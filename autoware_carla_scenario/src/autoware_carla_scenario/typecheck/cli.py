@@ -9,7 +9,8 @@
 Each ``scenario=`` config (a name or a glob, as ``scenario`` takes) is composed
 with the remaining overrides, exactly as the runner composes it, and checked
 the way the runner checks it before a run (docs/typecheck.md).  The exit
-status is 0 when every scenario passed, 1 when one failed, and 2 when there is
+status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` are
+invalid), and 2 when there is
 no Codon compiler to check with or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
 (the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``
@@ -135,6 +136,24 @@ def main(argv: list[str] | None = None) -> int:
             print(_compose_error(exc, name, overrides, run), file=sys.stderr)  # noqa: T201
             return 2
 
+    # The sweep reads `controls:` only when it expands; a wrong one is an
+    # authoring error, reported here with its config path (#546).
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from ..odd.controls import validate_controls  # noqa: PLC0415
+
+    control_errors: dict[str, int] = {}
+    for config_name, cfg in zip(names, cfgs):
+        node = OmegaConf.select(cfg, "controls")
+        resolved = None if node is None else OmegaConf.to_container(node, resolve=True)
+        diagnostics = validate_controls(resolved, cfg)
+        for d in diagnostics:
+            tag = "FAILED" if d.severity == "error" else "warning"
+            print(f"[{tag}] {config_name}: {d.path}: {d.message}")  # noqa: T201
+        errors = sum(d.severity == "error" for d in diagnostics)
+        if errors:
+            control_errors[config_name] = errors
+
     def check(cfg: Any) -> Any:
         return typecheck_registered(
             str(cfg.scenario.name), run._to_dict(cfg.scenario), toolchain=toolchain
@@ -142,12 +161,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # Each check is a separate `codon build`: run a few side by side (each
     # takes a CPU core and some memory of its own).
+    # A config whose controls are wrong is reported above, not compiled.
+    to_check = [c for n, c in zip(names, cfgs) if n not in control_errors]
     with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
-        results = list(pool.map(check, cfgs))
+        checked = iter(list(pool.map(check, to_check)))
+    results: list[Any] = [None if n in control_errors else next(checked) for n in names]
 
-    failed = 0
+    failed = len(control_errors)
     for config_name, cfg, result in zip(names, cfgs, results):
         scenario_name = str(cfg.scenario.name)
+        if config_name in control_errors:
+            continue
         if result is None and get_scenario_builder(scenario_name) is None:
             known = sorted(get_scenario_registry())
             hint = _suggest(scenario_name, known)

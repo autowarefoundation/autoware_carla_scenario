@@ -479,7 +479,7 @@ own hooks:
 | `adopt(entity)` | As the ego and each authored NPC join the run. The vehicle stays the scenario's. |
 | `start(world, skip_actor_ids=…)` | After warm-up and the init phase, immediately before the scenario clock starts. |
 | `tick(world, elapsed)` | Once per `world.tick()`. A backend driving a second simulator steps it exactly once here. |
-| `release(entity, world)` | When an action takes a vehicle over (a `FollowTrajectoryAction`). Stop driving it; may come before or after `start`. |
+| `release(entity, world)` | When an action takes a vehicle over (a `RoutingAction` in `follow` or `position` mode). Stop driving it; may come before or after `start`. |
 | `resume(entity, world)` | When an action that took a vehicle over hands it back (an adversarial manoeuvre is over). Drive it again from where it is; undoes `release`, may come before or after `start`. |
 | `close()` | During teardown, while the world is still alive. Called even when the run failed. |
 
@@ -581,14 +581,14 @@ manoeuvre finished.
 
 `release(entity, world)` is the one-authority-per-vehicle rule of
 `skip_actor_ids`, applied during the run: an action that drives a vehicle
-itself -- `FollowTrajectoryAction` places it on a trajectory every tick -- asks
+itself -- a `RoutingAction` in `position` mode places it on a trajectory every tick -- asks
 the backend to stop driving it first. The TrafficManager takes it off autopilot
 (and never puts it on, if `start` has not run yet); SUMO keeps it in its own
 simulation but publishes it from CARLA, as it does the ego. The base class does
 nothing, which is right for a backend that never drives the scenario's vehicles.
 
 `resume(entity, world)` undoes it, for an action that hands the vehicle back
-when it is done (`entity.resume_traffic(world)`; `FollowTrajectoryAction`
+when it is done (`entity.resume_traffic(world)`; a `RoutingAction`
 leaves its vehicle where the trajectory ends and does not): the TrafficManager
 puts it back on autopilot, keeping the desired speed and lane-change settings
 it had; SUMO drives it again from the pose it was published at, with the speed
@@ -808,7 +808,13 @@ scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
   the vehicle is taken off autopilot and held braking where it is, logged once,
   until it is given a new route or an action takes it over. On a path it was
   given the walk waits until the path's end is near: the TrafficManager follows
-  the path, which goes on, to there.
+  the path, which goes on, to there. Then, since the TrafficManager plans past a
+  path's end into the dead end beyond it, the vehicle is not held short of its
+  goal but taken off autopilot and drives the rest of its path itself, with the
+  controller a `RoutingAction` in `follow` mode drives with
+  (`traffic.final_approach.FinalApproach`, at 4 m/s, slowing onto the end), and
+  is stopped and held braking on the path's last point, logged once. Off
+  autopilot, the TrafficManager cannot destroy it; a new route puts it back on.
 
 Each kept vehicle is looked at every 0.5 s, the first looks spread over that
 period: a velocity read and, unless it is where the last walk found the road
@@ -896,7 +902,7 @@ road lanes, where SUMO's traffic brakes for it), until a second action stops
 it (`speed_ms: 0`). This is TraCI's walk, not SUMO's pedestrian model, which
 walks footways and crossings to a destination and so has no way to step off
 the kerb where a pedestrian stands. An action that moves the walker itself
-(`FollowTrajectoryAction`, an adversity) takes it back from SUMO, which
+(a `RoutingAction` in `follow`/`position` mode, an adversity) takes it back from SUMO, which
 publishes it from then on. A pedestrian with no footway within 50 m stays
 CARLA's, as a published one would.
 

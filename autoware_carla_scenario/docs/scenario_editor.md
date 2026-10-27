@@ -243,7 +243,7 @@ Three rules make it readable:
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
   next to each other instead of being correlated across the screen. A
-  *Follow Trajectory* card can also hold conditions on its vertices --
+  *Set Goal* card can also hold conditions on its waypoints --
   [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
   inspector with the same condition controls.
 * **One actor reacting to another is a reference, not a coincidence.**
@@ -552,8 +552,9 @@ box removes it; a malformed one is refused with the reason). A *Follow
 Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
-waypoint conditions. **Appear at the first vertex when the action starts**
-(`appear_on_start`) brings a hidden entity in.
+waypoint conditions. A **Spawn** card brings a hidden entity in (or, with no
+actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
+action state.
 
 ## Ego: who drives, and where to
 
@@ -601,6 +602,15 @@ phase is warned about: the ego's own goal is already delivered there, so the car
 would send a second destination in the same phase. Only a vehicle that plans its own route reads a
 goal at all, so a goal stored on any other entity is a validation error rather
 than something quietly dropped at export.
+
+The **Set Goal** card is also how any road user moves through waypoints
+(written out, each with a time or a waypoint condition) and **Driven by** says
+who moves it: its own driver, a controller, or a replay
+([Routes, Trajectories and Recorded-Scene Replay](trajectory.md)). The
+**Despawn** card (`despawn`, a vehicle or a pedestrian, never the ego) takes a
+road user out of the world when its trigger holds -- typically an *Action
+state* condition on its own Set Goal card reaching *Complete*, so it leaves
+where its route ends instead of driving on wherever its traffic takes it.
 
 ## Metadata-driven GUI
 

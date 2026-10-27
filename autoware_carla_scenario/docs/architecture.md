@@ -390,6 +390,7 @@ classDiagram
     class CollisionCondition
     class EntityExistenceCondition
     class OffRoadFractionCondition
+    class PlaceClearCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
 
@@ -417,6 +418,7 @@ classDiagram
     BaseCondition <|-- CollisionCondition
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- OffRoadFractionCondition
+    BaseCondition <|-- PlaceClearCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
@@ -445,9 +447,9 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, and leaving the driving lanes by more than a tolerance |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
-| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, following headway and speed difference |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
@@ -534,7 +536,6 @@ classDiagram
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
-    class FollowTrajectoryAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TrafficSignalControllerAction
@@ -544,7 +545,6 @@ classDiagram
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
-    BaseAction <|-- FollowTrajectoryAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
@@ -1124,7 +1124,7 @@ through any waypoints, to it. A pedestrian given one lays its walk out on the
 walkable lanelets (`PedestrianEntity.route_to`: a straight line for a leg they
 do not join up, as across a road whose crosswalks only overlap its walkways),
 and the `RoutingAction` walks it a tick at a time (`PedestrianEntity.walk_on`,
-steered as `FollowTrajectoryAction` steers a walker in `FOLLOW` mode) -- so on
+steered as a `RoutingAction` steers a walker in `follow` mode) -- so on
 a pedestrian the action needs the tick loop (`BaseAction.needs_tick_loop`).
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the

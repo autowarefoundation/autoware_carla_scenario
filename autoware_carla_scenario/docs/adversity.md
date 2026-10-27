@@ -188,7 +188,7 @@ removed). Outside that window the vehicle is out of the world.
 
 A vehicle cannot be spawned once a run has started, so the scenario spawns it
 in `setup`, preferably out of the world (`spawn.hidden`). The action is a
-`FollowTrajectoryAction` of a held pose, with `hidden_outside_trajectory`.
+trajectory run (the engine of `RoutingAction`'s `position` mode) of a held pose, with `hidden_outside_trajectory`.
 `collision_objects` creates two of them for a collision's aftermath.
 
 ```python
@@ -226,7 +226,7 @@ s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
 picked the side from the SUMO lane's index.
 
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
-the world as CARLA props, each added by a `PropAction` and named
+the world as CARLA props, each added by a `SpawnAction` and named
 `<label>/<zone>/<n>` (`docs/api.md`). Unlike a vehicle, a prop may appear
 while a run is under way. When the zone appears, two things happen:
 

@@ -120,7 +120,9 @@ class CompositionCondition(BaseCondition):
         # Kept as its string, the one thing every use of it reads.
         self._entity_name = str(entity_name) if entity_name is not None else None
         self._entity_existence = (
-            EntityExistenceCondition(entity_name, label=f"{label}_entity_exists")
+            EntityExistenceCondition(
+                entity_name, label=f"{label}_entity_exists", quiet=True
+            )
             if entity_name is not None
             else None
         )

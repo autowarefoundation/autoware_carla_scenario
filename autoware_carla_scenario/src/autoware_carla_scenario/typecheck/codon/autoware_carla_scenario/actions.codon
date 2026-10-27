@@ -118,6 +118,17 @@ class BaseAction:
         """Marks an action for _acs_list (lists.codon)."""
         return 0
 
+    # Python compares and hashes a BaseAction by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: BaseAction) -> bool:
+        return self is other
+
+    def __ne__(self, other: BaseAction) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     @staticmethod
     def _acs_hook_returns(name: Literal[str], r):
         """The return type of each method an override of which the scenario
@@ -320,27 +331,80 @@ class TurnIndicatorAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+@tuple
+class RoutingMode:
+    value: str
+    DRIVER: ClassVar[RoutingMode] = RoutingMode("driver")
+    FOLLOW: ClassVar[RoutingMode] = RoutingMode("follow")
+    POSITION: ClassVar[RoutingMode] = RoutingMode("position")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == RoutingMode.DRIVER:
+            return "DRIVER"
+        if self == RoutingMode.FOLLOW:
+            return "FOLLOW"
+        if self == RoutingMode.POSITION:
+            return "POSITION"
+        raise ValueError("not a member of RoutingMode")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[RoutingMode]:
+        return [RoutingMode.DRIVER, RoutingMode.FOLLOW, RoutingMode.POSITION]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> RoutingMode:
+        if name == "DRIVER":
+            return RoutingMode.DRIVER
+        if name == "FOLLOW":
+            return RoutingMode.FOLLOW
+        if name == "POSITION":
+            return RoutingMode.POSITION
+        raise KeyError(name)
+
+
 class RoutingAction(BaseAction):
     def __init__(self, label):
         compile_error("RoutingAction(): no constructor takes these arguments "
-                      "(required: entity_name, goal)")
+                      "(required: entity_name, and a goal or a trajectory)")
 
-    def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
+    def __init__(self, entity_name, goal: Optional[Lanelet2Pose] = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
-                 ground_projection = None, waypoints = (), walking_speed: float = 1.4):
-        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, waypoints and walking_speed")
+                 ground_projection = None, waypoints = (), walking_speed: float = 1.4,
+                 cross_factor = None, turn_back_ttc_s: Optional[float] = None,
+                 turn_back_distance_m: Optional[float] = None,
+                 turn_back_within_m: float = 1.0,
+                 trajectory: Optional[Trajectory] = None,
+                 mode: RoutingMode = RoutingMode("driver"), time_reference = None,
+                 initial_distance_offset: float = 0.0, until = None,
+                 control_config = None, speed = None, stop_at_end: bool = True):
+        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
+                           "waypoints, walking_speed, cross_factor, turn_back_ttc_s, "
+                           "turn_back_distance_m, turn_back_within_m, trajectory, mode, time_reference, "
+                           "initial_distance_offset, until, control_config, "
+                           "speed and stop_at_end")
         _expect_role(entity_name)
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
-        super().__init__(label, condition, timing, once=once)
+        _expect_optional_timing(time_reference)
+        _expect_optional_float(speed)
+        _expect_optional_float(cross_factor)
+        super().__init__(label, condition, timing, once=once, until=until)
 
     @property
-    def goal(self) -> Lanelet2Pose:
+    def goal(self) -> Optional[Lanelet2Pose]:
         raise NotImplementedError()
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def mode(self) -> RoutingMode:
         raise NotImplementedError()
 
     @property
@@ -353,26 +417,6 @@ class RoutingAction(BaseAction):
     def waypoints(self) -> List[Lanelet2Pose]:
         raise NotImplementedError()
 
-
-class FollowTrajectoryAction(BaseAction):
-    def __init__(self, label):
-        compile_error("FollowTrajectoryAction(): no constructor takes these arguments "
-                      "(required: entity_name, trajectory)")
-
-    def __init__(self, entity_name, trajectory: Trajectory, time_reference = None,
-                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("position"),
-                 initial_distance_offset: float = 0.0, condition = None,
-                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "follow_trajectory", once: bool = True, until = None,
-                 control_config = None, hidden_outside_trajectory: bool = False,
-                 speed = None, appear_on_start: bool = False, stop_at_end: bool = True):
-        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
-                           "hidden_outside_trajectory, speed, appear_on_start and stop_at_end")
-        _expect_role(entity_name)
-        _expect_optional_timing(time_reference)
-        _expect_optional_float(speed)
-        super().__init__(label, condition, timing, once=once, until=until)
-
     @property
     def trajectory(self) -> Trajectory:
         raise NotImplementedError()
@@ -383,6 +427,48 @@ class FollowTrajectoryAction(BaseAction):
 
     @property
     def held_vertex(self) -> Optional[int]:
+        raise NotImplementedError()
+
+
+class SpawnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("SpawnAction(): no constructor takes these arguments "
+                      "(an entity_name, or a name and a position for a prop)")
+
+    def __init__(self, entity_name = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "spawn",
+                 once: bool = True, position = None, shift_max: float = 0.0,
+                 speed: float = 0.0, name: Optional[str] = None,
+                 blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
+                 lanes = (), length: float = 0.0, width: float = 0.0):
+        _keyword_only(_kw, "SpawnAction(): label, once, position, shift_max, speed, "
+                           "name, blueprint, on_ground, lanes, length and width")
+        if entity_name is not None:
+            _expect_role(entity_name)
+        if position is not None:
+            _expect_trajectory_position(position)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def entity_name(self) -> str:
+        raise NotImplementedError()
+
+
+class DespawnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("DespawnAction(): no constructor takes these arguments "
+                      "(an entity_name, or a prop's name)")
+
+    def __init__(self, entity_name = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "despawn",
+                 once: bool = True, name: Optional[str] = None):
+        _keyword_only(_kw, "DespawnAction(): label, once and name")
+        if entity_name is not None:
+            _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def entity_name(self) -> str:
         raise NotImplementedError()
 
 
@@ -421,54 +507,11 @@ class StalledObjectAction(BaseAction):
 
 
 @tuple
-class PropOperation:
-    value: str
-    ADD: ClassVar[PropOperation] = PropOperation("add")
-    REMOVE: ClassVar[PropOperation] = PropOperation("remove")
-
-    # Enum's name (#307): Codon has no Enum to give a framework enum one.
-    @property
-    def name(self) -> str:
-        if self == PropOperation.ADD:
-            return "ADD"
-        if self == PropOperation.REMOVE:
-            return "REMOVE"
-        raise ValueError("not a member of PropOperation")
-
-    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
-    # them (#437). Declared in Python's order, as the test checks.
-    @staticmethod
-    def _acs_members() -> List[PropOperation]:
-        return [PropOperation.ADD, PropOperation.REMOVE]
-
-    @staticmethod
-    def _acs_by_name(name: str) -> PropOperation:
-        if name == "ADD":
-            return PropOperation.ADD
-        if name == "REMOVE":
-            return PropOperation.REMOVE
-        raise KeyError(name)
-
-
-class PropAction(BaseAction):
-    def __init__(self, label):
-        compile_error("PropAction(): no constructor takes these arguments (required: name)")
-
-    def __init__(self, name: str, operation: PropOperation = PropOperation("add"), position = None,
-                 *_kw, blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
-                 condition = None, timing: TickTiming = TickTiming("pre_tick"),
-                 label: str = "prop"):
-        _keyword_only(_kw, "PropAction(): blueprint, on_ground, condition, timing and label")
-        if position is not None:
-            _expect_trajectory_position(position)
-        super().__init__(label, condition, timing)
-
-    def apply(self, world: carla.World, library: Optional[carla.BlueprintLibrary] = None,
-              ground = None) -> bool:
-        raise NotImplementedError()
-
-
 def standing_props() -> List[str]:
+    raise NotImplementedError()
+
+
+def remove_prop(name: str) -> bool:
     raise NotImplementedError()
 
 

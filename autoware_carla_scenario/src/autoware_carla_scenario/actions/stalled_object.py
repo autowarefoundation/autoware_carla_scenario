@@ -8,7 +8,7 @@ two for the aftermath of a collision -- and is gone outside that window.
 An entity cannot be spawned once a run has started, so the vehicle is one the
 scenario spawns in ``setup`` (out of the world, ``spawn.hidden``, or not:
 the action takes it out from its first tick).  :class:`StalledObjectAction`
-is a :class:`~.follow_trajectory.FollowTrajectoryAction` of a trajectory that
+is a :class:`~._trajectory_run.TrajectoryRun` of a trajectory that
 stays at the pose from ``start_time`` to ``end_time``, in ``POSITION`` mode
 with ``hidden_outside_trajectory``: parked under the map with its physics off
 before and after, held at the pose, stopped, in between.
@@ -32,7 +32,7 @@ from ..trajectory.model import (
     TrajectoryVertex,
 )
 from .base import TickTiming
-from .follow_trajectory import FollowTrajectoryAction
+from ._trajectory_run import TrajectoryRun
 
 __all__ = ["FOREVER_S", "StalledObjectAction", "collision_objects"]
 
@@ -56,7 +56,7 @@ def _held(
     )
 
 
-class StalledObjectAction(FollowTrajectoryAction):
+class StalledObjectAction(TrajectoryRun):
     """A vehicle stalled at *pose* from *start_time* until *end_time*.
 
     Args:

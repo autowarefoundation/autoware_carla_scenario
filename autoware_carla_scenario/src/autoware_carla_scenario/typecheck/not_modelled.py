@@ -440,6 +440,48 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "PedestrianEntity": {
+        "walk_path": (
+            "the walk route_to() laid out, a trajectory.model ResolvedTrajectory "
+            "the routing action paces a walker along; a scenario routes the "
+            "pedestrian, it does not read its walk"
+        ),
+        "walk_along": (
+            "lays a walk out whole as a trajectory.model ResolvedTrajectory, "
+            "what the routing action does with a recorded walk; a scenario "
+            "routes the pedestrian with a RoutingAction instead"
+        ),
+        "set_traffic_backend": _SET_TRAFFIC_BACKEND,
+        "set_turn_back": (
+            "how the walks it is given wait at a kerb and turn back, which the "
+            "routing action sets from its turn_back_* thresholds; a scenario "
+            "sets them on the RoutingAction"
+        ),
+    },
+    "SpawnAction": {
+        "take_spawns": (
+            "the entities brought in, for the runner's log; a scenario reads "
+            "the log, not the action"
+        ),
+        "apply": (
+            "spawns at once with a blueprint library and a ground lookup shared "
+            "by many props, what ConstructionZoneAction does; a scenario "
+            "registers the action instead"
+        ),
+    },
+    "DespawnAction": {
+        "take_despawns": (
+            "the entities removed, which the runner reads for the trajectory "
+            "log; a scenario reads the log, not the action"
+        ),
+    },
+    "RoutingAction": {
+        "take_waypoint_arrivals": (
+            "the timed waypoints reached, as waypoint_arrival's WaypointArrival, "
+            "which the runner reads for the trajectory log; a scenario reads "
+            "the log, not the action"
+        ),
+    },
     "AdversarialTrafficAction": {
         "choices": (
             "the adversities NADE sampled, as adversity.nade's NadeChoice, "
@@ -471,7 +513,6 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "compiles them from their source",
     ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
-    "PedestrianEntity": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {
         **_members("get_details to_summary_dict", _CONDITION_DETAILS),

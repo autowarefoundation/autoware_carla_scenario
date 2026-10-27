@@ -49,8 +49,17 @@ def main(argv: list[str] | None = None) -> int:
     # expansion sees the same config (package conf dirs included).
     from .run import _compose_config  # noqa: PLC0415 -- imports the CARLA client
 
+    from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
+
     cfg = _compose_config(scenario, overrides)
-    json.dump({"scenario": scenario, "cases": expand_config(cfg)}, sys.stdout)
+    try:
+        cases = expand_config(cfg)
+    except ControlsError as exc:
+        # An authoring error: one line per problem, with its config path.
+        for line in format_diagnostics(exc.diagnostics, scenario):
+            print(line, file=sys.stderr)
+        return 1
+    json.dump({"scenario": scenario, "cases": cases}, sys.stdout)
     sys.stdout.write("\n")
     return 0
 

@@ -350,8 +350,9 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
     so do the ones started later as slots free up.  How long it waited.
     """
     lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a+", encoding="utf-8") as stream, _start_lock(
-        stream, lock, spacing
+    with (
+        open(lock, "a+", encoding="utf-8") as stream,
+        _start_lock(stream, lock, spacing),
     ):
         stream.seek(0)
         try:
@@ -447,6 +448,8 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     # Converts each case's trajectory log into a Rerun recording as the case
     # ends (rerun.enabled): each task converts its own cases.
     rerun: RerunConverter | None = None
+    # Bound before the try: layout.task_port() can raise once the slot is held.
+    port_file: Path | None = None
     sampler = _RssSampler()
     exit_status = 0
     try:
@@ -610,7 +613,8 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 # The file (the job script's pointer to CARLA) goes only once
                 # CARLA is gone; a worker cut short here leaves it to the
                 # watchdog, which removes it after stopping CARLA.
-                port_file.unlink(missing_ok=True)
+                if port_file is not None:
+                    port_file.unlink(missing_ok=True)
                 if watchdog is not None:
                     watchdog.finish()
             # With CARLA left, the watchdog ends it when this process does,

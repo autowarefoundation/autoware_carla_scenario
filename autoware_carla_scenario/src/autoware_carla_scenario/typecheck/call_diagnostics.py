@@ -554,10 +554,15 @@ def call_message(
     name = (found or takes)["name"]  # type: ignore[index]
     short = name.rpartition(".")[2]
     types_ = _split_types(found["args"]) if found else None
-    if found and name.endswith(".__init__"):
+    if found and name.endswith((".__init__", ".__new__")):
         short = name.rpartition(".")[0]
-    # self comes first for a constructor and a method.
-    got = types_[1:] if types_ is not None and "." in name else types_
+    # self comes first for a constructor and a method, but not for __new__,
+    # which builds the object (a @tuple class, range).
+    got = (
+        types_[1:]
+        if types_ is not None and "." in name and not name.endswith(".__new__")
+        else types_
+    )
     call = None
     if parsed is not None:
         tree, lines = parsed
@@ -1005,6 +1010,74 @@ def return_message(
 
 
 # ---------------------------------------------------------------------------
+# An annotated assignment of the wrong type (#564)
+# ---------------------------------------------------------------------------
+
+
+def annotated_message(
+    message: str,
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+) -> str | None:
+    """``speed is assigned a JSONValue, but is declared float`` for Codon's
+    ``'float' does not match expected type 'JSONValue'`` at ``speed: float =
+    doc["speed"]``: Codon names the declared type first, as for a ``return``."""
+    found = _MISMATCH.match(message)
+    parsed = files.get(path)
+    if found is None or parsed is None or line is None or column is None:
+        return None
+    tree, lines = parsed
+    statements = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AnnAssign)
+        and n.value is not None
+        and n.lineno == line
+        and _column(lines, line, n.col_offset) == column
+    ]
+    if len(statements) != 1:
+        return None
+    statement = statements[0]
+    want = canonical_annotation(codon_type(found["declared"]))
+    have = canonical_annotation(statement.annotation)
+    if want.lower() != have.lower():
+        return None  # not the declared type: another mismatch on this line
+    shown = canonical_annotation(codon_type(found["got"]))
+    target = ast.unparse(statement.target)
+    article = "an" if shown[:1] in "aeiouAEIOU" else "a"
+    value = "None" if shown == "None" else f"{article} {shown}"
+    return f"{target} is assigned {value}, but is declared {have}"
+
+
+#: What to write instead of a use of a ``JSONValue`` the check refuses (#564).
+_JSON_CONVERT = (
+    "a value read from a JSON document has no type the check knows "
+    '(JSONValue): convert it where you use it, `float(doc["speed"])`, '
+    "`int(v)`, `str(v)`, `[float(x) for x in v]`"
+)
+_JSON_READ_ONLY = (
+    "a JSON document is read-only here: copy what you need into a typed local"
+)
+_JSON_ATTRIBUTE = (
+    'a JSON object has no attributes: index it, `v["x"]`, and convert what '
+    "you take (JSONValue is none of the types the check knows)"
+)
+
+
+def json_hint(message: str) -> str:
+    """*message* with a hint when it is about a ``JSONValue``."""
+    if "JSONValue" not in message or "(JSONValue)" in message:
+        return message
+    if "'__setitem__'" in message or "'__delitem__'" in message:
+        return f"{message}: {_JSON_READ_ONLY}"
+    if "object has no attribute" in message:
+        return f"{message}: {_JSON_ATTRIBUTE}"
+    return f"{message}: {_JSON_CONVERT}"
+
+
+# ---------------------------------------------------------------------------
 # A forgotten ``self`` (#542)
 # ---------------------------------------------------------------------------
 
@@ -1111,6 +1184,211 @@ def forgotten_self(
     )
 
 
+# ---------------------------------------------------------------------------
+# Common slips whose Codon message does not say what is wrong (#599)
+# ---------------------------------------------------------------------------
+
+#: ``range(n / 2)``: Codon's range has no overload for a float (and the
+#: message once refined, ``range() cannot be called with (float)``).
+_RANGE_NEW = re.compile(
+    r"^no function 'range\.__new__' with arguments \(|^range\(\) cannot be called with"
+)
+#: ``xs[n / 2]`` (and the message once refined)
+_FLOAT_INDEX = re.compile(
+    r"^no function '[\w.]+\.__getitem__' with arguments \([^()]*, float\)$"
+    r"|^__getitem__\(\) cannot be called with \(float\)$"
+)
+#: ``",".join(ints)``
+_JOIN_MISMATCH = re.compile(
+    r"^'(?:Generator|List)\[(?P<got>[^\]']+)\]' does not match expected type "
+    r"'(?:Generator|List)\[str\]'$"
+)
+#: A callback that takes no argument where the framework passes the world.
+_TAKES_NONE = re.compile(
+    r"^(?P<name>%_lambda_\d+|a lambda|\w+)\(\) takes 0 arguments \(1 given\)$"
+)
+#: The framework's registrations whose callback is called with the world.
+WORLD_CALLBACKS = {
+    "register_init": "an init callback",
+    "register_pre_tick": "a tick callback",
+    "register_post_tick": "a tick callback",
+    "register_measure": "a measure's read function",
+    "register_cover": "a cover expression",
+}
+#: ``_expect_float(x: bool)``, the model's check of what a measure returned.
+_EXPECT_FLOAT_FRAME = re.compile(r"_expect_float\(x: (?P<got>[^)]*)\)")
+_READER_FRAME = re.compile(r"\b_expect_reader\(read:")
+
+
+def _divides(node: ast.AST) -> bool:
+    """Whether *node* has a true division (``/``) outside any call: a float."""
+    stack = [node]
+    while stack:
+        inner = stack.pop()
+        if isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Div):
+            return True
+        if isinstance(inner, (ast.Call, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(inner))
+    return False
+
+
+def _subscript_at(
+    tree: ast.Module, lines: list[str], line: int, column: int | None
+) -> ast.Subscript | None:
+    found = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Subscript)
+        and n.lineno == line
+        and (column is None or _column(lines, line, n.col_offset) == column)
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _world_callback(call: ast.Call) -> tuple[str, ast.expr] | None:
+    """(the registration, its callback argument) for a call of one of
+    :data:`WORLD_CALLBACKS`."""
+    name = _callee_name(call)
+    if name not in WORLD_CALLBACKS:
+        return None
+    index = 1 if name in ("register_measure", "register_cover") else 0
+    if len(call.args) > index:
+        return name, call.args[index]
+    wanted = {"read", "expression", "cb"}
+    for keyword in call.keywords:
+        if keyword.arg in wanted:
+            return name, keyword.value
+    return None
+
+
+def slip_hint(
+    message: str,
+    trace: tuple[str, ...],
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+) -> str | None:
+    """A hint for a common slip whose Codon message does not say what is
+    wrong (#599), or ``None``.  Each is given only when both Codon's message
+    and the author's source at the line say it is that slip:
+
+    * ``range(len(xs) / 2)``: ``__new__() cannot be called with ()``;
+    * ``xs[len(xs) / 2]``: ``__getitem__() cannot be called with (float)``;
+    * ``",".join(ints)``: ``'Generator[int]' does not match ... 'Generator[str]'``;
+    * ``register_pre_tick(lambda: ...)``: ``... takes 0 arguments (1 given)``
+      (the framework calls it with the world);
+    * ``register_measure("k", lambda w: True)``: ``expected a float (or an
+      int)``, with what the function returned.
+    """
+    parsed = files.get(path)
+    if parsed is None or line is None:
+        return None
+    tree, lines = parsed
+    if _RANGE_NEW.match(message):
+        call = _find_call(
+            tree,
+            lines,
+            line,
+            column,
+            lambda c: isinstance(c.func, ast.Name) and c.func.id == "range",
+        )
+        if call is None or not call.args:
+            return None
+        if any(_divides(a) for a in call.args):
+            return (
+                "range() takes ints, and `/` always gives a float (even of two "
+                "ints): divide with `//`, or convert with int()"
+            )
+        return None
+    if _FLOAT_INDEX.match(message):
+        subscript = _subscript_at(tree, lines, line, column)
+        if subscript is None or not _divides(subscript.slice):
+            return None
+        return (
+            "an index must be an int, and `/` always gives a float (even of "
+            "two ints): divide with `//`"
+        )
+    joined = _JOIN_MISMATCH.match(message)
+    if joined is not None:
+        call = _find_call(
+            tree,
+            lines,
+            line,
+            column,
+            lambda c: isinstance(c.func, ast.Attribute)
+            and c.func.attr == "join"
+            and len(c.args) == 1,
+        )
+        if call is None:
+            return None
+        got = codon_type(joined["got"])
+        return (
+            f"str.join takes strs, and these are {got} values: convert each, "
+            "`sep.join(map(str, values))` or `sep.join(str(v) for v in values)`"
+        )
+    takes_none = _TAKES_NONE.match(message)
+    if takes_none is not None:
+        call = _find_call(
+            tree, lines, line, column, lambda c: _world_callback(c) is not None
+        )
+        found = None if call is None else _world_callback(call)
+        if found is None:
+            return None
+        name, callback = found
+        if isinstance(callback, ast.Lambda):
+            args = callback.args
+            if args.args or args.posonlyargs or args.vararg:
+                return None  # a parameter moved by the `k=k` rewrite
+        elif isinstance(callback, ast.Name):
+            if callback.id != takes_none["name"]:
+                return None
+        elif isinstance(callback, ast.Attribute):
+            if callback.attr != takes_none["name"]:
+                return None
+        else:
+            return None
+        what = WORLD_CALLBACKS[name]
+        return (
+            f"{what} registered with {name}() is called with the world "
+            "(a carla.World): take it as a parameter, `lambda world: ...` "
+            "(or `def cb(world: carla.World) -> None:`), even if unused"
+        )
+    if message == "expected a float (or an int)" and any(
+        _READER_FRAME.search(f) for f in trace
+    ):
+        returned: str | None = next(
+            (m["got"] for f in trace if (m := _EXPECT_FLOAT_FRAME.search(f))), None
+        )
+        call = _find_call(
+            tree,
+            lines,
+            line,
+            column,
+            lambda c: _callee_name(c) == "register_measure",
+        )
+        if call is None or returned is None:
+            return None
+        key = ""
+        if call.args and isinstance(call.args[0], ast.Constant):
+            key = f" {call.args[0].value!r}"
+        shown = codon_type(returned)
+        article = "an" if shown[:1] in "aeiou" else "a"
+        extra = (
+            " (a bool is no number to a measure: return `1.0 if ... else "
+            "0.0`, or record it with register_cover)"
+            if shown == "bool"
+            else ""
+        )
+        return (
+            f"the read function (the second argument) of measure{key} returns "
+            f"{article} {shown}, and a measure is a float (or an int), or "
+            f"None{extra}"
+        )
+    return None
+
+
 @dataclass
 class Refiner:
     """Applies the rewrites above to a list of diagnostics."""
@@ -1123,6 +1401,25 @@ class Refiner:
         self.files = _Files()
 
     def refine(
+        self,
+        message: str,
+        path: str | None,
+        line: int | None,
+        column: int | None,
+        trace: tuple[str, ...] = (),
+    ) -> tuple[str, int | None, int | None]:
+        """*message* in the author's terms, and where it points; *trace* is
+        Codon's "during the realization of" frames, outermost last."""
+        try:
+            slip = slip_hint(message, trace, path, line, column, self.files)
+        except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+            slip = None
+        refined, at_line, at_column = self._refine(message, path, line, column)
+        if slip is not None:
+            refined = f"{refined}: {slip}"
+        return refined, at_line, at_column
+
+    def _refine(
         self, message: str, path: str | None, line: int | None, column: int | None
     ) -> tuple[str, int | None, int | None]:
         try:
@@ -1146,8 +1443,10 @@ class Refiner:
                 if changed is not None:
                     return changed
             returned = return_message(message, path, line, column, self.files)
+            if returned is None:
+                returned = annotated_message(message, path, line, column, self.files)
             if returned is not None:
-                return returned, line, column
+                return json_hint(returned), line, column
             changed = forgotten_self(
                 message, path, line, column, self.files, resolvers[0]
             )
@@ -1155,4 +1454,4 @@ class Refiner:
                 return changed
         except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
             pass
-        return message, line, column
+        return json_hint(message), line, column

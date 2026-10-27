@@ -74,6 +74,17 @@ class PedestrianEntity:
     def __init__(self, config: PedestrianEntityConfig):
         pass
 
+    # Python compares and hashes a PedestrianEntity by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: PedestrianEntity) -> bool:
+        return self is other
+
+    def __ne__(self, other: PedestrianEntity) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     @property
     def role_name(self) -> str:
         raise NotImplementedError()
@@ -97,8 +108,8 @@ class PedestrianEntity:
 
     def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
                  initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
-                 waypoints = (), walking_speed: float = 1.4) -> None:
-        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints and walking_speed")
+                 waypoints = (), walking_speed: float = 1.4, cross_factor = None) -> None:
+        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints, walking_speed and cross_factor")
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
         raise NotImplementedError()
@@ -107,7 +118,7 @@ class PedestrianEntity:
     def walking(self) -> bool:
         raise NotImplementedError()
 
-    def walk_on(self) -> None:
+    def walk_on(self, speed_mps: Optional[float] = None) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:
@@ -122,6 +133,17 @@ class EgoVehicle:
 
     def __init__(self):
         pass
+
+    # Python compares and hashes an EgoVehicle by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: EgoVehicle) -> bool:
+        return self is other
+
+    def __ne__(self, other: EgoVehicle) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
 
     def _acs_ego_vehicle(self) -> int:
         return 0

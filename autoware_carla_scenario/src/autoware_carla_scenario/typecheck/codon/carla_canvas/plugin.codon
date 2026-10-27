@@ -1,0 +1,10 @@
+# Model of carla_canvas.plugin (docs/typecheck.md): plugin_path(), the path of
+# the sensor plugin typesafe_carla loads (carla_canvas is not a dependency of
+# this package, so its signature is not compared by test_typecheck_model.py).
+# Nothing here runs: it names no file.
+
+from pathlib import Path
+
+
+def plugin_path() -> Path:
+    return Path("")

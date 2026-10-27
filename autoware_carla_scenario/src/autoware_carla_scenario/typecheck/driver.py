@@ -255,15 +255,28 @@ def _render_dataclass(
     for key, value in values.items():
         hint = hints.get(key, Any)
         rendered = _render(value, hint, imports, _at(actual, key), f"{path}.{key}")
-        if hint in (bool, int, float, str) and (
-            type(value) is hint or type(value) in (int, float, str)
-        ):
-            imports.checks.append(
-                (f"_acs_as_{hint.__name__}({rendered})", f"{path}.{key}")
-            )
+        _check_scalar(value, hint, rendered, imports, f"{path}.{key}")
         pieces.append(f"\n{key}={rendered},{_PATH_MARK}{path}.{key}")
     fields = "".join(pieces)
     return f"{imports.name(cls)}({_PATH_MARK}{path}{fields}\n)"
+
+
+def _check_scalar(
+    value: Any, hint: Any, rendered: str, imports: _Imports, path: str
+) -> None:
+    """Check a scalar field's *rendered* value strictly, on a line of its own.
+
+    Codon converts any value with ``__bool__`` assigned to a ``bool`` field
+    or passed as one (``enabled = "no"``), so a field annotated ``bool``,
+    ``int``, ``float`` or ``str`` given a value of one of those types is also
+    passed to ``_acs_as_<hint>``, which takes that type only: its error is
+    at the line, which names *path* (#531, #598).  An int given to a float
+    field is rendered as a float (:func:`_render`) and passes.
+    """
+    if hint in (bool, int, float, str) and (
+        type(value) is hint or type(value) in (int, float, str)
+    ):
+        imports.checks.append((f"_acs_as_{hint.__name__}({rendered})", path))
 
 
 def _split_marks(text: str, path: str) -> list[tuple[str, str]]:
@@ -309,21 +322,21 @@ def render_driver(
     shape_imports = _Imports(shape=True)
     config_args: list[tuple[str, str, str]] = []  # (key, line, shaped line)
     for key, value in scenario_dict.items():
-        line, shaped = (
-            f"    config.{key} = {rendered}"
-            if by_assignment
-            else f"        {key}={rendered},"
-            for rendered in (
-                _render(
-                    value,
-                    hints.get(key, Any),
-                    imports_,
-                    _at(built, key),
-                    f"scenario.{key}",
-                )
-                for imports_ in (imports, shape_imports)
+        hint = hints.get(key, Any)
+        rendered_lines = []
+        for imports_ in (imports, shape_imports):
+            rendered = _render(
+                value, hint, imports_, _at(built, key), f"scenario.{key}"
             )
-        )
+            # Strictly, as a nested field's (#598): `config.enabled = "no"`
+            # passes, as Codon converts a str to a bool field.
+            _check_scalar(value, hint, rendered, imports_, f"scenario.{key}")
+            rendered_lines.append(
+                f"    config.{key} = {rendered}"
+                if by_assignment
+                else f"        {key}={rendered},"
+            )
+        line, shaped = rendered_lines
         config_args.append((key, line, shaped))
     body = [
         "def _acs_expect_scenario(scenario: BaseScenario):",

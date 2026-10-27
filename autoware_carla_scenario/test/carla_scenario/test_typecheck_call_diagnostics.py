@@ -602,6 +602,44 @@ def test_a_return_of_a_nested_function_is_not_the_outer_functions(
     )
 
 
+def test_an_annotated_assignment_is_reported_declared_type_last(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        annotated_message,
+        json_hint,
+    )
+
+    path = tmp_path / "m.py"
+    path.write_text(
+        "def f(doc):\n    speed: float = doc['speed']\n    n: int = 'x'\n"
+        "    m: int | None = 1.5\n    k: int\n"
+    )
+    files = _Files()
+    got = annotated_message(
+        "'float' does not match expected type 'JSONValue'", str(path), 2, 5, files
+    )
+    assert got == "speed is assigned a JSONValue, but is declared float"
+    assert "convert it where you use it" in json_hint(got)
+    assert annotated_message(
+        "'int' does not match expected type 'str'", str(path), 3, 5, files
+    ) == ("n is assigned a str, but is declared int")
+    assert annotated_message(
+        "'Optional[int]' does not match expected type 'float'", str(path), 4, 5, files
+    ) == ("m is assigned a float, but is declared int | None")
+    # Another type on that line, or not an assignment: Codon's text stays.
+    assert (
+        annotated_message(
+            "'str' does not match expected type 'int'", str(path), 2, 5, files
+        )
+        is None
+    )
+    assert annotated_message("not a mismatch", str(path), 2, 5, files) is None
+    assert json_hint("an unrelated message") == "an unrelated message"
+    assert "read-only" in json_hint("'JSONValue' object has no attribute '__setitem__'")
+
+
 # ---------------------------------------------------------------------------
 # Own callables, `X | None` returns, a forgotten `self` (#539, #540, #542):
 # the rewrites on their own, with Codon's messages written out
@@ -1234,3 +1272,129 @@ def test_a_conditional_of_literals_is_a_certain_return_type(
     tree = ast.parse(f"def f(x: int, y: int) -> bool:\n    return {expr}\n")
     problems = return_problems({"m": ("m.py", tree)})
     assert bool(problems) is flagged, problems
+
+
+# ---------------------------------------------------------------------------
+# Common slips (#599): a hint only where the message and the source agree
+# ---------------------------------------------------------------------------
+
+_SLIPS = """
+class S:
+    def setup(self, ids, world):
+        for i in range(len(ids) / 2):
+            pass
+        for i in range(len(ids)):
+            pass
+        mid = ids[len(ids) / 2]
+        key = ids[k]
+        text = ",".join(ids)
+        self.register_pre_tick(lambda: None)
+        self.register_post_tick(lambda k=k: None)
+        self.register_init(tick)
+        self.register_measure("flag", lambda w: True)
+"""
+
+
+def _slip(message: str, needle: str, trace: tuple[str, ...] = ()) -> str | None:
+    from autoware_carla_scenario.typecheck.call_diagnostics import _Files, slip_hint
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "s.py"
+        path.write_text(_SLIPS)
+        line, column = _at(_SLIPS.splitlines(), needle)
+        return slip_hint(message, trace, str(path), line, column, _Files())
+
+
+_MEASURE_TRACE = (
+    "during the realization of _expect_float(x: bool) [_tc.codon:219]",
+    "during the realization of _expect_optional_float(x: bool) [_reader.codon:18]",
+    "during the realization of _expect_reader(read: %_lambda_9(...)) [x.codon:1]",
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "needle", "trace", "hint"),
+    [
+        (
+            "no function 'range.__new__' with arguments (float)",
+            "range(len(ids) / 2)",
+            (),
+            "range() takes ints",
+        ),
+        ("range() cannot be called with (float)", "range(len(ids) / 2)", (), "//"),
+        # No `/`: some other float, the hint would guess.
+        ("range() cannot be called with (float)", "range(len(ids))", (), None),
+        (
+            "no function 'List.__getitem__' with arguments (List[int], float)",
+            "ids[len(ids) / 2]",
+            (),
+            "an index must be an int",
+        ),
+        ("__getitem__() cannot be called with (float)", "ids[k]", (), None),
+        (
+            "'Generator[int]' does not match expected type 'Generator[str]'",
+            '",".join',
+            (),
+            "map(str, values)",
+        ),
+        (
+            "'Generator[int]' does not match expected type 'Generator[str]'",
+            "range(len(ids) / 2)",
+            (),
+            None,
+        ),
+        (
+            "%_lambda_12() takes 0 arguments (1 given)",
+            "self.register_pre_tick",
+            (),
+            "register_pre_tick() is called with the world",
+        ),
+        # A lambda the `k=k` rewrite emptied: that hint applies, not this one.
+        (
+            "%_lambda_12() takes 0 arguments (1 given)",
+            "self.register_post_tick",
+            (),
+            None,
+        ),
+        (
+            "tick() takes 0 arguments (1 given)",
+            "self.register_init",
+            (),
+            "an init callback registered with register_init()",
+        ),
+        ("other() takes 0 arguments (1 given)", "self.register_init", (), None),
+        (
+            "expected a float (or an int)",
+            "self.register_measure",
+            _MEASURE_TRACE,
+            "measure 'flag' returns a bool",
+        ),
+        # Not a measure's read function (a cover target, a min_stay).
+        ("expected a float (or an int)", "self.register_measure", (), None),
+    ],
+)
+def test_a_common_slip_gets_a_hint_only_where_it_applies(
+    message: str, needle: str, trace: tuple[str, ...], hint: str | None
+) -> None:
+    got = _slip(message, needle, trace)
+    if hint is None:
+        assert got is None, got
+    else:
+        assert got is not None and hint in got, got
+
+
+def test_a_refused_new_names_the_class_and_keeps_its_first_argument(
+    tmp_path: Path,
+) -> None:
+    # __new__ takes no self: its first argument is the author's (#599).
+    source = "class S:\n    def f(self, n):\n        return range(n / 2)\n"
+    message, _, _ = _refine(
+        tmp_path,
+        source,
+        "no function 'range.__new__' with arguments (float)",
+        "range(",
+    )
+    assert message.startswith("range() cannot be called with (float): "), message
+    assert "range() takes ints" in message

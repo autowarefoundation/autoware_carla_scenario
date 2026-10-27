@@ -40,6 +40,31 @@ class str:
             return self[: len(self) - len(_acs_suffix)]
         return self
 
+    # str.maketrans (#601), a static method Codon 0.19 lacks, with the table
+    # Codon's str.translate reads: a dict of code points to a str, or None
+    # for a character to delete. Python's also takes ints as values, which
+    # Codon's translate does not.
+    @staticmethod
+    def maketrans(_acs_x: str, _acs_y: str) -> Dict[int, Optional[str]]:
+        table = Dict[int, Optional[str]]()
+        for i in range(len(_acs_x)):
+            table[ord(_acs_x[i])] = Optional[str](_acs_y[i])
+        return table
+
+    @staticmethod
+    def maketrans(_acs_x: str, _acs_y: str, _acs_z: str) -> Dict[int, Optional[str]]:
+        table = str.maketrans(_acs_x, _acs_y)
+        for c in _acs_z:
+            table[ord(c)] = Optional[str]()
+        return table
+
+    @staticmethod
+    def maketrans(_acs_x: Dict[str, str]) -> Dict[int, Optional[str]]:
+        table = Dict[int, Optional[str]]()
+        for k, v in _acs_x.items():
+            table[ord(k)] = Optional[str](v)
+        return table
+
 
 def _acs_value(T: type) -> T:
     """A T, for the library check's calls (typecheck/library_driver.py):
@@ -120,6 +145,16 @@ def _keyword_only(extra, where: Literal[str]):
         compile_error(where + " is keyword-only")
 
 
+class _acs_KeywordOnly:
+    """What the checker annotates the `*_acs_kw` it puts in place of a bare
+    `*` with (typecheck/transform.py, #622): no argument is of this type, so
+    a positional argument for a keyword-only parameter, which Python
+    refuses, is a compile error at the call, and W says why."""
+    # Codon's generic parameter, in a form Python can parse too:
+    # `class _acs_KeywordOnly[W: Literal[str]]` needs Python 3.12.
+    W: Literal[str]
+
+
 def _acs_tuple(values):
     """What the checker puts in place of tuple(values) (typecheck/transform.py):
     Codon's tuples have a fixed length, so a tuple of a list or a generator is
@@ -129,6 +164,30 @@ def _acs_tuple(values):
         return values
     else:
         return list(values)
+
+
+def _acs_some(value):
+    """The branch of `a if x else None` that reads the narrowed x as an
+    Optional (a branch that already is one is kept): what the checker puts
+    in its place where it cannot be a lambda (typecheck/python_rewrites.py,
+    #597), and what _acs_some_if returns."""
+    if isinstance(value, Optional):
+        return value
+    else:
+        return Optional[type(value)](value)
+
+
+def _acs_some_if(value, subject):
+    """What the checker puts in place of the branch a of `a if x else None`
+    (and `None if x is None else a`) that reads the narrowed x:
+    `_acs_some_if(lambda: a, x) if not isinstance(x, Optional[NoneType]) else
+    None` (typecheck/python_rewrites.py, #597, #621). Codon decides that test
+    from the type and unifies nothing, and a call's type is resolved with its
+    argument's even where it is not known yet when Codon decides the test."""
+    if isinstance(subject, NoneType) or isinstance(subject, Optional[NoneType]):
+        return None
+    else:
+        return _acs_some(value())
 
 
 def _acs_reduce(function, iterable, *initial):
@@ -314,3 +373,138 @@ class Dict:
         if _acs_key in self:
             return self[_acs_key]
         return None
+
+    # Python's dict.pop(key, default, /) (#590): Codon's own takes the key
+    # only. A default of the value's type gives the value's type; a None
+    # default an Optional of it, as Python's does. Codon tries the overload
+    # defined last first; a None would also pass for the first one's `V`
+    # (Codon unwraps an Optional implicitly), so the None one is last.
+    def pop(self, _acs_key: K, _acs_default: V) -> V:
+        if _acs_key in self:
+            return self.pop(_acs_key)
+        return _acs_default
+
+    def pop(self, _acs_key: K, _acs_default: Optional[NoneType]) -> Optional[V]:
+        if _acs_key in self:
+            return self.pop(_acs_key)
+        return None
+
+    # reversed(d) (#601): the keys, last first, as Python 3.8+ gives them.
+    # Codon's reversed() indexes a value without __reversed__, which a dict
+    # cannot be.
+    def __reversed__(self) -> Generator[K]:
+        keys = list(self.keys())
+        i = len(keys) - 1
+        while i >= 0:
+            yield keys[i]
+            i -= 1
+
+
+@extend
+class List:
+    # Python's list.index(value, start[, stop], /) (#601): Codon's takes the
+    # value only. Negative bounds count from the end, as in a slice.
+    def index(self, _acs_x: T, _acs_start: int, _acs_stop: int = 0x7FFFFFFFFFFFFFFF) -> int:
+        n = self.__len__()
+        start = _acs_start
+        stop = _acs_stop
+        if start < 0:
+            start = max(start + n, 0)
+        if stop < 0:
+            stop = max(stop + n, 0)
+        elif stop > n:
+            stop = n
+        i = start
+        while i < stop:
+            if self[i] == _acs_x:
+                return i
+            i += 1
+        raise ValueError(f"{_acs_x} is not in list")
+
+    # `xs += (4, 5)` (#601): Python's list += takes any iterable (only `+`
+    # wants a list); Codon's takes a list.
+    def __iadd__(self, _acs_other) -> List[T]:
+        for a in _acs_other:
+            self.append(a)
+        return self
+
+    # Codon's own, again, defined after the one above so that Codon tries it
+    # first: a list operand is typed by the receiver (`xs += []`, `xs = []`
+    # then `xs += [1]`, a list of Optional or of a base class), which the
+    # untyped overload would type by its first element (or as NoneType).
+    def __iadd__(self, _acs_other: List[T]) -> List[T]:
+        n = self.len + _acs_other.len
+        if self.arr.len < n:
+            self._resize(n)
+        str.memcpy((self.arr.ptr + self.len).as_byte(),
+                   _acs_other.arr.ptr.as_byte(),
+                   _acs_other.len * gc.sizeof(T))
+        self.len = n
+        return self
+
+
+def _acs_bounds(n: int, bounds) -> Tuple[int, int]:
+    """The (start, stop) of a tuple's index(x[, start[, stop]]), as a slice
+    reads them, for a tuple of n items."""
+    start = 0
+    stop = n
+    if static.len(bounds) >= 1:
+        start = bounds[0]
+    if static.len(bounds) == 2:
+        stop = bounds[1]
+    elif static.len(bounds) > 2:
+        compile_error("index() takes at most 3 arguments")
+    if start < 0:
+        start = max(start + n, 0)
+    if stop < 0:
+        stop = max(stop + n, 0)
+    return (start, stop)
+
+
+def _acs_tuple_count(t, x) -> int:
+    """How many items of the tuple t equal x. An item of another type than x
+    is never equal to it."""
+    n = 0
+    for i in static.range(static.len(t)):
+        if isinstance(t[i], type(x)):
+            if t[i] == x:
+                n += 1
+    return n
+
+
+def _acs_tuple_index(t, x, bounds) -> int:
+    """The first position of x in the tuple t, between the bounds of
+    index(x[, start[, stop]])."""
+    start, stop = _acs_bounds(static.len(t), bounds)
+    for i in static.range(static.len(t)):
+        if isinstance(t[i], type(x)):
+            if start <= i and i < stop and t[i] == x:
+                return i
+    raise ValueError("tuple.index(x): x not in tuple")
+
+
+def _acs_count(t, x):
+    """What the checker puts in the place of t.count(x) when t has no count()
+    (typecheck/python_rewrites.py, #601): Codon's tuple has none. An Optional
+    (a tuple Python narrowed with `is not None`, still Optional here) is
+    unwrapped first. Not declared `-> int`: the unwrapped value may be a
+    class of the author's whose count() returns another type (#620)."""
+    if isinstance(t, Optional):
+        return _acs_count(unwrap(t), x)
+    elif isinstance(t, Tuple):
+        return _acs_tuple_count(t, x)
+    else:
+        return t.count(x)
+
+
+def _acs_index(t, x, *bounds):
+    """What the checker puts in the place of t.index(x[, start[, stop]]) when
+    t has no index() (typecheck/python_rewrites.py, #601): Codon's tuple has
+    none. An Optional is unwrapped first, as in _acs_count, and as there the
+    unwrapped value's own index() decides the type (#620)."""
+    if isinstance(t, Optional):
+        return _acs_index(unwrap(t), x, *bounds)
+    elif isinstance(t, Tuple):
+        return _acs_tuple_index(t, x, bounds)
+    else:
+        return t.index(x, *bounds)

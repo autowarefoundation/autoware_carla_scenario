@@ -50,7 +50,9 @@ Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
 module, to be fixed there with a type Codon can check.  ``object`` is
 accepted for the other operand of ``__eq__`` and ``__ne__``, which Python
-requires; it is given a value of the class itself.  A ``Callable[[A], R]``
+requires; it is given a value of the class itself, and the call is written
+``a == b`` (``a != b``), as Python makes it: Codon refuses an explicit
+``a.__eq__(b)`` of an ``__eq__`` overriding a base's.  A ``Callable[[A], R]``
 with types Codon can express is given a value of Codon's ``Callable`` type
 (:func:`callable_annotation`); one with a union among its argument types,
 which Codon 0.19 crashes on, a callable of as many arguments, of any type,
@@ -74,6 +76,7 @@ import itertools
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from .driver import Driver
 from .python_rewrites import _Pass, python_rewrites
@@ -126,6 +129,8 @@ _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
 _CLASS_VAR = {"ClassVar", "typing.ClassVar"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
+#: The comparisons a method call of the check is written as.
+_OPERATORS = {"__eq__": "==", "__ne__": "!="}
 
 
 def workspace_module(module: str) -> str:
@@ -404,6 +409,23 @@ class _Renderer:
         func: ast.FunctionDef | ast.AsyncFunctionDef,
         head: str,
         where: str,
+        **options: Any,
+    ) -> None:
+        """:meth:`_calls`, with the type parameters of *func* (PEP 695:
+        ``def first[T](xs: list[T]) -> T``, #624) read as the module's
+        ``TypeVar``s are: a generic function is compiled where it is called."""
+        kept = self.type_vars
+        self.type_vars = kept | type_parameter_names(func)
+        try:
+            self._calls(func, head, where, **options)
+        finally:
+            self.type_vars = kept
+
+    def _calls(
+        self,
+        func: ast.FunctionDef | ast.AsyncFunctionDef,
+        head: str,
+        where: str,
         *,
         drop_first: bool,
         owner: str | None = None,
@@ -627,8 +649,15 @@ class _Renderer:
             signature = ", ".join(
                 f"{a.arg}: {t}" for a, t in zip([*positional, *keyword], combo)
             )
+            call = f"{head}({', '.join(values)})"
+            operand, _, method = head.rpartition(".")
+            if method in _OPERATORS and receiver is None and len(values) == 1:
+                # `a == b`, not `a.__eq__(b)`: Codon refuses the explicit call
+                # of an __eq__ overriding a base's (the identity one of
+                # BaseCondition, #596), and `==` is how Python calls it.
+                call = f"({operand} {_OPERATORS[method]} {values[0]})"
             self.emit(
-                self.hooked(f"{head}({', '.join(values)})", hook),
+                self.hooked(call, hook),
                 f"{where}({signature})",
                 line,
             )
@@ -1230,6 +1259,18 @@ def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
     return out
 
 
+def type_parameter_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> set[str]:
+    """The names of *node*'s type parameters (PEP 695, Python 3.12+:
+    ``def first[T](...)``, ``class Box[K, V]:``); none before 3.12."""
+    return {
+        name
+        for param in getattr(node, "type_params", ())
+        if isinstance(name := getattr(param, "name", None), str)
+    }
+
+
 def render_library_checks(
     tree: ast.Module,
     uncalled: Collection[str] = (),
@@ -1287,6 +1328,19 @@ def render_library_checks(
             if not _is_dunder(node.name):
                 renderer.function(node)
         elif isinstance(node, ast.ClassDef):
+            params = [getattr(p, "name", "?") for p in getattr(node, "type_params", ())]
+            if params:
+                # A generic class (`class Box[T]:`, #624): no type to make a
+                # value of it with, so it is compiled where it is used.
+                renderer.problems.append(
+                    (
+                        node.lineno,
+                        f"{node.name}: the class is generic "
+                        f"(`class {node.name}[{', '.join(params)}]`), "
+                        "which has no type to call its methods with",
+                    )
+                )
+                continue
             renderer.cls(node)
     renderer.lines.append("    pass")
     return LibraryChecks(

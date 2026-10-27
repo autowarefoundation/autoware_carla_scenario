@@ -64,6 +64,27 @@ dev = [
 # autoware_carla_scenario/scripts/compile_protos.py.  Match the `_proto` package
 # convention so every generated group is covered without per-group config churn.
 extend-exclude = ["**/_proto"]
+# The floor of requires-python; keeps newer-only syntax from passing locally.
+target-version = "py310"
+
+[tool.ruff.lint]
+# mypy cannot be pinned to python_version = "3.10" (numpy's stubs use 3.12
+# `type` statements), so names missing on 3.10 are banned here instead.
+extend-select = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Self".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.assert_never".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.override".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.LiteralString".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.Never".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.NotRequired".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.Required".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.Unpack".msg = "Missing on Python 3.10; use typing_extensions."
+"typing.TypeVarTuple".msg = "Missing on Python 3.10; use typing_extensions."
+"datetime.UTC".msg = "Missing on Python 3.10; use datetime.timezone.utc."
+"enum.StrEnum".msg = "Missing on Python 3.10."
+"asyncio.TaskGroup".msg = "Missing on Python 3.10."
 
 [tool.mypy]
 ignore_missing_imports = true
@@ -87,7 +108,9 @@ disable_error_code = ["type-arg", "valid-type", "assignment"]
 testpaths = [
     "autoware_carla_scenario/test",
 ]
-addopts = "-n auto --testmon"
+# testmon is opt-in (`uv run pytest --testmon`): it never re-selects tests that
+# depend on the set of files or on docs text, which CI (no testmon) runs.
+addopts = "-n auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring a running CARLA server",

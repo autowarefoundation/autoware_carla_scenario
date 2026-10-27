@@ -1558,7 +1558,7 @@ def _clear_action_entity_refs(document: ScenarioDocument, entity_id: str) -> Non
     """Unset every action parameter that names *entity_id* through an entity field.
 
     An action's entity fields are optional references -- the entity a
-    *Follow Trajectory* card's relative vertices are measured from -- whose
+    *Set Goal* card's relative vertices are measured from -- whose
     absence has a meaning of its own (the card's own actor), so the action is
     kept and the reference cleared, rather than the card being deleted with
     everything written on it.

@@ -21,7 +21,7 @@ class TrajectoryTimeCondition(BaseCondition):
     :attr:`~autoware_carla_scenario.TrajectoryVertex.time` reads it back.
 
     As a vertex's whole ``advance`` it is evaluated by
-    :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` against
+    :class:`~autoware_carla_scenario.actions.RoutingAction` against
     the trajectory's clock -- the scenario clock mapped through the action's
     :class:`~autoware_carla_scenario.trajectory.TrajectoryTiming` (domain,
     scale, offset) and its ``initial_distance_offset`` -- not by calling

@@ -154,6 +154,10 @@ class TestScenarioQueueUnit:
         finally:
             MapManager._instance = found
 
+    def test_negative_cooldown_max_retries_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="cooldown_max_retries must be >= 0"):
+            ScenarioQueue(cooldown_max_retries=-1)
+
     def test_empty_queue_len_is_zero(self) -> None:
         queue = ScenarioQueue()
         assert len(queue) == 0

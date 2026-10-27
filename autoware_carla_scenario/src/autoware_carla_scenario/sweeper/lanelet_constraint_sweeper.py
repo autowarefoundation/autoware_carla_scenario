@@ -275,6 +275,11 @@ class LaneletConstraintSweeper(Sweeper):
         max_retries: int = int(
             OmegaConf.select(cfg, "server.cooldown_max_retries", default=0)
         )
+        if max_retries < 0:
+            raise ValueError(
+                "LaneletConstraintSweeper: server.cooldown_max_retries must be "
+                f">= 0, got {max_retries}."
+            )
         max_attempts = 1 + max_retries
         resume_from: int = int(
             sweep_dict.get("resume_from", 0) or os.environ.get("SWEEP_RESUME_FROM", "0")
@@ -305,6 +310,7 @@ class LaneletConstraintSweeper(Sweeper):
             idx = local_idx + idx_offset
 
             succeeded = False
+            exit_code: int | None = None
             for attempt in range(max_attempts):
                 # Cooldown in the parent process (no CARLA state, SIGSEGV-safe).
                 # Skip cooldown before the very first job of this run.

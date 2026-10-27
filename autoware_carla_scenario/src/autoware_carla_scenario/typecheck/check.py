@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import difflib
 import enum
 import hashlib
 import importlib.metadata
@@ -79,7 +80,16 @@ from .library import (
     UNCALLED,
     package_modules,
 )
+from .dead_isinstance import dead_isinstances
 from .none_check import (
+    BYTES_STR,
+    CLASS_VAR,
+    ENUM_EQ,
+    FINAL,
+    FROZEN,
+    OVERRIDE,
+    READ_ONLY_ABC,
+    STR_FORMAT,
     NoneCheckSkipped,
     NoneFinding,
     none_given,
@@ -94,8 +104,19 @@ from .library_driver import (
     uncalled_nodes,
     workspace_module,
 )
+from .local_bindings import (
+    int_literal_hint,
+    none_first_binding_message,
+    none_first_bindings,
+    none_mismatch_hint,
+)
 from .module_cycles import cycle_hint
-from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
+from .python_rewrites import (
+    REWRITE_HINTS,
+    python_rewrite_refusals,
+    uses_sequence_helpers,
+    without_sequence_helpers,
+)
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -110,10 +131,14 @@ from .transform import (
 )
 from .call_diagnostics import (
     Refiner,
+    _Files,
     is_internal_frame,
     plain_literal_types,
+    slip_hint,
 )
+from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
+from .static_raises import literal_argument_refusals, subscripted_isinstances
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
@@ -141,10 +166,13 @@ _PRELUDE_LINES = PRELUDE.count("\n")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _LOCATION = re.compile(
-    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+)(?: \((?P<col>\d+)(?:-\d+)?\))?: "
+    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+)(?: \((?P<col>\d+)(?:-(?P<end>\d+))?\))?: "
 )
 _ERROR = re.compile(r"error: ?(?P<message>.*)$")
 _CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
+#: Codon's error on ``t.count(x)`` / ``t.index(x)`` of a tuple left as
+#: written, as in a compile without the rewrite (#609).
+_UNREWRITTEN_SEQUENCE_METHOD = re.compile(r"no attribute '(?:count|index)'")
 #: Codon 0.19's code generation refusing the IR it generated itself: a bug of
 #: Codon's, no error of the program (#263).
 _LLVM_ERROR = "LLVM: error:"
@@ -179,18 +207,16 @@ _STDLIB_EXTENSIONS = "_stdlib"
 #: Why a module Codon has no model for is refused, and what to write instead
 #: (#378): appended to the refusal at the import line.
 _UNMODELLED_HINTS = {
-    "contextlib": "write a class with __enter__ and __exit__(self, exc_type, "
-    "exc, tb) for contextmanager (the check calls __exit__ with no arguments, "
-    "so those parameters are None in it), and try/except X: pass for suppress",
     "warnings": "log with logger.warning(...) instead of warnings.warn(...)",
-    "json": "the check has no dict[str, Any] to load or dump: read the "
-    "configuration into a @dataclass, and leave serialisation to a module the "
-    "check does not compile",
     "types": "name the type itself (SimpleNamespace is a @dataclass or a plain "
     "class; MappingProxyType is a dict; annotate the tb of __exit__ as object)",
     "textwrap": "build the string with str methods and join()",
     "traceback": "log the exception with logger.exception(...)",
     "io": "use a str, or a pathlib.Path opened with open()",
+    "csv": "read the file with Path.read_text().splitlines() and split(',') "
+    "on each line (a quoted field needs more care), and write one with "
+    "','.join(fields) and Path.write_text()",
+    "uuid": "use a counter, or os.getpid() for an id that differs per process",
 }
 
 
@@ -813,6 +839,15 @@ def _build_workspace(
         problems += [
             Diagnostic(message, str(module.path), line) for line, message in refused
         ]
+        # What Python raises for when it runs, decided from the syntax
+        # (#602, #603): Codon checks types, so it compiles these.
+        problems += [
+            Diagnostic(r.message, str(module.path), r.line, r.column)
+            for r in [
+                *subscripted_isinstances(module.tree),
+                *literal_argument_refusals(module.tree),
+            ]
+        ]
         problems += [
             Diagnostic(message, str(module.path), line)
             for line, message in [
@@ -838,6 +873,12 @@ def _build_workspace(
             ws.warnings.append(
                 _unchecked_warning(message, module.path, line, driver.reaches)
             )
+        ws.warnings += [
+            Diagnostic(
+                d.message, str(module.path), d.line, d.column, severity="warning"
+            )
+            for d in dead_isinstances(module.tree)
+        ]
         dest.write_text(text + checks.source)
         key = rel.as_posix()
         ws.files[key] = str(module.path)
@@ -865,6 +906,24 @@ def _build_workspace(
 #: or on any tuple's truth, and what to write instead.
 _VARIADIC_LIMITS = (
     (
+        # An empty container with no annotation, an unannotated class
+        # attribute `items = []` most often (#611): Codon types it from what
+        # it holds, and it holds nothing, so its elements are `None`.
+        re.compile(r"^'[^']+' does not match expected type 'NoneType'$"),
+        "Codon typed the target from its first value with no element type: "
+        "an empty `[]`, `{}` or `set()` with no annotation (a class attribute "
+        "`items = []`) holds `None`, and so does a name first bound to `None`: "
+        "annotate it (`items: list[str] = []`, `x: int | None = None`)",
+    ),
+    (
+        # A tuple display given for a `tuple[X, ...]` the check could not
+        # rewrite (#614): Codon's tuples have a fixed length.
+        re.compile(r"^'Tuple\[[^']*\]' does not match expected type 'List\[[^']*\]'"),
+        "a variable-length `tuple[X, ...]` is checked as a list (Codon's "
+        "tuples have a fixed length): build it with `tuple([...])` "
+        "(`tuple([1, 2, 1])`) instead of a tuple display",
+    ),
+    (
         re.compile(r"^'NamedTuple(?:\[[^']*\])?' object has no attribute '"),
         "Codon makes **kwargs a NamedTuple of the keywords passed, not a dict: "
         'read one with kw.get("name", default) or declare it as a keyword '
@@ -876,6 +935,47 @@ _VARIADIC_LIMITS = (
         re.compile(r"^'Tuple\[[^']*\]' object has no attribute '__bool__'"),
         "Codon gives no tuple a truth value, *args included: test "
         "len(t) > 0 instead of the tuple t itself",
+    ),
+    (
+        # Any other class without __bool__ (#603): a plain object, or one
+        # with only __len__.  Not a bound method (`'flag(Cls)'`), whose
+        # forgotten call has its own hint (call_diagnostics.forgotten_self).
+        re.compile(
+            r"^'[A-Za-z_][\w.]*(?:\[[^']*\])?' object has no attribute '__bool__'$"
+        ),
+        "Codon gives an object a truth value only through __bool__, and this "
+        "class has none (Python takes a plain object as true, and one with "
+        "__len__ as len() != 0): test what you mean, `x is not None` for a "
+        "value that may be missing, `len(x) > 0` for a container, or define "
+        "__bool__ on the class",
+    ),
+    (
+        re.compile(r"^unsupported class decorator$"),
+        "Codon refuses a decorator on a class, other than those the check "
+        "drops (@dataclass, @enum.unique, @typing.runtime_checkable, "
+        "@functools.total_ordering): a decorator that registers the class "
+        "(`@register`) does not compile. Drop it, and choose the class with an "
+        "if/elif chain (or a `match`) on the name, as Codon cannot hold a "
+        "class as a value",
+    ),
+    (
+        re.compile(r"^async not yet supported$"),
+        "Codon compiles no `async def`, `await`, `async for` or `async with` "
+        "anywhere in a checked module, called or not (the runner calls the "
+        "scenario synchronously): make it a plain `def`, or move it to a "
+        "module the scenario does not import",
+    ),
+    (
+        # getattr(x, "name", default) with a literal name and a plain receiver
+        # is rewritten (python_rewrites.py); this is any other (#590).
+        re.compile(r"^getattr\(\) takes 2 arguments \(3 given\)"),
+        "Codon's getattr takes no default: write "
+        '`x.name if hasattr(x, "name") else default`, which Codon decides '
+        'when it compiles (the check rewrites getattr(x, "name", default) '
+        "itself where the name is a literal, x a name or an attribute chain "
+        "and the default on one line); a name built at run time has no Codon "
+        "spelling, so spell the "
+        "attributes out",
     ),
     (
         re.compile(r"cannot import name 'Generic' from 'typing'"),
@@ -897,6 +997,16 @@ _VARIADIC_LIMITS = (
         '({"x": point.x, "y": point.y})',
     ),
     (
+        re.compile(r"cannot import name '(?:InitVar|KW_ONLY)' from 'dataclasses'"),
+        "dataclasses.InitVar and KW_ONLY are not modelled: Codon's constructor "
+        "of a dataclass takes every annotated field and does not pass an "
+        "init-only value to __post_init__. For an InitVar, make the value a "
+        "parameter of a @classmethod or a function that builds the instance "
+        "(or keep it as an ordinary field); for KW_ONLY, drop the marker and "
+        "pass the fields by keyword (a field without a default goes before "
+        "the defaulted ones)",
+    ),
+    (
         re.compile(r"cannot import name '\w+' from 'dataclasses'"),
         "the check models only dataclass, field and replace of dataclasses: "
         'docs/typecheck.md ("standard library names") lists the names',
@@ -904,11 +1014,77 @@ _VARIADIC_LIMITS = (
     (
         re.compile(
             r"cannot import name '\w+' from "
-            "'(functools|itertools|collections|math|random)'"
+            "'(functools|itertools|collections|math|random|statistics)'"
         ),
         "the check adds only some names to Codon's functools, itertools, "
-        'collections, math and random: docs/typecheck.md ("standard library '
-        'names") lists them',
+        'collections, math, random and statistics: docs/typecheck.md ("standard '
+        'library names") lists them',
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'contextlib'"),
+        "the check models only suppress of contextlib: write a class with "
+        "__enter__ and __exit__(self, exc_type, exc, tb) for contextmanager "
+        "(the check calls __exit__ with no arguments, so those parameters are "
+        "None in it)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'json'"),
+        "the check models only dumps, dump, loads, load and JSONDecodeError of "
+        'json: docs/typecheck.md ("standard library names") lists what they '
+        "take and return",
+    ),
+    (
+        re.compile(r"^'Path' object has no attribute '\w+'"),
+        "the check models only some members of pathlib.Path: if CPython's Path "
+        'has it, it is not modelled (docs/typecheck.md, "pathlib" among the '
+        "shims lists the members); build the path with str methods and the "
+        "declared members (name, stem, suffix, parent, with_name(), "
+        "with_suffix(), joinpath(), /, ...)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os(?:\.__init__)?'"),
+        "the check models only some names of os: if CPython's os has it, it "
+        'is not modelled (docs/typecheck.md, "os" among the shims lists the '
+        "names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os\.path'"),
+        "the check models only some names of os.path: if CPython's os.path has "
+        'it, it is not modelled (docs/typecheck.md, "os.path" among the shims '
+        "lists the names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'shutil'"),
+        "the check models only some names of shutil: if CPython's shutil has "
+        'it, it is not modelled (docs/typecheck.md, "shutil" among the shims '
+        "lists the names)",
+    ),
+    (
+        re.compile(
+            r"cannot import name '(?:version_info|version|hexversion)' from 'sys'"
+        ),
+        "sys.version_info (and sys.version, sys.hexversion) is not modelled: "
+        "the check compiles every branch of a version test, so the code has "
+        "to be valid on every supported Python (3.10 and later) anyway: "
+        "write that code without the test, or keep the version-dependent part "
+        "out of the checked modules",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'sys'"),
+        "the check models only argv, stdin, stdout, stderr, exit, maxsize, "
+        'platform and executable of sys (docs/typecheck.md, "sys" among the '
+        "shims): if CPython's sys has it, it is not modelled",
+    ),
+    (
+        re.compile(r"cannot import name 'strftime' from 'time'"),
+        "time.strftime is not modelled: take now = datetime.datetime.now() and "
+        "format its fields, f'{now.year:04d}{now.month:02d}{now.day:02d}'",
+    ),
+    (
+        re.compile(r"^'datetime' object has no attribute 'strftime'"),
+        "datetime.strftime is not modelled (Codon's datetime has no "
+        "strftime() or format): format the fields, "
+        "f'{now.year:04d}{now.month:02d}{now.day:02d}'",
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),
@@ -918,6 +1094,23 @@ _VARIADIC_LIMITS = (
 )
 
 
+#: A positional argument for a keyword-only parameter of the author's own
+#: function (#622): the message is in the type (transform._keyword_only_message).
+_KEYWORD_ONLY = re.compile(
+    r"^'[^']*' does not match expected type "
+    r"'_acs_KeywordOnly\['(?P<message>[^']*)'\]'$"
+)
+
+
+def _keyword_only_hint(diagnostic: Diagnostic) -> Diagnostic | None:
+    """*diagnostic* in Python's words when it is the refusal of a positional
+    argument for a keyword-only parameter (#622), else ``None``."""
+    found = _KEYWORD_ONLY.match(diagnostic.message)
+    if found is None:
+        return None
+    return dataclasses.replace(diagnostic, message=found["message"])
+
+
 _LIST_DISPLAY_FRAME = re.compile(r"during the realization of _acs_list(?:_into)?\(")
 _LIST_DISPLAY_HINT = (
     "a list display is typed by its first element, so its elements must share "
@@ -925,6 +1118,15 @@ _LIST_DISPLAY_HINT = (
     "(`rules: list[Base] = [A(), B()]`, a `-> list[Base]` return, a `list[Base]` "
     "parameter), or declare a local `list[Base]` and `append()` each element; "
     "an element that is no subclass of the base is refused"
+)
+
+
+#: A list display assigned to an annotated target (``xs: list[B] = [...]``),
+#: which the check already makes a list of the annotated element type (#611).
+_ANNOTATED_DISPLAY = re.compile(r"^\s*[A-Za-z_][\w.]*\s*:[^=]+=\s*\[")
+_ANNOTATED_DISPLAY_HINT = (
+    "the display is a list of the target's annotated element type, so an "
+    "element that is not of it (or of a subclass) is refused"
 )
 
 
@@ -959,6 +1161,32 @@ _DICT_LINE = re.compile(r"\{|^\s*[\w\"'.]+\s*:\s*\w+\(")
 _LIST_SUM = re.compile(
     r"^unsupported operand type\(s\) for \+=?: 'List\[(\w+)\]' and 'List\[(\w+)\]'"
 )
+
+
+_ANY_MISMATCH = re.compile(r"^'[^']+' does not match expected type '[^']+'$")
+_CONDITIONAL_HINT = (
+    "a conditional expression (`a if c else b`) has one type in Codon: if "
+    "its two branches have different types (Python allows that), convert one "
+    "(`str(n)`, `float(n)`), or write an if/else statement that uses each "
+    "value in its own branch"
+)
+
+
+def _conditional_expression_at(diagnostic: Diagnostic) -> bool:
+    """Whether *diagnostic* is at the start of a conditional expression of
+    the author's file, where Codon reports its branches' mismatch (#603)."""
+    if diagnostic.path is None or diagnostic.line is None or not diagnostic.column:
+        return False
+    try:
+        tree = ast.parse(Path(diagnostic.path).read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return False
+    return any(
+        isinstance(node, ast.IfExp)
+        and node.lineno == diagnostic.line
+        and node.col_offset == diagnostic.column - 1
+        for node in ast.walk(tree)
+    )
 
 
 def _source_line(diagnostic: Diagnostic) -> str:
@@ -1041,9 +1269,15 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
         )
         if later is not None and not in_body:
             return _define_above(later)
+        if _ANNOTATED_DISPLAY.match(_source_line(diagnostic)):
+            return _ANNOTATED_DISPLAY_HINT
         return _LIST_DISPLAY_HINT
     if any("_acs_dict_into" in frame for frame in diagnostic.trace):
         return None  # already a dict of the target type: the value is refused
+    if _ANY_MISMATCH.match(diagnostic.message) and _conditional_expression_at(
+        diagnostic
+    ):
+        return _CONDITIONAL_HINT
     sum_ = _LIST_SUM.match(diagnostic.message)
     if sum_ is not None and sum_[1] != sum_[2] and "+" in _source_line(diagnostic):
         return _SUM_DISPLAY_HINT
@@ -1065,6 +1299,59 @@ _REPLACE_THUNK_FRAME = re.compile(
 )
 
 
+#: The frame of the method ``replace(obj, a=x)`` is lowered to (#614): its
+#: lines are appended after the module and map to the class's line, while the
+#: frame names the line of the call.
+_REPLACE_HELPER_FRAME = re.compile(
+    r"^during the realization of _acs_with__\w+\(self: \w+\b.*"
+    r" \[(?:[^\]]*, )?(?P<file>[^\]\s:]+):(?P<line>\d+)\]$"
+)
+
+
+def _replace_helper_location(
+    diagnostic: Diagnostic, files: Mapping[str, str] | None = None
+) -> Diagnostic:
+    """*diagnostic* raised inside a ``replace`` method, at the ``replace(...)``
+    call that reached it, rather than at the class.
+
+    The frame names the call's file by its basename, as Codon does: *files*
+    maps the basename of each checked module that no other checked module
+    shares to its path (:func:`_unique_basenames`), so a call in another
+    module than the class's (``replace(cfg.lanes, ids=...)`` in
+    ``scenario.py`` of a class of ``configs.py``) is found too (#623).  An
+    ambiguous basename leaves the diagnostic at the class.  Without *files*,
+    only a call in the class's own file is.
+    """
+    if not diagnostic.trace or diagnostic.path is None:
+        return diagnostic
+    found = _REPLACE_HELPER_FRAME.match(diagnostic.trace[0])
+    if found is None:
+        return diagnostic
+    if files is None:
+        path = diagnostic.path if Path(diagnostic.path).name == found["file"] else None
+    else:
+        path = files.get(found["file"])
+    if path is None:
+        return diagnostic
+    return dataclasses.replace(
+        diagnostic,
+        path=path,
+        line=int(found["line"]),
+        column=None,
+        trace=diagnostic.trace[1:],
+    )
+
+
+def _unique_basenames(ws: _Workspace) -> dict[str, str]:
+    """The path of each checked module of *ws* by its basename, for the
+    basenames no other checked module has (Codon's frames name a file by its
+    basename alone)."""
+    by_name: dict[str, list[str]] = {}
+    for rel, original in ws.files.items():
+        by_name.setdefault(Path(rel).name, []).append(original)
+    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
+
+
 def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
     """Say what ``replace(obj, a="x")`` got wrong when the field is inherited."""
     for frame in diagnostic.trace:
@@ -1080,12 +1367,78 @@ def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
     return diagnostic
 
 
-def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+_SHIM_MEMBER = re.compile(
+    r"^'Path' object has no attribute '(?P<path_name>\w+)'"
+    r"|cannot import name '(?P<name>\w+)' from "
+    r"'(?P<module>os|os\.__init__|os\.path|shutil)'"
+)
+
+
+@lru_cache(maxsize=8)
+def _shim_members(shim: str) -> tuple[str, ...]:
+    """The public names the shim *shim* (``pathlib``, ``os``, ``os/path`` or
+    ``shutil``) declares: the methods of ``Path``, or the module's functions
+    and constants."""
+    file = model_dir() / f"{shim}.codon"
+    if not file.is_file():
+        file = model_dir() / shim / "__init__.codon"
+    try:
+        text = file.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    if shim == "pathlib":
+        text = text[text.index("\nclass Path:") :]
+        names = re.findall(r"^    def (\w+)", text, re.MULTILINE)
+    else:
+        pairs = re.findall(r"^(?:def (\w+)|(\w+) =)", text, re.MULTILINE)
+        names = [a or b for a, b in pairs]
+    return tuple(sorted({n for n in names if not n.startswith("_")}))
+
+
+def _misspelt_member(message: str) -> str | None:
+    """The hint for a refused ``Path`` member or ``os``, ``os.path`` or
+    ``shutil`` name that CPython lacks too (a typo), or None when CPython has
+    it (then it is only not modelled)."""
+    found = _SHIM_MEMBER.search(message)
+    if found is None:
+        return None
+    owner: object
+    if found["path_name"] is not None:
+        name, shim, owner, label = found["path_name"], "pathlib", Path, "Path"
+    else:
+        name, module = found["name"], found["module"]
+        if module == "shutil":
+            shim, owner = "shutil", shutil
+        elif module == "os.path":
+            shim, owner = "os/path", os.path
+        else:
+            shim, owner = "os", os
+        label = module.removesuffix(".__init__")
+    if hasattr(owner, name):
+        return None
+    close = difflib.get_close_matches(name, _shim_members(shim), n=1)
+    suggestion = f", did you mean '{close[0]}'?" if close else ""
+    return f"CPython's {label} has no '{name}' either (a typo?){suggestion}"
+
+
+def _variadic_hints(
+    diagnostics: list[Diagnostic], modules: Mapping[str, str] | None = None
+) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
-    ``*args`` or on a tuple saying why and what to write instead (#266)."""
+    ``*args`` or on a tuple saying why and what to write instead (#266).
+
+    *modules* is :func:`_unique_basenames` of the workspace, which places an
+    error inside a ``replace`` method (:func:`_replace_helper_location`)."""
     out = []
+    files = _Files()
     for diagnostic in diagnostics:
-        diagnostic = _replace_thunk_message(diagnostic)
+        diagnostic = _replace_helper_location(
+            _replace_thunk_message(diagnostic), modules
+        )
+        keyword_only = _keyword_only_hint(diagnostic)
+        if keyword_only is not None:
+            out.append(keyword_only)
+            continue
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
         if in_display:
             # A list display `_acs_list` could not make one list (#480): the
@@ -1096,6 +1449,29 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
                     f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
                 ),
             )
+        typo = _misspelt_member(diagnostic.message)
+        if typo is not None:
+            diagnostic = dataclasses.replace(
+                diagnostic, message=f"{diagnostic.message}: {typo}"
+            )
+            out.append(diagnostic)
+            continue
+        try:
+            slip = slip_hint(
+                diagnostic.message,
+                diagnostic.trace,
+                diagnostic.path,
+                diagnostic.line,
+                diagnostic.column,
+                files,
+            )
+        except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+            slip = None
+        if slip is not None:
+            # The refiner adds it, to its own wording (_authors_terms): no
+            # other hint here, which would not apply.
+            out.append(diagnostic)
+            continue
         for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS, *TYPING_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
@@ -1226,7 +1602,9 @@ _OPERAND = re.compile(
     r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
 )
 _GETITEM = re.compile(r"__getitem__\(self: (?P<cls>\w+),")
-_NO_HASH = re.compile(r"^'(?P<cls>\w+)' object has no attribute '__hash__'")
+_NO_HASH = re.compile(
+    r"^'(?P<cls>\w+)(?:\[[^']*\])?' object has no attribute '__hash__'"
+)
 _NAMED_TUPLE_ONLY = ("_replace", "_asdict", "_fields", "_field_defaults", "_make")
 
 
@@ -1261,10 +1639,55 @@ def _data_model_hints(
             pass
         if hint is None and message.startswith("expected iterable expression"):
             hint = _self_iterator_hint(diagnostic, sources)
+        if hint is None:
+            try:
+                hint = _local_binding_hint(diagnostic, sources)
+            except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+                pass
         if hint is not None:
             diagnostic = dataclasses.replace(diagnostic, message=f"{message}: {hint}")
         out.append(diagnostic)
     return out
+
+
+def _author_tree(path: str | None, sources: _Sources) -> ast.Module | None:
+    """The AST of the checked module at *path* (the author's file)."""
+    if path is None:
+        return None
+    for module in sources.modules.values():
+        if str(module.path) == path:
+            return module.tree
+    return None
+
+
+def _local_binding_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None:
+    """A local Codon typed by its first assignment, an int literal or
+    ``None``, where the refused value is stored in it (#583, #584)."""
+    tree = _author_tree(diagnostic.path, sources)
+    if tree is None or diagnostic.line is None:
+        return None
+    hint = int_literal_hint(diagnostic.message, diagnostic.line, tree)
+    if hint is None:
+        found = none_mismatch_hint(diagnostic.message, diagnostic.line, tree)
+        hint = found[0] if found is not None else None
+    return hint
+
+
+def _none_first_binding_hints(sources: _Sources, why: str) -> list[Diagnostic]:
+    """Each unannotated local of the checked modules first bound to ``None``
+    and rebound later, at its ``= None`` line, as a likely cause of *why*
+    (Codon's crash, or its ``Optional[NoneType]`` refusal elsewhere) (#584)."""
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for binding in none_first_bindings(module.tree):
+            found.append(
+                Diagnostic(
+                    f"{why}; a likely cause: " f"{none_first_binding_message(binding)}",
+                    str(module.path),
+                    binding.line,
+                )
+            )
+    return found
 
 
 _FOR_LINE = re.compile(r"\bfor\b.*?\bin\b(?P<iterable>.*)$")
@@ -1369,10 +1792,8 @@ def _data_model_hint(
             if operand["op"] in ("==", "!="):
                 return (
                     "the check gives a @dataclass its == and != only with "
-                    "eq=True (the default) and bases it can see the fields "
-                    "of (dataclasses of this module); with eq=False Python "
-                    "compares by identity: write `a is b`, or compare the "
-                    "fields"
+                    "bases it can see the fields of (dataclasses of this "
+                    "module): compare the fields"
                 )
             return (
                 "the check gives a @dataclass ordering only with "
@@ -1388,6 +1809,16 @@ def _data_model_hint(
                 "the check generates hash() for a @dataclass(frozen=True) "
                 "(or unsafe_hash=True) whose bases are dataclasses of this "
                 "module; key on a field or a tuple of fields instead"
+            )
+        if cls is not None and cls.__hash__ is None:
+            # Python sets __hash__ = None on a class that defines __eq__ and
+            # not __hash__ (#596).
+            return (
+                f"{cls.__name__} defines __eq__ and not __hash__, so Python "
+                f"makes it unhashable (it sets __hash__ = None): a set of "
+                f"them, or a dict keyed by one, raises TypeError; define "
+                f"__hash__ consistent with __eq__ (`return hash((self.x, "
+                f"self.y))`), or key on a field"
             )
     if message.startswith("expected iterable expression"):
         for frame in trace:
@@ -1499,6 +1930,253 @@ def _fstring_line(
     return _original_line(origin, fields[0][0])
 
 
+def _string_pieces(text: str) -> list[tuple[int, int, bool, bool]] | None:
+    """The literals of the (implicitly concatenated) string *text*, the
+    source of its node, as (where the content starts, where it ends, whether
+    it is an f-string, whether it is triple-quoted); ``None`` when it cannot
+    be read."""
+    pieces: list[tuple[int, int, bool, bool]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in " \t\r\n\\":
+            i += 1
+            continue
+        if text[i] == "#":  # a comment between two literals
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        prefix = i
+        while i < n and text[i].isalpha():
+            i += 1
+        if i >= n or text[i] not in "'\"":
+            return None
+        quote = text[i : i + 3] if text[i : i + 3] in ("'''", '"""') else text[i]
+        letters = text[prefix:i].lower()
+        fstring, raw = "f" in letters, "r" in letters
+        i += len(quote)
+        begin = i
+        depth = 0
+        while i < n and not (depth == 0 and text.startswith(quote, i)):
+            char = text[i]
+            if char == "\\" and not (raw and depth == 0):
+                i += 1
+            elif fstring and char == "{":
+                if depth == 0 and text.startswith("{{", i):
+                    i += 1
+                else:
+                    depth += 1
+            elif fstring and char == "}" and depth:
+                depth -= 1
+            elif depth and char in "'\"":
+                i = text.find(char, i + 1)  # a string inside a field
+                if i < 0:
+                    return None
+            i += 1
+        if i >= n:
+            return None
+        pieces.append((begin, i, fstring, len(quote) == 3))
+        i += len(quote)
+    return pieces
+
+
+def _field_expression(part: str) -> str:
+    """The expression of the text of an f-string field (inside its braces),
+    without its ``=``, conversion and format spec."""
+    depth = 0
+    i = 0
+    while i < len(part):
+        char = part[i]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char in "'\"":
+            close = part.find(char, i + 1)
+            i = len(part) if close < 0 else close
+        elif depth == 0 and (
+            (char == "!" and not part.startswith("!=", i)) or char == ":"
+        ):
+            part = part[:i]
+            break
+        i += 1
+    part = part.rstrip()
+    return part[:-1] if part.endswith("=") and not part.endswith("==") else part
+
+
+def _fields(content: str) -> Iterator[tuple[int, str]]:
+    """(the offset of the ``{`` in *content*, the field's text with its
+    braces) of each field of the f-string literal whose content (between its
+    quotes) is *content*."""
+    i = 0
+    while i < len(content):
+        if content.startswith("{{", i) or content.startswith("}}", i):
+            i += 2
+            continue
+        if content[i] == "\\":
+            i += 2
+            continue
+        if content[i] != "{":
+            i += 1
+            continue
+        brace, depth, j = i, 0, i
+        while j < len(content):
+            char = content[j]
+            if char in "{[(":
+                depth += 1
+            elif char in "}])":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif char in "'\"":
+                j = content.find(char, j + 1)
+                if j < 0:
+                    return
+            j += 1
+        if j >= len(content):
+            return
+        yield brace, content[brace : j + 1]
+        i = j + 1
+
+
+def _concatenated_field_line(
+    node: ast.JoinedStr, lines: list[str], start: int, width: int
+) -> int | None:
+    """The line of the field of the f-string *node* (implicitly concatenated
+    or not) that Codon's error at column *start*, *width* wide, is in, or
+    ``None`` (#616).
+
+    Codon 0.19 reports an error in an f-string field on the line after the
+    one the string's first literal starts on, at the column that is that
+    literal's 0-based column, plus the offset of the field's ``{`` in its
+    own literal's content, plus the length of the field's text (``{n +
+    'x'}``), plus the expression's offset from the ``{``.  Measured and
+    exact for one or more literals on one line or several, plain literals
+    before or after, prefixes, specs and other fields.  A triple-quoted
+    literal, a field on several lines and a string that is not ASCII (whose
+    offsets Python counts in bytes) are not mapped.
+    """
+    if node.end_lineno is None or node.end_col_offset is None:
+        return None
+    first, last = node.lineno - 1, node.end_lineno - 1
+    if last >= len(lines):
+        return None
+    chunk = list(lines[first : last + 1])
+    if not all(part.isascii() for part in chunk):
+        return None
+    chunk[-1] = chunk[-1][: node.end_col_offset]
+    chunk[0] = chunk[0][node.col_offset :]
+    text = "\n".join(chunk)
+    for begin, close, fstring, triple in _string_pieces(text) or []:
+        if not fstring or triple:
+            continue
+        for brace, shown in _fields(text[begin:close]):
+            if "\n" in shown:
+                continue
+            try:
+                parsed = ast.parse(f"({_field_expression(shown[1:-1])}\n)", mode="eval")
+            except SyntaxError:
+                continue
+            for inner in ast.walk(parsed):
+                if (
+                    isinstance(inner, ast.expr)
+                    and inner.lineno == inner.end_lineno == 1
+                    and inner.end_col_offset is not None
+                    and inner.end_col_offset - inner.col_offset == width
+                    and node.col_offset + brace + len(shown) + inner.col_offset == start
+                ):
+                    return node.lineno + text.count("\n", 0, begin + brace)
+    return None
+
+
+def _fstring_field_line(
+    tree: ast.Module,
+    line: int,
+    start: int | None,
+    end: int | None,
+    lines: list[str] | None = None,
+) -> int | None:
+    """The line of the f-string field an error Codon reports at *line* (its
+    columns *start*-*end*) is in, or ``None`` when it is not one (#610).
+
+    Codon 0.19 parses an f-string field on its own and reports an error in it
+    on the line after the line the f-string starts on, at the column of the
+    faulting expression plus the length of the field's text: one line late,
+    at a column that is no position of that line (past its end, or past the
+    end of the file when the f-string is on its last line).  Its width
+    (*end* - *start*) is the expression's.
+
+    The rule, on the checked copy *tree*: the error is moved when no node on
+    *line* itself starts at *start* (Codon's 1-based column of an ordinary
+    error), whatever its width, and an f-string that starts on the line before
+    has a field holding an expression of that width that ends at or before
+    *start* (the field's text holds the expression).  An ordinary error on
+    *line* always has such a node, so it is never moved: a comprehension's
+    ``for`` clause, which has no position in Python's tree, is matched by
+    where it ends (Codon reports ``for c in n`` from its ``for``).  On a
+    one-line f-string, Codon's offset from the expression (the field's text)
+    is no longer than the rest of the f-string from the field on, so a column
+    past that is not one of its fields.  The line returned is the
+    expression's own (a field on a later line of a triple-quoted f-string is
+    on its line); the column is dropped by the caller.
+
+    With the checked copy's *lines*, the field is first looked for where
+    :func:`_concatenated_field_line` computes Codon's column exactly: that
+    also finds a field of an implicitly concatenated f-string (``"a"
+    f"b{n + 'x'}"``), whose column the rule above cannot bound (#616).
+    """
+    if start is None or end is None or line < 2:
+        return None
+    width = end - start
+    found: set[int] = set()
+    strings: list[ast.JoinedStr] = []
+    for node in ast.walk(tree):
+        if (
+            getattr(node, "lineno", None) == line
+            and getattr(node, "col_offset", -1) + 1 == start
+        ):
+            # An ordinary error on the line itself.  Any width: Codon's
+            # width of an expression on several lines (a call) counts its
+            # characters across the line breaks, and that of a `with` or
+            # `for` statement is one more than Python's.
+            return None
+        if isinstance(node, ast.comprehension):
+            last = node.ifs[-1] if node.ifs else node.iter
+            if last.end_lineno == line and last.end_col_offset == end - 1:
+                return None  # a comprehension's `for` clause on the line
+        if not isinstance(node, ast.JoinedStr) or node.lineno != line - 1:
+            continue
+        strings.append(node)
+        one_line = node.end_lineno == node.lineno and node.end_col_offset is not None
+        for value in node.values:
+            if not isinstance(value, ast.FormattedValue):
+                continue
+            for inner in ast.walk(value.value):
+                if (
+                    isinstance(inner, ast.expr)
+                    and inner.lineno == inner.end_lineno
+                    and inner.end_col_offset is not None
+                    and inner.end_col_offset - inner.col_offset == width
+                    and inner.end_col_offset <= start
+                    and not (
+                        one_line
+                        and inner.lineno == node.lineno
+                        and start - inner.col_offset
+                        > node.end_col_offset - value.value.col_offset  # type: ignore[operator]
+                    )
+                ):
+                    found.add(inner.lineno)
+    for node in strings:
+        exact = (
+            None
+            if lines is None
+            else _concatenated_field_line(node, lines, start, width)
+        )
+        if exact is not None:
+            return exact
+    return min(found) if found else None
+
+
 def _rewritten_lines(
     checked: Path, line: int, original: str, original_line: int
 ) -> tuple[str, str] | None:
@@ -1543,7 +2221,11 @@ def _authors_terms(diagnostic: Diagnostic, refiner: Refiner) -> Diagnostic:
     refused call or ``return`` says what is wrong with it, a static string
     type is ``str``, and the frames of the model's own helpers are gone."""
     message, line, column = refiner.refine(
-        diagnostic.message, diagnostic.path, diagnostic.line, diagnostic.column
+        diagnostic.message,
+        diagnostic.path,
+        diagnostic.line,
+        diagnostic.column,
+        diagnostic.trace,
     )
     return dataclasses.replace(
         diagnostic,
@@ -1582,9 +2264,29 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     #: The (compiled, author's) text of each (file, line) of Codon's that the
     #: check rewrote: a column after the rewrite is not the author's.
     moved: dict[tuple[str, int], tuple[str, str]] = {}
+    #: The (file, line) of Codon's of each error in an f-string field, which
+    #: Codon puts a line late at no column of the line (#610).
+    in_fields: set[tuple[str, int]] = set()
+    trees: dict[str, tuple[ast.Module, list[str]] | None] = {}
+
+    def checked_tree(rel: str) -> tuple[ast.Module, list[str]] | None:
+        """The checked copy *rel*, parsed, and its lines."""
+        if rel not in trees:
+            try:
+                text = (ws.root / rel).read_text()
+                # Split at "\n" only, as Python numbers the lines: splitlines()
+                # also splits at a form feed or U+2028, which do not end one.
+                trees[rel] = (ast.parse(text), text.split("\n"))
+            except (OSError, SyntaxError, ValueError):
+                trees[rel] = None
+        return trees[rel]
 
     def locate(
-        file: str, line: int, column: int | None = None, message: str = ""
+        file: str,
+        line: int,
+        column: int | None = None,
+        message: str = "",
+        end: int | None = None,
     ) -> tuple[str, int, bool, str | None] | None:
         """(path to show, line, is the scenario's own file, the appended call)."""
         if file == DRIVER_MODULE:
@@ -1594,6 +2296,16 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         if len(candidates) != 1:
             return None
         rel = candidates[0]
+        if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
+            checked = checked_tree(rel)
+            field = (
+                None
+                if checked is None
+                else _fstring_field_line(checked[0], line, column, end, checked[1])
+            )
+            if field is not None:
+                in_fields.add((file, line))
+                line = field
         if rel in ws.appended and line > ws.appended[rel][0]:
             # A call the check appended: name the call it makes, and, in a
             # scenario, report it at the line of what it compiles (a
@@ -1624,6 +2336,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
+    #: The end column of each frame that has one (by the frame's id).
+    ends: dict[int, int] = {}
     for raw in output.splitlines():
         text = _ANSI.sub("", raw)
         nested = text.lstrip().startswith(("├─", "╰─", "│"))
@@ -1644,6 +2358,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             if match
             else ("", 0, None, text_)
         )
+        if match and match["end"]:
+            ends[id(frame)] = int(match["end"])
         if nested and errors:
             errors[-1][1].append(frame)
         else:
@@ -1652,13 +2368,16 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
         located = [
-            (f, locate(f[0], f[1], f[2], f[3])) if f[0] else (f, None) for f in frames
+            (f, locate(f[0], f[1], f[2], f[3], ends.get(id(f)))) if f[0] else (f, None)
+            for f in frames
         ]
         pf, primary = next(
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
-        if column is not None and pf is not None and (pf[0], pf[1]) in moved:
+        if pf is not None and (pf[0], pf[1]) in in_fields:
+            column = None  # Codon's column in an f-string field is no column (#610)
+        elif column is not None and pf is not None and (pf[0], pf[1]) in moved:
             if not _column_survives(column, *moved[(pf[0], pf[1])]):
                 column = None  # a column of the rewritten line (#494)
         trace = []
@@ -2108,6 +2827,7 @@ def typecheck_scenario(
         refuse=lambda sources: [
             *_abstract_classes_built(sources, scenario_cls),
             *_returns_not_kept(sources),
+            *_class_problems(sources),
         ],
     )
     if built and built[0].build_error and result.skipped is None and not result.crashed:
@@ -2135,6 +2855,32 @@ def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:
     return [
         Diagnostic(p.message, p.path, p.line, p.column)
         for p in return_problems(modules)
+    ]
+
+
+def _of_package(cls: type) -> bool:
+    return cls.__module__ == _PACKAGE or cls.__module__.startswith(_PACKAGE + ".")
+
+
+def _class_problems(sources: _Sources, *, library: bool = False) -> list[Diagnostic]:
+    """Each class of the collected modules Codon builds and Python does not
+    (:mod:`.class_rules`): an ``__init__`` that skips a framework base's
+    (#587) and an attribute declared at class level that nothing assigns
+    (#588).  The framework is the package outside the scenario's modules;
+    in the library check, the whole package."""
+    modules = {
+        name: (str(module.path), module.tree)
+        for name, module in sources.modules.items()
+    }
+    framework: Callable[[type], bool] | None = None
+    if library:
+        framework = _of_package
+    return [
+        Diagnostic(p.message, p.path, p.line)
+        for p in [
+            *skipped_base_inits(modules, framework=framework),
+            *unassigned_attributes(modules),
+        ]
     ]
 
 
@@ -2375,6 +3121,72 @@ def _with_none_misuses(
 
 def _none_check_advice(finding: NoneFinding) -> str:
     """The message of a :class:`.none_check.NoneFinding`, with what to do."""
+    if finding.kind == FROZEN and finding.read_only is not None:
+        cls, attr = finding.read_only
+        return (
+            f"{cls} is a frozen dataclass; use dataclasses.replace(x, {attr}=...) "
+            f"instead of assigning its field {attr!r}, or Python raises "
+            f"FrozenInstanceError here (mypy: {finding.code})"
+        )
+    if finding.kind == BYTES_STR:
+        return (
+            f"{finding.message}: bytes and str do not mix in Python: decode with "
+            f".decode() / encode with .encode(); Codon's bytes is a str, so this "
+            f"compiles, and Python raises TypeError here or the comparison is "
+            f"always False (mypy: {finding.code})"
+        )
+    if finding.kind == ENUM_EQ:
+        return (
+            f"{finding.message}: an Enum member never equals its raw value: "
+            f"compare with Color.RED, or use Color.RED.value; Python evaluates "
+            f"this comparison to False (mypy: {finding.code})"
+        )
+    if finding.kind == FINAL:
+        return (
+            f"{finding.message}: a name declared Final is bound once; drop the "
+            f"assignment, bind a new name, or drop Final from the declaration. "
+            f"Python does not stop it and Codon ignores Final, so this runs "
+            f"with the value the declaration promised never to change "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == CLASS_VAR:
+        return (
+            f"{finding.message}: a ClassVar is shared by the class; assign it "
+            f"through the class (ClassName.name = ...), or declare it without "
+            f"ClassVar to make it an instance field. Python creates a "
+            f"shadowing instance attribute here and Codon treats the "
+            f"annotated name as an instance field, so what runs can differ "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == OVERRIDE:
+        return (
+            f"{finding.message}: the override must accept what the overridden "
+            f"method accepts and return what it returns, as the caller (the "
+            f"framework, for a hook of BaseScenario) calls it with the "
+            f"superclass's signature; Python fails on the call that does not "
+            f"fit, and Codon does not compare the two. Match the "
+            f"superclass's signature (extra parameters need a default), or "
+            f"add `# type: ignore[override]` if the narrowing is intended "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == READ_ONLY_ABC:
+        return (
+            f"{finding.message}: a Mapping / Sequence / AbstractSet parameter "
+            f"is read-only by its annotation; copy it first (dict(x), "
+            f"list(x), set(x)) and mutate the copy, or annotate it with the "
+            f"mutable type (dict, list, set). Python fails here when the "
+            f"caller passes a tuple or a MappingProxyType, and Codon does not "
+            f"enforce the annotation (mypy: {finding.code})"
+        )
+    if finding.kind == STR_FORMAT:
+        return (
+            f"{finding.message}: Python raises ValueError, TypeError, "
+            f"IndexError or KeyError on this format string with these values "
+            f'("{{:d}}" and "{{:x}}" take an int, "%d" and "{{:.2f}}" a number; '
+            f"each field needs a value); convert the value first (int(x), "
+            f'str(x)) or use "{{}}" / "%s". Codon formats with its own '
+            f"rules, so this compiles (mypy: {finding.code})"
+        )
     union = finding.union
     if union is None:
         wanted = none_given(finding.message)
@@ -2508,12 +3320,19 @@ def _compile(
             return None
         output = proc.stdout + proc.stderr
         diagnostics = _data_model_hints(
-            _with_member_reasons(_variadic_hints(_parse_output(output, ws)), sources),
+            _with_member_reasons(
+                _variadic_hints(_parse_output(output, ws), _unique_basenames(ws)),
+                sources,
+            ),
             sources,
         )
         if proc.returncode != 0:
             try:
                 diagnostics += _uninferred_attributes(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
+            try:
+                diagnostics += _unplaced_none_mismatches(diagnostics, sources)
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
     seconds = time.monotonic() - started
@@ -2540,11 +3359,47 @@ def _compile(
             diagnostics = _bad_alloc_hints(sources)
         except Exception:  # only a hint: the crash is reported either way
             diagnostics = []
+    if (
+        crashed
+        and not codegen
+        and not diagnostics
+        and any(uses_sequence_helpers(m.text) for m in sources.modules.values())
+    ):
+        # Codon 0.19 crashes with no diagnostic where an earlier error left a
+        # type the model's `_acs_count` / `_acs_index` is instantiated with
+        # wrong (#609): compiled again without that rewrite, the error is
+        # Codon's own diagnostic. A rerun that passes or crashes too says
+        # nothing more: the crash is reported. So does one that refuses a
+        # tuple's count() / index() the rewrite made valid: the crash had
+        # another cause (a local first bound to None, #584), which the rerun
+        # would hide behind an error in valid code.
+        with without_sequence_helpers():
+            rerun = _compile(
+                name, sources, driver, toolchain, codon_path, timeout, build
+            )
+        if (
+            rerun is not None
+            and not rerun.ok
+            and not rerun.crashed
+            and not any(
+                _UNREWRITTEN_SEQUENCE_METHOD.search(d.message)
+                for d in rerun.diagnostics
+            )
+        ):
+            return dataclasses.replace(rerun, seconds=seconds + rerun.seconds)
     if proc.returncode != 0 and not diagnostics:
         tail = _ANSI.sub("", output).strip().splitlines()[-1:] or [
             f"exit status {proc.returncode}"
         ]
         diagnostics = [Diagnostic(f"Codon failed without a diagnostic: {tail[0]}")]
+        try:
+            # Codon 0.19 segfaults on some locals first bound to None (#584):
+            # name each, after the crash itself (which may have another cause).
+            diagnostics += _none_first_binding_hints(
+                sources, f"Codon crashed ({tail[0]})"
+            )
+        except Exception:  # only a hint: the crash is reported either way
+            pass
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
@@ -2556,6 +3411,24 @@ def _compile(
         output=output,
         seconds=seconds,
     )
+
+
+def _unplaced_none_mismatches(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """The locals first bound to ``None`` when Codon refused a value as
+    ``Optional[NoneType]`` at a line that rebinds none of them (#584)."""
+    if not any(
+        _NONE_TYPE_MISMATCH in d.message and "Codon fixes the type" not in d.message
+        for d in diagnostics
+    ):
+        return []
+    return _none_first_binding_hints(
+        sources, f"Codon refused a value as {_NONE_TYPE_MISMATCH}"
+    )
+
+
+_NONE_TYPE_MISMATCH = "expected type 'Optional[NoneType]'"
 
 
 def _callable_signature_hints(output: str, sources: _Sources) -> list[Diagnostic]:
@@ -3124,6 +3997,12 @@ def typecheck_library(
         )
     names = sorted([*names, *dependencies])
     _library_imports(sources, toolchain, codon_path)
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - its classes are then left alone
+            logger.debug("%s does not import: its classes are not checked", name)
+    sources.problems += _class_problems(sources, library=True)
     files = _library_files(names, sources, every)
     driver = render_library_driver(names)
     key = _cache_key(

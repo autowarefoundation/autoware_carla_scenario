@@ -61,7 +61,6 @@ from autoware_carla_scenario import (
     ComparisonRule,
     EgoConfig,
     ElapsedTimeCondition,
-    FollowTrajectoryAction,
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
@@ -69,6 +68,8 @@ from autoware_carla_scenario import (
     OpenDrivePose,
     ReferenceContext,
     RelativeLanePose,
+    RoutingAction,
+    RoutingMode,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
@@ -524,6 +525,11 @@ _ACTOR_GETTERS = """
 
     def _pedestrian_or_none(self) -> carla.Walker | None:
         return None
+
+    def _spawned(self, npc: carla.Vehicle, pedestrian: carla.Walker) -> None:
+        # Assigned, or Python raises AttributeError at the first read (#588).
+        self._npc = npc
+        self._pedestrian = pedestrian
 """
 
 
@@ -915,18 +921,22 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
             ],
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
+            RoutingAction(
                 "npc1",
-                path,
-                TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
-                TrajectoryFollowingMode.FOLLOW,
+                trajectory=path,
+                time_reference=TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
+                mode=RoutingMode.FOLLOW,
                 condition=ElapsedTimeCondition(1.0, label="go"),
                 label="npc1_follow",
             )
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
-                "npc2", path, hidden_outside_trajectory=True, label="npc2_follow"
+            RoutingAction(
+                "npc2",
+                trajectory=path,
+                time_reference=TrajectoryTiming(),
+                mode=RoutingMode.POSITION,
+                label="npc2_follow",
             )
         )
         """
@@ -968,9 +978,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         gate = path.vertices[1].gate
         if gate is not None:
             logger.info("second departs on %s", gate.label)
-        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated", speed=8.0)
+        action = RoutingAction("npc1", trajectory=path, time_reference=TrajectoryTiming(), label="npc1_gated", speed=8.0)
         self.register_pre_tick(action)
-        self.register_pre_tick(FollowTrajectoryAction("npc2", untimed, label="npc2_gated"))
+        self.register_pre_tick(RoutingAction("npc2", trajectory=untimed, mode=RoutingMode.POSITION, label="npc2_gated"))
         held = action.held_vertex
         if held is not None:
             logger.info("held at %d", held)
@@ -1049,9 +1059,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
             "expected an EntityRole or a str",
         ),
         (
-            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
-            "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
-            "FollowTrajectoryAction(",
+            'RoutingAction("npc1", trajectory=Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
+            "TrajectoryVertex(MapPose(3.0, 4.0))]), time_reference=RoutingMode.FOLLOW)\n",
+            "RoutingAction(",
             "TrajectoryTiming",
         ),
         (
@@ -1603,7 +1613,11 @@ def test_a_type_error_mentioning_none_is_not_called_optional_misuse(
     result = typecheck_scenario(scenario, config)
     error = _only_error(result)
     assert "expected a float" in error.message, result.format()
-    assert not [d for d in result.diagnostics if "None" in d.message], result.format()
+    # The error's own hint may say a measure can be None (#599); no other
+    # diagnostic may.
+    assert not [
+        d for d in result.diagnostics if d is not error and "None" in d.message
+    ], result.format()
 
 
 _VARIADIC_HELPERS = """
@@ -2126,6 +2140,51 @@ def test_a_bad_value_in_a_nested_list_names_its_field(tmp_path: Path) -> None:
     assert error.path == "scenario.legs[1].speed"
 
 
+_BOOL_CONFIG = """
+from dataclasses import dataclass
+
+
+@dataclass
+class CaseConfig:
+    timeout_seconds: float = 10.0
+    enabled: bool = True
+"""
+
+_REQUIRED_BOOL_CONFIG = """
+from dataclasses import dataclass
+
+
+@dataclass
+class CaseConfig:
+    enabled: bool
+    timeout_seconds: float = 10.0
+"""
+
+
+@pytest.mark.parametrize(
+    "config_source", [_BOOL_CONFIG, _REQUIRED_BOOL_CONFIG], ids=["default", "required"]
+)
+def test_a_string_for_a_top_level_bool_is_reported_at_its_key(
+    tmp_path: Path, config_source: str
+) -> None:
+    # Hydra reads `scenario.enabled=no` as the str "no", which Codon converts
+    # to a bool field (#598): the value is checked strictly, as a nested
+    # field's is, by assignment and by the constructor (a required field)
+    # alike.  An int for a float field still passes.
+    setup = "if cfg.enabled:\n    logger.info('%f', cfg.timeout_seconds)\n"
+    scenario, config, _ = _write_case(tmp_path, setup, config=config_source)
+    error = _only_error(typecheck_scenario(scenario, config, {"enabled": "no"}))
+    assert error.path == "scenario.enabled", error.format()
+    assert "'str' does not match expected type 'bool'" in error.message
+    if config_source is _REQUIRED_BOOL_CONFIG:
+        return  # _HEADER's `config or CaseConfig()` needs every default
+
+    result = typecheck_scenario(
+        scenario, config, {"enabled": False, "timeout_seconds": 3}
+    )
+    assert result.ok, result.format()
+
+
 def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> None:
     scenario, config, path = _write_case(tmp_path, "self._count = 3\n")
     error = _only_error(typecheck_scenario(scenario, config))
@@ -2134,10 +2193,160 @@ def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> 
     assert error.line == _line_of(path, "self._count = 3")
 
 
-def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
-    scenario, config, path = _write_case(tmp_path, "import json\njson.dumps({})\n")
+def test_a_json_document_is_held_to_the_members_of_jsonvalue(tmp_path: Path) -> None:
+    # What loads() returns has no type the check knows: it is converted
+    # explicitly, and handing it on as a float or a str is refused.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ncfg = json.loads("{}")\nspeed = float(cfg["v"])\n'
+        'name = str(cfg["n"])\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, _ = _write_case(
+        tmp_path, 'import json\ncfg = json.loads("{}")\nspeed: float = cfg["v"]\n'
+    )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "json has no Codon model" in error.message
+    # The declared type is named first, as for a return (#564), with a hint.
+    assert "speed is assigned a JSONValue, but is declared float" in error.message
+    assert 'convert it where you use it, `float(doc["speed"])`' in error.message
+    assert "does not match expected type" not in error.message
+
+
+def test_a_json_document_is_read_from_a_file_and_given_defaults(
+    tmp_path: Path,
+) -> None:
+    # The usual ways to read a side file (#562): a builtin open() (with
+    # CPython's text keywords), a default for get(), a slice of a list.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "import json\n"
+        'with open("wp.json") as f:\n'
+        "    doc = json.load(f)\n"
+        'other = json.load(open("wp.json", "r", encoding="utf-8"))\n'
+        'lane = int(doc.get("lane", 1))\n'
+        'speed = float(doc.get("speed", 5.0))\n'
+        'name = str(other.get("name", "x"))\n'
+        'sub = doc["wps"][1:3]\n'
+        "for wp in sub:\n"
+        '    speed += float(wp["v"])\n'
+        'with open("out.json", "w", encoding="utf-8", newline="") as g:\n'
+        '    json.dump({"a": speed}, g)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # What the get() default allows is not a way round the conversion.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ndoc = json.loads("{}")\nspeed: float = doc.get("v", 5.0)\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "speed is assigned a JSONValue, but is declared float" in error.message
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ('xs: list[float] = doc["xs"]\n', "xs is assigned a JSONValue"),
+        ('a = doc["v"] + 1.0\n', "unsupported operand"),
+        ('a = doc["v"] > 3.0\n', "unsupported operand"),
+        ('a = sum(doc["xs"])\n', "unsupported operand"),
+        ('for wp in doc["wps"]:\n    b = wp.x\n', "no attribute 'x'"),
+        ('doc["v"] = 2.0\n', "read-only here"),
+    ],
+)
+def test_a_json_misuse_says_to_convert_the_value(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path, 'import json\ndoc = json.loads("{}")\n' + setup
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert needle in error.message
+    assert " a JSON " in error.message, error.message  # the hint
+
+
+@pytest.mark.parametrize(
+    "import_line",
+    ["import json\n", "import json as js\n", "from json import loads\n"],
+)
+def test_wrong_code_in_an_isinstance_branch_of_a_json_value_is_refused(
+    tmp_path: Path, import_line: str
+) -> None:
+    # Codon decides isinstance by the static type and a JSONValue is none of
+    # dict/list/str, so the branch it guards was not compiled (#563).
+    loads = "loads" if "from" in import_line else import_line.split()[-1] + ".loads"
+    for branch, needle in (
+        ('    q: int = "wrong"\n', "q is assigned a str"),
+        ("    z = v.nonexistent()\n", "nonexistent"),
+        ("    total = 0\n    for x in v:\n        total += x\n", "operand"),
+    ):
+        scenario, config, _ = _write_case(
+            tmp_path,
+            import_line
+            + f'v = {loads}("{{}}")["k"]\nif isinstance(v, (dict, list)):\n'
+            + branch,
+        )
+        error = _only_error(typecheck_scenario(scenario, config))
+        assert needle in error.message, error.message
+
+
+def test_a_json_value_is_told_apart_with_isinstance(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "import json\n"
+        'doc = json.loads("{}")\n'
+        "def total(v) -> float:\n"
+        "    out = 0.0\n"
+        "    if isinstance(v, list):\n"
+        "        for x in v:\n"
+        "            out += float(x)\n"
+        "    elif isinstance(v, dict):\n"
+        "        for k, x in v.items():\n"
+        "            out += float(x)\n"
+        "    elif isinstance(v, str):\n"
+        "        out = float(len(v))\n"
+        "    else:\n"
+        "        out = float(v)\n"
+        "    return out\n"
+        'top = total(doc["k"])\n'
+        'wps = doc["wps"]\n'
+        "if isinstance(wps, list):\n"
+        "    first = wps[0]\n"
+        "    top += float(first)\n"
+        "elif isinstance(wps, str):\n"
+        "    top += float(wps)\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # The else branch of the same test is compiled too.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\nv = json.loads("{}")["k"]\n'
+        'if isinstance(v, list):\n    n = len(v)\nelse:\n    q: int = "wrong"\n',
+    )
+    assert "q is assigned" in _only_error(typecheck_scenario(scenario, config)).message
+
+
+def test_isinstance_of_a_known_type_is_left_alone_in_a_json_module(
+    tmp_path: Path,
+) -> None:
+    # The rewrite adds a static false for any type but a JSONValue: dead code
+    # of a known type stays uncompiled, as in a module without json.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ny = 5\nif isinstance(y, str):\n    q: int = "wrong"\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, 'import textwrap\ntextwrap.dedent("")\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "textwrap has no Codon model" in error.message
     assert error.path == str(path)
 
 
@@ -2382,6 +2591,128 @@ class GapCondition(_GapBase):
     assert result.ok, result.format()
 
 
+_NO_SUPER_CONDITION = """
+
+class LateCondition(BaseCondition):
+    _after: float
+
+    def __init__(self, after: float) -> None:
+        self._after = after
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        if elapsed > self._after:
+            return ScenarioResult(passed=True, message="late", elapsed_seconds=elapsed)
+        return None
+"""
+
+_UNASSIGNED_CONDITION = """
+
+class CountCondition(BaseCondition):
+    _count: int
+    _limit: int
+
+    def __init__(self, limit: int, *, label: str) -> None:
+        super().__init__(label=label)
+        self._limit = limit
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        self._count += 1
+        if self._count > self._limit:
+            return ScenarioResult(passed=True, message="count", elapsed_seconds=elapsed)
+        return None
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "header", "needle", "message"),
+    [
+        (
+            "self.register_pass_condition(LateCondition(3.0))\n",
+            _NO_SUPER_CONDITION,
+            _HEADER,
+            "def __init__(self, after: float)",
+            "LateCondition.__init__ never calls BaseCondition.__init__, "
+            "which sets label",
+        ),
+        (
+            "",
+            "",
+            _HEADER.replace(
+                "super().__init__(ego_config, spawn_pose=spawn_pose, "
+                "ground_projection=ground_projection)",
+                "self.ego_spawn = spawn_pose",
+            ),
+            "def __init__(",
+            "CaseScenario.__init__ never calls BaseScenario.__init__",
+        ),
+        (
+            'self.register_pass_condition(CountCondition(3, label="c"))\n',
+            _UNASSIGNED_CONDITION,
+            _HEADER,
+            "    _count: int",
+            "CountCondition._count is declared but never assigned",
+        ),
+    ],
+    ids=["condition-without-super", "scenario-without-super", "never-assigned"],
+)
+def test_an_attribute_python_never_sets_is_refused(
+    tmp_path: Path, setup: str, extra: str, header: str, needle: str, message: str
+) -> None:
+    # Codon zero-initialises every field, so these compiled; Python raises
+    # AttributeError at the first read (#587, #588).
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, extra, header=header
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_inits_calling_the_base_and_assigned_attributes_compile(
+    tmp_path: Path,
+) -> None:
+    # The look-alikes: a subclass of the scenario's own condition calling
+    # super(), a base called by name inside an `if`, and attributes assigned
+    # by a tuple target or only in another method (#587, #588).
+    extra = """
+
+class LateCondition(BaseCondition):
+    _after: float
+    _seen: int
+    _last: float
+
+    def __init__(self, after: float) -> None:
+        if after >= 0.0:
+            super().__init__("late")
+        else:
+            BaseCondition.__init__(self, "never")
+        self._after, self._seen = after, 0
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        self._seen += 1
+        self._last = elapsed
+        if elapsed > self._after:
+            return ScenarioResult(passed=True, message="late", elapsed_seconds=elapsed)
+        return None
+
+
+class LaterCondition(LateCondition):
+    def __init__(self) -> None:
+        super().__init__(9.0)
+"""
+    setup = (
+        _TIMEOUT_SETUP
+        + "self.register_pass_condition(LateCondition(3.0))\n"
+        + "self.register_pass_condition(LaterCondition())\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 _TRACKER = """
 
 class GapTracker:
@@ -2496,10 +2827,11 @@ def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     assert result.ok, result.format()
     scenario, config, path = _write_case(
         tmp_path,
-        'from pathlib import Path\nlogger.info("%s", Path("a").chmod(0o644))\n',
+        'from pathlib import Path\nlogger.info("%s", Path("a").is_socket())\n',
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "chmod" in error.message
+    assert "is_socket" in error.message
+    assert "not modelled" in error.message, error.format()
     assert error.path == str(path)
 
 
@@ -2523,11 +2855,112 @@ def test_a_scenario_may_use_the_os_and_shutil_shims_and_nothing_beyond_them(
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
     scenario, config, path = _write_case(
-        tmp_path, 'import shutil\nshutil.copytree("a", "b")\n'
+        tmp_path, 'import shutil\nshutil.disk_usage("a")\n'
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "copytree" in error.message
+    assert "disk_usage" in error.message
+    assert "not modelled" in error.message, error.format()
     assert error.path == str(path)
+
+
+#: The file helpers #568 and #569 added to the pathlib, os, os.path and shutil
+#: shims, each used in a scenario (the library check holds their signatures,
+#: ``test_typecheck_library.py``).
+_FILE_HELPER_SETUP = """
+import os
+import os.path
+import shutil
+from pathlib import Path
+base = Path("/tmp/acs") / "a.txt"
+logger.info("%s %s", base.with_suffix(".csv").name, base.with_stem("b").name)
+logger.info("%s %d", base.joinpath("x", "y").as_posix(), len(base.parts))
+logger.info("%s %s", base.suffixes, sorted(Path("/tmp").iterdir()))
+base.touch()
+base.rename("/tmp/acs/b.txt")
+Path("/tmp/acs").rmdir()
+logger.info("%d", base.write_bytes(b"x"))
+logger.info("%d", len(os.listdir("/tmp")))
+os.makedirs("/tmp/acs", exist_ok=True)
+os.remove("/tmp/acs/a.txt")
+for root, dirs, files in os.walk("/tmp"):
+    logger.info("%s %d %d", root, len(dirs), len(files))
+logger.info("%d", os.path.getsize("/tmp/a"))
+logger.info("%s %s", os.path.relpath("/tmp/a", "/tmp"), os.path.realpath("/tmp"))
+shutil.copy("/tmp/a", "/tmp/b")
+shutil.copytree("/tmp/a", "/tmp/b", dirs_exist_ok=True)
+"""
+
+
+def test_a_scenario_may_use_the_file_helpers_of_pathlib_os_and_shutil(
+    tmp_path: Path,
+) -> None:
+    scenario, config, _ = _write_case(tmp_path, _FILE_HELPER_SETUP)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "message", "hint"),
+    [
+        (
+            'from pathlib import Path\nPath("a").is_socket()\n',
+            "'Path' object has no attribute 'is_socket'",
+            "not modelled",
+        ),
+        (
+            "import os\nos.scandir('a')\n",
+            "cannot import name 'scandir' from 'os",
+            "not modelled",
+        ),
+        (
+            "import os\nos.path.commonpath(['a'])\n",
+            "cannot import name 'commonpath' from 'os.path'",
+            "not modelled",
+        ),
+        (
+            "import shutil\nshutil.disk_usage('a')\n",
+            "cannot import name 'disk_usage' from 'shutil'",
+            "not modelled",
+        ),
+        (
+            'from pathlib import Path\nPath("a").with_sufix(".x")\n',
+            "'Path' object has no attribute 'with_sufix'",
+            "did you mean 'with_suffix'?",
+        ),
+        (
+            "import shutil\nshutil.copytre('a', 'b')\n",
+            "cannot import name 'copytre' from 'shutil'",
+            "did you mean 'copytree'?",
+        ),
+        (
+            "import time\ntime.strftime('%Y')\n",
+            "cannot import name 'strftime' from 'time'",
+            "datetime.datetime.now()",
+        ),
+        (
+            "import datetime\ndatetime.datetime.now().strftime('%Y')\n",
+            "'datetime' object has no attribute 'strftime'",
+            "now.year:04d",
+        ),
+    ],
+    ids=[
+        "path",
+        "os",
+        "os-path",
+        "shutil",
+        "path-typo",
+        "shutil-typo",
+        "time-strftime",
+        "datetime-strftime",
+    ],
+)
+def test_a_name_the_file_and_time_shims_lack_is_refused_as_not_modelled_or_misspelt(
+    tmp_path: Path, setup: str, message: str, hint: str
+) -> None:
+    scenario, config, _ = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert hint in error.message, error.format()
 
 
 def test_a_scenario_may_use_the_subprocess_and_metadata_shims_and_nothing_beyond_them(
@@ -3246,8 +3679,8 @@ from autoware_carla_scenario import (
     JaywalkAction,
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
-    PropAction,
-    PropOperation,
+    SpawnAction,
+    DespawnAction,
     RunTrafficRuleAction,
     Lanelet2Pose,
     MapPose,
@@ -3288,13 +3721,13 @@ self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
 self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
 self.register_pre_tick(
-    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+    SpawnAction(name="cone1", position=Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
 )
-self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction(name="box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction("npc5", position=Lanelet2Pose(1, 8.0), shift_max=30.0, speed=3.0))
 self.register_pre_tick(
-    PropAction(
-        "cone1",
-        PropOperation.REMOVE,
+    DespawnAction(
+        name="cone1",
         condition=ElapsedTimeCondition(8.0, label="gone"),
         label="clear",
     )
@@ -4288,6 +4721,7 @@ _SEQUENCE_HEADER = _HEADER.replace(
     MapManager,
     OrCondition,
     RoutingAction,
+    RoutingMode,
     TrafficSignalAction,
     TrafficSourceAction,
     VehicleEntity,
@@ -5725,9 +6159,8 @@ def test_a_namedtuple_class_is_a_tuple_class(tmp_path: Path) -> None:
     [
         (_DATACLASSES, "Fz(1) < Fz(2)", "order=True"),
         (_DATACLASSES, "{Fz(1): 2}", "frozen=True"),
-        (_DATACLASSES, "ByIdentity(1) == ByIdentity(1)", "a is b"),
     ],
-    ids=["unordered", "unhashable", "eq-false"],
+    ids=["unordered", "unhashable"],
 )
 def test_what_a_dataclass_does_not_generate_is_refused_with_a_hint(
     tmp_path: Path, definitions: str, line: str, hint: str
@@ -5806,7 +6239,7 @@ def test_enum_members_are_dictionary_keys_and_a_plain_enum_equals_only_members(
         e = {Level.LOW: 1}
         assert d[Plain.A] == 1 and e[Level.LOW] == 1
         assert Plain.A == Plain.A and Plain.A != Plain.B
-        assert not (Plain.A == 1) and Plain.A != 1
+        assert Plain.A.value == 1 and Plain.A.value != 2
         assert Word.A == "a"
     """
     scenario, config, _ = _data_case(
@@ -6225,6 +6658,27 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         "def power(x: float) -> float:\n    return math.exp2(x)\n",
         "assert power(10.0) == 1024.0\nlogger.info('%f', power(1.0))\n",
     ),
+    "math.hypot": (
+        "import math\nfrom math import hypot\n",
+        "def norm3(x: float, y: float, z: float) -> float:\n"
+        "    return math.hypot(x, y, z)\n"
+        "def norm2(x: float, y: float) -> float:\n    return hypot(x, y)\n"
+        "def norm_mixed() -> float:\n    return hypot(1, 2.0, 2) + hypot() + hypot(-3)\n",
+        "assert norm3(1.0, 2.0, 2.0) == 3.0 and norm2(3.0, 4.0) == 5.0\n"
+        "assert norm_mixed() == 6.0\n"
+        "logger.info('%f', norm3(1.0, 2.0, 2.0))\n",
+    ),
+    "statistics.fmean": (
+        "import statistics\nfrom statistics import fmean\n",
+        "def average(xs: list[float]) -> float:\n    return fmean(xs)\n"
+        "def average_ints(xs: list[int]) -> float:\n"
+        "    return statistics.fmean(xs)\n"
+        "def weighted(xs: list[float], ws: list[float]) -> float:\n"
+        "    return fmean(xs, ws) + fmean(xs, None)\n",
+        "assert average([1.0, 2.0, 4.5]) == 2.5 and average_ints([1, 2, 3]) == 2.0\n"
+        "assert weighted([1.0, 2.0, 4.5], [1.0, 0.0, 1.0]) == 5.25\n"
+        "logger.info('%f', average([1.0, 2.0]))\n",
+    ),
     "random.Random (choices, triangular)": (
         "import random\n",
         "def draw(rng: random.Random) -> int:\n"
@@ -6241,6 +6695,28 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         "assert draw(rng) == 11\n"
         "assert 0.0 <= skew(rng) <= 3.0\n"
         "logger.info('%d', draw(rng))\n",
+    ),
+    "re.Match (group, m[n], groups, groupdict)": (
+        "import re\n",
+        "def number(text: str) -> str:\n"
+        "    m = re.match(r'(?P<word>[a-z]+)(\\d+)', text)\n"
+        "    if m is None:\n"
+        "        return ''\n"
+        "    word, digits = m.groups()\n"
+        "    first, second = m.group(1, 2)\n"
+        "    kept: str = m.groupdict()['word']\n"
+        "    return m.group(2) + m[1] + word + digits + first + second + kept\n"
+        "def number_or_empty(text: str) -> str:\n"
+        "    m = re.search(r'(\\d+)', text)\n"
+        "    return m.group(1) if m else ''\n",
+        "assert number('npc12') == '12npcnpc12npc12npc'\n"
+        "logger.info('%s %s', number(cfg.name), number_or_empty(cfg.name))\n",
+    ),
+    "re.Pattern (split)": (
+        "import re\n",
+        "def pieces(text: str) -> int:\n"
+        "    return len(re.compile(r'(-)').split(text)) + len(re.split(r'-', text))\n",
+        "logger.info('%d', pieces(cfg.name))\n",
     ),
     "random.triangular": (
         "import random\nfrom random import triangular\n",
@@ -6270,6 +6746,18 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "cannot import name 'asdict' from 'dataclasses'",
         "build the dict from the fields you need",
     ),
+    "dataclasses.InitVar": (
+        "from dataclasses import InitVar\n",
+        "",
+        "cannot import name 'InitVar' from 'dataclasses'",
+        "make the value a parameter of a @classmethod",
+    ),
+    "dataclasses.KW_ONLY": (
+        "from dataclasses import KW_ONLY\n",
+        "",
+        "cannot import name 'KW_ONLY' from 'dataclasses'",
+        "drop the marker and pass the fields by keyword",
+    ),
     "functools.wraps": (
         "from functools import wraps\n",
         "",
@@ -6282,11 +6770,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "cannot import name 'ulp' from 'math'",
         "docs/typecheck.md",
     ),
-    "contextlib": (
-        "from contextlib import suppress\n",
+    "contextlib.contextmanager": (
+        "from contextlib import contextmanager\n",
         "",
-        "contextlib has no Codon model",
-        "try/except X: pass for suppress",
+        "cannot import name 'contextmanager' from 'contextlib'",
+        "write a class with __enter__ and __exit__",
     ),
     "warnings": (
         "import warnings\n",
@@ -6294,11 +6782,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "warnings has no Codon model",
         "logger.warning",
     ),
-    "json": (
-        "import json\n",
+    "json.JSONEncoder": (
+        "from json import JSONEncoder\n",
         "",
-        "json has no Codon model",
-        "@dataclass",
+        "cannot import name 'JSONEncoder' from 'json'",
+        "dumps, dump, loads, load and JSONDecodeError",
     ),
     "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
     "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
@@ -6309,6 +6797,8 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "logger.exception",
     ),
     "io": ("import io\n", "", "io has no Codon model", "pathlib.Path"),
+    "csv": ("import csv\n", "", "csv has no Codon model", "split(',')"),
+    "uuid": ("import uuid\n", "", "uuid has no Codon model", "os.getpid()"),
 }
 
 
@@ -6580,6 +7070,7 @@ def test_stdlib_names() -> None:
     import functools
     import math
     import random
+    import statistics
 
     from autoware_carla_scenario.typecheck.transform import FUNCTOOLS_NAMES
 
@@ -6614,6 +7105,8 @@ def test_stdlib_names() -> None:
                 "collections": collections,
                 "math": math,
                 "random": random,
+                "statistics": statistics,
+                "re": re,
             }[module],
             attribute,
         ), name
@@ -6927,6 +7420,99 @@ def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
     assert diagnostic.message == message
 
 
+def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
+    """Codon's error at *line* of *source* (after the prelude), columns
+    *span*, parsed for a checked copy that is *source* unchanged."""
+    from autoware_carla_scenario.typecheck import check
+
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(check.PRELUDE + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = list(range(1, source.count("\n") + 1))
+    output = f"{rel}:{check._PRELUDE_LINES + line} ({span}): error: bad operand\n"
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/scenario.py"
+    return diagnostic
+
+
+@pytest.mark.parametrize(
+    ("source", "line", "span", "expected"),
+    [
+        # Codon puts an error in an f-string field on the line after the
+        # f-string, at the expression's column plus the field's length (#610).
+        ("a = 1\ns = f\"{a} {a + 'x'}\"\nb = 2\n", 3, "18-25", (2, None)),
+        # A field in a call's argument: the f-string's own line.
+        ("a = 1\nprint(1,\n  f\"{len(a + 'x')}\")\nb = 2\n", 4, "21-28", (3, None)),
+        # On the last line: past the end of the file.
+        ("a = 1\ns = f\"{a + 'x'}\"\n", 3, "14-21", (2, None)),
+        # A field on the second line of a triple-quoted f-string.
+        ('a = 1\ns = f"""{a}\n  {a + \'x\'}"""\nb = 2\n', 3, "20-27", (3, None)),
+        # An ordinary error on the line after an f-string with a field of the
+        # same width stays where Codon puts it, column and all.
+        ("a = 1\ns = f\"{a} {a + 'x'}\"\nb = a + 'x'\n", 3, "5-12", (3, 5)),
+        # No f-string on the line before: left alone.
+        ("a = 1\ns = 2\nb = a + 'x'\n", 3, "5-12", (3, 5)),
+        # A comprehension's `for c in nnnn`, which Codon locates from its
+        # `for` and Python's tree gives no position, is the line's own.
+        (
+            'abcd = 1\nnnnn = 5\ns = f"{abcd + 123456}"\n'
+            "x = [cc * 22222222 for c in nnnn]\n",
+            4,
+            "20-33",
+            (4, 20),
+        ),
+        # A column further from the field than the f-string's end is not
+        # one of its fields.
+        ('a = 1\ns = f"{a + 1}"\nb = 2\n', 3, "15-20", (3, 15)),
+        # Implicitly concatenated f-strings (#616), at the columns Codon
+        # reports: the first literal's column, plus the field's offset in
+        # its own literal, its length and the expression's offset in it.
+        ('n = 1\ns = "aaaa" f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (2, None)),
+        ('n = 1\ns = ("a" f"b{n + \'x\'}")\nt = 2\n', 3, "16-23", (2, None)),
+        ('n = 1\ns = "a" f"b{n} {n + \'x\'}"\nt = 2\n', 3, "19-26", (2, None)),
+        (
+            'n = 1\ns = "a" f"b{1 + (n + \'x\'):>4}" "z"\nt = 2\n',
+            3,
+            "29-36",
+            (2, None),
+        ),
+        # On several lines: the field's own line.
+        (
+            'n = 1\ns = ("aaa"\n  "bb"\n     f"b{n + \'x\'}")\nt = 2\n',
+            3,
+            "16-23",
+            (4, None),
+        ),
+        ('n = 1\ns = "a" \\\n    f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (3, None)),
+        # The line's own error stays, column and all.
+        (
+            "n = 1\ns = \"aaaa\" f\"b{n + 'x'}\"\nt = [0, 1, 2, n + 'x']\n",
+            3,
+            "15-22",
+            (3, 15),
+        ),
+        # So does one of a call on several lines that starts at that column,
+        # whose width Codon counts across the line break.
+        (
+            'n = 1\ns = "" f"{n + 100000000000000}"\n'
+            'result_value_long_name = g(\n            "x")\n',
+            3,
+            "26-45",
+            (3, 26),
+        ),
+        # A form feed is no line break for Python.
+        ('n = 1  # a\fb\ns = "a" f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (2, None)),
+    ],
+)
+def test_an_error_in_an_fstring_field_is_moved_to_its_line(
+    tmp_path: Path, source: str, line: int, span: str, expected: tuple[int, Any]
+) -> None:
+    diagnostic = _parsed_at(tmp_path, source, line, span)
+    assert (diagnostic.line, diagnostic.column) == expected
+
+
 def test_a_format_spec_on_a_bool_is_hinted(tmp_path: Path) -> None:
     line = 'r = f"{True:+d}"'
     scenario, config, path = _data_case(tmp_path, "", line + "\n")
@@ -6996,8 +7582,8 @@ def test_builtins_codon_lacks_compile(tmp_path: Path) -> None:
         ("r = s.endswith(('a', 2))", "'int' does not match expected type 'str'"),
         ("r = s.startswith(('a', 'b'), 'x')", "'str' does not match expected"),
         ("r = format(s, 5)", "'int' does not match expected type 'str'"),
-        ("r: int = format(5)", "'int' does not match expected type 'str'"),
-        ("r: int = ascii(5)", "'int' does not match expected type 'str'"),
+        ("r: int = format(5)", "r is assigned a str, but is declared int"),
+        ("r: int = ascii(5)", "r is assigned a str, but is declared int"),
     ],
     ids=[
         "startswith-ints",
@@ -7050,6 +7636,41 @@ def test_a_builtin_codon_lacks_is_refused_with_a_hint(
     error = _only_error(typecheck_scenario(scenario, config))
     assert hint in error.message, error.format()
     assert error.line == _line_of(path, last)
+
+
+def test_one_argument_round_is_an_int(tmp_path: Path) -> None:
+    # #585: Codon's round(x, n=0) always returns a float, Python's an int
+    # without ndigits; the check writes int(round(x)).
+    definitions = """
+def pick(xs: list[int], x: float) -> int:
+    return xs[round(x)]
+
+
+def steps(x: float) -> int:
+    n: int = round(x)
+    total = 0
+    for i in range(round(x, None)):
+        total += i
+    return n + total + round(number=x, ndigits=None)
+
+
+def tenths(x: float) -> float:
+    y: float = round(x)
+    ws: list[float] = [float(round(x)), 1.5]
+    return y + ws[0] + round(x, 1) + round(x, ndigits=2)
+"""
+    setup = 'logger.info("%d %d %f", pick([1, 2], 0.6), steps(2.4), tenths(1.25))\n'
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_rewritten_round_is_still_type_checked(tmp_path: Path) -> None:
+    line = "r: str = round(2.5)"
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "r is assigned an int, but is declared str" in error.message, error.format()
+    assert error.line == _line_of(path, line)
 
 
 def test_dict_update_with_a_dict_or_pairs_compiles(tmp_path: Path) -> None:
@@ -7261,6 +7882,74 @@ def test_a_lambda_capturing_a_default_is_still_typed(tmp_path: Path) -> None:
     assert "for +: 'str' and 'int'" in error.message, error.format()
     call = _line_of(path, 'r = fs[0]("x")')
     assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+def test_a_nested_def_default_reading_an_enclosing_local_compiles(
+    tmp_path: Path,
+) -> None:
+    # Codon refuses a bare local of the enclosing function as a default
+    # ("name 'name' cannot be captured"); the check writes `(name,)[0]` (#612).
+    setup = """
+        names = ["a", "b"]
+        scale = 2
+        for name in names:
+            def log_it(world: carla.World, n: str = name) -> None:
+                logger.info("%s", n)
+            self.register_post_tick(log_it)
+        def f(k: int = scale, *, label: str = cfg.name, tag=name) -> int:
+            def g(m: int = k) -> int:
+                return m * 2
+            return g() + len(label) + len(tag)
+        logger.info("%d %d", f(), f(3, label="x"))
+    """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_nested_def_default_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        name = "a"
+        def f(k: int = name) -> int:
+            return k * 2
+        logger.info("%d", f())
+    """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'int'" in error.message, error.format()
+
+
+def test_an_fstring_in_a_decorator_compiles(tmp_path: Path) -> None:
+    # Codon reads it as "'str' object has no attribute '__prefix_f__'" (#616).
+    extra = """
+
+
+N = 3
+
+
+def tag(label: str, extra: str = ""):
+    def deco(f):
+        return f
+    return deco
+
+
+@tag(f"lane-{N}", extra=f"x{N!r:>4}")
+@tag(f"plain")
+def plain() -> int:
+    return 1
+
+
+def helper(k: int) -> int:
+    @tag(f"inner-{k}")
+    def inner() -> int:
+        return k
+    return inner()
+"""
+    scenario, config, _ = _write_case(
+        tmp_path, 'logger.info("%d %d", plain(), helper(2))\n', extra=extra
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 @pytest.mark.parametrize("call", ["fs[0](1, k=5)", "fs[0](1, 5)"])
@@ -9001,6 +9690,86 @@ def test_codons_lambda_type_names_are_not_shown() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A dropped decorator stacked under a kept one (#595)
+# ---------------------------------------------------------------------------
+
+_STACK_IMPORTS = """
+
+import functools
+from abc import ABC, abstractmethod
+
+from typing_extensions import override
+"""
+
+#: Each case: the base class's member and the subclass's (#595).
+_STACKED_DECORATORS = {
+    "property_abstractmethod": (
+        "    @property\n    @abstractmethod\n    def area(self) -> float: ...\n",
+        "    @property\n    def area(self) -> float:\n        return 4.0\n",
+    ),
+    "property_override": (
+        "    @property\n    def area(self) -> float:\n        return 0.0\n",
+        "    @property\n    @override\n    def area(self) -> float:\n"
+        "        return 4.0\n",
+    ),
+    "staticmethod_abstractmethod": (
+        "    @staticmethod\n    @abstractmethod\n    def area() -> float: ...\n",
+        "    @staticmethod\n    def area() -> float:\n        return 4.0\n",
+    ),
+    "property_cache": (
+        "    @property\n    def area(self) -> float:\n        return 0.0\n",
+        "    @property\n    @functools.cache\n    def area(self) -> float:\n"
+        "        return 4.0\n",
+    ),
+    "staticmethod_lru_cache": (
+        "    @staticmethod\n    def area() -> float:\n        return 0.0\n",
+        "    @staticmethod\n    @functools.lru_cache(maxsize=None)\n"
+        "    def area() -> float:\n        return 4.0\n",
+    ),
+    "multi_line_with_comments": (
+        "    @property\n    @abstractmethod\n    def area(self) -> float: ...\n",
+        "    @property  # read as an attribute\n"
+        "    # cached, and an override\n"
+        "    @functools.lru_cache(\n        maxsize=8,\n    )\n"
+        "    @override\n"
+        "    def area(self) -> float:\n        return 4.0\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_STACKED_DECORATORS))
+def test_a_dropped_decorator_under_a_kept_one_compiles(
+    tmp_path: Path, case: str
+) -> None:
+    # `@property` / `@staticmethod` over `@abstractmethod`, `@override`,
+    # `@functools.cache` or `@functools.lru_cache(...)`: the dropped one left
+    # a blank line in the decorator list, a Codon syntax error (#595).
+    base, sub = _STACKED_DECORATORS[case]
+    read = "s.area()" if "staticmethod" in case else "s.area"
+    setup = f's: Shape = Sq()\nlogger.info("%f", {read})\n'
+    extra = f"{_STACK_IMPORTS}\n\nclass Shape(ABC):\n{base}\n\nclass Sq(Shape):\n{sub}"
+    scenario, config, _ = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_error_on_a_moved_decorator_is_at_its_line(tmp_path: Path) -> None:
+    # The kept decorator moves down over the dropped `@abstractmethod`
+    # (#595): its error names the line it is written on.
+    extra = (
+        "\n\nfrom abc import ABC, abstractmethod\n\n\n"
+        "def tag(n: int):\n    def wrap(f):\n        return f\n\n    return wrap\n\n\n"
+        "class Shape(ABC):\n"
+        '    @tag("a")\n    @abstractmethod\n    def area(self) -> float: ...\n\n\n'
+        "class Sq(Shape):\n    def area(self) -> float:\n        return 4.0\n"
+    )
+    setup = 's: Shape = Sq()\nlogger.info("%f", s.area())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, '@tag("a")'), error.format()
+
+
+# ---------------------------------------------------------------------------
 # typing_extensions (#514)
 # ---------------------------------------------------------------------------
 
@@ -9067,6 +9836,72 @@ def test_a_typing_extensions_name_typing_lacks_is_refused_with_a_hint(
     error = _only_error(typecheck_scenario(scenario, config))
     assert "cannot import name 'deprecated' from 'typing_extensions'" in error.message
     assert "docs/typecheck.md" in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# collections.abc (#586)
+# ---------------------------------------------------------------------------
+
+
+def test_collections_abc_names_compile_as_typing_ones(tmp_path: Path) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from collections.abc import (\n    Callable,\n    Iterator,\n    Mapping,\n"
+        "    Sequence,\n    Set,\n)\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    helper = """
+
+
+def total(xs: Sequence[float], f: Callable[[float], float]) -> float:
+    return sum(f(v) for v in xs)
+
+
+def count(n: int) -> Iterator[int]:
+    for i in range(n):
+        yield i
+
+
+def has(s: Set[int], k: int) -> bool:
+    return k in s
+
+
+def get(m: Mapping[str, int]) -> int:
+    return m["a"]
+"""
+    setup = _TIMEOUT_SETUP + (
+        'logger.info("%f %d %s %d", total([1.0, 2.0], lambda v: v * 2.0), '
+        'sum(count(3)), has({1, 2}, 1), get({"a": 1}))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, helper, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("statement", "needle"),
+    [
+        (
+            "from collections.abc import KeysView",
+            "collections.abc.KeysView is not modelled by the check",
+        ),
+        ("import collections.abc", "`import collections.abc` is not supported"),
+    ],
+    ids=["unmodelled-name", "module-import"],
+)
+def test_collections_abc_the_check_cannot_read_is_refused_with_a_hint(
+    tmp_path: Path, statement: str, needle: str
+) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"{statement}\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert needle in error.message, error.format()
+    assert "from typing" in error.message, error.format()
+    assert error.line == _line_of(path, statement)
 
 
 # ---------------------------------------------------------------------------
@@ -9575,3 +10410,2091 @@ def test_the_optional_hint_is_not_given_for_unrelated_optionals(
     scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
     result = typecheck_scenario(scenario, config)
     assert "does not convert an Optional of a subclass" not in result.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'logger.info("%s", base.parts[-1])',
+        'logger.info("%s", "a" in base.parts)',
+        'logger.info("%d", len(base.parts))',
+        'logger.info("%s", base.parts[1:])',
+        'logger.info("%s", [p.upper() for p in base.parts])',
+        'logger.info("%s", "/".join(base.parts[1:]))',
+        'logger.info("%s", base.parts[0] == "/")',
+    ],
+)
+def test_a_scenario_may_index_slice_and_iterate_path_parts(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path, f'from pathlib import Path\nbase = Path("/a/b.txt")\n{line}\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A field of a scenario's own frozen dataclass cannot be assigned (#567)
+# ---------------------------------------------------------------------------
+
+_FROZEN_EXTRA = """
+
+@dataclass(frozen=True)
+class Pt:
+    x: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", float(self.x))
+
+    def moved(self, dx: float) -> Pt:
+        return replace(self, x=self.x + dx)
+
+    def bump(self) -> None:
+        BUMP
+
+
+@dataclass(frozen=True)
+class Sub(Pt):
+    y: float = 0.0
+
+
+@dataclass
+class Free:
+    x: float = 0.0
+
+"""
+_FROZEN_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom dataclasses import dataclass, replace\n",
+    1,
+)
+
+
+def _frozen_case(
+    tmp_path: Path, setup: str, bump: str = "pass"
+) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path,
+        setup,
+        extra=_FROZEN_EXTRA.replace("BUMP", bump),
+        header=_FROZEN_HEADER,
+    )
+
+
+def test_frozen_dataclass_idioms_compile(tmp_path: Path) -> None:
+    # Reading a field, replace(), object.__setattr__ in __post_init__ and
+    # assigning a field of a dataclass that is not frozen are all valid.
+    scenario, config, _ = _frozen_case(
+        tmp_path,
+        """
+        p = Pt(1.0)
+        q = p.moved(2.0)
+        s = replace(Sub(1.0), y=2.0)
+        f = Free(1.0)
+        f.x = 2.0
+        assert q.x + s.y + f.x > 0.0
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "p.x = 2.0",
+        "p.x += 1.0",
+        "for it in [Pt(1.0)]:\n    it.x = 2.0",
+        "s = Sub(1.0)\ns.y = 5.0",
+    ],
+)
+def test_assigning_a_field_of_a_frozen_dataclass_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _frozen_case(tmp_path, f"p = Pt(1.0)\n{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "is a frozen dataclass; use dataclasses.replace(x," in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1].strip())
+
+
+def test_assigning_self_field_in_a_frozen_dataclass_method_is_refused(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _frozen_case(tmp_path, "pass\n", bump="self.x = 3.0")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "Pt is a frozen dataclass" in error.message
+    assert error.line == _line_of(path, "self.x = 3.0")
+
+
+# ---------------------------------------------------------------------------
+# bytes and str mixed, an Enum compared with a raw value (#574, #575)
+# ---------------------------------------------------------------------------
+
+_MIX_EXTRA = """
+
+class Color(enum.Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Mode(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+
+
+class Phase(str, enum.Enum):
+    GO = "go"
+
+
+def label(name: str) -> str:
+    payload = name.encode()
+    return LABEL
+
+
+def up(s: str) -> str:
+    return s.upper()
+
+"""
+_MIX_HEADER = _HEADER.replace("import logging\n", "import enum\nimport logging\n", 1)
+
+
+def _mix_case(tmp_path: Path, setup: str, label: str = '"sent " + name') -> Any:
+    return _write_case(
+        tmp_path, setup, extra=_MIX_EXTRA.replace("LABEL", label), header=_MIX_HEADER
+    )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        's = b"x" + "y"',
+        'raw = "ab".encode()\ns = "x" in raw',
+        'raw = "ab".encode()\nok = raw == "ab"',
+        'logger.info("%s", up("ego".encode("utf-8")))',
+        'x: str = "ego".encode()',
+    ],
+    ids=["operator", "in", "equality", "argument", "assignment"],
+)
+def test_mixing_bytes_and_str_is_refused(tmp_path: Path, statement: str) -> None:
+    scenario, config, path = _mix_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "bytes and str do not mix in Python" in error.message, error.format()
+    assert ".decode()" in error.message and ".encode()" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_a_bytes_returned_for_a_str_is_refused(tmp_path: Path) -> None:
+    scenario, config, path = _mix_case(tmp_path, "pass\n", label="payload")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "bytes and str do not mix in Python" in error.message, error.format()
+    assert error.line == _line_of(path, "return payload")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'c = Color.RED\nok = c == "red"',
+        "m = Mode.A\nok = m == 1",
+        "m = Mode.A\nok = m in (1, 2)",
+        "ok = Color.RED == Mode.A",
+    ],
+    ids=["str", "int", "container", "other-enum"],
+)
+def test_an_enum_compared_with_its_raw_value_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _mix_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "an Enum member never equals its raw value" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_bytes_str_and_enum_look_alikes_compile(tmp_path: Path) -> None:
+    # bytes with bytes, str with str, .encode() used as bytes, a member with
+    # a member or its .value, an IntEnum with an int and a (str, Enum) with a
+    # str (both overlap their raw value in Python as well).
+    scenario, config, _ = _mix_case(
+        tmp_path,
+        """
+        raw = "ab".encode()
+        joined = raw + raw
+        both = "x" + "y"
+        same = raw == b"ab"
+        c = Color.RED
+        logger.info(
+            "%s %s %s %s %s %s %s %s",
+            len(joined), both, same, c == Color.RED, c.value == "red",
+            Level.LOW == 1, Phase.GO == "go", label("a"),
+        )
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A string formatting Python fails on (#589)
+# ---------------------------------------------------------------------------
+
+_FORMAT_EXTRA = """
+
+
+def label(speed: float, name: str) -> str:
+    return LABEL
+"""
+
+
+@pytest.mark.parametrize(
+    "label",
+    ['"{:d} km/h".format(speed)', '"%d km/h" % name', '"%s at %s" % (name,)'],
+    ids=["format-spec", "percent-type", "percent-count"],
+)
+def test_a_string_formatting_python_fails_on_is_refused(
+    tmp_path: Path, label: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", label(3.5, "ego"))\n',
+        extra=_FORMAT_EXTRA.replace("LABEL", label),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "Python raises ValueError, TypeError" in error.message, error.format()
+    assert "(mypy: str-format)" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, label)
+
+
+def test_a_valid_string_formatting_compiles(tmp_path: Path) -> None:
+    # A float for "%d", an int for "{:.2f}", "{:05}" of a str (mypy's
+    # "numeric flags" message, which Python runs) and an f-string spec.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", label(3.5, "ego"))\n',
+        extra=_FORMAT_EXTRA.replace(
+            "LABEL",
+            '"%d km/h" % speed + " {:.2f} {:05}".format(int(speed), name)'
+            ' + f" {speed:.1f}"',
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# dict.pop and getattr with a default (#590)
+# ---------------------------------------------------------------------------
+
+_DEFAULTS_EXTRA = """
+
+
+class HasV:
+    v: float
+
+    def __init__(self) -> None:
+        self.v = 1.0
+
+
+class NoV:
+    pass
+
+
+def take(d: dict[str, float], names: dict[str, str]) -> float:
+    a = d.pop("a", 0.0)
+    b = d.pop("zz", None)
+    c = names.pop("k", "default")
+    return a + (b if b is not None else 1.0) + len(c)
+
+
+def read(a: HasV, b: NoV) -> float:
+    return getattr(a, "v", 0.0) + getattr(b, "v", 2.0) + READ
+"""
+
+
+def test_dict_pop_and_getattr_with_a_default_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s %s", take({"a": 1.0}, {"k": "v"}), read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", "0.0"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_getattr_with_a_name_built_at_run_time_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", 'getattr(a, "v" + "", 0.0)'),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "getattr() takes 2 arguments (3 given)" in error.message, error.format()
+    assert 'x.name if hasattr(x, "name") else default' in error.message
+    assert error.line == _line_of(path, '"v" + ""')
+
+
+def test_getattr_default_is_checked_where_the_attribute_exists(
+    tmp_path: Path,
+) -> None:
+    # Python evaluates the default even when the attribute exists, so a typo
+    # in it fails every call: the rewrite keeps it compiled (#590).
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", 'getattr(a, "v", float(a.vv))'),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute 'vv'" in error.message, error.format()
+    assert error.line == _line_of(path, "a.vv")
+
+
+# ---------------------------------------------------------------------------
+# Typing contracts broken: Final, ClassVar, override, read-only ABCs (#577)
+# ---------------------------------------------------------------------------
+
+_CONTRACT_EXTRA = """
+
+MAX_SPEED: Final = 30.0
+
+
+class Counter:
+    total: ClassVar[int] = 0
+    free: int = 0
+    LIMIT: Final = 5.0
+
+    def bump(self) -> None:
+        BUMP
+
+
+class Sub(CaseScenario):
+    SUB_BODY
+
+
+def total_of(items: Sequence[float], table: Mapping[str, int]) -> float:
+    ordered = sorted(items)
+    own = dict(table)
+    own["k"] = 1
+    return ordered[0] + own["k"]
+
+"""
+_CONTRACT_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom typing import ClassVar, Final, Mapping, Sequence\n",
+    1,
+)
+
+
+def _contract_case(
+    tmp_path: Path,
+    setup: str = "pass\n",
+    bump: str = "pass",
+    sub: str = "pass",
+    extra: str = "",
+) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path,
+        setup,
+        extra=_CONTRACT_EXTRA.replace("BUMP", bump).replace("SUB_BODY", sub) + extra,
+        header=_CONTRACT_HEADER,
+    )
+
+
+def test_final_classvar_override_and_mapping_idioms_compile(tmp_path: Path) -> None:
+    # Reading a Final, a ClassVar assigned through the class, a hook
+    # overridden with a compatible signature (an extra parameter with a
+    # default, a wider argument), and a copy of a Mapping that is mutated.
+    scenario, config, _ = _contract_case(
+        tmp_path,
+        """
+        Counter.total += 1
+        Counter().free += 1
+        logger.info("%s %s", MAX_SPEED, total_of([2.0, 1.0], {"a": 1}))
+        """,
+        bump="Counter.total += 1\n        self.free += 1",
+        sub=(
+            "def is_done(self, tolerance: float = 0.0) -> bool:\n"
+            "        return False\n\n"
+            "    @property\n"
+            "    def importance_sampling_weight(self) -> float:\n"
+            "        return 1.0"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "global MAX_SPEED\nMAX_SPEED = 40.0",
+        "speed: Final = 10.0\nspeed = 20.0",
+        "Counter.LIMIT = 1.0",
+        "Counter().LIMIT += 1.0",
+    ],
+    ids=["module", "local", "attribute-of-class", "attribute-augmented"],
+)
+def test_a_final_assigned_again_is_refused(tmp_path: Path, statement: str) -> None:
+    scenario, config, path = _contract_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a name declared Final is bound once" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_a_final_assigned_through_self_is_refused(tmp_path: Path) -> None:
+    scenario, config, path = _contract_case(tmp_path, bump="self.LIMIT = 40.0")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a name declared Final is bound once" in error.message, error.format()
+    assert error.line == _line_of(path, "self.LIMIT = 40.0")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["Counter().total = 5", "c = Counter()\nc.total += 1"],
+    ids=["assign", "augmented"],
+)
+def test_a_classvar_assigned_through_an_instance_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a ClassVar is shared by the class" in error.message, error.format()
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+@pytest.mark.parametrize(
+    "sub",
+    [
+        "def is_done(self, strict: bool) -> bool:\n        return strict",
+        "def is_done(self) -> str:\n        return ''",
+        "def setup(self, mode: str) -> None:\n        pass",
+    ],
+    ids=["required-parameter", "return-type", "setup-parameter"],
+)
+def test_a_framework_hook_overridden_incompatibly_is_refused(
+    tmp_path: Path, sub: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, sub=sub)
+    result = typecheck_scenario(scenario, config)
+    errors = [d for d in result.diagnostics if "the override must accept" in d.message]
+    assert len(errors) == 1, result.format()
+    assert "# type: ignore[override]" in errors[0].message
+    assert errors[0].path == str(path)
+    assert errors[0].line == _line_of(path, sub.splitlines()[0])
+
+
+def test_an_override_with_type_ignore_compiles(tmp_path: Path) -> None:
+    scenario, config, _ = _contract_case(
+        tmp_path,
+        sub=(
+            "def is_done(self, strict: bool) -> bool:  # type: ignore[override]\n"
+            "        return strict"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "def f(m: Mapping[str, int]) -> None:\n    m['k'] = 1",
+        "def f(s: Sequence[int]) -> None:\n    s.append(3)",
+        "def f(s: Sequence[float]) -> None:\n    s.sort()",
+        "def f(m: Mapping[str, int]) -> None:\n    m.update({'a': 2})",
+    ],
+    ids=["index", "append", "sort", "update"],
+)
+def test_mutating_a_mapping_or_sequence_parameter_is_refused(
+    tmp_path: Path, extra: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, extra="\n\n" + extra + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "is read-only by its annotation" in error.message, error.format()
+    assert error.line == _line_of(path, extra.splitlines()[-1].strip())
+
+
+# ---------------------------------------------------------------------------
+# An isinstance branch the check does not compile warns (#565)
+# ---------------------------------------------------------------------------
+
+
+_DEAD_HELPER = """
+    def helper(self, r: float) -> None:
+        if isinstance(r, int):
+            q: int = 1
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra"),
+    [
+        ('x = 5\nif isinstance(x, str):\n    q: int = "wrong"\n', ""),
+        ("pass\n", _DEAD_HELPER),
+    ],
+)
+def test_a_statically_false_isinstance_warns_that_its_branch_is_not_checked(
+    tmp_path: Path, setup: str, extra: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup, extra=extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    warning = next(w for w in result.warnings if "isinstance(" in w.message)
+    assert warning.severity == "warning"
+    assert "not checked by the static check" in warning.message
+    assert warning.line == _line_of(path, "if isinstance(")
+
+
+def test_a_valid_isinstance_does_not_warn(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "n = 5\nif isinstance(n, int):\n    q: int = n\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not [w for w in result.warnings if "isinstance(" in w.message]
+
+
+# ---------------------------------------------------------------------------
+# A local typed by its first assignment: an int literal, None (#583, #584)
+# ---------------------------------------------------------------------------
+
+
+_INT_ACCUMULATOR = """
+
+
+def mean_speed(speeds: list[float]) -> float:
+    total = {start}
+    for v in speeds:
+        total += v
+    return total / max(len(speeds), 1)
+"""
+
+
+@pytest.mark.parametrize(("start", "ok"), [("0", False), ("0.0", True)])
+def test_a_float_stored_in_a_local_first_bound_to_an_int_literal_names_it(
+    tmp_path: Path, start: str, ok: bool
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, "pass\n", extra=_INT_ACCUMULATOR.format(start=start)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok == ok, result.format()
+    if ok:
+        return
+    error = _only_error(result)
+    assert error.line == _line_of(path, "total += v")
+    first = _line_of(path, "total = 0")
+    assert f"`total = 0` on line {first}" in error.message, error.format()
+    assert "`total = 0.0`" in error.message
+
+
+def test_an_int_literal_branch_of_a_conditional_expression_is_named(
+    tmp_path: Path,
+) -> None:
+    extra = (
+        "\n\ndef floor_speed(v: float | None) -> float:\n"
+        "    s = v if v is not None else 0\n"
+        "    return s * 2.0\n"
+    )
+    scenario, config, path = _write_case(tmp_path, "pass\n", extra=extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "s = v if")
+    assert "Optional[int]" in error.message
+    assert "int literal branch `0`" in error.message, error.format()
+    assert "`0.0`" in error.message
+
+
+_RUNNING_MIN = """
+
+
+def seen_low(xs: list[float]) -> {result}:
+    best{annotation} = None
+    for x in xs:
+        if best is None or x < best:
+            best = x
+{tail}"""
+
+
+@pytest.mark.parametrize(
+    ("annotation", "result", "tail"),
+    [
+        ("", "bool", "    return best is not None\n"),
+        ("", "None", ""),
+        (": float | None", "bool", "    return best is not None\n"),
+    ],
+    ids=["crash", "optional-nonetype", "annotated"],
+)
+def test_a_local_first_bound_to_none_and_rebound_names_its_annotation(
+    tmp_path: Path, annotation: str, result: str, tail: str
+) -> None:
+    extra = _RUNNING_MIN.format(annotation=annotation, result=result, tail=tail)
+    scenario, config, path = _write_case(tmp_path, "pass\n", extra=extra)
+    checked = typecheck_scenario(scenario, config)
+    if annotation:
+        assert checked.ok, checked.format()
+        return
+    assert not checked.ok, checked.format()
+    hinted = [
+        d
+        for d in checked.diagnostics
+        if "annotate it: `best: float | None = None`" in d.message
+    ]
+    assert hinted, checked.format()
+    first = _line_of(path, "best = None")
+    assert f"`best = None` on line {first}" in hinted[0].message
+    if checked.crashed:
+        # Codon 0.19 segfaults: the crash is kept, the cause is located.
+        assert "Codon failed without a diagnostic" in checked.diagnostics[0].message
+        assert hinted[0].line == first
+    else:
+        assert "Optional[NoneType]" in hinted[0].message
+        assert hinted[0].line == _line_of(path, "best = x")
+
+
+# ---------------------------------------------------------------------------
+# Identity == and hash of a plain class (#596)
+# ---------------------------------------------------------------------------
+
+_IDENTITY_CLASSES = """
+
+
+from abc import ABC
+from dataclasses import dataclass
+
+
+class Npc:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class Car(Npc):
+    def describe(self) -> str:
+        return self.name
+
+
+class Hashed:
+    def __hash__(self) -> int:
+        return 3
+
+
+@dataclass(eq=False)
+class Loose:
+    x: float
+
+
+class Root(ABC):
+    pass
+
+
+class Leaf(Root):
+    pass
+
+
+class Mine(BaseCondition):
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        return None
+
+
+class Keyed(BaseCondition):
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Keyed) and other.label == self.label
+
+    # Called by name, over the model's identity __eq__ it overrides.
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self.label)
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        return None
+
+
+@dataclass
+class Fielded(Loose):
+    y: float
+
+    # Over Loose's identity __eq__: the generated __ne__ calls it.
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Fielded) and other.y == self.y
+
+    def __hash__(self) -> int:
+        return hash(self.y)
+
+
+KNOWN = {Npc("known")}
+"""
+
+
+def test_a_plain_class_compares_and_hashes_by_identity(tmp_path: Path) -> None:
+    setup = """
+        a = Npc("a")
+        c = Car("c")
+        npcs: list[Npc] = [a, c]
+        if a in npcs:
+            npcs.remove(a)
+        gaps: dict[Npc, float] = {}
+        gaps[c] = 1.0
+        seen: set[Npc] = set()
+        seen.add(a)
+        index = {a: 1, c: 2}
+        r = Root()
+        logger.info(
+            "%s %s %d %d %d %d %d %d %d",
+            a == c, a != c, npcs.index(c), len(gaps), len(seen), index[c],
+            len({Hashed()}), len({Loose(1.0)}) + int(Loose(1.0) == Loose(1.0)),
+            len(KNOWN) + len({r, Leaf()}),
+        )
+        t = TimeoutCondition(1.0, label="a")
+        turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
+        conds = {t, TimeoutCondition(2.0, label="b")}
+        by_cond = {t: "a"}
+        mine = Mine("m")
+        listed = [mine, t]
+        logger.info(
+            "%d %s %s %d %s %d %d",
+            len(conds), by_cond[t], mine in listed, len({turn}), turn == turn,
+            len({Keyed("k"), Keyed("k")}), len({mine: 1}),
+        )
+        f = Fielded(1.0, 2.0)
+        logger.info(
+            "%s %s %s", Keyed("k") != Keyed("j"), Keyed("k").__eq__(t), f != f
+        )
+        if self.ego_entity is not None:
+            logger.info("%d", len({self.ego_entity}))
+    """
+    scenario, config, _ = _write_case(
+        tmp_path, _TIMEOUT_SETUP + textwrap.dedent(setup), _IDENTITY_CLASSES
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("extra", "use", "hint"),
+    [
+        (
+            # Python sets __hash__ = None on a class defining __eq__ alone.
+            "\n\nclass Pt:\n    x: int\n\n    def __init__(self, x: int) -> None:\n"
+            "        self.x = x\n\n    def __eq__(self, other: object) -> bool:\n"
+            "        return isinstance(other, Pt) and other.x == self.x\n",
+            "seen = {Pt(1), Pt(1)}",
+            "Pt defines __eq__ and not __hash__, so Python makes it unhashable",
+        ),
+        (
+            # A plain @dataclass: eq=True and not frozen, unhashable too.
+            "\n\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass Goal:\n"
+            "    x: float\n",
+            "seen = {Goal(1.0)}",
+            "the check generates hash() for a @dataclass(frozen=True)",
+        ),
+    ],
+    ids=["eq-only", "dataclass"],
+)
+def test_a_class_python_cannot_hash_is_refused_as_a_key_with_a_hint(
+    tmp_path: Path, extra: str, use: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + use + '\nlogger.info("%d", len(seen))\n', extra
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute '__hash__'" in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, use), error.format()
+
+
+# ---------------------------------------------------------------------------
+# re.Match.group() is a str (#597)
+# ---------------------------------------------------------------------------
+
+
+def test_a_regex_group_is_a_str_and_a_narrowed_branch_unifies_with_none(
+    tmp_path: Path,
+) -> None:
+    setup = r"""
+        m = re.match(r"npc(\d+)", cfg.name)
+        a = m.group(1) if m else ""
+        b = m.group(1) if m is not None else ""
+        c = "" if m is None else m.group(1)
+        d = m[1] if m else ""
+        e: str = m.group() if m else ""
+        f = m.group(1).upper() if m else ""
+        named = re.fullmatch(r"(?P<word>\w+)-(\d+)?", cfg.name)
+        g = ""
+        if named:
+            first, second = named.groups()
+            h: str = named.groupdict()["word"]
+            g = first + second + h + named.group("word") + named["word"]
+            whole, word = named.group(0, 1)
+            g += whole + word
+        parts = re.split(r"(-)", cfg.name)
+        logger.info(
+            "%s %s %s %s %s %s %s %d %s %s",
+            a, b, c, d, e, f, g, len(parts), group_or_none(cfg.name),
+            name_or_none(None),
+        )
+    """
+    extra = r"""
+
+
+class Named:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def group_or_none(text: str) -> str | None:
+    m = re.search(r"(\d+)", text)
+    return m.group(1) if m else None
+
+
+def name_or_none(n: Named | None) -> str | None:
+    return n.name if n is not None else None
+"""
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        extra,
+        header=_stdlib_header("import re\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# What Python raises for, decided from the syntax (#602, #603)
+# ---------------------------------------------------------------------------
+
+_LITERAL_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig\n",
+    "from autoware_carla_scenario import (\n"
+    "    MetricCondition,\n"
+    "    RouteCrossingPose,\n"
+    "    RouteRoadsidePose,\n"
+    ")\n\nfrom .configs import CaseConfig\n",
+    1,
+)
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            'MetricCondition("no_such_metric", label="m")',
+            "MetricCondition: 'no_such_metric' is not a metric; known: ",
+        ),
+        (
+            'ElapsedTimeCondition(1.0, label="")',
+            "ElapsedTimeCondition: label must not be empty",
+        ),
+        (
+            'RouteCrossingPose(approach="Left")',
+            "RouteCrossingPose.approach must be one of ['left', 'right', "
+            "'opposite'], got 'Left'",
+        ),
+        (
+            'RouteRoadsidePose(side="kerb")',
+            "RouteRoadsidePose.side must be one of ['left', 'right'], got 'kerb'",
+        ),
+    ],
+)
+def test_a_literal_argument_the_framework_refuses_is_refused_at_the_call(
+    tmp_path: Path, call: str, message: str
+) -> None:
+    setup = _TIMEOUT_SETUP + f"logger.info('%s', {call})\n"
+    scenario, config, path = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "raises ValueError when the scenario runs" in error.message
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, call)
+    line = path.read_text().splitlines()[error.line - 1]
+    assert line[error.column - 1 :].startswith(call)
+
+
+def test_literal_arguments_the_framework_accepts_pass(tmp_path: Path) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        self.register_fail_condition(MetricCondition("offroad", label="m"))
+        traj = Trajectory(
+            "t",
+            [
+                TrajectoryVertex(RouteCrossingPose(approach="left", distance=5.0)),
+                TrajectoryVertex(RouteRoadsidePose(ds=3.0, side="right")),
+            ],
+        )
+        self.register_pre_tick(FollowTrajectoryAction("npc", traj))
+        """
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("test", "generic"),
+    [
+        ("isinstance(v, list[int])", "list[int]"),
+        ("isinstance(v, (str, dict[str, int]))", "dict[str, int]"),
+        ("issubclass(type(v), dict[str, int])", "dict[str, int]"),
+    ],
+)
+def test_isinstance_with_a_subscripted_generic_is_refused_at_the_call(
+    tmp_path: Path, test: str, generic: str
+) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        f"""
+        v: object = cfg.goal_lanelet_ids
+        if {test}:
+            logger.info("list")
+        """
+    )
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert f"cannot take the subscripted generic `{generic}`" in error.message
+    assert "Python raises TypeError" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, test)
+
+
+def test_isinstance_with_a_union_of_classes_passes(tmp_path: Path) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        n = cfg.timeout_seconds
+        if isinstance(n, int | float) and isinstance(n, (int, float)):
+            logger.info("%f", n)
+        """
+    )
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_decorator_is_refused_with_a_hint(tmp_path: Path) -> None:
+    extra = """
+
+
+class Base:
+    def speed(self) -> float:
+        return 0.0
+
+
+def register(cls):
+    return cls
+
+
+@register
+class Fast(Base):
+    def speed(self) -> float:
+        return 10.0
+"""
+    setup = _TIMEOUT_SETUP + 'logger.info("%f", Fast().speed())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith("unsupported class decorator: "), error.format()
+    assert "choose the class with an if/elif chain" in error.message
+    assert error.line == _line_of(path, "@register")
+
+
+def test_an_async_def_is_refused_with_a_hint(tmp_path: Path) -> None:
+    extra = """
+
+
+async def fetch() -> int:
+    return 1
+"""
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith("async not yet supported: "), error.format()
+    assert "make it a plain `def`" in error.message
+    assert error.line == _line_of(path, "async def fetch")
+
+
+@pytest.mark.parametrize(
+    ("members", "shown"),
+    [
+        (
+            "    def __len__(self) -> int:\n        return len(self.items)\n",
+            "'Bag[List[int]]'",
+        ),
+        ("", "'Bag[List[int]]'"),
+    ],
+)
+def test_the_truth_of_an_object_without_bool_is_refused_with_a_hint(
+    tmp_path: Path, members: str, shown: str
+) -> None:
+    extra = (
+        "\n\nclass Bag:\n"
+        "    def __init__(self) -> None:\n"
+        "        self.items: list[int] = []\n\n" + members
+    )
+    setup = _TIMEOUT_SETUP + 'b = Bag()\nif b:\n    logger.info("nonempty")\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith(
+        f"{shown} object has no attribute '__bool__': "
+    ), error.format()
+    assert "`x is not None`" in error.message
+    assert "`len(x) > 0`" in error.message
+    assert error.line == _line_of(path, "if b:")
+
+
+def test_a_conditional_expression_of_two_types_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        label = cfg.name if cfg.min_speed_kmh is None else 3
+        logger.info("%s", label)
+        """
+    )
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert "a conditional expression (`a if c else b`) has one type" in error.message
+    assert error.line == _line_of(path, "label = cfg.name if")
+
+
+# ---------------------------------------------------------------------------
+# Hints for common slips (#599)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "codon", "hint"),
+    [
+        (
+            "for i in range(len(cfg.goal_lanelet_ids) / 2):\n"
+            '    logger.info("%d", i)\n',
+            "for i in range(",
+            "range() cannot be called with (float)",
+            "range() takes ints, and `/` always gives a float",
+        ),
+        (
+            "ids = cfg.goal_lanelet_ids\n"
+            "mid = ids[len(ids) / 2]\n"
+            'logger.info("%d", mid)\n',
+            "mid = ids[",
+            "__getitem__() cannot be called with (float)",
+            "an index must be an int, and `/` always gives a float",
+        ),
+        (
+            'logger.info("ids: %s", ",".join(cfg.goal_lanelet_ids))\n',
+            '",".join(',
+            "'Generator[int]' does not match expected type 'Generator[str]'",
+            "`sep.join(map(str, values))`",
+        ),
+        (
+            "self.register_pre_tick(lambda: None)\n",
+            "register_pre_tick(",
+            "takes 0 arguments (1 given)",
+            "register_pre_tick() is called with the world (a carla.World): "
+            "take it as a parameter, `lambda world: ...`",
+        ),
+        (
+            'self.register_measure("flag", lambda w: True, unit="n")\n',
+            'register_measure("flag"',
+            "expected a float (or an int)",
+            "the read function (the second argument) of measure 'flag' returns "
+            "a bool, and a measure is a float (or an int), or None",
+        ),
+    ],
+    ids=["range-of-float", "float-index", "join-of-ints", "tick-arity", "measure-bool"],
+)
+def test_a_common_slip_is_refused_with_a_hint(
+    tmp_path: Path, setup: str, needle: str, codon: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert codon in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, needle), error.format()
+    # Only the hint that applies: not the one about lambda defaults (`k=k`).
+    assert "k=k" not in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# Enum values the check cannot type (#600)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("members", "why"),
+    [
+        (
+            '    LEFT = (-3.5, "left")\n'
+            '    RIGHT = (3.5, "right")\n\n'
+            "    def __init__(self, offset: float, label: str) -> None:\n"
+            "        self.offset = offset\n"
+            "        self.label = label\n",
+            "its member `LEFT` has a tuple value",
+        ),
+        (
+            '    LEFT = 1\n    RIGHT = "r"\n',
+            "its members' values are of different types (int, str)",
+        ),
+        (
+            "    LEFT = WIDTH\n    RIGHT = 2 * WIDTH\n",
+            "the value of its member `LEFT` is not an int",
+        ),
+    ],
+    ids=["tuple", "mixed", "not-literal"],
+)
+def test_an_enum_whose_value_type_cannot_be_told_is_refused_at_its_class(
+    tmp_path: Path, members: str, why: str
+) -> None:
+    extra = (
+        "\n\nfrom enum import Enum\n\nWIDTH = 3.5\n\n\nclass Lane(Enum):\n" + members
+    )
+    scenario, config, path = _write_case(
+        tmp_path, 'logger.info("%s", Lane.LEFT.name)\n', extra=extra
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert f"Enum Lane cannot be checked: {why}" in error.message, error.format()
+    assert "literals of one type" in error.message
+    assert error.line == _line_of(path, "class Lane(Enum):")
+
+
+def test_an_enum_with_negative_values_compiles(tmp_path: Path) -> None:
+    extra = (
+        "\n\nfrom enum import Enum\n\n\nclass Side(Enum):\n"
+        "    LEFT = -1\n    CENTER = 0\n    RIGHT = +1\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s %d %s", Side.LEFT.name, Side.LEFT.value, Side(-1))\n'
+        "assert [s.value for s in Side] == [-1, 0, 1]\n",
+        extra=extra,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# Builtin gaps (#601)
+# ---------------------------------------------------------------------------
+
+_BUILTIN_GAPS = """
+
+
+import itertools
+from typing import Optional
+
+
+class Base:
+    k: float
+
+    def __init__(self, k: float) -> None:
+        self.k = k
+
+
+class Derived(Base):
+    def __init__(self, k: float) -> None:
+        super(Derived, self).__init__(k)
+
+
+class Counted:
+    hits: list[int]
+
+    def __init__(self) -> None:
+        self.hits = [1, 2, 2]
+
+    def count(self, x: int) -> int:
+        return self.hits.count(x)
+
+
+def gaps(d: dict[str, int], e: dict[str, int], pair: tuple[int, str]) -> str:
+    xs = [1, 2, 3, 2]
+    i: int = xs.index(2, 2) + xs.index(2, 0, 2) + xs.index(3, -2) + xs.index(1)
+    t = (1, 2, 2)
+    n: int = t.count(2) + t.index(2) + t.index(2, 2) + (4, 5, 4).count(4)
+    m: int = pair.count(1) + pair.index("a") + "banana".count("a") + xs.count(2)
+    c: int = Counted().count(2) + next(itertools.count(5))
+    xs += (4, 5)
+    xs += [6]
+    xs += []
+    grown = []
+    grown += [1]
+    maybe: list[Optional[int]] = []
+    maybe += [1]
+    maybe += [None]
+    floats: list[float] = [1.0]
+    floats += [2, 3]
+    bases: list[Base] = []
+    bases += [Derived(1.0)]
+    common: set[str] = d.keys() & e.keys()
+    only: set[str] = d.keys() - {"a"}
+    either: set[str] = d.keys() | ["z"]
+    pairs: set[tuple[str, int]] = d.items() ^ e.items()
+    sub: bool = d.items() <= e.items()
+    same: bool = d.keys() == e.keys()
+    back: list[str] = list(reversed(d))
+    table = str.maketrans("lo", "01")
+    a = "hello".translate(table)
+    b = "hello".translate(str.maketrans("l", "L", "o"))
+    f = "hello".translate(str.maketrans({"h": "H"}))
+    return f"{i} {n} {m} {c} {xs} {common} {only} {either} {pairs} {sub} {same} {back} {a} {b} {f} {Derived(2.0).k} {grown} {len(maybe)} {floats} {len(bases)}"
+"""
+
+
+def test_the_builtin_gaps_of_601_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", gaps({"a": 1}, {"a": 2}, (1, "a")))\n',
+        extra=_BUILTIN_GAPS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_count_of_a_value_that_has_none_is_still_refused(tmp_path: Path) -> None:
+    # The `hasattr` branch keeps a tuple working; anything else without the
+    # method is still refused, at the author's line (#601).
+    scenario, config, path = _write_case(
+        tmp_path,
+        "v = 2.5\n" 'logger.info("%d", v.count(2))\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "count" in error.message, error.format()
+    assert error.line == _line_of(path, "v.count(2)"), error.format()
+
+
+def test_sys_version_info_is_refused_with_a_hint(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        "import sys\n" "if sys.version_info >= (3, 11):\n" '    logger.info("new")\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "cannot import name 'version_info' from 'sys'" in error.message
+    assert "sys.version_info (and sys.version, sys.hexversion) is not modelled" in (
+        error.message
+    ), error.format()
+    assert error.line == _line_of(path, "sys.version_info")
+
+
+_REWRITES_IN_FSTRINGS = """
+
+
+class Obj:
+    a: int = 1
+
+
+class Hits:
+    hits: tuple[int, int] | None = (1, 2)
+"""
+
+
+def test_rewrites_inside_fstrings_and_on_optional_tuples_compile(
+    tmp_path: Path,
+) -> None:
+    # A rewrite's string in a single-quoted f-string ended it ("unexpected
+    # dedent"), `dict(a=1)` became an escaped brace, and `count` / `index` of
+    # a tuple narrowed from an Optional was refused (#609).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "o = Obj()\n"
+        "xs = [1, 2, 1]\n"
+        "t = (1, 2)\n"
+        'name = "lane_a_b"\n'
+        "logger.info(f'{xs.count(1)} {name.count(\"_\")} {xs.index(2)} {t.count(1)}')\n"
+        'logger.info(f\'{getattr(o, "a", 1)} {name.startswith(("a", "b"))}\')\n'
+        'logger.info(f"{dict(a=1)} {dict(b=2)!r}")\n'
+        "tup: tuple[int, int] | None = (1, 1) if cfg.name else None\n"
+        "c = tup.count(1) if tup is not None else 0\n"
+        "i = tup.index(1) if tup is not None else 0\n"
+        "h = Hits()\n"
+        "n = h.hits.count(1) if h.hits is not None else 0\n"
+        'logger.info("%d %d %d", c, i, n)\n',
+        extra=_REWRITES_IN_FSTRINGS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_OPTIONAL_OWN_COUNT = """
+
+
+class Tally:
+    hits: dict[str, float]
+
+    def __init__(self) -> None:
+        self.hits = {}
+
+    def count(self, kind: str) -> float:
+        return self.hits.get(kind, 0.0)
+
+
+class Route:
+    def index(self, name: str) -> str:
+        return name.upper()
+
+
+class Holder:
+    route: Route | None
+    tally: Tally | None
+    pair: tuple[int, int] | None
+
+    def __init__(self, on: bool) -> None:
+        self.route = Route() if on else None
+        self.tally = Tally() if on else None
+        self.pair = (1, 2) if on else None
+
+    def label(self) -> str:
+        if self.route is not None and self.tally is not None:
+            return self.route.index("a") + "!" + str(self.tally.count("npc") / 2.0)
+        return ""
+
+    def positions(self) -> int:
+        if self.pair is not None:
+            n: int = self.pair.count(1) + self.pair.index(2) + self.pair.index(2, 1)
+            return n
+        return 0
+"""
+
+
+def test_count_and_index_of_an_optional_class_of_yours_keep_their_types(
+    tmp_path: Path,
+) -> None:
+    # Unwrapping an Optional, the model's `_acs_count` / `_acs_index` call
+    # the class's own method: declared `-> int`, they refused a count() of a
+    # float and an index() of a str (#620). An Optional tuple's still type
+    # as int.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "h = Holder(cfg.timeout_seconds > 1.0)\n"
+        'logger.info("%s %d", h.label(), h.positions())\n',
+        extra=_OPTIONAL_OWN_COUNT,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_mixin_attribute_its_subclass_framework_base_assigns_compiles(
+    tmp_path: Path,
+) -> None:
+    # BaseScenario.__init__ assigns ego_config on the mixin's subclass, so
+    # the declared attribute is assigned (#620).
+    header = _HEADER.replace(
+        "class CaseScenario(BaseScenario):",
+        "class VehicleInfoMixin:\n"
+        "    ego_config: EgoConfig\n\n"
+        "    def vehicle_label(self) -> str:\n"
+        '        return "ego:" + self.ego_config.vehicle_type\n\n\n'
+        "class CaseScenario(BaseScenario, VehicleInfoMixin):",
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", self.vehicle_label())\n',
+        header=header,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_crash_of_the_tuple_helpers_is_compiled_again_for_a_diagnostic(
+    tmp_path: Path,
+) -> None:
+    # Codon crashed (exit -11) instantiating `_acs_index` with the type the
+    # list display's error left; compiled again without the rewrite, the
+    # display's error is reported (#609). The display is unannotated: an
+    # annotated one is written from its annotation and compiles (#611).
+    scenario, config, path = _write_case(
+        tmp_path,
+        "a = Npc()\n" "lst = [None, a]\n" 'logger.info("%d", lst.index(a))\n',
+        extra="\n\nclass Npc:\n    pass\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert not result.crashed, result.format()
+    assert "Optional[NoneType]" in error.message, error.format()
+    assert error.line == _line_of(path, "lst = [None, a]"), error.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "needle"),
+    [
+        ("o = Obj()\ns = f\"{o.a} {o.a + 'x'}\"\n", _REWRITES_IN_FSTRINGS, "s = f"),
+        ('n = 1\ns = "a" + f"{n + \'x\'}"\nt = 2\n', "", "s = "),
+        # On the last line of the file: Codon put it past its end.
+        (
+            'logger.info("%s", label(1))\n',
+            "\n\ndef label(n: int) -> str:\n    return f\"{n + 'x'}\"\n",
+            "return f",
+        ),
+        # Implicitly concatenated, on one line and on several (#616).
+        ('n = 1\ns = "a" f"b{n + \'x\'}"\nt = 2\n', "", "s = "),
+        (
+            'n = 1\ns = ("aaa"\n     "bb"\n     f"b{n} {n + \'x\'}")\nt = 2\n',
+            "",
+            "f\"b{n} {n + 'x'}\"",
+        ),
+        # An error of a decorator's f-string, which the check lowers (#616).
+        (
+            'logger.info("%d", helper(2))\n',
+            "\n\ndef tag(label: str):\n    def deco(f):\n        return f\n"
+            "    return deco\n\n\ndef helper(k: int) -> int:\n"
+            "    @tag(f\"lane-{k + 'x'}\")\n    def inner() -> int:\n"
+            "        return k\n    return inner()\n",
+            "@tag(f",
+        ),
+    ],
+)
+def test_an_error_in_an_fstring_field_is_reported_at_its_line(
+    tmp_path: Path, setup: str, extra: str, needle: str
+) -> None:
+    # Codon reports it on the next line, at no column of it (#610).
+    scenario, config, path = _write_case(tmp_path, setup, extra=extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand" in error.message, error.format()
+    assert (error.path, error.line, error.column) == (
+        str(path),
+        _line_of(path, needle),
+        None,
+    ), error.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ("n = 1\ns = f\"{n}\"\nt = n + 'x'\n", "t = n + 'x'"),
+        # Codon locates a comprehension's error from its `for`, which no node
+        # of Python's tree starts at: the f-string's field of the same width
+        # did not take it (#610).
+        (
+            'abcd = 1\nnnnn = 5\ns = f"{abcd + 123456}"\n'
+            'x = [str(c) + "-suffix-" for c in nnnn]\n',
+            "x = [str(c)",
+        ),
+    ],
+)
+def test_an_error_after_an_fstring_stays_on_its_line(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, needle), error.format()
+    assert error.column is not None, error.format()
+
+
+def test_a_crash_with_another_cause_is_not_hidden_by_the_rerun(
+    tmp_path: Path,
+) -> None:
+    # Compiled again without the count / index rewrite, a valid
+    # `t.count(1)` of a tuple is refused: that is no diagnostic of the crash
+    # (a local first bound to None, #584), which stays reported (#609).
+    scenario, config, path = _write_case(
+        tmp_path,
+        't = (1, 2)\nlogger.info("%d", t.count(1))\n',
+        extra=_RUNNING_MIN.format(
+            annotation="", result="bool", tail="    return best is not None\n"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.crashed, result.format()
+    assert not [d for d in result.diagnostics if "count" in d.message], result.format()
+    assert any(
+        "annotate it: `best: float | None = None`" in d.message
+        for d in result.diagnostics
+    ), result.format()
+
+
+_ANNOTATED_DISPLAYS = """
+
+
+class Npc:
+    pass
+
+
+class Bag:
+    items: list[int] = []
+    tags: dict[str, int] = {}
+    seen: set[str] = set()
+
+    def add(self, v: int) -> None:
+        self.items.append(v)
+        self.tags[str(v)] = v
+        self.seen.add(str(v))
+
+
+class Node:
+    # Its own class is not defined in its body: left `[]` (Codon crashes on
+    # `List[Node]()` there), and the `__init__` rebinds it.
+    children: list[Node] = []
+
+    def __init__(self) -> None:
+        self.children = []
+
+
+def displays(a: Npc) -> str:
+    lst: list[Npc | None] = [None, a]
+    d: dict[str, Npc | None] = {"x": None, "y": a}
+    e: list[int] = []
+    e.append(1)
+    return f"{lst.index(a)} {len(d)} {e}"
+"""
+
+
+def test_annotated_empty_and_none_first_displays_compile(tmp_path: Path) -> None:
+    # #611: an empty display, or one whose first element is None, is typed
+    # from the annotation of its target, also as a class-level default of a
+    # class with no __init__ (which Codon's constructor takes).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "b = Bag()\n"
+        "b.add(1)\n"
+        "n = Node()\n"
+        "n.children.append(Node())\n"
+        'logger.info("%d %d %s", len(b.items), len(n.children), displays(Npc()))\n',
+        extra=_ANNOTATED_DISPLAYS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_unannotated_empty_class_attribute_gets_a_hint(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'Registry.items.append("x")\nlogger.info("%d", len(Registry.items))\n',
+        extra="\n\nclass Registry:\n    items = []\n",
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "expected type 'NoneType'" in error.message, error.format()
+    assert "`items: list[str] = []`" in error.message, error.format()
+    assert error.line == _line_of(path, 'Registry.items.append("x")')
+
+
+def test_the_builtin_idioms_of_613_compile(tmp_path: Path) -> None:
+    # dict(base, a=1) is `(dict(base) | {"a": 1})`, filter(None, xs) a
+    # generator of the truthy items.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'base = {"x": 1}\n'
+        "merged = dict(base, a=1, b=2)\n"
+        "xs = [0, 1, 2]\n"
+        "nz = list(filter(None, xs))\n"
+        'logger.info("%d %s", merged["a"], nz)\n'
+        'logger.info(f"{dict(base, c=3)}")\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_deriving_from_a_builtin_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'r = Registry()\nr["a"] = 1\nlogger.info("%d", len(r))\n',
+        extra="\n\nclass Registry(dict[str, int]):\n    pass\n",
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "derives from the builtin `dict[str, int]`" in error.message
+    assert "`items: dict[K, V]`" in error.message
+    assert error.line == _line_of(path, "class Registry(")
+
+
+_LANES = """
+
+
+@dataclass(frozen=True)
+class Plan:
+    lanes: tuple[int, ...] = ()
+
+    def wider(self) -> Plan:
+        return replace(self, lanes=(1, 1, 1, 1))
+"""
+
+
+def test_a_tuple_display_for_a_variable_length_field_compiles(
+    tmp_path: Path,
+) -> None:
+    # #614: a `tuple[X, ...]` field is checked as a `List[X]`; a tuple display
+    # given to it, by the constructor or `replace()` of a told class, is one.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "p = Plan(lanes=(1, 2, 1))\n"
+        "q = replace(Plan(), lanes=(1, 2))\n"
+        'logger.info("%d %d %d", len(p.lanes), len(q.lanes), len(p.wider().lanes))\n',
+        extra=_LANES,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_tuple_display_replace_it_cannot_type_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    # The object's class is not told: refused with a hint, at the `replace`
+    # call rather than at the class line of the method it is lowered to.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "p = Plan()\n"
+        "q = replace(p, lanes=(1, 2, 1))\n"
+        'logger.info("%d", len(q.lanes))\n',
+        extra=_LANES,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'Tuple[int,int,int]' does not match expected type 'List[int]'" in (
+        error.message
+    ), error.format()
+    assert "`tuple([1, 2, 1])`" in error.message
+    assert error.line == _line_of(path, "q = replace(p, lanes=")
+
+
+# ---------------------------------------------------------------------------
+# replace() of a class of another module, of a nested dataclass (#623)
+# ---------------------------------------------------------------------------
+
+_LANES_CONFIG = """
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Lanes:
+    ids: tuple[int, ...] = (460, 265)
+
+
+@dataclass
+class CaseConfig:
+    name: str = "case"
+    goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
+    timeout_seconds: float = 10.0
+    min_speed_kmh: float | None = None
+    lanes: Lanes = field(default_factory=Lanes)
+"""
+
+
+def test_a_wrong_replace_of_a_class_of_another_module_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    # The method `replace` is lowered to is in configs.py, the call in
+    # scenario.py: the error is at the call, not at the class.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "lanes = replace(cfg.lanes, ids=(1, 2, 3))\n"
+        'logger.info("%d", len(lanes.ids))\n',
+        config=_LANES_CONFIG,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'Tuple[int,int,int]' does not match expected type 'List[int]'" in (
+        error.message
+    ), error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, "lanes = replace(cfg.lanes")
+
+
+_NESTED_DATACLASSES = """
+
+
+class Plans:
+    @dataclass(frozen=True)
+    class Leg:
+        lanelet: int = 0
+        speed: float = 1.0
+
+    def faster(self, leg: Plans.Leg) -> Plans.Leg:
+        return replace(leg, speed=leg.speed * 2)
+
+
+def segments() -> int:
+    @dataclass(frozen=True)
+    class Seg:
+        a: int = 0
+
+        @dataclass(order=True)
+        class Part:
+            b: int = 0
+
+    kept = {replace(Seg(1), a=2), Seg(2)}
+    lower = Seg.Part(1) < replace(Seg.Part(1), b=3)
+    return len(kept) + replace(Seg(1), a=2).a + int(lower)
+"""
+
+
+def test_replace_and_hash_of_a_nested_dataclass_compile(tmp_path: Path) -> None:
+    # A dataclass in a class or in a function gets its `replace` methods and
+    # its ==, hash and ordering in its body, as `@extend` cannot name it.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "leg = Plans().faster(Plans.Leg(3, 2.0))\n"
+        "legs = {leg, Plans.Leg(3, 4.0)}\n"
+        'logger.info("%f %d %d", leg.speed, len(legs), segments())\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_wrong_replace_of_a_nested_dataclass_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'leg = replace(Plans.Leg(), speed="fast")\n' 'logger.info("%f", leg.speed)\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'float'" in error.message, error.format()
+    assert error.line == _line_of(path, "leg = replace(Plans.Leg()")
+
+
+# ---------------------------------------------------------------------------
+# Python 3.12+ syntax (#624): kept in strings, as the suite runs on 3.10
+# ---------------------------------------------------------------------------
+
+_PY312 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 695, PEP 701)"
+)
+
+_PY312_DEFINITIONS = """
+
+
+type LaneIds = list[int]
+
+
+def total(ids: LaneIds) -> int:
+    return sum(ids)
+
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+
+class Base:
+    def v(self) -> int:
+        return 1
+
+
+def pick[B: Base](a: B, b: B) -> B:
+    return a if a.v() >= b.v() else b
+
+
+class Box[T]:
+    item: T
+
+    def __init__(self, item: T) -> None:
+        self.item = item
+
+    def get(self) -> T:
+        return self.item
+
+
+@dataclass(frozen=True)
+class Pair[K, V]:
+    k: K
+    v: V
+"""
+
+
+@_PY312
+def test_python_3_12_syntax_compiles(tmp_path: Path) -> None:
+    # Same-quote f-string fields are requoted, `type X = T` is an alias, and
+    # type parameters are Codon's generics; a generic function or class is
+    # compiled where it is used, with a warning each.
+    scenario, config, path = _write_case(
+        tmp_path,
+        'd = {"k": 1}\n'
+        'p = replace(Pair(1, "a"), v="b")\n'
+        'logger.info(f"{cfg.name.replace("_", "-")} {d["k"]} '
+        '{total(cfg.goal_lanelet_ids)} {first(cfg.goal_lanelet_ids)}")\n'
+        'logger.info(f"{pick(Base(), Base()).v()} {Box(1).get()} {Box("x").get()} '
+        '{p.v} {hash(p) == hash(Pair(1, "b"))}")\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    lines = {w.line for w in result.warnings}
+    assert lines == {
+        _line_of(path, "def first["),
+        _line_of(path, "def pick["),
+        _line_of(path, "class Box["),
+        _line_of(path, "class Pair["),
+    }, result.format()
+
+
+@_PY312
+def test_a_generic_class_is_checked_where_it_is_used(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'n = Box("a").get() + 1\nlogger.info("%d", n)\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand type(s) for +: 'str'" in error.message, error.format()
+    assert error.line == _line_of(path, 'n = Box("a")')
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("code", "needle", "hint"),
+    [
+        (
+            'd = {"it\'s": 1}\nlogger.info(f"{d["it\'s"]}")\n',
+            "logger.info(f",
+            "cannot quote it with the other quote",
+        ),
+        (
+            'd = {"a\\n": 1}\nlogger.info(f"{d["a\\n"]}")\n',
+            "logger.info(f",
+            "holds a backslash",
+        ),
+        (
+            'x: Pair2[int] = (1, 2)\nlogger.info("%d", x[0])\n',
+            "type Pair2[",
+            "no generic alias",
+        ),
+    ],
+)
+def test_python_3_12_syntax_codon_cannot_parse_is_refused_at_its_line(
+    tmp_path: Path, code: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        code,
+        extra="\n\ntype Pair2[T] = tuple[T, T]\n",
+        header=_FROZEN_HEADER,
+    )
+    errors = typecheck_scenario(scenario, config).diagnostics
+    found = [e for e in errors if hint in e.message]
+    assert found, "\n".join(e.format() for e in errors)
+    assert found[0].line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
+# A conditional expression narrowing an attribute chain (#621)
+# ---------------------------------------------------------------------------
+
+_NARROWED_NPC = r"""
+
+
+class Npc:
+    speed: float
+    name: str
+
+    def __init__(self, speed: float, name: str) -> None:
+        self.speed = speed
+        self.name = name
+
+    def label(self) -> str:
+        return self.name.upper()
+
+
+class Holder:
+    npc: Optional[Npc]
+
+    def __init__(self) -> None:
+        self.npc = None
+
+
+def npc_name(npc: Optional[Npc]) -> str | None:
+    return npc.name if npc is not None else None
+
+
+def npc_label(h: Holder) -> Optional[str]:
+    return None if h.npc is None else h.npc.label()
+
+
+def lane_number(name: str) -> str | None:
+    m = re.match(r"lane_(\d+)", name)
+    return m.group(1) if m else None
+
+
+def describe(h: Holder) -> str:
+    speed = h.npc.speed if h.npc is not None else None
+    rounded = round(speed) if speed is not None else None
+    doubled = 0.0
+    if speed is not None:
+        doubled = speed * 2.0 + 1.0
+    text = f"{speed:.1f}" if speed is not None else "n/a"
+    shown = str(speed) if speed is not None else "n/a"
+    count = rounded + 1 if rounded is not None else 0
+    label = h.npc.label() if h.npc else None
+    upper = label.upper() if label is not None else "?"
+    return text + shown + upper + str(doubled) + str(count)
+
+
+def npc_speed(npc: Optional[Npc]) -> str | None:
+    return npc.speed if npc is not None else None
+"""
+
+
+def test_a_narrowed_attribute_chain_is_an_optional_of_its_type(
+    tmp_path: Path,
+) -> None:
+    # The value of `npc.speed if npc is not None else None` was an unresolved
+    # `Optional[T]`: `str()` of it, a format spec or a `round()` of it were
+    # refused, or crashed Codon (exit -11).  Only `npc_speed()`, which returns
+    # the float as a str, is wrong.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "h = Holder()\n"
+        'h.npc = Npc(3.0, "a")\n'
+        'logger.info("%s", describe(h))\n'
+        "name = npc_name(h.npc)\n"
+        'logger.info("%s", name.upper() if name is not None else "-")\n'
+        'logger.info("%s", npc_label(h))\n'
+        'number = lane_number("lane_7")\n'
+        'logger.info("%s", f"{number}" if number else "?")\n'
+        'logger.info("%s", npc_speed(h.npc))\n',
+        _NARROWED_NPC,
+        header=_stdlib_header("import re\nfrom typing import Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert (
+        "npc_speed() returns float | None, but the function is declared -> str | None"
+        in error.message
+    ), error.format()
+    assert error.line == _line_of(path, "return npc.speed if npc is not None")
+
+
+def test_a_narrowed_branch_is_compiled_only_where_its_value_can_be_something(
+    tmp_path: Path,
+) -> None:
+    # The branch of a conditional expression narrowed at module level, in a
+    # comprehension, or of a parameter that is always None (never compiled,
+    # as Codon compiles neither branch of a test it decides); a wrong one is
+    # reported at its line.
+    extra = r"""
+
+
+class Npc:
+    speed: float
+
+    def __init__(self, speed: float) -> None:
+        self.speed = speed
+
+
+DEFAULT: Optional[Npc] = Npc(1.0)
+DEFAULT_SPEED = DEFAULT.speed if DEFAULT is not None else None
+
+
+class Ref:
+    name: Optional[str]
+
+    def __init__(self, name=None) -> None:
+        self.name = str(name) if name is not None else None
+
+
+def table(env=None):
+    return None if env is None else dict(env)
+
+
+def speeds(npcs: list[Optional[Npc]]) -> list[Optional[float]]:
+    return [n.speed if n else None for n in npcs]
+
+
+def broken(npc: Optional[Npc]) -> Optional[float]:
+    return npc.nope if npc is not None else None
+"""
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s %s %s", DEFAULT_SPEED, Ref().name, speeds([Npc(1.0), None]))\n'
+        'logger.info("%s %s", table(), broken(None))\n',
+        extra,
+        header=_stdlib_header("from typing import Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert "'Npc' object has no attribute 'nope'" in error.message, error.format()
+    assert error.line == _line_of(path, "return npc.nope if")
+    assert not any(".codon" in frame for frame in error.trace), error.format()
+
+
+# ---------------------------------------------------------------------------
+# A positional argument for a keyword-only parameter (#622)
+# ---------------------------------------------------------------------------
+
+_KEYWORD_ONLY = r"""
+
+
+def gap(a: float, *, scale: float = 1.0) -> float:
+    return a * scale
+
+
+def total(*args: float, k: float = 0.0) -> float:
+    return sum(args) + k
+
+
+class Box:
+    v: float
+
+    def __init__(self, v: float, *, w: float = 0.0) -> None:
+        self.v = v + w
+
+    def m(self, a: float, *, s: float = 1.0, t: float = 2.0) -> float:
+        return a * s * t
+"""
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            "gap(1.0, 2.0)",
+            "gap() takes 1 positional argument but more were given: scale is "
+            "keyword-only (pass it by name: `scale=...`)",
+        ),
+        (
+            "b.m(1.0, 2.0)",
+            "Box.m() takes 2 positional arguments but more were given: s and t "
+            "are keyword-only (pass them by name: `s=...`)",
+        ),
+        (
+            "Box(1.0, 2.0).v",
+            "Box.__init__() takes 2 positional arguments but more were given: w "
+            "is keyword-only (pass it by name: `w=...`)",
+        ),
+    ],
+)
+def test_a_positional_argument_for_a_keyword_only_parameter_is_refused_at_the_call(
+    tmp_path: Path, call: str, message: str
+) -> None:
+    # The `*_acs_kw` Codon needs in place of the bare `*` took it silently;
+    # what passes keywords by name, `*args`, and `functools.partial` with a
+    # keyword-only argument still compile.
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", gap(1.0, scale=2.0))\n'
+        'logger.info("%s", total(1.0, 2.0, k=1.0))\n'
+        "p = functools.partial(gap, scale=3.0)\n"
+        'logger.info("%s", p(1.0))\n'
+        "b = Box(1.0, w=2.0)\n"
+        'logger.info("%s", b.m(1.0, s=2.0) + Box(v=1.0).v)\n'
+        f'logger.info("%s", {call})\n',
+        _KEYWORD_ONLY,
+        header=_stdlib_header("import functools\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert error.message == message, error.format()
+    assert error.line == _line_of(path, call)
