@@ -862,9 +862,12 @@ def _project_to_centerline(
 
     offsets = point - starts
     # Fraction of each segment at the foot of the perpendicular, clamped.
-    u = np.clip(np.einsum("ij,ij->i", offsets, deltas) / lengths**2, 0.0, 1.0)
-    feet = starts + u[:, None] * deltas
-    dists = np.einsum("ij,ij->i", point - feet, point - feet)
+    # (Row-wise dot products written out: Codon's numpy has no einsum.)
+    dot = offsets[:, 0] * deltas[:, 0] + offsets[:, 1] * deltas[:, 1]
+    u = np.clip(dot / lengths**2, 0.0, 1.0)
+    gap_x = offsets[:, 0] - u * deltas[:, 0]
+    gap_y = offsets[:, 1] - u * deltas[:, 1]
+    dists = gap_x * gap_x + gap_y * gap_y
     idx = int(np.argmin(dists))
     if u[idx] == 1.0 and idx + 1 < len(u):
         # The foot is the end vertex, which the next segment starts at: it is
