@@ -1124,7 +1124,11 @@ scenario has to do itself:
 
     Codon compiles some of these as written (a `None` first binding read
     only after an `is None` test), so a local named after a crash is a
-    candidate, not a verdict: the crash may have another cause.
+    candidate, not a verdict: the crash may have another cause. A Codon
+    killed with SIGKILL (exit status -9: the out-of-memory killer, as when
+    two library checks of about 8 GB each run at once) is no crash of the
+    code: the check says so, names no local, and should be run again with
+    more memory free.
 
     The same holds where a conditional expression tests the local before it
     is rebound, the previous value of a loop (`prev = None`, then `d = v -
