@@ -2010,7 +2010,7 @@ Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the <code>type</code>s it does not know reads
 any later file.</p>
 <h2 id="records">Records<a class="headerlink" href="#records" title="Permanent link">&para;</a></h2>
-<p>Each line is one of eleven records, told apart by <code>type</code>. A file starts with one
+<p>Each line is one of sixteen records, told apart by <code>type</code>. A file starts with one
 <code>world</code> line and one <code>map</code> line, then one <code>traffic_light</code> line per light and one
 <code>warmup</code> line. After that come the ticks: each <code>tick</code> line is preceded by an
 <code>actor</code> line for every vehicle or walker appearing in it for the first time and
@@ -2092,6 +2092,26 @@ each condition that changed and an <code>action</code> line for each action that
 <td><code>adversity</code> (2)</td>
 <td>on the tick NADE samples an adversity (<code>AdversarialTrafficAction</code>)</td>
 <td><code>frame</code>, <code>t</code>, <code>label</code> (the action's), <code>agent</code>, <code>kind</code> (<code>AdversityKind</code>), <code>location</code> (<code>AdversityLocation</code>), <code>probability</code> (<code>p</code>, cut for an unavoidable one), <code>is_probability</code> (<code>q</code>), <code>weight</code> (the run's, once sampled), <code>avoidable</code>, <code>victims</code>, <code>response</code> (<code>avoid</code>, <code>accept</code> or empty)</td>
+</tr>
+<tr>
+<td><code>waypoint_arrival</code> (2)</td>
+<td>when a routed entity has reached a waypoint with a time or a departure condition (<code>RoutingAction</code>, any mode), and its target is known</td>
+<td><code>frame</code>, <code>t</code>, <code>label</code> (the action's), <code>entity</code>, <code>vertex</code> (0-based), <code>kind</code> (<code>time</code>, or <code>condition</code>: the target is when it first held), <code>mode</code> (<code>driver</code>, <code>follow</code>, <code>position</code>), <code>target_t</code>, <code>actual_t</code>, <code>error_s</code> (<code>actual_t - target_t</code>)</td>
+</tr>
+<tr>
+<td><code>collision</code> (2)</td>
+<td>when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second) (<code>npc_collisions</code>)</td>
+<td><code>frame</code>, <code>t</code>, <code>actors</code> <code>[role, role]</code> (type ids where an actor has no role), <code>ids</code> <code>[id, id]</code>, <code>impulse</code> (N*s; at the end, the strongest), <code>ego</code> (one side is the ego), <code>phase</code> (<code>start</code>/<code>end</code>), <code>duration</code> (s, at the end; null at the start)</td>
+</tr>
+<tr>
+<td><code>walker_fallen</code> (2)</td>
+<td>once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways)</td>
+<td><code>frame</code>, <code>t</code>, <code>id</code>, <code>role</code>, <code>drop</code> (m), <code>tilt</code> (deg)</td>
+</tr>
+<tr>
+<td><code>despawn</code> (2)</td>
+<td>on the tick a <code>DespawnAction</code> removed an entity, or the run a walker that lay fallen 5 s</td>
+<td><code>frame</code>, <code>t</code>, <code>label</code> (the action's), <code>entity</code> (role), <code>id</code> (its actor's, or null), <code>reason</code> (<code>action</code>/<code>fallen</code>)</td>
 </tr>
 <tr>
 <td><code>result</code> (2)</td>
@@ -2247,7 +2267,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 13:10:33 UTC"><span class="timeago" datetime="2026-10-20T13:10:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 13:10:33 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
   </span>
 
     

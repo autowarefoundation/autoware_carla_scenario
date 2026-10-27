@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#trajectories-and-recorded-scene-replay" class="md-skip">
+        <a href="#routes-trajectories-and-recorded-scene-replay" class="md-skip">
           Skip to content
         </a>
       
@@ -1441,10 +1441,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#following-modes" class="md-nav__link">
+  <a href="#modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Following modes
+        Modes
       
     </span>
   </a>
@@ -1452,10 +1452,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
+  <a href="#driver-mode-and-timing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Who drives, and when it ends
+        Driver mode and timing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-drives-in-follow-and-position-modes-and-when-it-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who drives in follow and position modes, and when it ends
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-a-road-user-leaves-despawnaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When a road user leaves: DespawnAction
       
     </span>
   </a>
@@ -1936,10 +1958,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#following-modes" class="md-nav__link">
+  <a href="#modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Following modes
+        Modes
       
     </span>
   </a>
@@ -1947,10 +1969,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#who-drives-and-when-it-ends" class="md-nav__link">
+  <a href="#driver-mode-and-timing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Who drives, and when it ends
+        Driver mode and timing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-drives-in-follow-and-position-modes-and-when-it-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who drives in follow and position modes, and when it ends
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-a-road-user-leaves-despawnaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When a road user leaves: DespawnAction
       
     </span>
   </a>
@@ -2015,22 +2059,72 @@
   
 
 
-<h1 id="trajectories-and-recorded-scene-replay">Trajectories and Recorded-Scene Replay<a class="headerlink" href="#trajectories-and-recorded-scene-replay" title="Permanent link">&para;</a></h1>
-<p><code>FollowTrajectoryAction</code> moves a vehicle or a pedestrian along a given
-trajectory. It is OpenSCENARIO's <code>FollowTrajectoryAction</code>, and it is what lets a
-recorded drive be <strong>written down as a scenario</strong>: a recording is transcribed
-into one trajectory per road user, and each one is replayed around the ego.
-Reading a dataset is left to tools outside the framework (see
+<h1 id="routes-trajectories-and-recorded-scene-replay">Routes, Trajectories and Recorded-Scene Replay<a class="headerlink" href="#routes-trajectories-and-recorded-scene-replay" title="Permanent link">&para;</a></h1>
+<p><code>RoutingAction</code> sends a vehicle or a pedestrian through <strong>waypoints</strong> to a
+goal. Each waypoint may carry <em>when</em>: an <strong>arrival time</strong> or a <strong>departure
+condition</strong>. Who moves the entity is its <code>mode</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>mode</code></th>
+<th>Who drives</th>
+<th>Between waypoints</th>
+<th>Timing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RoutingMode.DRIVER</code> (default)</td>
+<td>The entity's own driver: the TrafficManager or SUMO for a vehicle, the pedestrian route walker, Autoware for an Autoware ego</td>
+<td>Lanelet2 routes (walkable lanelets for a pedestrian)</td>
+<td>Met by speed commands to the driver (<a href="#driver-mode-and-timing">below</a>); an Autoware ego takes the route only</td>
+</tr>
+<tr>
+<td><code>RoutingMode.FOLLOW</code></td>
+<td>The action's own controller (OpenSCENARIO's trajectory following, <code>FOLLOW</code>)</td>
+<td>Straight legs</td>
+<td>Kept by the controller on the trajectory's clock</td>
+</tr>
+<tr>
+<td><code>RoutingMode.POSITION</code></td>
+<td>Nobody: the entity is placed every tick (<code>POSITION</code>)</td>
+<td>Straight legs</td>
+<td>Exact (a kinematic replay)</td>
+</tr>
+</tbody>
+</table>
+<p>It is what lets a recorded drive be <strong>written down as a scenario</strong>: a recording
+is transcribed into one trajectory per road user, and each one is replayed
+around the ego (<code>follow</code> or <code>position</code>), or handed to the road user's own driver
+to keep its timing (<code>driver</code>).</p>
+<div class="admonition warning">
+<p class="admonition-title">Breaking change (19.0.0): <code>FollowTrajectoryAction</code> is gone</p>
+<p><code>FollowTrajectoryAction</code> and the editor's <em>Follow Trajectory</em> card
+(<code>follow_trajectory</code>) were removed; <code>RoutingAction</code> and the <em>Set Goal</em>
+card (<code>routing</code>) do everything they did. In Python write
+<code>RoutingAction(entity, trajectory=..., time_reference=..., mode=RoutingMode.FOLLOW)</code>
+(or <code>POSITION</code>) for <code>FollowTrajectoryAction(entity, trajectory,
+time_reference, TrajectoryFollowingMode.FOLLOW)</code>. In a document change
+<code>type: follow_trajectory</code> to <code>type: routing</code> and <code>following_mode</code> to
+<code>mode</code> (<code>follow</code> / <code>position</code> as before, or <code>driver</code>), and state
+<code>time_domain</code> (the card's default is now <code>none</code>). A document that still
+has a <code>follow_trajectory</code> card is refused with a message saying so; there
+is no automatic conversion.</p>
+</div>
+<p>Reading a dataset is left to tools outside the framework (see
 <a href="#replaying-a-recorded-scene">Replaying a recorded scene</a>), so the framework
 carries no dataset format.</p>
 <h2 id="the-action">The action<a class="headerlink" href="#the-action" title="Permanent link">&para;</a></h2>
+<p>A goal and Lanelet2 waypoints are what an ego is given
+(<code>RoutingAction("ego", Lanelet2Pose(42, 10.0), waypoints=[Lanelet2Pose(17, 0.0)])</code>);
+a <code>trajectory</code> writes the waypoints out, the last one the goal:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">Lanelet2Pose</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">MapPose</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">ReferenceContext</span><span class="p">,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">Trajectory</span><span class="p">,</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">TrajectoryFollowingMode</span><span class="p">,</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">Lanelet2Pose</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">MapPose</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">ReferenceContext</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">RoutingAction</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">RoutingMode</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">Trajectory</span><span class="p">,</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
@@ -2045,16 +2139,16 @@ carries no dataset format.</p>
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="p">],</span>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="p">)</span>
 <a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">RoutingAction</span><span class="p">(</span>
 <a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">path</span><span class="p">,</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="n">trajectory</span><span class="o">=</span><span class="n">path</span><span class="p">,</span>
 <a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(</span><span class="n">ReferenceContext</span><span class="o">.</span><span class="n">RELATIVE</span><span class="p">),</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">following_mode</span><span class="o">=</span><span class="n">TrajectoryFollowingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="n">mode</span><span class="o">=</span><span class="n">RoutingMode</span><span class="o">.</span><span class="n">POSITION</span><span class="p">,</span>
 <a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_follows_path"</span><span class="p">,</span>
 <a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    <span class="p">)</span>
 <a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="p">)</span>
 </code></pre></div>
-<p>It has the same four parts as in OpenSCENARIO:</p>
+<p>A trajectory has the same four parts as OpenSCENARIO's trajectory following:</p>
 <table>
 <thead>
 <tr>
@@ -2081,7 +2175,7 @@ carries no dataset format.</p>
 </tr>
 <tr>
 <td><code>TrajectoryFollowingMode</code></td>
-<td><code>following_mode=POSITION</code> or <code>FOLLOW</code></td>
+<td><code>mode=RoutingMode.POSITION</code> or <code>FOLLOW</code> (or <code>DRIVER</code>)</td>
 <td>See below.</td>
 </tr>
 <tr>
@@ -2121,8 +2215,14 @@ in ahead of the ego -- once, to be played from wherever it begins:</p>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">],</span>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
 <a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span><span class="s2">"npc1"</span><span class="p">,</span> <span class="n">overtake</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_overtakes"</span><span class="p">)</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">)</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">RoutingAction</span><span class="p">(</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="n">trajectory</span><span class="o">=</span><span class="n">overtake</span><span class="p">,</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(),</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        <span class="n">mode</span><span class="o">=</span><span class="n">RoutingMode</span><span class="o">.</span><span class="n">FOLLOW</span><span class="p">,</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"npc1_overtakes"</span><span class="p">,</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="p">)</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="p">)</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2196,8 +2296,10 @@ neither ends nor fails meanwhile, and warns once per run; a lane the map does
 not have raises a
 <code>ValueError</code> naming the trajectory and the vertex. These lane checks can only
 be made then: they depend on where the reference entity is.</p>
-<h3 id="following-modes">Following modes<a class="headerlink" href="#following-modes" title="Permanent link">&para;</a></h3>
+<h3 id="modes">Modes<a class="headerlink" href="#modes" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong><code>DRIVER</code></strong> hands the route to the entity's own driver -- see
+  <a href="#driver-mode-and-timing">Driver mode and timing</a>.</li>
 <li><strong><code>POSITION</code></strong> places the entity on the trajectory every tick, with the
   velocity the trajectory implies (so speed conditions and the recorder see the
   recorded speed). It is a kinematic replay: it reproduces a recording exactly,
@@ -2210,7 +2312,65 @@ be made then: they depend on where the reference entity is.</p>
   the vehicle's own, so it can lag or cut a corner. A pedestrian is walked
   towards the path.</li>
 </ul>
-<h3 id="who-drives-and-when-it-ends">Who drives, and when it ends<a class="headerlink" href="#who-drives-and-when-it-ends" title="Permanent link">&para;</a></h3>
+<h3 id="driver-mode-and-timing">Driver mode and timing<a class="headerlink" href="#driver-mode-and-timing" title="Permanent link">&para;</a></h3>
+<p>In <code>driver</code> mode the route starts where the entity is -- the nearest point of
+its path within 6 m, a hidden one having been brought in by a <code>SpawnAction</code> --
+and passes every waypoint after it, each
+placed on the lanelet under it (a walkable one for a pedestrian). A vehicle
+the traffic backend drives is handed it as a path
+(<code>BackendDriven.route_to</code>), a pedestrian walks it (<code>PedestrianEntity.route_to</code>),
+an Autoware ego is given it as a mission.</p>
+<p><strong>Timing.</strong> When waypoints carry times (with a time reference) or departure
+conditions, the action keeps running until the entity reaches the goal and,
+every tick, sets the driver's speed to meet them (<code>TrafficManager</code>
+<code>set_desired_speed</code>, SUMO <code>setSpeed</code>, the walker's step speed):</p>
+<ul>
+<li>the next waypoint with a time: the distance left to it <strong>along the planned
+  path</strong> over the time left, clamped to <code>[0, limit]</code> (the lane's speed limit,
+  2 m/s for a walker) and smoothed. A late entity goes at the limit to catch
+  up. The driver still stops for lights and yields; the speed is a target;</li>
+<li>the next waypoint with a departure condition: a rising <code>route_progress</code>
+  condition (what a logical scenario times its road users by) is
+  <strong>predicted</strong> -- its entity's progress rate says when it will hold -- and
+  the entity is paced to arrive then. Any other condition, or a measured
+  entity that is not moving forward, is approached at cruise speed (<code>speed</code>,
+  else the limit) braking to stop 2 m short of the waypoint, where it <strong>holds</strong>
+  until the condition does;</li>
+<li>with nothing due ahead: <code>speed</code> if given, else the limit.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">A hold can deadlock</p>
+<p>An NPC holding before a waypoint until the ego has progressed, while it
+stands in the ego's way, waits for ever: the ego cannot pass it. Prediction
+slows the NPC down long before it would hold, so a <code>route_progress</code>
+condition on a moving ego seldom holds it; a condition that cannot be
+predicted does. Place waypoints that wait for the ego out of its path.</p>
+</div>
+<p><strong>An Autoware ego</strong> takes no speed: it is given the route only, and the action
+warns once that its waypoints' times and conditions cannot be met.</p>
+<p><strong>Arrivals.</strong> In every mode, each waypoint with a time or a condition is
+logged when reached -- when it was due (its time; the moment its condition
+first held) against when the entity arrived -- as a <code>waypoint_arrival</code>
+record of the <a href="../trajectory_log/">trajectory log</a>, so a run can be scored on
+its timing.</p>
+<p><strong>Keeping to the recorded lanes.</strong> A vehicle's written-out waypoints are not
+routed one by one onto the nearest lane: the whole track between them is
+sampled every 2 m and matched to the lanes it runs along -- road lanelets
+within 4 m running within 60 degrees of its heading, joined on the routing
+graph by following on, a lane change or a short path, the closest sequence
+chosen (<code>traffic.route_match</code>) -- and the route goes through where it leaves
+each one. A track that cannot be matched falls back to its waypoints one by
+one, leaving out those no lane route reaches, with a warning. The
+TrafficManager is given the route with its own lane changes off, and a route
+ending in a junction is carried on along the lane after it until it is clear
+of the junction, so it is never handed an empty path.</p>
+<p><strong>When it ends.</strong> A route given as a goal (and Lanelet2 waypoints) with
+nothing to time ends as soon as the vehicle has it (as an ego's initial goal
+always has); a route written out as waypoints, timed or not, runs until the
+vehicle is within 1 m of its end along the planned path (a timed one then sets
+its driver's speed back to the cruise speed); a pedestrian's ends when it
+arrives.</p>
+<h3 id="who-drives-in-follow-and-position-modes-and-when-it-ends">Who drives in follow and position modes, and when it ends<a class="headerlink" href="#who-drives-in-follow-and-position-modes-and-when-it-ends" title="Permanent link">&para;</a></h3>
 <p>For the length of the run the action is the entity's only driver. A vehicle is
 taken back from the <a href="../traffic_backends/">traffic backend</a> first
 (<code>TrafficBackend.release</code>); an ego driven by an external stack (Autoware, a
@@ -2225,21 +2385,83 @@ where the trajectory ended. Pass <code>until=</code> to end it on a condition of
 -- in <code>POSITION</code> mode with the last segment's velocity -- for an action that
 hands it straight back to traffic, as the adversarial actions do
 (<code>resume_traffic</code>).</p>
-<p><code>hidden_outside_trajectory=True</code> (an extension, <code>POSITION</code> mode with a timing
-only) keeps the entity out of the world -- parked under the map with its physics
-off -- before its first vertex's time and after its last. That is what a road
-user that enters a recording late or leaves it early needs, since an entity
-cannot be spawned once a run has started.</p>
-<p><code>appear_on_start=True</code> (an extension, either mode) is the other way in: when a
-run of the action starts, the entity -- spawned hidden -- is put on the first
-vertex facing along the path, physics on, moving at <code>speed</code> (standing if
-unset), and then follows the trajectory. Triggered by a <code>RouteProgressCondition</code>
-it enters when the ego has come as far as it had when the road user was first
-seen; it cannot be combined with <code>hidden_outside_trajectory</code>.</p>
+<p><code>RoutingAction</code> routes an entity that is in the scene; it does not bring one
+in or take it out (<code>appear_on_start</code> and <code>hidden_outside_trajectory</code> are gone
+from it as of 1.0).  A road user that enters a recording late is spawned
+hidden and brought in by a <code>SpawnAction</code> (the <code>spawn</code> card): put on its place,
+physics on, facing its heading, moving at <code>speed</code>; its routing card is
+triggered on the spawn card completing and starts where it stands.  Triggered
+by a <code>RouteProgressCondition</code> it enters when the ego has come as far as it had
+when the road user was first seen; a <code>PlaceClearCondition</code> on the same place
+in its trigger waits for the place to be clear, and <code>shift_max</code> lets it take
+the nearest clear place further on along its lane once the trigger gives up
+waiting.  One that leaves early is removed by a <code>DespawnAction</code>.</p>
 <p>Vertices may also be placed against a logical scenario's <em>route</em>
 (<code>RouteLanePose</code>, <code>RouteOppositePose</code>, <code>RouteCrossingPose</code>,
 <code>RouteCrosswalkPose</code>, <code>RouteRoadsidePose</code>; <code>path_source: route</code> in a
 document) -- see <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</p>
+<h3 id="when-a-road-user-leaves-despawnaction">When a road user leaves: <code>DespawnAction</code><a class="headerlink" href="#when-a-road-user-leaves-despawnaction" title="Permanent link">&para;</a></h3>
+<p>A route's end is where the road user's recording ends, but its driver does not
+know that: a vehicle the TrafficManager drives carries on wherever its traffic
+takes it. <code>DespawnAction(entity, condition)</code> (card <strong>Despawn</strong>, <code>despawn</code>)
+takes a vehicle or a pedestrian -- never the ego -- out of the world when its
+condition holds: the traffic backend lets go of it (and stops protecting it),
+the collision log stops listening to it, its actor is destroyed and the entity
+is unregistered. An action still naming it afterwards logs that once and does
+nothing (a routing run on it ends); a condition reads it as absent. The run
+writes a <code>despawn</code> record to the <a href="../trajectory_log/">trajectory log</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">npc1_leaves</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">despawn</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">npc1</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">action_state</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="nv">npc1_drive</span><span class="p p-Indicator">,</span><span class="nt"> state</span><span class="p">:</span><span class="w"> </span><span class="nv">completeState</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>A <code>driver</code> route written out as waypoints runs until the entity reaches its
+last one, timed or not, so its completion is the moment it arrives.</p>
+<p>A road user the ego has left behind for good can leave too: one standing at
+least 30 m behind the ego along the road reads, in a trigger,</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">children</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">action_state</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="nv">npc1_drive</span><span class="p p-Indicator">,</span><span class="nt"> state</span><span class="p">:</span><span class="w"> </span><span class="nv">completeState</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">children</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">action_state</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="nv">npc1_drive</span><span class="p p-Indicator">,</span><span class="nt"> state</span><span class="p">:</span><span class="w"> </span><span class="nv">runningState</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">standstill</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="nv">npc1</span><span class="p p-Indicator">,</span><span class="nt"> duration</span><span class="p">:</span><span class="w"> </span><span class="nv">5.0</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">npc1</span><span class="p p-Indicator">,</span><span class="nt"> measure</span><span class="p">:</span><span class="w"> </span><span class="nv">lane</span><span class="p p-Indicator">,</span><span class="nt"> signed</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="nt">             rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than_or_equal</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">-30.0</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p><code>signed</code> (lane frame only) measures how far the target is ahead of the
+subject along the road, the way the subject faces, negative behind it
+(<code>coordinate.lane_distance.lane_offset</code>), so it reads the same whether the ego
+is moving or stopped.</p>
+<p>A pedestrian routed in <code>driver</code> mode is walked by CARLA's own walker
+controller (<code>controller.ai.walker</code>) where the map has a pedestrian navigation
+mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
+CARLA's walkers do), and walks round what stands in its way. It is sent along
+its route a target every 10 m (reached 2 m short of it along the walk, or
+2 m from it), its top speed the walk's pace; a walker held by its route's
+timing is taken off the controller while it stands (CARLA sends a walker
+standing 4 s somewhere random) and its target is sent again every 2 s.
+Whether it may cross a road away from a crossing is its own: the
+RoutingAction's <code>cross_factor</code> (the card's <em>Crosses away from crossings</em>), the
+probability its route may use the road anywhere -- 1 for a recorded walk that
+crossed there, 0 keeps it to crossings, empty is CARLA's default (0). CARLA
+keeps one such factor for the world and reads it only as a walker's controller
+starts (<code>Navigation::AddWalker</code>), so it is set to the walker's own just then
+and put back straight after. A map without a navigation mesh is said once, and its walkers are
+stepped along their routes as before. The navigation mesh comes with the map's
+import (roadgen's <code>&lt;Name&gt;Package.py</code> builds it with CARLA's RecastBuilder).
+A vehicle driven by the framework's own controller (<code>follow</code> mode, a final
+approach), which the TrafficManager does not drive, brakes for a walker in its
+way within its stopping distance (<code>utils.clearance</code>). A walker that falls over all the same is taken out of the
+world once it has lain there 5 s (<code>npc_collisions.FALLEN_DESPAWN_S</code>, the
+monitor's <code>despawn_fallen_after_s</code>; never the ego), with a <code>despawn</code> record
+of reason <code>fallen</code>.</p>
+<p>A pedestrian's written-out waypoints a few metres apart (no more than 10 m
+from one to the next: a recorded walk) are walked as written, from where it
+starts; farther apart they are routed between on the walkable lanelets.</p>
 <h2 id="waypoint-conditions">Waypoint conditions<a class="headerlink" href="#waypoint-conditions" title="Permanent link">&para;</a></h2>
 <p><strong>Each vertex is departed on one condition</strong>, its <code>advance</code>: when it holds,
 the entity leaves the vertex for the next one. A vertex with none is passed
@@ -2297,49 +2519,62 @@ are not checked. A repeating action (<code>once=False</code>) re-arms every cond
 the start of each run, and a <strong>closed</strong> path -- which cannot carry times --
 checks its conditions again on every lap in <code>POSITION</code> mode. Whatever state a
 condition object keeps is its own: a latched <code>StickyCondition</code> stays latched.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">EGO_ROLE_NAME</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">ComparisonRule</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">EntityDistanceCondition</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">MapPose</span><span class="p">,</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">Trajectory</span><span class="p">,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">)</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">crossing</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="s2">"walker_crossing"</span><span class="p">,</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="p">[</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81200.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="c1"># At the kerb: wait until the ego is within 25 m, then step out.</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>            <span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>            <span class="n">EntityDistanceCondition</span><span class="p">(</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>                <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"ego_close"</span><span class="p">,</span>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>            <span class="p">),</span>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="p">),</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># Across by 11 s -- or, if the ego came late, at 1.4 m/s.</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50110.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">11.0</span><span class="p">)),</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="p">],</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="p">)</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>    <span class="n">FollowTrajectoryAction</span><span class="p">(</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>        <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">crossing</span><span class="p">,</span> <span class="n">TrajectoryTiming</span><span class="p">(),</span> <span class="n">speed</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"cross"</span>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>    <span class="p">)</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="p">)</span>
-<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>
-<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="c1"># A trajectory built elsewhere (a recording, a lanelet route): `gated` replaces</span>
-<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="c1"># what the vertices named depart on, a time included.</span>
-<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="n">held</span> <span class="o">=</span> <span class="n">recorded</span><span class="o">.</span><span class="n">gated</span><span class="p">({</span><span class="mi">12</span><span class="p">:</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"not_before_20s"</span><span class="p">)})</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">EGO_ROLE_NAME</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">ComparisonRule</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">EntityDistanceCondition</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">MapPose</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">RoutingAction</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">RoutingMode</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">Trajectory</span><span class="p">,</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">TrajectoryTimeCondition</span> <span class="k">as</span> <span class="n">At</span><span class="p">,</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">TrajectoryTiming</span><span class="p">,</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">TrajectoryVertex</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="n">crossing</span> <span class="o">=</span> <span class="n">Trajectory</span><span class="p">(</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="s2">"walker_crossing"</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="p">[</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81200.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)),</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="c1"># At the kerb: wait until the ego is within 25 m, then step out.</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>            <span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50100.0</span><span class="p">),</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>            <span class="n">EntityDistanceCondition</span><span class="p">(</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>                <span class="s2">"walker1"</span><span class="p">,</span> <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"ego_close"</span><span class="p">,</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>            <span class="p">),</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>        <span class="p">),</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>        <span class="c1"># Across by 11 s -- or, if the ego came late, at 1.4 m/s.</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>        <span class="n">TrajectoryVertex</span><span class="p">(</span><span class="n">MapPose</span><span class="p">(</span><span class="mf">81205.0</span><span class="p">,</span> <span class="mf">50110.0</span><span class="p">),</span> <span class="n">At</span><span class="p">(</span><span class="mf">11.0</span><span class="p">)),</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>    <span class="p">],</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="p">)</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>    <span class="n">RoutingAction</span><span class="p">(</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>        <span class="s2">"walker1"</span><span class="p">,</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>        <span class="n">trajectory</span><span class="o">=</span><span class="n">crossing</span><span class="p">,</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>        <span class="n">time_reference</span><span class="o">=</span><span class="n">TrajectoryTiming</span><span class="p">(),</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>        <span class="n">mode</span><span class="o">=</span><span class="n">RoutingMode</span><span class="o">.</span><span class="n">FOLLOW</span><span class="p">,</span>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a>        <span class="n">speed</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"cross"</span><span class="p">,</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a>    <span class="p">)</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="p">)</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="c1"># A trajectory built elsewhere (a recording, a lanelet route): `gated` replaces</span>
+<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="c1"># what the vertices named depart on, a time included.</span>
+<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a><span class="n">held</span> <span class="o">=</span> <span class="n">recorded</span><span class="o">.</span><span class="n">gated</span><span class="p">({</span><span class="mi">12</span><span class="p">:</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"not_before_20s"</span><span class="p">)})</span>
 </code></pre></div>
-<p><strong>By following mode.</strong></p>
+<p><strong>By mode.</strong></p>
 <ul>
-<li><code>POSITION</code> places the entity where that timeline has it every tick; waiting,
-  it stands on the vertex itself.</li>
+<li>
+<p><code>DRIVER</code>: see <a href="#driver-mode-and-timing">Driver mode and timing</a> -- the
+  entity is paced to arrive when the condition holds, or held 2 m short of
+  the waypoint until it does.</p>
+</li>
+<li>
+<p><code>POSITION</code> places the entity where that timeline has it every tick; waiting,
+  it stands on the vertex itself.</p>
+</li>
 <li><code>FOLLOW</code> (vehicle): a vertex whose condition has not held yet is a <strong>stop
   line</strong> -- the controller's plan ends on it, slowed to come to rest there at
   2 m/s². A car cannot stop within a tick, so here the condition is checked
@@ -2360,9 +2595,7 @@ condition object keeps is its own: a latched <code>StickyCondition</code> stays 
   path to its start -- so in <code>FOLLOW</code> mode a closed path's conditions are
   reliable on the first lap only. <code>POSITION</code> has no such limit.</li>
 </ul>
-<p><code>hidden_outside_trajectory</code> keeps the entity out of the world until the first
-vertex is departed on its time, and after the run ends -- for a trajectory of
-times alone, exactly as before. <code>FollowTrajectoryAction.held_vertex</code> names the
+<p><code>RoutingAction.held_vertex</code> names the
 vertex (0-based) the entity waits at for a condition other than a time, or
 <code>None</code>.</p>
 <div class="admonition warning">
@@ -2374,10 +2607,13 @@ document a <code>trajectory_time</code> waypoint condition on the vertex. The ol
 forms raise an error that says so.</p>
 </div>
 <h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
-<p><strong>Follow Trajectory</strong> (category <em>Vehicle / Motion</em>) is a card like any other,
-for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
-three sources:</p>
+<p><strong>Set Goal</strong> (category <em>Vehicle / Motion</em>) is a card like any other, for the
+ego, a vehicle or a pedestrian. <strong>Driven by</strong> is its mode (Driver, Follow,
+Position). Its route comes from one of five sources:</p>
 <ul>
+<li><strong>Goal lanelet, via lanelets</strong> (the default) -- a goal lanelet and <code>s</code>
+  along it, and the lanelets to pass on the way: what an ego is sent to. It
+  takes no waypoint conditions and no time reference.</li>
 <li><strong>Vertices (map frame)</strong> -- written in the card, one vertex per line:
   <code>x, y[, yaw]</code> (metres, radians; <code>81234.5, 50123.0</code> leaves the yaw to the
   path). The line above the text says how many vertices and how long. Their
@@ -2385,6 +2621,8 @@ three sources:</p>
   transcribes to, so a replayed road user's card can be edited like any other.</li>
 <li><strong>Along lanelets</strong> -- the lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.</li>
+<li><strong>Along the scenario's route</strong> -- route vertices, see
+  <a href="../logical_scenarios/">Logical Scenarios from Routes</a>.</li>
 <li><strong>Relative to an entity's lane</strong> -- <a href="#lane-relative-vertices">lane-relative vertices</a>,
   one per line: <code>ds[, offset][, d_lane][, yaw]</code> (metres, metres, lanes,
   radians; only <code>ds</code> is required, <code>d_lane</code> is a whole number),
@@ -2409,25 +2647,26 @@ recording's long list of times folds away. The card on the canvas says how
 many it has, and <strong>Speed where no time paces</strong> sets the action's <code>speed</code>. In
 the document they are a list on the action, each a vertex and a condition
 node:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">actions</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a_walker</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker1</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vertices</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">81200.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">               </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50110.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]]</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">relative</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.4</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">advance_conditions</span><span class="p">:</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}}</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">          </span><span class="c1"># the second vertex</span>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">walker1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">11.0</span><span class="p p-Indicator">}}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">actions</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a_walker</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">routing</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker1</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vertices</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[[</span><span class="nv">81200.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50100.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">],</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">               </span><span class="p p-Indicator">[</span><span class="nv">81205.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50110.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">null</span><span class="p p-Indicator">]]</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">relative</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.4</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">  </span><span class="nt">advance_conditions</span><span class="p">:</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">          </span><span class="c1"># the second vertex</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">entity_distance</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="nv">walker1</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">less_than</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="w">    </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">trajectory_time</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="nv">11.0</span><span class="p p-Indicator">}}</span>
 </code></pre></div>
 <p>The compiler builds each condition with the same builders as a trigger, and
 the validator checks them as it checks a trigger, plus where they sit and the
@@ -2444,7 +2683,7 @@ reference to the card's own action but "is running" is refused, even under a
 <em>Not</em> where it could not deadlock. A row with a time cell, as documents had before, is refused
 with a message that gives the <code>trajectory_time</code> condition to write instead.</p>
 <p>The other fields are the action's: the time reference (from the action start,
-from the scenario start, or none), its scale and offset, the following mode,
+from the scenario start, or none -- the default), its scale and offset, the mode,
 how far along to start, and whether the entity is out of the world outside the
 trajectory's time. The validator checks what the fields only mean together: a
 time reference needs vertex times (or a speed, for lanelets), and keeping the
@@ -2463,7 +2702,7 @@ above:</p>
 <ul>
 <li>the ego spawns where the recording's ego started and is sent where it went;</li>
 <li>every road user is an entity spawned on the lanelet it was first seen on,
-  with one Follow Trajectory card: map-frame vertices, each departed at its
+  with one Set Goal card: map-frame vertices, each departed at its
   recorded time (a <code>trajectory_time</code> waypoint condition) on the scenario
   clock (<code>time_domain: absolute</code>, <code>time_offset</code> moving the recording's first
   frame to <code>t = 0</code>), in Position mode and hidden outside its trajectory;</li>
@@ -2510,7 +2749,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 06:06:44 UTC"><span class="timeago" datetime="2026-10-20T06:06:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 06:06:44 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
   </span>
 
     

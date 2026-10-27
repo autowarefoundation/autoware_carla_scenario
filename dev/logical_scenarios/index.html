@@ -1582,10 +1582,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#appear_on_start" class="md-nav__link">
+  <a href="#bringing-an-entity-in-the-spawn-card" class="md-nav__link">
     <span class="md-ellipsis">
       
-        appear_on_start
+        Bringing an entity in: the spawn card
       
     </span>
   </a>
@@ -2063,10 +2063,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#appear_on_start" class="md-nav__link">
+  <a href="#bringing-an-entity-in-the-spawn-card" class="md-nav__link">
     <span class="md-ellipsis">
       
-        appear_on_start
+        Bringing an entity in: the spawn card
       
     </span>
   </a>
@@ -2268,61 +2268,79 @@ A full example, using every feature this page describes:</p>
 <a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="w">    </span><span class="nt">spawn</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">hidden</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
 <a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>
 <a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="nt">actions</span><span class="p">:</span>
-<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="w">  </span><span class="c1"># The oncoming car: appears when the ego is 40 m short of the junction,</span>
-<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="w">  </span><span class="c1"># 30 m before the junction on the opposite approach, at 8 m/s; drives FOLLOW</span>
-<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="w">  </span><span class="c1"># mode and waits at the junction entry until the ego is 5 m from it.</span>
-<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming_drive</span>
-<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
-<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming</span>
-<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
-<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
-<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-40.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span><span class="w">     </span><span class="c1"># entity: ego (default)</span>
-<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
-<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="w">      </span><span class="nt">following_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
-<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
-<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8.0</span><span class="w">               </span><span class="c1"># initial speed on appearing, and pace</span>
-<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="w">      </span><span class="nt">appear_on_start</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span>
-<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">-30.0</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a><span class="w">    </span><span class="nt">advance_conditions</span><span class="p">:</span>
-<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">                 </span><span class="c1"># counted from 1</span>
-<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
-<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="w">          </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
-<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-5.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">greater_than_or_equal</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a>
-<a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="w">  </span><span class="c1"># A pedestrian: appears on the pavement at the exit crosswalk's right end</span>
-<a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="w">  </span><span class="c1"># when the ego enters the junction, and walks across.</span>
-<a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker_cross</span>
-<a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow_trajectory</span>
-<a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker</span>
-<a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
-<a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
-<a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
-<a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a><span class="w">      </span><span class="nt">following_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
-<a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
-<a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.3</span>
-<a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="w">      </span><span class="nt">appear_on_start</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span><span class="w">          </span><span class="c1"># the editor's text form is accepted too</span>
-<a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=-1.5</span>
-<a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=6</span>
-<a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a>
-<a id="__codelineno-0-88" name="__codelineno-0-88" href="#__codelineno-0-88"></a><span class="w">  </span><span class="c1"># The other route vertex kinds, for reference (an entity "lead" not shown):</span>
-<a id="__codelineno-0-89" name="__codelineno-0-89" href="#__codelineno-0-89"></a><span class="w">  </span><span class="c1">#   - {kind: lane, ds: 15.0, d_lane: -1, offset: 0.0, yaw: null, anchor: null}</span>
-<a id="__codelineno-0-90" name="__codelineno-0-90" href="#__codelineno-0-90"></a><span class="w">  </span><span class="c1">#   - {kind: opposite, ds: 10.0, lane: 1, offset: 0.0, yaw: null, anchor: "segment:0:start"}</span>
-<a id="__codelineno-0-91" name="__codelineno-0-91" href="#__codelineno-0-91"></a><span class="w">  </span><span class="c1">#   - {kind: roadside, ds: 20.0, side: left, kerb_distance: 1.0, yaw: null, anchor: start}</span>
-<a id="__codelineno-0-92" name="__codelineno-0-92" href="#__codelineno-0-92"></a>
-<a id="__codelineno-0-93" name="__codelineno-0-93" href="#__codelineno-0-93"></a><span class="nt">assertions</span><span class="p">:</span>
-<a id="__codelineno-0-94" name="__codelineno-0-94" href="#__codelineno-0-94"></a><span class="w">  </span><span class="nt">pass</span><span class="p">:</span>
-<a id="__codelineno-0-95" name="__codelineno-0-95" href="#__codelineno-0-95"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
-<a id="__codelineno-0-96" name="__codelineno-0-96" href="#__codelineno-0-96"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-2.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="nv">end</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-97" name="__codelineno-0-97" href="#__codelineno-0-97"></a><span class="w">  </span><span class="nt">fail</span><span class="p">:</span>
-<a id="__codelineno-0-98" name="__codelineno-0-98" href="#__codelineno-0-98"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">timeout</span>
-<a id="__codelineno-0-99" name="__codelineno-0-99" href="#__codelineno-0-99"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="nv">60</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="w">  </span><span class="c1"># The oncoming car: brought in when the ego is 40 m short of the junction,</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="w">  </span><span class="c1"># at 8 m/s (a Spawn card; with no place of its own it enters where it was</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="w">  </span><span class="c1"># declared -- give lanelet_id/s for a place, shift_max to take a clear one</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="w">  </span><span class="c1"># further on); then its Set Goal card, triggered on the Spawn card</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="w">  </span><span class="c1"># completing, drives it FOLLOW mode from 30 m before the junction on the</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="w">  </span><span class="c1"># opposite approach and waits at the junction entry until the ego is 5 m</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="w">  </span><span class="c1"># from it.</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming_enters</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">spawn</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-40.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span><span class="w">     </span><span class="c1"># entity: ego (default)</span>
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8.0</span><span class="w">               </span><span class="c1"># its speed as it enters</span>
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming_drive</span>
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">routing</span>
+<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oncoming</span>
+<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">action_state</span>
+<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="nv">oncoming_enters</span><span class="p p-Indicator">,</span><span class="nt"> state</span><span class="p">:</span><span class="w"> </span><span class="nv">completeState</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
+<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
+<a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8.0</span><span class="w">               </span><span class="c1"># its pace</span>
+<a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span>
+<a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">-30.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="nv">crossing</span><span class="p p-Indicator">,</span><span class="nt"> junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> approach</span><span class="p">:</span><span class="w"> </span><span class="nv">opposite</span><span class="p p-Indicator">,</span><span class="nt"> turn</span><span class="p">:</span><span class="w"> </span><span class="nv">straight</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">25.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a><span class="w">    </span><span class="nt">advance_conditions</span><span class="p">:</span>
+<a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vertex</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span><span class="w">                 </span><span class="c1"># counted from 1</span>
+<a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
+<a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a><span class="w">          </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-5.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">,</span><span class="nt"> rule</span><span class="p">:</span><span class="w"> </span><span class="nv">greater_than_or_equal</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a>
+<a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="w">  </span><span class="c1"># A pedestrian: brought in when the ego enters the junction, and walks</span>
+<a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="w">  </span><span class="c1"># across the exit crosswalk from its right end.</span>
+<a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker_enters</span>
+<a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">spawn</span>
+<a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker</span>
+<a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-88" name="__codelineno-0-88" href="#__codelineno-0-88"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="s">"junction:0:entry"</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-89" name="__codelineno-0-89" href="#__codelineno-0-89"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-90" name="__codelineno-0-90" href="#__codelineno-0-90"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.3</span>
+<a id="__codelineno-0-91" name="__codelineno-0-91" href="#__codelineno-0-91"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker_cross</span>
+<a id="__codelineno-0-92" name="__codelineno-0-92" href="#__codelineno-0-92"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">routing</span>
+<a id="__codelineno-0-93" name="__codelineno-0-93" href="#__codelineno-0-93"></a><span class="w">    </span><span class="nt">actor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">walker</span>
+<a id="__codelineno-0-94" name="__codelineno-0-94" href="#__codelineno-0-94"></a><span class="w">    </span><span class="nt">trigger</span><span class="p">:</span>
+<a id="__codelineno-0-95" name="__codelineno-0-95" href="#__codelineno-0-95"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">action_state</span>
+<a id="__codelineno-0-96" name="__codelineno-0-96" href="#__codelineno-0-96"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="nv">walker_enters</span><span class="p p-Indicator">,</span><span class="nt"> state</span><span class="p">:</span><span class="w"> </span><span class="nv">completeState</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-97" name="__codelineno-0-97" href="#__codelineno-0-97"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-0-98" name="__codelineno-0-98" href="#__codelineno-0-98"></a><span class="w">      </span><span class="nt">path_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route</span>
+<a id="__codelineno-0-99" name="__codelineno-0-99" href="#__codelineno-0-99"></a><span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">follow</span>
+<a id="__codelineno-0-100" name="__codelineno-0-100" href="#__codelineno-0-100"></a><span class="w">      </span><span class="nt">time_domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-0-101" name="__codelineno-0-101" href="#__codelineno-0-101"></a><span class="w">      </span><span class="nt">speed_ms</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.3</span>
+<a id="__codelineno-0-102" name="__codelineno-0-102" href="#__codelineno-0-102"></a><span class="w">      </span><span class="nt">route_vertices</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span><span class="w">          </span><span class="c1"># the editor's text form is accepted too</span>
+<a id="__codelineno-0-103" name="__codelineno-0-103" href="#__codelineno-0-103"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=-1.5</span>
+<a id="__codelineno-0-104" name="__codelineno-0-104" href="#__codelineno-0-104"></a><span class="w">        </span><span class="no">crosswalk junction=0 leg=exit side=right along=6</span>
+<a id="__codelineno-0-105" name="__codelineno-0-105" href="#__codelineno-0-105"></a>
+<a id="__codelineno-0-106" name="__codelineno-0-106" href="#__codelineno-0-106"></a><span class="w">  </span><span class="c1"># The other route vertex kinds, for reference (an entity "lead" not shown):</span>
+<a id="__codelineno-0-107" name="__codelineno-0-107" href="#__codelineno-0-107"></a><span class="w">  </span><span class="c1">#   - {kind: lane, ds: 15.0, d_lane: -1, offset: 0.0, yaw: null, anchor: null}</span>
+<a id="__codelineno-0-108" name="__codelineno-0-108" href="#__codelineno-0-108"></a><span class="w">  </span><span class="c1">#   - {kind: opposite, ds: 10.0, lane: 1, offset: 0.0, yaw: null, anchor: "segment:0:start"}</span>
+<a id="__codelineno-0-109" name="__codelineno-0-109" href="#__codelineno-0-109"></a><span class="w">  </span><span class="c1">#   - {kind: roadside, ds: 20.0, side: left, kerb_distance: 1.0, yaw: null, anchor: start}</span>
+<a id="__codelineno-0-110" name="__codelineno-0-110" href="#__codelineno-0-110"></a>
+<a id="__codelineno-0-111" name="__codelineno-0-111" href="#__codelineno-0-111"></a><span class="nt">assertions</span><span class="p">:</span>
+<a id="__codelineno-0-112" name="__codelineno-0-112" href="#__codelineno-0-112"></a><span class="w">  </span><span class="nt">pass</span><span class="p">:</span>
+<a id="__codelineno-0-113" name="__codelineno-0-113" href="#__codelineno-0-113"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">route_progress</span>
+<a id="__codelineno-0-114" name="__codelineno-0-114" href="#__codelineno-0-114"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">-2.0</span><span class="p p-Indicator">,</span><span class="nt"> anchor</span><span class="p">:</span><span class="w"> </span><span class="nv">end</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-115" name="__codelineno-0-115" href="#__codelineno-0-115"></a><span class="w">  </span><span class="nt">fail</span><span class="p">:</span>
+<a id="__codelineno-0-116" name="__codelineno-0-116" href="#__codelineno-0-116"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">timeout</span>
+<a id="__codelineno-0-117" name="__codelineno-0-117" href="#__codelineno-0-117"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="nv">60</span><span class="p p-Indicator">}</span>
 </code></pre></div>
 <h3 id="route-the-route-search"><code>route</code> -- the route search<a class="headerlink" href="#route-the-route-search" title="Permanent link">&para;</a></h3>
 <table>
@@ -2459,7 +2477,7 @@ one to four consecutive lanelets carrying <code>turn_direction</code>:</p>
 silently ignored constraint. A junction segment does not take lane keys and
 vice versa.</p>
 <h3 id="route-vertices-path_source-route">Route vertices (<code>path_source: route</code>)<a class="headerlink" href="#route-vertices-path_source-route" title="Permanent link">&para;</a></h3>
-<p>A <em>Follow Trajectory</em> card with <code>path_source: route</code> lists its vertices in
+<p>A <em>Set Goal</em> card with <code>path_source: route</code> lists its vertices in
 <code>route_vertices</code>: a list of mappings, each with a <code>kind</code>, or the editor's text
 form, one vertex per line, <code>kind key=value ...</code> (commas allowed between pairs;
 blank lines and <code>#</code> comments skipped and not counted). Unstated keys take
@@ -2592,15 +2610,19 @@ progress: the condition does not hold, and <code>progress</code> is <code>None</
 assertion, inside <code>all</code>/<code>any</code>/<code>not</code>, and as a <strong>waypoint condition</strong>
 (<code>advance_conditions</code>) -- a vertex departs when the ego has progressed to the
 recorded point.</p>
-<h3 id="appear_on_start"><code>appear_on_start</code><a class="headerlink" href="#appear_on_start" title="Permanent link">&para;</a></h3>
-<p>A <em>Follow Trajectory</em> parameter (bool, default <code>false</code>): when a run of the
-action starts, the entity is put on the first vertex (on the point
-<code>initial_distance_offset</code> names), facing along the path, physics on, moving at
-<code>speed_ms</code> (standing if unset) -- then follows the trajectory as usual, in
-either mode, vehicle or pedestrian. It is what brings in an entity spawned
-<code>hidden</code>. It cannot be combined with <code>hidden_outside_trajectory</code>
-(validation error). An appearing entity that is not spawned hidden draws a
-warning (it would stand at its spawn until then).</p>
+<h3 id="bringing-an-entity-in-the-spawn-card">Bringing an entity in: the <code>spawn</code> card<a class="headerlink" href="#bringing-an-entity-in-the-spawn-card" title="Permanent link">&para;</a></h3>
+<p>An entity spawned <code>hidden</code> is brought into the scene by a <strong>Spawn</strong> card
+(<code>SpawnAction</code>, the counterpart of <code>despawn</code>; <code>appear_on_start</code> until 1.0):
+set on its place (<code>lanelet_id</code>, <code>s</code>, <code>t</code>, <code>heading</code>; none: where it was
+declared to spawn), physics on, facing its heading, moving at <code>speed_ms</code>.
+Its <em>Set Goal</em> card is triggered on the Spawn card completing (<code>action_state</code>
+<code>completeState</code>) and routes it from where it stands.  To wait until its place
+is clear, put a <code>place_clear</code> condition on the same place in the Spawn card's
+trigger -- with a give-up, e.g.
+<code>all(&lt;progress&gt;, any(place_clear, persistent(sticky(&lt;progress&gt;), 20)))</code>; with
+<code>shift_max</code> it then takes the nearest clear place that far on along its lane
+if its own is still taken.  An entity a Spawn card brings in that is not
+spawned hidden draws a warning (it would stand at its spawn until then).</p>
 <h3 id="entities-in-a-logical-scenario">Entities in a logical scenario<a class="headerlink" href="#entities-in-a-logical-scenario" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The <strong>ego</strong> needs no spawn lanelet and, with <code>ego_goal: true</code>, no goal: the
@@ -2782,7 +2804,7 @@ and the ego is sent along it:</p>
 <h2 id="python-api">Python API<a class="headerlink" href="#python-api" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">RouteLanePose</span><span class="p">,</span> <span class="n">RouteOppositePose</span><span class="p">,</span> <span class="n">RouteCrossingPose</span><span class="p">,</span> <span class="n">RouteCrosswalkPose</span><span class="p">,</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">RouteRoadsidePose</span><span class="p">,</span> <span class="n">RouteProgressCondition</span><span class="p">,</span> <span class="n">FollowTrajectoryAction</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">RouteRoadsidePose</span><span class="p">,</span> <span class="n">RouteProgressCondition</span><span class="p">,</span> <span class="n">RoutingAction</span><span class="p">,</span> <span class="n">RoutingMode</span><span class="p">,</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">parse_route_search</span><span class="p">,</span> <span class="n">RouteMatch</span><span class="p">,</span> <span class="n">set_scenario_route</span><span class="p">,</span> <span class="n">scenario_route</span><span class="p">,</span>
@@ -2813,8 +2835,8 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
 <li>Without a time reference a <code>FOLLOW</code> entity drives every segment at
   <code>speed_ms</code>; recorded speed changes between vertices are expressed by waypoint
   conditions only.</li>
-<li><code>appear_on_start</code> does not take the entity out again at the end; combine with
-  an <code>until</code> condition or leave it standing.</li>
+<li>A Spawn card does not take the entity out again: a <code>despawn</code> card does
+  (triggered on its Set Goal card completing, say).</li>
 </ul>
 
 
@@ -2838,7 +2860,7 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 10:07:36 UTC"><span class="timeago" datetime="2026-10-23T10:07:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 10:07:36 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
   </span>
 
     
