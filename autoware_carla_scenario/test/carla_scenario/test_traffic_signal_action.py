@@ -35,7 +35,10 @@ class _FakeTransform:
 class _FakeTrafficLight:
     """Minimal traffic light stub."""
 
+    _ids = iter(range(1, 1_000_000))
+
     def __init__(self, opendrive_id: str = "") -> None:
+        self.id = next(_FakeTrafficLight._ids)
         self._state: object = None
         self._frozen: bool = False
         self._opendrive_id = opendrive_id

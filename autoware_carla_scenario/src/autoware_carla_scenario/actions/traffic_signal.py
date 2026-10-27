@@ -265,14 +265,14 @@ class TrafficSignalAction(BaseAction):
         # Collect all OpenDRIVE signal IDs for the requested Lanelet2 IDs;
         # a light no controller is named after (a roadgen map), by its stop line.
         all_signal_ids: set[str] = set()
-        by_stop_line: list[Any] = []
+        by_stop_line: set[int] = set()  # actor ids: each listing wraps anew
         for ll2_id in lanelet2_ids:
             controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(ll2_id)
             if controller_id is None:
                 line = stop_line_in_carla(ll2_id)
                 found = [] if line is None else lights_on_stop_line(world, line)
                 if found:
-                    by_stop_line.extend(found)
+                    by_stop_line.update(int(light.id) for light in found)
                     continue
                 logger.warning(
                     "TrafficSignalAction [%s]: no OpenDRIVE controller found "
@@ -295,9 +295,7 @@ class TrafficSignalAction(BaseAction):
 
         count = 0
         for actor in world.get_actors().filter("traffic.traffic_light*"):
-            if actor.get_opendrive_id() in all_signal_ids or any(
-                actor is light for light in by_stop_line
-            ):
+            if actor.get_opendrive_id() in all_signal_ids or actor.id in by_stop_line:
                 actor.set_state(self._state)
                 actor.freeze(self._freeze)
                 count += 1
