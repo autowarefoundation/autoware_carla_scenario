@@ -2485,7 +2485,7 @@ register_action_spec(
                     "lane ds= offset= d_lane= yaw= anchor= | "
                     "opposite ds= lane= offset= yaw= anchor= | "
                     "crossing junction= approach=same|left|right|opposite distance= "
-                    "turn= offset= yaw= | "
+                    "turn= offset= yaw= d_lane= | "
                     "crosswalk junction= leg=entry|exit side=left|right along= "
                     "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
                     "ds counts from the anchor (start, end, segment:K:start|end, "
@@ -3496,8 +3496,7 @@ register_condition_spec(
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
-                help="Where the reference position is -- a spawn, a junction's "
-                "start.",
+                help="Where the reference position is -- a spawn, a junction's start.",
             ),
             FieldSpec(
                 name="s",

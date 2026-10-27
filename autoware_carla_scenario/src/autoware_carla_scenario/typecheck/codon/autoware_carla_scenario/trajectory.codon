@@ -80,15 +80,17 @@ class RouteCrossingPose:
     turn: Optional[str]
     offset: float
     yaw: Optional[float]
+    d_lane: int
 
     def __init__(self, junction: int = 0, approach: str = "left", distance = 0.0,
-                 turn = None, offset = 0.0, yaw = None):
+                 turn = None, offset = 0.0, yaw = None, d_lane: int = 0):
         self.junction = junction
         self.approach = approach
         self.distance = _expect_float(distance)
         self.turn = _expect_optional_str(turn)
         self.offset = _expect_float(offset)
         self.yaw = _expect_optional_float(yaw)
+        self.d_lane = d_lane
 
 
 class RouteCrosswalkPose:

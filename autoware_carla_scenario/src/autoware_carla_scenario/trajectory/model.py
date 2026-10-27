@@ -313,6 +313,8 @@ class RouteCrossingPose:
         offset: Metres from that path's centreline, positive to its left.
         yaw: Heading relative to that path's direction; ``None`` faces along
             the trajectory.
+        d_lane: Lanes across from the path's own lane where the pose is,
+            positive to its left -- another lane of the road it is on.
     """
 
     junction: int = 0
@@ -321,6 +323,7 @@ class RouteCrossingPose:
     turn: Optional[str] = None
     offset: float = 0.0
     yaw: Optional[float] = None
+    d_lane: int = 0
 
     def __post_init__(self) -> None:
         from ..route.model import PATH_APPROACHES  # noqa: PLC0415
@@ -332,6 +335,9 @@ class RouteCrossingPose:
             raise ValueError("RouteCrossingPose.junction counts from 0")
         object.__setattr__(self, "junction", junction)
         _one_of("RouteCrossingPose", "approach", self.approach, PATH_APPROACHES)
+        object.__setattr__(
+            self, "d_lane", _whole("RouteCrossingPose", "d_lane", self.d_lane)
+        )
         if self.turn is not None:
             _one_of(
                 "RouteCrossingPose", "turn", self.turn, ("left", "right", "straight")
@@ -741,8 +747,7 @@ class Trajectory:
         for index, condition in advance.items():
             if not -count <= int(index) < count:
                 raise IndexError(
-                    f"trajectory {self.name!r} has no vertex {index} "
-                    f"(it has {count})"
+                    f"trajectory {self.name!r} has no vertex {index} (it has {count})"
                 )
             vertices[int(index)] = TrajectoryVertex(
                 vertices[int(index)].position, condition

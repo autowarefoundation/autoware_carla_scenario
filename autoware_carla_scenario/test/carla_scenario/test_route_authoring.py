@@ -217,15 +217,35 @@ class TestTheDocument:
 
     def test_a_junctions_paths_reach_the_search(self) -> None:
         raw = _raw()
-        raw["route"]["segments"][1]["paths"] = [{"approach": "same", "turn": "right"}]
+        raw["route"]["segments"][1]["paths"] = [
+            {"approach": "same", "turn": "right"},
+            {"approach": "left", "turn": "straight", "before": {"min": 30.0}},
+        ]
         document = ScenarioDocument.model_validate(raw)
         assert document.route is not None
         dumped = document.route.to_sweep_dict()
-        assert dumped["segments"][1]["paths"] == [{"approach": "same", "turn": "right"}]
+        assert dumped["segments"][1]["paths"] == [
+            {"approach": "same", "turn": "right"},
+            {"approach": "left", "turn": "straight", "before": {"min": 30.0}},
+        ]
         junction = parse_route_search(dumped).segments[1]
         assert isinstance(junction, JunctionSegmentSpec)
-        assert [(p.approach, p.turn) for p in junction.paths] == [("same", "right")]
-        assert "path from same turning right" in document.route.segments[1].summary()
+        assert [(p.approach, p.turn) for p in junction.paths] == [
+            ("same", "right"),
+            ("left", "straight"),
+        ]
+        assert junction.paths[1].before.min == 30.0
+        summary = document.route.segments[1].summary()
+        assert "path from same turning right" in summary
+        assert "path from left turning straight (before >= 30 m)" in summary
+        # A junction's length reaches the search, and says nothing unset.
+        raw["route"]["segments"][1]["length"] = {"min": 15.0, "max": 25.0}
+        bounded = ScenarioDocument.model_validate(raw)
+        assert bounded.route is not None
+        spec = parse_route_search(bounded.route.to_sweep_dict()).segments[1]
+        assert isinstance(spec, JunctionSegmentSpec)
+        assert (spec.length.min, spec.length.max) == (15.0, 25.0)
+        assert "length" not in _document().route.to_sweep_dict()["segments"][1]  # type: ignore[union-attr]
         # A junction asking for none says nothing of them.
         assert "paths" not in _document().route.to_sweep_dict()["segments"][1]  # type: ignore[union-attr]
 

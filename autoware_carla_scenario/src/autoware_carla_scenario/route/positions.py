@@ -189,6 +189,10 @@ def _crossing(pose: RouteCrossingPose, frame: RouteFrame) -> Lanelet2Pose:
     lanelet_id, along = advance_along_lane(
         frame.map, frame.graph, int(chosen.lanelet.id), 0.0, float(pose.distance)
     )
+    if pose.d_lane:
+        lanelet_id, along = shift_lanes(
+            frame.map, frame.graph, lanelet_id, along, pose.d_lane
+        )
     return Lanelet2Pose(
         lanelet_id=lanelet_id, s=along, t=float(pose.offset), heading=_yaw(pose.yaw)
     )

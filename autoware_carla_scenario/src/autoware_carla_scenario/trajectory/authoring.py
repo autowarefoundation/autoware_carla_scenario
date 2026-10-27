@@ -352,7 +352,7 @@ ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
     "opposite": (RouteOppositePose, ("ds", "lane", "offset", "yaw", "anchor")),
     "crossing": (
         RouteCrossingPose,
-        ("junction", "approach", "distance", "turn", "offset", "yaw"),
+        ("junction", "approach", "distance", "turn", "offset", "yaw", "d_lane"),
     ),
     "crosswalk": (RouteCrosswalkPose, ("junction", "leg", "side", "along", "yaw")),
     "roadside": (
