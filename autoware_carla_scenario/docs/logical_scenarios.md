@@ -181,6 +181,7 @@ one to four consecutive lanelets carrying `turn_direction`:
 | `traffic_light` | `any` / `yes` / `no` | A traffic-light regulatory element on one of its lanelets or on the lanelet entering it. |
 | `crossing_from_left` / `_right` / `_opposite` | `any` / `yes` / `no` | Whether a lanelet of the same junction, entering it **from that approach, conflicts** with the ego's way (see *Junctions* below). |
 | `crosswalk_entry` / `crosswalk_exit` | `any` / `yes` / `no` | Whether a crosswalk crosses the ego's path on the way in / out (see *Crosswalks* below). |
+| `paths` | list of `{approach, turn}` (default none) | Other paths through the junction it must have: a member entering from `approach` (`same`, `left`, `right`, `opposite`) whose path turns `turn` (`left`, `right`, `straight`). It need not conflict with the ego's way. What a `crossing` pose with that approach and turn needs (see *Junctions* below). |
 
 Unknown keys are refused (`extra="forbid"`), so a typo is an error, not a
 silently ignored constraint. A junction segment does not take lane keys and
@@ -221,8 +222,9 @@ from 0.
   point's projection onto it -- also where the two directions are split into
   lanelets at different places. Faces that lane's own direction.
 * **`crossing`** -- a lanelet of junction `junction` entering from `approach`
-  (`left`, `right` or `opposite`, seen from the ego), whose path through the
-  junction turns `turn` if given; of several, one whose path conflicts with
+  (`same`, `left`, `right` or `opposite`, seen from the ego; `same` is the
+  ego's own approach: its lane turning another way, or a lane beside it),
+  whose path through the junction turns `turn` if given; of several, one whose path conflicts with
   the ego's way wins, then the lowest id. `distance` is metres along that path
   from where it enters the junction (its first junction lanelet's start):
   negative is back on its approach road (straightest predecessors), positive
@@ -360,14 +362,17 @@ its first lanelet's heading where it enters:
 
 | Angle | Approach |
 |-------|----------|
-| within +-45 deg | the ego's own (ignored) |
+| within +-45 deg | `same`: the ego's own (another way out of its lane, or another lane of its road) |
 | -45 to -135 deg (clockwise: it drives towards the ego's right) | `left` |
 | +45 to +135 deg | `right` |
 | beyond +-135 deg | `opposite` |
 
 `crossing_from_X: yes` needs a member from approach X with a lanelet that
-**directly conflicts** with one of the ego's junction lanelets. A `crossing` *pose* takes
-any member from that approach (conflicting ones first).
+**directly conflicts** with one of the ego's junction lanelets (`X` is never
+`same`). A `paths` entry `{approach: A, turn: T}` needs a member from approach
+A whose path turns T, conflicting or not. A `crossing` *pose* takes any member
+from that approach, of that turn if it names one (conflicting ones first,
+then the lowest id).
 
 ### Crosswalks
 

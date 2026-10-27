@@ -159,6 +159,7 @@ class RouteFrame:
 
 # The values trajectory.model's route poses are checked against.
 APPROACHES = ("left", "right", "opposite")
+PATH_APPROACHES = ("same", "left", "right", "opposite")
 CROSSWALK_LEGS = ("entry", "exit")
 SIDES = ("left", "right")
 
