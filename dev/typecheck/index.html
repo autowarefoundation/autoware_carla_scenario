@@ -3040,7 +3040,19 @@ the float is the value stored in <code>k</code> here".</p>
 </code></pre></div>
 <p>Codon compiles some of these as written (a <code>None</code> first binding read
 only after an <code>is None</code> test), so a local named after a crash is a
-candidate, not a verdict: the crash may have another cause.
+candidate, not a verdict: the crash may have another cause.</p>
+<p>The same holds where a conditional expression tests the local before it
+is rebound, the previous value of a loop (<code>prev = None</code>, then <code>d = v -
+prev if prev is not None else None</code> and <code>prev = v</code>, #629): Codon decides
+the test while the local's type is still the unresolved <code>Optional</code> of its
+<code>= None</code>, completes it as <code>Optional[int]</code>, its default, and refuses
+<code>'Optional[int]' does not match expected type 'Optional[float]'</code> further
+on. The check adds the local's <code>= None</code> line and its annotation
+(<code>prev: float | None = None</code>). A local that is <em>only ever</em> <code>None</code> and
+that a conditional expression tests (<code>z = None</code>, then <code>z + 1 if z is not
+None else None</code>, even <code>1 if z is None else 2</code>) crashes Codon 0.19 with no
+diagnostic; the check names it after the crash, at the conditional
+expression. Annotate it, or drop the branch that cannot run.
 - <strong>Write the element types of a class attribute</strong> (#482): <code>xs: list[int] =
   field(default_factory=list)</code>, <code>d: dict[str, float]</code>, <code>ids: set[int]</code>,
   <code>xy: tuple[float, float] = (0.0, 0.0)</code> or <code>tuple[X, ...]</code>. Codon types a
@@ -3312,6 +3324,22 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
   <code>Optional[NoneType]</code>, which no <code>Optional[X]</code> parameter takes. Leave the
   argument to its default, pass a variable declared <code>Optional[X]</code>, or give
   the subclass an <code>__init__</code> of its own.</p>
+<p>A subclass with an <code>__init__</code> of its own that lists a mixin before its
+  framework base (<code>class CaseScenario(VehicleInfoMixin, BaseScenario)</code>)
+  calls <code>super().__init__(ego_config, spawn_pose=..., ...)</code>, which Python
+  follows through the MRO past the mixin to <code>BaseScenario.__init__</code>. Codon's
+  <code>super()</code> is the mixin's constructor of its fields, which refused the
+  base's arguments (<code>'ground_projection' is an invalid keyword argument for
+  __init__()</code>), so the check rewrites the call to
+  <code>BaseScenario.__init__(self, ego_config, spawn_pose=..., ...)</code> (#626),
+  which checks every argument against the base's <code>__init__</code> as before. It
+  does so only where the MRO makes the two the same method: every base
+  before it is a plain mixin of the scenario's modules (no <code>__init__</code> of its
+  own or inherited, no <code>@dataclass</code>, and only such mixins, <code>object</code>, <code>ABC</code>
+  or <code>Generic[...]</code> as bases). A class whose first base has an
+  <code>__init__</code>, or whose earlier bases the check cannot see, keeps <code>super()</code>;
+  listing the framework base first (<code>class CaseScenario(BaseScenario,
+  VehicleInfoMixin)</code>) always works.</p>
 <ul>
 <li><strong><code>return None</code> from a function returning <code>Optional[X]</code>.</strong> A bare <code>None</code>
   is Codon's <code>NoneType</code>, so a function whose only return is <code>return None</code>
@@ -3615,6 +3643,11 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>items: list[int] = []</code>, <code>tags: dict[str, int] = {}</code>, <code>seen: set[str] = set()</code> (annotated, in a class body, a function or the module, #611)</td>
 <td>an empty one of the annotated type, <code>List[int]()</code>: Codon types a display from its elements, and an empty one is a container of <code>None</code> (a class with no <code>__init__</code> of its own was refused at its constructor call)</td>
 <td>an annotation Codon cannot name there (<code>Any</code>, a <code>TypeVar</code>, a class defined further down outside a function)</td>
+</tr>
+<tr>
+<td><code>pairs: list[tuple[int, ...]] = []</code> (a local of a function, #625), then tuple displays of more than one length appended or inserted in that function: <code>pairs.append((1, 2))</code>, <code>pairs.insert(0, (3,))</code></td>
+<td><code>pairs = List[List[int]]()</code>, <code>pairs.append(List[int]([1, 2]))</code>: the <code>tuple[X, ...]</code> inside is the <code>List[X]</code> a class-level one is checked as (Codon's tuples have a fixed length), so tuples of different lengths go in, and the elements are still checked. Dropped, the annotation left Codon to type the list from its first <code>append</code>. Given tuples of one length only, the annotation is dropped as before (the list of fixed-length tuples Codon types then takes a tuple held in a name, <code>extend</code>, <code>in</code> with a tuple display), and so is a <code>tuple[X, ...]</code> in a dict, a set, a nested list or an <code>Optional</code></td>
+<td>a list given tuples of more than one length that is also given a tuple from a name (<code>pairs.append(t)</code>), or another way (<code>+=</code>, <code>extend</code>), or tested with <code>(1, 2) in pairs</code>: refused with a hint to build it with <code>tuple([...])</code>; a module-level one, or one a nested function appends to, is typed from its first append as before</td>
 </tr>
 <tr>
 <td><code>lst: list[Npc \| None] = [None, a]</code>, <code>d: dict[str, Npc \| None] = {"x": None, "y": a}</code> (a display whose first element or value is <code>None</code>, #611)</td>
@@ -3972,6 +4005,26 @@ the check needs the other spelling.</p>
 <td><code>'str' does not match expected type 'int'</code>, at the conditional expression</td>
 <td>one type for both branches (<code>str(3)</code>, <code>float(n)</code>), or an <code>if</code>/<code>else</code> statement that uses each value in its own branch</td>
 </tr>
+<tr>
+<td><code>lambda a, *, k=1: a * k</code>, a lambda with keyword-only parameters (#629)</td>
+<td>a syntax error (<code>unexpected dedent</code>); refused at its line before Codon runs</td>
+<td>a nested <code>def f(a, *, k=1): return a * k</code>, whose keyword-only parameters the check compiles (#622)</td>
+</tr>
+<tr>
+<td>A call of a method that a subclass of yours overrides, passing a keyword (<code>b.m(1.0, s=3.0)</code>), or leaving out a parameter with a default (<code>b.m(1.0)</code>), keyword-only parameters included (#629)</td>
+<td><code>'s' is an invalid keyword argument for class_thunk_dispatch()</code>, or <code>cannot typecheck 'b.m(1.0)'</code>, with a hint</td>
+<td>pass every argument by position: Codon calls an overridden method through a dispatch thunk, which takes no keyword and fills in no default. A keyword-only parameter cannot be passed by position, so in an overridden method make it a positional one with its default, in the base and in each override</td>
+</tr>
+<tr>
+<td>A function with keyword-only parameters in a table annotated <code>Callable</code> (<code>fs: list[Callable[[int], int]] = [key_of, dbl]</code> with <code>def key_of(x, *, rev=False)</code>, #629)</td>
+<td><code>no function 'Callable.__new__' with arguments (key_of[int,T2,bool])</code>, with a hint naming it</td>
+<td>a lambda that calls it, <code>[lambda x: key_of(x), dbl]</code>. An annotated variable (<code>g: Callable[[int], int] = key_of</code>) and a <code>Callable</code> parameter take it as it is</td>
+</tr>
+<tr>
+<td>A <code>nonlocal</code> variable that may be <code>None</code> used as its value, even narrowed (<code>out = y + 1 if y is not None else None</code> in the inner function, #629)</td>
+<td><code>unsupported operand type(s) for +: 'Capsule[Optional[int]]' and '1'</code>, with a hint</td>
+<td>copy it into an annotated local of the inner function (<code>cur: int \| None = y</code>), and test and use that; an unannotated copy is a <code>Capsule</code> too</td>
+</tr>
 </tbody>
 </table>
 <p>Plain value, or-pattern, guard, sequence (without <code>*</code>) and enum-member
@@ -3980,11 +4033,20 @@ the check needs the other spelling.</p>
 class is a <code>HasArea</code> only if it lists <code>HasArea</code> among its bases. Python runs
 the same code either way, because a <code>Protocol</code> base is only a marker there.</p>
 <h3 id="what-python-raises-for-that-codon-compiles-602-603">What Python raises for that Codon compiles (#602, #603)<a class="headerlink" href="#what-python-raises-for-that-codon-compiles-602-603" title="Permanent link">&para;</a></h3>
-<p>Codon checks types, so a call it compiles may still raise in CPython. Two
+<p>Codon checks types, so a call it compiles may still raise in CPython. Three
 kinds are decided from the syntax and refused at the call, before Codon
 runs (<code>typecheck/static_raises.py</code>):</p>
 <ul>
-<li><strong><code>isinstance</code> / <code>issubclass</code> with a subscripted generic</strong> (#603):
+<li>
+<p><strong><code>sum()</code> with a <code>str</code> start</strong> (#625): <code>sum(["a", "b"], "")</code>,
+  <code>sum(parts, start="-")</code>, a start that is an f-string or <code>str(...)</code>, and
+  likewise a <code>bytes</code> or <code>bytearray</code> one. CPython refuses it before it adds
+  anything ("sum() can't sum strings [use ''.join(seq) instead]"); Codon
+  concatenates. Use <code>"".join(parts)</code>. A start held in a variable is left to
+  the run.</p>
+</li>
+<li>
+<p><strong><code>isinstance</code> / <code>issubclass</code> with a subscripted generic</strong> (#603):
   <code>isinstance(v, list[int])</code>, <code>issubclass(C, dict[str, int])</code>,
   <code>isinstance(v, typing.List[int])</code>, also inside a tuple of classes
   (<code>(str, list[int])</code>), a <code>|</code> union (<code>int | list[int]</code>) or a
@@ -3997,7 +4059,8 @@ runs (<code>typecheck/static_raises.py</code>):</p>
   <code>Literal[...]</code>, compare the value. <code>isinstance(x, int | float)</code>, an
   unsubscripted <code>typing.List</code>, <code>Optional[int]</code> and an index into a tuple of
   classes (<code>TYPES[0]</code>) are left alone, and so is a name the module binds
-  itself (a parameter called <code>list</code>).</li>
+  itself (a parameter called <code>list</code>).</p>
+</li>
 <li><strong>A framework class built with literal arguments it refuses</strong> (#602):
   <code>MetricCondition("no_such_metric", label="m")</code>,
   <code>ElapsedTimeCondition(1.0, label="")</code>, <code>RouteCrossingPose(approach="Left")</code>,
@@ -4301,6 +4364,17 @@ The known gaps:</p>
   mode.</li>
 <li><strong>A scenario registered with <code>register_scenario_builder()</code></strong> is not
   checked at all: only its builder knows how it is built.</li>
+<li><strong>The <code>None</code> branch of a conditional expression chosen statically</strong>
+  (#629). The check makes Codon decide <code>a if x else None</code> (and <code>None if x
+  else a</code>) from <code>x</code>'s type (#597): where <code>x</code> is always <code>None</code> to Codon, only
+  the <code>None</code> branch is compiled. When the test does not narrow as Python
+  does (<code>None if x else x.a</code>, which evaluates <code>x.a</code> exactly when <code>x</code> is
+  <code>None</code>), the error in the other branch is not compiled. mypy's pass
+  reports it where <code>x</code> is annotated (<code>Item "None" of "Npc | None" has no
+  attribute "a"</code>); an unannotated parameter only ever given <code>None</code> passes.</li>
+<li><strong>A <code>sum()</code> whose <code>str</code> start is a variable</strong> (<code>sum(parts, sep)</code>), which
+  CPython refuses: only a start written as a string, an f-string or
+  <code>str(...)</code> is decided from the syntax (#625).</li>
 <li><strong>A value a framework constructor refuses</strong>, unless every argument of
   the call is a literal and the class is one of those
   <a href="#what-python-raises-for-that-codon-compiles-602-603">built with literal arguments</a>
@@ -5006,7 +5080,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>dict.get</code> does; <code>d.get(key)</code> is an <code>Optional</code> of it, as in Python (the
   model's <code>_tc.codon</code> declares it). So does <code>d.pop(key, default)</code> (#590,
   Codon's <code>pop</code> takes the key only), and <code>d.pop(key, None)</code> is an <code>Optional</code>
-  of the value's type. Likewise <code>if not x: continue</code> instead
+  of the value's type. <code>dict.fromkeys(xs)</code> of one argument (#625) is a
+  dict whose values are all <code>None</code>, as in Python (<code>Dict[K,
+  Optional[NoneType]]</code>, so it holds only <code>None</code>: give the value in the call,
+  <code>dict.fromkeys(xs, 0)</code>, for a dict to fill with other values). Likewise <code>if not x: continue</code> instead
   of <code>(x or {})</code>, <code>s.startswith(a) or s.startswith(b)</code> instead of
   <code>s.startswith((a, b))</code>, and <code>if x is None: return None</code> / <code>return x.attr</code>
   instead of <code>None if x is None else x.attr</code>.</li>
@@ -6276,7 +6353,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 07:11:23 UTC"><span class="timeago" datetime="2026-10-27T07:11:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 07:11:23 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 08:21:36 UTC"><span class="timeago" datetime="2026-10-27T08:21:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 08:21:36 UTC">2026-10-27</span>
   </span>
 
     
