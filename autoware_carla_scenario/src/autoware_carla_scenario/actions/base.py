@@ -182,6 +182,12 @@ class BaseAction(ABC):
         none: list[WaypointArrival] = []
         return none
 
+    def take_spawns(self) -> list[tuple[str, int]]:
+        """The ``(role, actor id)`` brought in since the last call, for the
+        run's log; none unless the action brings entities in."""
+        none: list[tuple[str, int]] = []
+        return none
+
     def take_despawns(self) -> list[tuple[str, int]]:
         """The ``(role, actor id)`` removed since the last call, for the
         run's log; none unless the action removes entities."""

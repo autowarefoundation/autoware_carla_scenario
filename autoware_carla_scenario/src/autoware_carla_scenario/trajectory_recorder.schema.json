@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of sixteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of seventeen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -48,6 +48,9 @@
       "$ref": "#/definitions/WalkerFallenRecord"
     },
     {
+      "$ref": "#/definitions/SpawnRecord"
+    },
+    {
       "$ref": "#/definitions/DespawnRecord"
     },
     {
@@ -71,6 +74,7 @@
       "waypoint_arrival": "#/$defs/WaypointArrivalRecord",
       "collision": "#/$defs/CollisionRecord",
       "walker_fallen": "#/$defs/WalkerFallenRecord",
+      "spawn": "#/$defs/SpawnRecord",
       "despawn": "#/$defs/DespawnRecord",
       "result": "#/$defs/ResultRecord"
     }
@@ -846,6 +850,52 @@
         "role",
         "drop",
         "tilt"
+      ],
+      "additionalProperties": false
+    },
+    "SpawnRecord": {
+      "title": "SpawnRecord",
+      "description": "A `SpawnAction` brought an entity spawned hidden into the scene: put on its place, physics on, moving at its speed. Written on the tick it fired; the entity's `actor` record came earlier, when it was first seen hidden. A prop the action adds is not an entity and has no record. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "spawn"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity brought in.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its actor's id; null if it is not known.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "id"
       ],
       "additionalProperties": false
     },

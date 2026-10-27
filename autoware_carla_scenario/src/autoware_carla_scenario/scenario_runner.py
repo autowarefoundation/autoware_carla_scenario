@@ -1595,6 +1595,8 @@ class ScenarioRunner:
                             trajectory.record_adversity(action.label, event)
                         for arrival in action.take_waypoint_arrivals():
                             trajectory.record_waypoint_arrival(action.label, arrival)
+                        for entity, actor_id in action.take_spawns():
+                            trajectory.record_spawn(action.label, entity, actor_id)
                         for entity, actor_id in action.take_despawns():
                             trajectory.record_despawn(action.label, entity, actor_id)
                 if npc_events is not None:

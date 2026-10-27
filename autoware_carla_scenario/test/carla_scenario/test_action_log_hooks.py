@@ -1,8 +1,8 @@
 """What an action hands the runner for the trajectory log (#655).
 
 ``BaseAction`` declares each hook the runner reads off every action, as an
-empty list: ``take_adversity_events()``, ``take_waypoint_arrivals()`` and
-``take_despawns()``. The actions that have something to log override them,
+empty list: ``take_adversity_events()``, ``take_waypoint_arrivals()``,
+``take_spawns()`` (#658) and ``take_despawns()``. The actions that have something to log override them,
 and the runner calls them directly, with no ``getattr``, so that the
 library check compiles the logging.
 """
@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario import DespawnAction, RoutingAction
+from autoware_carla_scenario import DespawnAction, RoutingAction, SpawnAction
 from autoware_carla_scenario.actions.adversarial_traffic import (
     AdversarialTrafficAction,
 )
@@ -29,6 +29,7 @@ from autoware_carla_scenario.waypoint_arrival import WaypointArrival
 _HOOKS = {
     "take_adversity_events": AdversarialTrafficAction,
     "take_waypoint_arrivals": RoutingAction,
+    "take_spawns": SpawnAction,
     "take_despawns": DespawnAction,
 }
 
@@ -59,6 +60,13 @@ def test_the_action_with_something_to_log_overrides_the_hook(
     assert inspect.signature(getattr(owner, hook)) == inspect.signature(
         getattr(BaseAction, hook)
     )
+
+
+def test_a_spawn_is_handed_over_once() -> None:
+    action = SpawnAction("npc1")
+    action._spawned.append(("npc1", 42))
+    assert action.take_spawns() == [("npc1", 42)]
+    assert action.take_spawns() == []
 
 
 def test_a_despawn_is_handed_over_once() -> None:
@@ -112,3 +120,27 @@ def test_the_runner_calls_each_hook_off_the_action_directly(hook: str) -> None:
         )
     ]
     assert not looked_up, f"run_scenario() looks action.{hook} up with getattr()"
+
+
+def test_the_runner_records_a_spawn_as_it_records_a_despawn() -> None:
+    """Each pair the hook hands over goes to the recorder under the action's
+    label (#658)."""
+    run = _run_scenario()
+    recorded: dict[str, str] = {}
+    for node in ast.walk(run):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Attribute)
+            and node.iter.func.attr in ("take_spawns", "take_despawns")
+        ):
+            (body,) = node.body
+            assert isinstance(body, ast.Expr) and isinstance(body.value, ast.Call)
+            call = body.value
+            assert isinstance(call.func, ast.Attribute)
+            assert ast.unparse(call.args[0]) == "action.label"
+            recorded[node.iter.func.attr] = call.func.attr
+    assert recorded == {
+        "take_spawns": "record_spawn",
+        "take_despawns": "record_despawn",
+    }

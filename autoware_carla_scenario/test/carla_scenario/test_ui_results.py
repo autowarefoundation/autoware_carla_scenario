@@ -83,6 +83,50 @@ def test_the_metrics_read_off_a_trajectory_log(tmp_path: Path) -> None:
     assert metrics["distance_m"] == pytest.approx(43.0, abs=0.1)
 
 
+def test_records_other_than_ticks_and_actors_are_skipped(tmp_path: Path) -> None:
+    """A record that merely names "tick" or "actor" (a label, a role) is not
+    read as a tick: a spawn or despawn line, or a collision's role list."""
+    plain = tmp_path / "Plain.trajectory.jsonl"
+    _trajectory(plain, stop_short_of=3.0)
+    lines = plain.read_text(encoding="utf-8").splitlines()
+    others = [
+        {
+            "type": "spawn",
+            "frame": 5,
+            "t": 0.1,
+            "label": "actor",
+            "entity": "tick",
+            "id": 2,
+        },
+        {
+            "type": "despawn",
+            "frame": 9,
+            "t": 0.3,
+            "label": "actor",
+            "entity": "tick",
+            "id": 2,
+            "reason": "action",
+        },
+        {
+            "type": "collision",
+            "frame": 9,
+            "t": 0.3,
+            "actors": ["tick", "actor"],
+            "ids": [2, 3],
+            "impulse": 1.0,
+            "ego": False,
+            "phase": "start",
+            "duration": None,
+        },
+    ]
+    mixed = tmp_path / "Mixed.trajectory.jsonl"
+    mixed.write_text(
+        "\n".join(lines[:5] + [json.dumps(o) for o in others] + lines[5:]) + "\n",
+        encoding="utf-8",
+    )
+    assert results.case_metrics(mixed) == results.case_metrics(plain)
+
+
 def test_boxes_that_overlap_are_no_distance_apart() -> None:
     a = results._box(0.0, 0.0, 0.0, (2.0, 1.0))
     assert results._box_distance(a, results._box(3.0, 0.5, 30.0, (2.0, 1.0))) == 0.0

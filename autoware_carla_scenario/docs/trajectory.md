@@ -275,7 +275,9 @@ by a `RouteProgressCondition` it enters when the ego has come as far as it had
 when the road user was first seen; a `PlaceClearCondition` on the same place
 in its trigger waits for the place to be clear, and `shift_max` lets it take
 the nearest clear place further on along its lane once the trigger gives up
-waiting.  One that leaves early is removed by a `DespawnAction`.
+waiting.  The run writes a `spawn` record to the
+[trajectory log](trajectory_log.md) on the tick it is brought in (a prop the
+action adds has none).  One that leaves early is removed by a `DespawnAction`.
 
 Vertices may also be placed against a logical scenario's *route*
 (`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,

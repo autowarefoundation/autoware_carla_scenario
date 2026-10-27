@@ -33,7 +33,7 @@ any later file.
 
 ## Records
 
-Each line is one of sixteen records, told apart by `type`. A file starts with one
+Each line is one of seventeen records, told apart by `type`. A file starts with one
 `world` line and one `map` line, then one `traffic_light` line per light and one
 `warmup` line. After that come the ticks: each `tick` line is preceded by an
 `actor` line for every vehicle or walker appearing in it for the first time and
@@ -71,6 +71,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `waypoint_arrival` (2) | when a routed entity has reached a waypoint with a time or a departure condition (`RoutingAction`, any mode), and its target is known | `frame`, `t`, `label` (the action's), `entity`, `vertex` (0-based), `kind` (`time`, or `condition`: the target is when it first held), `mode` (`driver`, `follow`, `position`), `target_t`, `actual_t`, `error_s` (`actual_t - target_t`) |
 | `collision` (2) | when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second) (`npc_collisions`) | `frame`, `t`, `actors` `[role, role]` (type ids where an actor has no role), `ids` `[id, id]`, `impulse` (N*s; at the end, the strongest), `ego` (one side is the ego), `phase` (`start`/`end`), `duration` (s, at the end; null at the start) |
 | `walker_fallen` (2) | once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways) | `frame`, `t`, `id`, `role`, `drop` (m), `tilt` (deg) |
+| `spawn` (2) | on the tick a `SpawnAction` brought an entity spawned hidden into the scene (not for a prop) | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null) |
 | `despawn` (2) | on the tick a `DespawnAction` removed an entity, or the run a walker that lay fallen 5 s | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null), `reason` (`action`/`fallen`) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
@@ -114,6 +115,10 @@ SHA-256, so a reader can load the very map the run was on.
   when none changed. Carry each light's state forward.
 - **Ticks can be missing.** A tick without any vehicle or walker is not
   written, so `frame` and `t` can skip.
+- **Entities brought in late are marked.** An entity spawned hidden is in
+  `actors` from the start, parked out of sight under the map;
+  a `spawn` line says when a `SpawnAction` put it on its place, as a
+  `despawn` line says when one was taken out.
 - **Actors that go are marked.** A vehicle or walker that is destroyed or
   despawned stops appearing in `actors`, and from version 2 an `actor_gone`
   line says so before the first tick it is missing from.
