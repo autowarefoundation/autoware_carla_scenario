@@ -106,9 +106,11 @@ from .library_driver import (
 )
 from .local_bindings import (
     int_literal_hint,
+    narrowed_none_first_bindings,
     none_first_binding_message,
     none_first_bindings,
     none_mismatch_hint,
+    none_only_tests,
 )
 from .module_cycles import cycle_hint
 from .python_rewrites import (
@@ -124,6 +126,7 @@ from .transform import (
     conflicting_imports,
     enum_class_names,
     literal_all,
+    plain_classes,
     redirect_imports,
     relative_module_imports,
     transform_source_lines,
@@ -138,7 +141,11 @@ from .call_diagnostics import (
 )
 from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
-from .static_raises import literal_argument_refusals, subscripted_isinstances
+from .static_raises import (
+    literal_argument_refusals,
+    str_sums,
+    subscripted_isinstances,
+)
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
@@ -820,6 +827,8 @@ def _build_workspace(
         if isinstance(node, ast.ClassDef)
     }
     init_classes = _init_classes(classes)
+    # The mixins a `super().__init__` passes over (#626).
+    mixins = plain_classes(classes, init_classes)
     callers = call_sites([module.tree for module in sources.modules.values()])
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
@@ -840,12 +849,13 @@ def _build_workspace(
             Diagnostic(message, str(module.path), line) for line, message in refused
         ]
         # What Python raises for when it runs, decided from the syntax
-        # (#602, #603): Codon checks types, so it compiles these.
+        # (#602, #603, #625): Codon checks types, so it compiles these.
         problems += [
             Diagnostic(r.message, str(module.path), r.line, r.column)
             for r in [
                 *subscripted_isinstances(module.tree),
                 *literal_argument_refusals(module.tree),
+                *str_sums(module.tree),
             ]
         ]
         problems += [
@@ -861,6 +871,7 @@ def _build_workspace(
             init_classes=init_classes,
             enum_classes=enum_class_names(classes),
             file=str(module.path),
+            mixins=mixins,
         )
         checks = render_library_checks(
             module.tree,
@@ -904,7 +915,31 @@ def _build_workspace(
 
 #: Codon's refusals of valid Python on a ``**kwargs`` or ``*args`` (#266),
 #: or on any tuple's truth, and what to write instead.
+#: What a call of a method a subclass overrides cannot do (#629).
+_THUNK_HINT = (
+    "Codon 0.19 calls a method that a subclass overrides through a dispatch "
+    "thunk, which takes no keyword argument and fills in no default: pass "
+    "every argument by position. A keyword-only parameter (after `*`) cannot "
+    "be passed that way, so in a method that is overridden make it a "
+    "positional parameter (with its default) in the base and in each override"
+)
+
 _VARIADIC_LIMITS = (
+    (
+        re.compile(r"is an invalid keyword argument for class_thunk_dispatch\(\)"),
+        _THUNK_HINT,
+    ),
+    (
+        # A `nonlocal` that may be None, used where Codon unwraps the
+        # Optional (narrowed by a test, #629): Codon holds a nonlocal in a
+        # Capsule and unwraps no Optional through it.
+        re.compile(r"'Capsule\[Optional\["),
+        "Codon holds a `nonlocal` variable in a Capsule and does not unwrap an "
+        "Optional through it, so a nonlocal that may be None cannot be used as "
+        "its value even where a test narrowed it: copy it into an annotated "
+        "local of the inner function first (`cur: int | None = y`; unannotated, "
+        "the copy is a Capsule too), and test and use the local",
+    ),
     (
         # An empty container with no annotation, an unannotated class
         # attribute `items = []` most often (#611): Codon types it from what
@@ -3326,6 +3361,10 @@ def _compile(
             ),
             sources,
         )
+        try:
+            diagnostics = _keyword_only_hints(diagnostics, sources)
+        except Exception:  # only a hint: never lose Codon's own errors to it
+            pass
         if proc.returncode != 0:
             try:
                 diagnostics += _uninferred_attributes(diagnostics, sources)
@@ -3333,6 +3372,10 @@ def _compile(
                 pass
             try:
                 diagnostics += _unplaced_none_mismatches(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
+            try:
+                diagnostics += _narrowed_none_first_hints(diagnostics, sources)
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
     seconds = time.monotonic() - started
@@ -3400,6 +3443,20 @@ def _compile(
             )
         except Exception:  # only a hint: the crash is reported either way
             pass
+        try:
+            # ... and on a conditional expression testing a local that is
+            # only ever None (#629).
+            diagnostics += [
+                Diagnostic(
+                    f"Codon crashed ({tail[0]}); a likely cause: {test.message()}",
+                    str(module.path),
+                    test.test_line,
+                )
+                for module in sources.modules.values()
+                for test in none_only_tests(module.tree)
+            ]
+        except Exception:  # only a hint: the crash is reported either way
+            pass
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
@@ -3411,6 +3468,105 @@ def _compile(
         output=output,
         seconds=seconds,
     )
+
+
+#: Codon completing a type it had not resolved as ``int``, its default
+#: (``'Optional[int]' does not match expected type 'Optional[float]'``).
+_DEFAULTED_INT = re.compile(
+    r"^'Optional\[int\]' does not match expected type 'Optional\[(?!int\])"
+)
+
+
+def _narrowed_none_first_hints(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """The locals first bound to ``None`` that a conditional expression tests,
+    when Codon refused an ``Optional[int]`` it made up (#629): ``prev = None``
+    in a loop, then ``v - prev if prev is not None else None``."""
+    if not any(_DEFAULTED_INT.search(d.message) for d in diagnostics):
+        return []
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for binding in narrowed_none_first_bindings(module.tree):
+            found.append(
+                Diagnostic(
+                    "Codon typed a value Optional[int], which it gives a type "
+                    "it has not resolved yet; a likely cause: "
+                    f"{none_first_binding_message(binding)}",
+                    str(module.path),
+                    binding.line,
+                )
+            )
+    return found
+
+
+#: Codon's refusal of a function in a table annotated ``Callable`` (#629).
+_CALLABLE_TABLE = re.compile(
+    r"^(?P<codon>no function 'Callable\.__new__' with arguments "
+    r"\((?P<fn>\w+)\[[^)]*\))"
+)
+#: Codon failing on a call of a method (``b.m(1.0)``) with no other word.
+_UNTYPED_METHOD_CALL = re.compile(
+    r"^cannot typecheck '[^']*\.(?P<method>\w+)\([^']*\)'$"
+)
+
+
+def _bare_star(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether *function* has keyword-only parameters after a bare ``*``."""
+    return bool(function.args.kwonlyargs) and function.args.vararg is None
+
+
+def _keyword_only_hints(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """*diagnostics*, a refusal that keyword-only parameters cause saying so
+    (#629): a function with them in a table annotated ``Callable``, and a
+    call of an overridden method with them (or with defaults), which goes
+    through Codon's dispatch thunk."""
+    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    methods: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for module in sources.modules.values():
+        for node in module.tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions[node.name] = node
+            elif isinstance(node, ast.ClassDef):
+                for member in node.body:
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        methods.setdefault(member.name, []).append(member)
+    out: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        table = _CALLABLE_TABLE.match(diagnostic.message)
+        untyped = _UNTYPED_METHOD_CALL.match(diagnostic.message)
+        if table is not None:
+            function = functions.get(table["fn"])
+            if function is not None and _bare_star(function):
+                positional = ", ".join(
+                    a.arg for a in [*function.args.posonlyargs, *function.args.args]
+                )
+                diagnostic = dataclasses.replace(
+                    diagnostic,
+                    message=(
+                        f"{table['codon']}: `{function.name}` has keyword-only "
+                        "parameters, which Codon cannot convert to a Callable "
+                        "even when they have defaults: put a lambda that calls "
+                        f"it in the table instead (`lambda {positional}: "
+                        f"{function.name}({positional})`)"
+                    ),
+                )
+        elif untyped is not None:
+            defined = methods.get(untyped["method"], [])
+            if len(defined) > 1 and any(
+                _bare_star(m) or m.args.defaults or m.args.kw_defaults for m in defined
+            ):
+                diagnostic = dataclasses.replace(
+                    diagnostic,
+                    message=(
+                        f"{diagnostic.message}: `{untyped['method']}` is "
+                        f"overridden. {_THUNK_HINT}"
+                    ),
+                )
+        out.append(diagnostic)
+    return out
 
 
 def _unplaced_none_mismatches(
