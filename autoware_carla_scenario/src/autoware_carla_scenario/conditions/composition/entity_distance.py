@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ...coordinate.lane_distance import lane_separation
+from ...coordinate.lane_distance import lane_offset, lane_separation
 from ...coordinate.poses import CarlaWorldPose
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
@@ -56,6 +56,11 @@ class EntityDistanceCondition(CompositionCondition):
             centres, clamped at zero once they overlap.  Off by default,
             OpenSCENARIO's ``freespace``, and not available in the lane frame.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
+        signed: In the lane frame, measure ahead (positive) or behind
+            (negative) the source, the way it faces, rather than how far apart
+            (:func:`~autoware_carla_scenario.coordinate.lane_distance.lane_offset`):
+            ``value=-30`` with ``LESS_THAN_OR_EQUAL`` reads "at least 30 m
+            behind the source".  Off by default; only in the lane frame.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
             measures the straight line between the two.
             :attr:`~DistanceCoordinateSystem.LANE` measures along the roads
@@ -89,6 +94,7 @@ class EntityDistanceCondition(CompositionCondition):
     _distance_type: RelativeDistanceType
     _edge_to_edge: bool
     _coordinate_system: DistanceCoordinateSystem
+    _signed: bool
     _comparison: ScalarComparisonRule
 
     def __init__(
@@ -104,10 +110,16 @@ class EntityDistanceCondition(CompositionCondition):
         coordinate_system: DistanceCoordinateSystem = (DistanceCoordinateSystem.ENTITY),
         *,
         label: str,
+        signed: bool = False,
     ) -> None:
         if tolerance < 0:
             raise ValueError("tolerance must be non-negative")
         in_lane = coordinate_system is DistanceCoordinateSystem.LANE
+        if signed and not in_lane:
+            raise ValueError(
+                "signed is a lane-frame distance (ahead along the road, or "
+                "behind); measure in the lane frame"
+            )
         if vertical and in_lane:
             raise ValueError(
                 "a lane-frame distance is measured along the road and has no "
@@ -138,6 +150,7 @@ class EntityDistanceCondition(CompositionCondition):
         self._distance_type = distance_type
         self._edge_to_edge = edge_to_edge
         self._coordinate_system = coordinate_system
+        self._signed = signed
         self._comparison = ScalarComparisonRule(
             field="distance", rule=rule, value=value, tolerance=tolerance
         )
@@ -158,6 +171,7 @@ class EntityDistanceCondition(CompositionCondition):
                 "distance_type": self._distance_type.name,
                 "edge_to_edge": self._edge_to_edge,
                 "coordinate_system": self._coordinate_system.name,
+                "signed": self._signed,
             }
         )
         return details
@@ -179,6 +193,12 @@ class EntityDistanceCondition(CompositionCondition):
             # something -- unlike a headway, a separation has no direction.
             src_loc = source.get_location()
             tgt_loc = target.get_location()
+            if self._signed:
+                yaw = float(source.get_transform().rotation.yaw)
+                return lane_offset(
+                    CarlaWorldPose(x=src_loc.x, y=src_loc.y, z=src_loc.z, yaw=yaw),
+                    CarlaWorldPose(x=tgt_loc.x, y=tgt_loc.y, z=tgt_loc.z, yaw=0.0),
+                )
             return lane_separation(
                 CarlaWorldPose(x=src_loc.x, y=src_loc.y, z=src_loc.z, yaw=0.0),
                 CarlaWorldPose(x=tgt_loc.x, y=tgt_loc.y, z=tgt_loc.z, yaw=0.0),
@@ -206,6 +226,8 @@ class EntityDistanceCondition(CompositionCondition):
             if self._coordinate_system is DistanceCoordinateSystem.LANE
             else self._distance_type.value
         )
+        if self._signed:
+            measure = "ahead along lane"
         rule_text = self._comparison.rule.text
         return ScenarioResult(
             passed=True,

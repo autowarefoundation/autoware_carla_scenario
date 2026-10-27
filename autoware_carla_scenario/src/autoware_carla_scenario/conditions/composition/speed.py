@@ -15,6 +15,44 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 
+#: Each walker's last place and the velocity measured to it, by actor id:
+#: ``(elapsed, x, y, z, vx, vy, vz)``.
+_PLACED: dict[int, tuple[float, float, float, float, float, float, float]] = {}
+
+
+def walker_velocity(entity: "carla.Actor", elapsed: float) -> Vector3:
+    """*entity*'s (a walker's) velocity, measured from where it stood when
+    last asked: CARLA's walker controller moves a walker by placing it, so
+    ``get_velocity()`` reads 0 for one walking on its controller.  The first
+    time it is asked, and again once the scenario's clock has gone back,
+    what CARLA reports."""
+    location = entity.get_location()
+    key = int(entity.id)
+    velocity = Vector3.from_carla_vector3d(entity.get_velocity())
+    before = _PLACED.get(key)
+    if before is not None:
+        when, x, y, z, vx, vy, vz = before
+        span = elapsed - when
+        if span == 0.0:
+            return Vector3(vx, vy, vz)  # asked again this tick
+        if span > 0.0:
+            velocity = Vector3(
+                (location.x - x) / span,
+                (location.y - y) / span,
+                (location.z - z) / span,
+            )
+    _PLACED[key] = (
+        elapsed,
+        location.x,
+        location.y,
+        location.z,
+        velocity.x,
+        velocity.y,
+        velocity.z,
+    )
+    return velocity
+
+
 class SpeedDirection(Enum):
     """Which speed component to evaluate.
 
@@ -127,20 +165,26 @@ class SpeedCondition(CompositionCondition):
         self,
         entity: carla.Actor,
         world: "carla.World",
+        elapsed: float = 0.0,
     ) -> Optional[float]:
         """Extract the relevant speed component from *entity*.
 
         Args:
             entity: The target actor whose velocity is measured.
             world: The world, to look up the reference entity in.
+            elapsed: The scenario's elapsed time, to measure a walker's
+                velocity by (:func:`walker_velocity`).
 
         Returns:
             The speed value (m/s), or ``None`` if the reference entity
             required for :attr:`SpeedCoordinateSystem.ENTITY` cannot be
             found or has a degenerate forward vector.
         """
-        velocity: carla.Vector3D = entity.get_velocity()
-        vel = Vector3.from_carla_vector3d(velocity)
+        if str(entity.type_id).startswith("walker."):
+            vel = walker_velocity(entity, elapsed)
+        else:
+            velocity: carla.Vector3D = entity.get_velocity()
+            vel = Vector3.from_carla_vector3d(velocity)
 
         if self._direction == SpeedDirection.MAGNITUDE:
             return vel.magnitude()
@@ -183,7 +227,7 @@ class SpeedCondition(CompositionCondition):
         if entity is None:
             return None
 
-        speed_component = self._extract_speed_component(entity, world)
+        speed_component = self._extract_speed_component(entity, world, elapsed)
         if speed_component is None:
             return None
 

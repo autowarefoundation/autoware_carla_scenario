@@ -490,7 +490,7 @@ class DeclarativeScenario(BaseScenario):
         """Where a parked entity waits: under the ego's spawn, 10 m apart."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
-        from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+        from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
         assert self._spawn_pose is not None  # noqa: S101 -- set before NPCs spawn
@@ -616,7 +616,7 @@ def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Tra
         return transform
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
-    from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+    from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
 
     location = transform.location
     return carla.Transform(

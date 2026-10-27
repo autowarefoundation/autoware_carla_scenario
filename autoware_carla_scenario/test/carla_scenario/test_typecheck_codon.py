@@ -61,7 +61,6 @@ from autoware_carla_scenario import (
     ComparisonRule,
     EgoConfig,
     ElapsedTimeCondition,
-    FollowTrajectoryAction,
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
@@ -69,6 +68,8 @@ from autoware_carla_scenario import (
     OpenDrivePose,
     ReferenceContext,
     RelativeLanePose,
+    RoutingAction,
+    RoutingMode,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
@@ -920,18 +921,22 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
             ],
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
+            RoutingAction(
                 "npc1",
-                path,
-                TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
-                TrajectoryFollowingMode.FOLLOW,
+                trajectory=path,
+                time_reference=TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
+                mode=RoutingMode.FOLLOW,
                 condition=ElapsedTimeCondition(1.0, label="go"),
                 label="npc1_follow",
             )
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
-                "npc2", path, hidden_outside_trajectory=True, label="npc2_follow"
+            RoutingAction(
+                "npc2",
+                trajectory=path,
+                time_reference=TrajectoryTiming(),
+                mode=RoutingMode.POSITION,
+                label="npc2_follow",
             )
         )
         """
@@ -973,9 +978,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         gate = path.vertices[1].gate
         if gate is not None:
             logger.info("second departs on %s", gate.label)
-        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated", speed=8.0)
+        action = RoutingAction("npc1", trajectory=path, time_reference=TrajectoryTiming(), label="npc1_gated", speed=8.0)
         self.register_pre_tick(action)
-        self.register_pre_tick(FollowTrajectoryAction("npc2", untimed, label="npc2_gated"))
+        self.register_pre_tick(RoutingAction("npc2", trajectory=untimed, mode=RoutingMode.POSITION, label="npc2_gated"))
         held = action.held_vertex
         if held is not None:
             logger.info("held at %d", held)
@@ -1054,9 +1059,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
             "expected an EntityRole or a str",
         ),
         (
-            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
-            "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
-            "FollowTrajectoryAction(",
+            'RoutingAction("npc1", trajectory=Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
+            "TrajectoryVertex(MapPose(3.0, 4.0))]), time_reference=RoutingMode.FOLLOW)\n",
+            "RoutingAction(",
             "TrajectoryTiming",
         ),
         (
@@ -3674,8 +3679,8 @@ from autoware_carla_scenario import (
     JaywalkAction,
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
-    PropAction,
-    PropOperation,
+    SpawnAction,
+    DespawnAction,
     RunTrafficRuleAction,
     Lanelet2Pose,
     MapPose,
@@ -3716,13 +3721,13 @@ self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
 self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
 self.register_pre_tick(
-    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+    SpawnAction(name="cone1", position=Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
 )
-self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction(name="box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction("npc5", position=Lanelet2Pose(1, 8.0), shift_max=30.0, speed=3.0))
 self.register_pre_tick(
-    PropAction(
-        "cone1",
-        PropOperation.REMOVE,
+    DespawnAction(
+        name="cone1",
         condition=ElapsedTimeCondition(8.0, label="gone"),
         label="clear",
     )
@@ -4716,6 +4721,7 @@ _SEQUENCE_HEADER = _HEADER.replace(
     MapManager,
     OrCondition,
     RoutingAction,
+    RoutingMode,
     TrafficSignalAction,
     TrafficSourceAction,
     VehicleEntity,

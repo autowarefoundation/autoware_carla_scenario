@@ -1,6 +1,6 @@
 """TeraSim's scheduled static adversities: a stalled object, collision objects (#401).
 
-On the follow-trajectory action's fakes (:mod:`.test_follow_trajectory_action`):
+On the follow-trajectory action's fakes (:mod:`.test_routing_trajectory_action`):
 a teleport puts the vehicle where it is told.
 """
 
@@ -19,11 +19,11 @@ from autoware_carla_scenario import (
     TrajectoryFollowingMode,
     collision_objects,
 )
-from autoware_carla_scenario.actions.follow_trajectory import HIDDEN_DEPTH_M
+from autoware_carla_scenario.actions._trajectory_run import HIDDEN_DEPTH_M
 from autoware_carla_scenario.actions.stalled_object import FOREVER_S
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
-from .test_follow_trajectory_action import _Actor, _Entity, _run
+from .test_routing_trajectory_action import _Actor, _Entity, _run
 
 AT = CarlaWorldPose(30.0, 4.0, 0.0, yaw=90.0)
 

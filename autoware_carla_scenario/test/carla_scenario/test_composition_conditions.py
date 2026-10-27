@@ -774,3 +774,54 @@ class TestAnOpenDriveAddressNeedsNoMap:
         details = condition.get_details()
         assert details["road_id"] == "80"
         assert details["lane_id"] == 2
+
+
+def test_a_guard_reads_a_gone_entity_quietly(caplog: pytest.LogCaptureFixture) -> None:
+    """A composition condition's guard on an entity that is gone (despawned)
+    is nothing to check, not an error each tick; the ego's own existence
+    condition still says it."""
+    import logging as _logging
+
+    from autoware_carla_scenario.conditions import EntityExistenceCondition
+
+    class _Empty:
+        id = 4242
+
+        def get_actors(self) -> list:
+            return []
+
+        def get_actor(self, actor_id: int) -> None:
+            return None
+
+    world = _Empty()
+    guard = EntityExistenceCondition("npc9", label="g", quiet=True)
+    loud = EntityExistenceCondition("ego", label="e")
+    with caplog.at_level(_logging.DEBUG):
+        for t in range(5):
+            assert guard.check(world, float(t)) is not None  # type: ignore[arg-type]
+        assert [r.levelno for r in caplog.records] == [_logging.DEBUG]
+        caplog.clear()
+        loud.check(world, 0.0)  # type: ignore[arg-type]
+        assert [r.levelno for r in caplog.records] == [_logging.ERROR]
+
+
+def test_a_guard_reads_an_entity_parked_under_the_map_as_not_there() -> None:
+    """Not yet brought in: a despawn trigger's standstill and distance say
+    nothing of it (it was despawned before it ever appeared)."""
+    from types import SimpleNamespace as _NS
+
+    from autoware_carla_scenario.conditions import EntityExistenceCondition
+    from autoware_carla_scenario.conditions import base as base_module
+
+    where = _NS(x=415.0, y=57.0, z=-499.7)
+    actor = _NS(get_location=lambda: where)
+    original = base_module.find_actor_in_world
+    base_module.find_actor_in_world = lambda world, name: actor  # type: ignore[assignment]
+    try:
+        guard = EntityExistenceCondition("npc9", label="g", quiet=True)
+        assert guard.check(None, 1.0) is not None  # type: ignore[arg-type]
+        assert EntityExistenceCondition("npc9", label="e").check(None, 1.0) is None  # type: ignore[arg-type]
+        where.z = 0.9
+        assert guard.check(None, 2.0) is None  # type: ignore[arg-type]
+    finally:
+        base_module.find_actor_in_world = original  # type: ignore[assignment]

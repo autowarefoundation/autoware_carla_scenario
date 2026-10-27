@@ -1,8 +1,10 @@
-"""A trajectory as a scenario document states it, and the one it builds.
+"""A route as a scenario document states it, and the one it builds.
 
-The editor's *Follow Trajectory* card says where the path comes from in one of
-three ways (:data:`PATH_SOURCES`):
+The editor's *Set Goal* card says where the route goes in one of five ways
+(:data:`PATH_SOURCES`):
 
+* ``goal`` -- a goal lanelet (and ``s`` along it) and the lanelets to pass
+  on the way: the destination an ego is given;
 * ``vertices`` -- a list of map-frame vertices ``[x, y, yaw]`` kept in the
   document itself, ``yaw`` optional.  This is what a recording transcribes
   to, and what an author pastes or edits as text, one vertex per line;
@@ -49,6 +51,7 @@ from .model import (
 
 if TYPE_CHECKING:
     from ..conditions.base import BaseCondition
+    from ..coordinate.poses import Lanelet2Pose
 
 __all__ = [
     "PATH_SOURCES",
@@ -56,8 +59,11 @@ __all__ = [
     "RelativeVertexRow",
     "TIME_DOMAINS",
     "VertexRow",
+    "authored_goal",
+    "authored_route",
     "authored_timing",
     "authored_trajectory",
+    "authored_waypoints",
     "format_relative_vertices",
     "format_route_vertices",
     "format_vertices",
@@ -72,8 +78,15 @@ __all__ = [
     "vertex_problems",
 ]
 
-#: Where a document's trajectory comes from.
-PATH_SOURCES: tuple[str, ...] = ("vertices", "lanelets", "relative_lane", "route")
+#: Where a document's route comes from: ``goal`` names a goal and via
+#: lanelets; the others write the waypoints out as a trajectory.
+PATH_SOURCES: tuple[str, ...] = (
+    "goal",
+    "vertices",
+    "lanelets",
+    "relative_lane",
+    "route",
+)
 
 #: A document's time reference: ``none`` ignores the vertex times.
 TIME_DOMAINS: tuple[str, ...] = ("none", "relative", "absolute")
@@ -491,7 +504,7 @@ def authored_trajectory(
     advance: Optional[Mapping[int, "BaseCondition"]] = None,
     route_vertices: Any = None,
 ) -> Trajectory:
-    """The trajectory a *Follow Trajectory* card describes.
+    """The trajectory a *Set Goal* card's written-out waypoints describe.
 
     Args:
         path_source: ``vertices``, ``lanelets`` or ``relative_lane`` (see
@@ -611,6 +624,69 @@ def _lanelet_path(
             )
         travelled += length
     return Trajectory(name, vertices)
+
+
+def authored_route(
+    path_source: str,
+    vertices: Any = None,
+    lanelet_ids: Optional[Sequence[int]] = None,
+    speed_kmh: Optional[float] = None,
+    lateral_offset_m: float = 0.0,
+    relative_vertices: Any = None,
+    reference_entity: Optional[str] = None,
+    advance: Optional[Mapping[int, "BaseCondition"]] = None,
+    route_vertices: Any = None,
+) -> Optional[Trajectory]:
+    """The waypoints a *Set Goal* card writes out, as a trajectory; ``None``
+    for a ``goal`` card, whose route is its goal and via lanelets.
+
+    Raises:
+        ValueError: As :func:`authored_trajectory`, and on waypoint
+            conditions on a ``goal`` card, which writes no waypoints out.
+    """
+    if path_source == "goal":
+        if advance:
+            raise ValueError(
+                "a route given as a goal and via lanelets writes no waypoints "
+                "out to give conditions to"
+            )
+        return None
+    return authored_trajectory(
+        path_source,
+        vertices=vertices,
+        lanelet_ids=lanelet_ids,
+        speed_kmh=speed_kmh,
+        lateral_offset_m=lateral_offset_m,
+        name="route",
+        relative_vertices=relative_vertices,
+        reference_entity=reference_entity,
+        advance=advance,
+        route_vertices=route_vertices,
+    )
+
+
+def authored_goal(
+    path_source: str, lanelet_id: Optional[int] = None, s: Optional[float] = None
+) -> "Optional[Lanelet2Pose]":
+    """A ``goal`` card's goal, *s* metres along lanelet *lanelet_id*; ``None``
+    for a card that writes its waypoints out."""
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
+    if path_source != "goal":
+        return None
+    return Lanelet2Pose(lanelet_id=int(lanelet_id or 0), s=float(s or 0.0))
+
+
+def authored_waypoints(
+    path_source: str, lanelet_ids: Optional[Sequence[int]] = None
+) -> "list[Lanelet2Pose]":
+    """A ``goal`` card's via lanelets, each a pose at its start; none for a
+    card that writes its waypoints out."""
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
+    if path_source != "goal":
+        return []
+    return [Lanelet2Pose(lanelet_id=int(i), s=0.0) for i in lanelet_ids or ()]
 
 
 def authored_timing(

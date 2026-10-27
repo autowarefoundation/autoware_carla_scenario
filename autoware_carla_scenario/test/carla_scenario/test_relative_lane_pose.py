@@ -12,7 +12,7 @@ centreline.  These tests work on a small synthetic Lanelet2 map --
 
 first the arithmetic, then whole trajectories placed in CARLA coordinates, then
 the action following one against the simulated vehicle of
-``test_follow_trajectory_action``.
+``test_routing_trajectory_action``.
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import lanelet2.traffic_rules
 from autoware_carla_scenario import (
     CarlaWorldPose,
     ElapsedTimeCondition,
-    FollowTrajectoryAction,
     Lanelet2Pose,
     RelativeLanePose,
     Trajectory,
@@ -51,8 +50,8 @@ from autoware_carla_scenario.trajectory.relative_lane import (
 )
 from autoware_carla_scenario.trajectory.resolve import resolve_trajectory
 
-from .test_follow_trajectory_action import _Actor, _Entity, _run, _World
-from .test_follow_trajectory_action import _at as _time
+from .test_routing_trajectory_action import _Actor, _Entity, _run, _World, _route
+from .test_routing_trajectory_action import _at as _time
 
 B, R0, R1, R2, L0, L1, L2 = 100, 101, 102, 103, 111, 112, 113
 
@@ -407,7 +406,7 @@ class TestTheAction:
     def test_it_follows_a_path_placed_where_the_entity_started(
         self, npc: _Entity
     ) -> None:
-        action = FollowTrajectoryAction("npc1", _overtake(), TrajectoryTiming())
+        action = _route("npc1", _overtake(), TrajectoryTiming())
         _run(action, npc.actor, 2.5)
         assert action.finished
         assert (npc.actor.x, npc.actor.y) == (pytest.approx(25.0), pytest.approx(-3.5))
@@ -415,7 +414,7 @@ class TestTheAction:
     def test_a_relative_vertex_can_hold_it(self, npc: _Entity) -> None:
         """A condition on a relative vertex holds the entity where it was placed."""
         # Its time replaced by the condition; to it, at the action's speed.
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _overtake().gated({1: ElapsedTimeCondition(2.0, label="go")}),
             TrajectoryTiming(),
@@ -442,7 +441,7 @@ class TestTheAction:
                     ),
                 ],
             )
-            action = FollowTrajectoryAction("npc1", ahead_of_ego, TrajectoryTiming())
+            action = _route("npc1", ahead_of_ego, TrajectoryTiming())
             _run(action, npc.actor, 0.5)
             ego.actor.x = 12.0  # the reference moves on; the path does not
             _run(action, npc.actor, 1.0, start=0.5)
@@ -459,7 +458,7 @@ class TestTheAction:
                 TrajectoryVertex(RelativeLanePose(-2.0, entity_ref="late"), _time(1.0)),
             ],
         )
-        action = FollowTrajectoryAction("npc1", trajectory, TrajectoryTiming())
+        action = _route("npc1", trajectory, TrajectoryTiming())
         _run(action, npc.actor, 0.2)
         assert npc.actor.teleports == 0
         assert npc.released == 0
@@ -484,9 +483,7 @@ class TestTheAction:
                 TrajectoryVertex(RelativeLanePose(5.0, entity_ref="lead"), _time(0.5)),
             ],
         )
-        action = FollowTrajectoryAction(
-            "npc1", trajectory, TrajectoryTiming(), once=False
-        )
+        action = _route("npc1", trajectory, TrajectoryTiming(), once=False)
         world = _World()
         register_entity("lead", _Entity(_Actor(x=20.0, y=0.0)))
         elapsed = 0.0
@@ -519,7 +516,7 @@ class TestTheAction:
                 ),
             ],
         )
-        action = FollowTrajectoryAction("npc1", trajectory, TrajectoryTiming())
+        action = _route("npc1", trajectory, TrajectoryTiming())
         with caplog.at_level("WARNING"):
             _run(action, npc.actor, 1.0)
         assert sum("'nobody'" in r.getMessage() for r in caplog.records) == 1
@@ -532,9 +529,7 @@ class TestTheAction:
                 TrajectoryVertex(RelativeLanePose(5.0), _time(0.5)),
             ],
         )
-        action = FollowTrajectoryAction(
-            "npc1", trajectory, TrajectoryTiming(), once=False
-        )
+        action = _route("npc1", trajectory, TrajectoryTiming(), once=False)
         world = _World()
         elapsed = 0.0
         ends: list[float] = []

@@ -671,8 +671,8 @@ class EntityExistenceCondition(BaseCondition):
         compile_error("EntityExistenceCondition(): no constructor takes these arguments "
                       "(required: entity_name, keyword label)")
 
-    def __init__(self, entity_name, *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityExistenceCondition(): label")
+    def __init__(self, entity_name, *_kw, label = _Required(), quiet: bool = False):
+        _keyword_only(_kw, "EntityExistenceCondition(): label and quiet")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
 
@@ -771,6 +771,14 @@ class RouteProgressCondition(BaseCondition):
     def progress(self) -> Optional[float]:
         raise NotImplementedError()
 
+    @property
+    def target(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def rises(self) -> bool:
+        raise NotImplementedError()
+
 
 class RelativeSpeedCondition(BaseCondition):
     def __init__(self, label):
@@ -810,8 +818,8 @@ class EntityDistanceCondition(BaseCondition):
                  distance_type: RelativeDistanceType = RelativeDistanceType("euclidean"),
                  edge_to_edge: bool = False, tolerance: float = 1e-06,
                  coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),  # ENTITY
-                 *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityDistanceCondition(): label")
+                 *_kw, label = _Required(), signed: bool = False):
+        _keyword_only(_kw, "EntityDistanceCondition(): label and signed")
         _expect_role(source)
         _expect_role(target)
         super().__init__(_required_str(label, "EntityDistanceCondition(): label"))
@@ -899,6 +907,18 @@ class TimeHeadwayCondition(BaseCondition):
         _expect_role(source)
         _expect_role(target)
         super().__init__(_required_str(label, "TimeHeadwayCondition(): label"))
+
+
+class PlaceClearCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("PlaceClearCondition(): no constructor takes these arguments "
+                      "(required: position, length, width, keyword label)")
+
+    def __init__(self, position, length: float, width: float, margin: float = 0.3,
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "PlaceClearCondition(): label")
+        _expect_pose(position)
+        super().__init__(_required_str(label, "PlaceClearCondition(): label"))
 
 
 class TimeToCollisionCondition(BaseCondition):

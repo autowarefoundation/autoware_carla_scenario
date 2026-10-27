@@ -1,7 +1,7 @@
 """The static check for a logical scenario's API: route poses and progress.
 
 The same check as :mod:`.test_typecheck_codon`, on a scenario written with the
-route poses, ``RouteProgressCondition`` and ``appear_on_start``.  Skipped
+route poses, ``RouteProgressCondition`` and ``SpawnAction``.  Skipped
 where no Codon compiler is installed.
 """
 
@@ -30,7 +30,9 @@ _ROUTE_HEADER = _HEADER.replace(
     "    RouteLanePose,\n"
     "    RouteOppositePose,\n"
     "    RouteProgressCondition,\n"
-    "    RouteRoadsidePose,\n",
+    "    RouteRoadsidePose,\n"
+    "    SpawnAction,\n"
+    "    PlaceClearCondition,\n",
 )
 _counter = 0
 
@@ -74,18 +76,28 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
             ],
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
+            RoutingAction(
                 "npc1",
-                path,
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                trajectory=path,
+                mode=RoutingMode.FOLLOW,
                 condition=RouteProgressCondition(
                     EGO_ROLE_NAME, 20.0, ComparisonRule.GREATER_THAN, label="go"
                 ),
                 label="npc1_route",
                 speed=8.0,
-                appear_on_start=True,
             )
         )
+        self.register_pre_tick(
+            SpawnAction(
+                "npc1",
+                condition=RouteProgressCondition(value=10.0, label="enter"),
+                position=Lanelet2Pose(1, 3.0),
+                shift_max=30.0,
+                speed=8.0,
+            )
+        )
+        clear = PlaceClearCondition(Lanelet2Pose(1, 3.0), 4.6, 2.0, label="clear")
+        self.register_pass_condition(clear)
         arrived = RouteProgressCondition(value=0.0, anchor="end", label="arrived")
         self.register_pass_condition(arrived)
         progress = arrived.progress
@@ -116,13 +128,12 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
             "expected a str",
         ),
         (
-            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(RouteLanePose()), '
-            'TrajectoryVertex(RouteLanePose(5.0))]), appear_on_start="yes")\n',
-            'FollowTrajectoryAction("npc1"',
-            "FollowTrajectoryAction(): appear_on_start: expected bool, got str",
+            'SpawnAction("npc1", shift_max="far")\n',
+            'SpawnAction("npc1"',
+            "SpawnAction(): shift_max: expected float, got str",
         ),
     ],
-    ids=["missing-label", "str-for-float", "int-anchor", "str-appear-on-start"],
+    ids=["missing-label", "str-for-float", "int-anchor", "str-shift-max"],
 )
 def test_a_wrong_logical_scenario_is_refused_at_its_line(
     tmp_path: Path, setup: str, needle: str, message: str
