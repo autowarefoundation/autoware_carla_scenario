@@ -11308,8 +11308,8 @@ _LITERAL_HEADER = _HEADER.replace(
         ),
         (
             'RouteCrossingPose(approach="Left")',
-            "RouteCrossingPose.approach must be one of ['left', 'right', "
-            "'opposite'], got 'Left'",
+            "RouteCrossingPose.approach must be one of ['same', 'left', "
+            "'right', 'opposite'], got 'Left'",
         ),
         (
             'RouteRoadsidePose(side="kerb")',

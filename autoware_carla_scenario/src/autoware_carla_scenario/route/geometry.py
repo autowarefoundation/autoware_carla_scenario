@@ -142,8 +142,8 @@ class JunctionMember:
 
     Attributes:
         lanelet: The path's first junction lanelet: where it enters.
-        approach: ``left``, ``right`` or ``opposite`` (:func:`approach_of`),
-            by that lanelet's heading.
+        approach: ``same``, ``left``, ``right`` or ``opposite``
+            (:func:`approach_of`), by that lanelet's heading.
         turn: The path's turn: ``straight``, or the one non-straight
             ``turn_direction`` of its lanelets (``mixed`` for both ways).
         conflicts: Whether any lanelet of the path conflicts with the ego's
@@ -743,7 +743,8 @@ class MapFeatures:
     def junction_members(self, way: Sequence[ConstLanelet]) -> list[JunctionMember]:
         """The other lanelets of the junction *way* (the ego's) drives through.
 
-        By id; the ego's approach (``same``) left out.
+        By id; those of the ego's own approach (``same``: another lane of
+        it) included.
         """
         own = {int(ll.id) for ll in way}
         centre_points = [p for ll in way for p in _centreline(ll)]
@@ -774,8 +775,6 @@ class MapFeatures:
             if int(first.id) in own:
                 continue  # a branch off the ego's own way
             approach = approach_of(entry_heading, _start_heading(first))
-            if approach == "same":
-                continue
             turns = {self.turn(ll) for ll in path} - {"straight", ""}
             turn = (
                 "straight"

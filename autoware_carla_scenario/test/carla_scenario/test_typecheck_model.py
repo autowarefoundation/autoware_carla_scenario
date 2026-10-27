@@ -430,7 +430,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "scenario_route_frame": ("route", route_active.scenario_route_frame),
     **{
         name: ("route", getattr(route_model, name))
-        for name in ("APPROACHES", "CROSSWALK_LEGS", "SIDES")
+        for name in ("APPROACHES", "PATH_APPROACHES", "CROSSWALK_LEGS", "SIDES")
     },
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),

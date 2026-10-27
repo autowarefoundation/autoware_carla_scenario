@@ -365,11 +365,16 @@ class _Search:
             if not tristate_holds(seg.traffic_light, lit):
                 return False
         wanted = {a: seg.crossing(a) for a in ("left", "right", "opposite")}
-        if any(v != "any" for v in wanted.values()):
+        if any(v != "any" for v in wanted.values()) or seg.paths:
             members = f.junction_members(way)
             for approach, want in wanted.items():
                 present = any(m.conflicts and m.approach == approach for m in members)
                 if not tristate_holds(want, present):
+                    return False
+            for path in seg.paths:
+                if not any(
+                    m.approach == path.approach and m.turn == path.turn for m in members
+                ):
                     return False
         if seg.crosswalk_entry != "any" or seg.crosswalk_exit != "any":
             crosswalks = f.junction_crosswalks(way, entry, exit_)
