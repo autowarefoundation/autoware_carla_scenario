@@ -315,6 +315,11 @@ class RouteCrossingPose:
             the trajectory.
         d_lane: Lanes across from the path's own lane where the pose is,
             positive to its left -- another lane of the road it is on.
+        path: Which of the paths entering from *approach* and turning *turn*
+            -- counted from 1, from the left as they enter the junction
+            (:func:`~autoware_carla_scenario.route.positions.paths_from_left`)
+            -- where two lanes turn the same way, say.  ``None``: the one
+            crossing the ego's way first, then the lowest lanelet id.
     """
 
     junction: int = 0
@@ -324,6 +329,7 @@ class RouteCrossingPose:
     offset: float = 0.0
     yaw: Optional[float] = None
     d_lane: int = 0
+    path: Optional[int] = None
 
     def __post_init__(self) -> None:
         from ..route.model import PATH_APPROACHES  # noqa: PLC0415
@@ -338,6 +344,11 @@ class RouteCrossingPose:
         object.__setattr__(
             self, "d_lane", _whole("RouteCrossingPose", "d_lane", self.d_lane)
         )
+        if self.path is not None:
+            path = _whole("RouteCrossingPose", "path", self.path)
+            if path < 1:
+                raise ValueError("RouteCrossingPose.path counts from 1")
+            object.__setattr__(self, "path", path)
         if self.turn is not None:
             _one_of(
                 "RouteCrossingPose", "turn", self.turn, ("left", "right", "straight")

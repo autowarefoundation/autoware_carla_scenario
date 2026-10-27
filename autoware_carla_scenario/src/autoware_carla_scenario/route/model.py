@@ -239,12 +239,18 @@ class JunctionPathSpec:
             the junction before it or a dead end (straightest predecessors).
         after: Metres of road after it leaves the junction, on to the next
             junction or a dead end (straightest successors).
+        path: Which of such paths, from the left as they enter the junction
+            (:func:`~.geometry.paths_from_left`): the match has at least this
+            many, and *before* and *after* bound that one's reach -- what a
+            crossing pose naming it (its ``path``) is placed on.  ``None``:
+            the one a crossing pose naming none takes.
     """
 
     approach: str = "left"
     turn: str = "straight"
     before: Range = field(default_factory=Range)
     after: Range = field(default_factory=Range)
+    path: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -335,7 +341,7 @@ def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
         at = f"{where}[{i}]"
         if not isinstance(item, Mapping):
             raise ValueError(f"{at} must be a mapping, got {item!r}")
-        unknown = sorted(set(item) - {"approach", "turn", "before", "after"})
+        unknown = sorted(set(item) - {"approach", "turn", "before", "after", "path"})
         if unknown:
             raise ValueError(f"{at}: a path does not take {unknown}")
         approach = str(item.get("approach", "")).strip()
@@ -346,8 +352,20 @@ def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
             raise ValueError(f"{at}.turn must be one of {list(PATH_TURNS)}")
         before = Range.parse(f"{at}.before", item.get("before"))
         after = Range.parse(f"{at}.after", item.get("after"))
+        raw_path = item.get("path")
+        which: Optional[int] = None
+        if raw_path is not None:
+            if (
+                isinstance(raw_path, bool)
+                or not isinstance(raw_path, int)
+                or raw_path < 1
+            ):
+                raise ValueError(f"{at}.path counts paths from 1, got {raw_path!r}")
+            which = int(raw_path)
         out.append(
-            JunctionPathSpec(approach=approach, turn=turn, before=before, after=after)
+            JunctionPathSpec(
+                approach=approach, turn=turn, before=before, after=after, path=which
+            )
         )
     return tuple(out)
 

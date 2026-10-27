@@ -723,6 +723,44 @@ class TestPathsOfTheEgosApproach:
         )
         assert (before.lanelet_id, before.s) == (rm.W_IN2, pytest.approx(45.0))  # type: ignore[union-attr]
 
+    def test_a_second_path_is_required_by_its_number(
+        self, road: tuple[Any, Any], side: tuple[Any, Any]
+    ) -> None:
+        """``path: 2`` needs two right turns from the ego's approach: the side
+        lane's crossroads has them, the plain one only its own lane's."""
+        wanted = [{"approach": "same", "turn": "right", "path": 2}]
+        assert _find(side, **self._straight(paths=wanted))
+        assert not _find(road, **self._straight(paths=wanted))
+
+    def test_a_crossing_pose_names_one_of_two_paths_from_the_left(
+        self, side: tuple[Any, Any]
+    ) -> None:
+        """Two lanes of the ego's approach turn right: ``path`` 1 is the left
+        one (the ego's own lane), 2 the one beside it; a third is refused."""
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                self._straight(paths=[{"approach": "same", "turn": "right"}])
+            ),
+            *side,
+        )
+        frame = RouteFrame(match, *side)
+
+        def on(path: Any) -> int:
+            pose = RouteCrossingPose(
+                approach="same", turn="right", distance=1.0, path=path
+            )
+            return int(resolve_route_pose(pose, frame).lanelet_id)  # type: ignore[union-attr]
+
+        assert (on(1), on(2)) == (rm.J[("W", "S")], rm.SIDE_RIGHT)
+        with pytest.raises(ValueError, match="there is no path 3"):
+            on(3)
+        with pytest.raises(ValueError, match="counts from 1"):
+            RouteCrossingPose(approach="same", path=0)
+
     @pytest.mark.parametrize(
         ("paths", "message"),
         [
@@ -730,6 +768,7 @@ class TestPathsOfTheEgosApproach:
             ([{"approach": "behind", "turn": "left"}], "approach must be one of"),
             ([{"approach": "same", "turn": "u"}], "turn must be one of"),
             ([{"approach": "same", "turn": "left", "lanes": 2}], "does not take"),
+            ([{"approach": "same", "turn": "left", "path": 0}], "counts paths from 1"),
         ],
     )
     def test_a_malformed_path_is_refused(self, paths: Any, message: str) -> None:

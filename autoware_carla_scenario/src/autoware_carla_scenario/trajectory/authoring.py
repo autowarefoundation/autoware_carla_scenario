@@ -352,7 +352,7 @@ ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
     "opposite": (RouteOppositePose, ("ds", "lane", "offset", "yaw", "anchor")),
     "crossing": (
         RouteCrossingPose,
-        ("junction", "approach", "distance", "turn", "offset", "yaw", "d_lane"),
+        ("junction", "approach", "distance", "turn", "offset", "yaw", "d_lane", "path"),
     ),
     "crosswalk": (RouteCrosswalkPose, ("junction", "leg", "side", "along", "yaw")),
     "roadside": (
@@ -364,9 +364,9 @@ ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
 #: Keys holding text, not numbers.
 _TEXT_KEYS = frozenset({"approach", "turn", "leg", "side", "anchor"})
 #: Keys holding a whole number.
-_WHOLE_KEYS = frozenset({"d_lane", "lane", "junction"})
+_WHOLE_KEYS = frozenset({"d_lane", "lane", "junction", "path"})
 #: Keys that may be left unstated (``None``).
-_OPTIONAL_KEYS = frozenset({"yaw", "turn", "anchor"})
+_OPTIONAL_KEYS = frozenset({"yaw", "turn", "anchor", "path"})
 #: Keys the editor's text always writes out, default or not: they say *which*.
 _ALWAYS_WRITTEN = frozenset({"junction", "approach", "leg", "side"})
 

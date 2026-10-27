@@ -80,6 +80,7 @@ __all__ = [
     "OPPOSITE_MIN_TURN_DEG",
     "OPPOSITE_SEARCH_M",
     "approach_of",
+    "paths_from_left",
 ]
 
 #: A stop line further than this (m) beyond a lanelet's end is not on it.
@@ -962,3 +963,29 @@ def _slice(
             out.append((x1, y1))
     out.append(_point_at(points, end))
     return out
+
+
+def paths_from_left(members: list[JunctionMember]) -> list[JunctionMember]:
+    """*members* -- paths entering a junction from one approach -- from the
+    left to the right as they enter it: by where each first lanelet starts,
+    across the way they come in (their mean heading there)."""
+    if len(members) < 2:
+        return list(members)
+    starts = []
+    hx = hy = 0.0
+    for member in members:
+        points = _centreline(member.lanelet)
+        (x0, y0), (x1, y1) = points[0], points[1]
+        span = math.hypot(x1 - x0, y1 - y0)
+        if span > 1e-9:
+            hx += (x1 - x0) / span
+            hy += (y1 - y0) / span
+        starts.append((x0, y0))
+    # Left of the way in, in the map's right-handed frame.
+    lx, ly = -hy, hx
+    keyed = [
+        (-(x * lx + y * ly), int(member.lanelet.id), index)
+        for index, (member, (x, y)) in enumerate(zip(members, starts))
+    ]
+    keyed.sort()
+    return [members[index] for _left, _id, index in keyed]

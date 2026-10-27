@@ -32,11 +32,18 @@ from ..trajectory.relative_lane import (
     shift_lanes,
 )
 from .frame import RouteFrame
+from .geometry import paths_from_left
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
 
-__all__ = ["RoutePose", "junction_traffic_lights", "resolve_route_pose", "route_base_s"]
+__all__ = [
+    "RoutePose",
+    "junction_traffic_lights",
+    "paths_from_left",
+    "resolve_route_pose",
+    "route_base_s",
+]
 
 RoutePose = Union[
     RouteLanePose,
@@ -184,8 +191,18 @@ def _crossing(pose: RouteCrossingPose, frame: RouteFrame) -> Lanelet2Pose:
             f"junction {pose.junction} of the route has no lanelet entering it "
             f"from the {pose.approach}{turning}"
         )
-    # Traffic that actually crosses the ego's way first, then by id.
-    chosen = min(members, key=lambda m: (not m.conflicts, int(m.lanelet.id)))
+    if pose.path is not None:
+        ordered = paths_from_left(members)
+        if pose.path > len(ordered):
+            raise ValueError(
+                f"junction {pose.junction} of the route has {len(ordered)} "
+                f"path(s) from the {pose.approach} turning {pose.turn}; there "
+                f"is no path {pose.path}"
+            )
+        chosen = ordered[pose.path - 1]
+    else:
+        # Traffic that actually crosses the ego's way first, then by id.
+        chosen = min(members, key=lambda m: (not m.conflicts, int(m.lanelet.id)))
     lanelet_id, along = advance_along_lane(
         frame.map, frame.graph, int(chosen.lanelet.id), 0.0, float(pose.distance)
     )

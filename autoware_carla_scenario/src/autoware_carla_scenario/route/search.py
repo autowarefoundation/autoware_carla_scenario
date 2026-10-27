@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from ..trajectory.relative_lane import _centreline, _heading_at
-from .geometry import MapFeatures
+from .geometry import MapFeatures, paths_from_left
 from .model import (
     MAX_EXPANSIONS,
     MAX_JUNCTION_LANELETS,
@@ -382,6 +382,8 @@ class _Search:
                 ]
                 if not options:
                     return False
+                if path.path is not None and len(options) < path.path:
+                    return False
                 bounds = (
                     path.before.min,
                     path.before.max,
@@ -390,11 +392,14 @@ class _Search:
                 )
                 if all(bound is None for bound in bounds):
                     continue
-                # The path a crossing pose takes: conflicting first, then the
-                # lowest id.
-                chosen = min(
-                    options, key=lambda m: (not m.conflicts, int(m.lanelet.id))
-                )
+                if path.path is not None:
+                    chosen = paths_from_left(options)[path.path - 1]
+                else:
+                    # The path a crossing pose takes: conflicting first, then
+                    # the lowest id.
+                    chosen = min(
+                        options, key=lambda m: (not m.conflicts, int(m.lanelet.id))
+                    )
                 before, _through, after = f.path_reach(chosen.lanelet)
                 if not path.before.contains(before) or not path.after.contains(after):
                     return False

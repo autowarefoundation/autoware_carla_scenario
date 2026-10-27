@@ -1048,6 +1048,7 @@ class JunctionPath(_Node):
     turn: Literal["left", "right", "straight"]
     before: LengthRange = Field(default_factory=LengthRange)
     after: LengthRange = Field(default_factory=LengthRange)
+    path: Optional[int] = Field(default=None, ge=1)
 
 
 class JunctionSegment(_Node):
@@ -1095,6 +1096,8 @@ class JunctionSegment(_Node):
                 parts.append(f"{label}: {value}")
         for path in self.paths:
             text = f"path from {path.approach} turning {path.turn}"
+            if path.path is not None:
+                text += f" (path {path.path} from the left)"
             for name in ("before", "after"):
                 reach = _range_text(getattr(path, name), "m")
                 if reach != "any":
