@@ -2279,7 +2279,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 207 of
-the package's 304 modules (68%; about 47,400 of 85,600 lines) are `CHECKED`:
+the package's 305 modules (68%; about 47,400 of 85,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2374,9 +2374,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 97 `EXCLUDED` modules fall in
+which the check has no value of). The 98 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 71 import what Codon cannot
-compile, 29 build on an excluded module and 24 hold values Codon has no type
+compile, 29 build on an excluded module and 25 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **71 import what Codon cannot compile**: pyxodr,
@@ -2413,12 +2413,12 @@ for), so each is counted once, in the first group that fits it:
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
   holds its factories by, and the `registry` its plugin loader imports); 4 of the 19
   also hold values Codon has no type for.
-- **7 hold values Codon has no type for**, and nothing else keeps them out:
+- **8 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults, `npc_collisions`' actors and world snapshots, which it also
   hears through collision-sensor callbacks, `traffic.route_match`'s lanelet2
   maps, lanelets and routing graphs, `utils.clearance`'s world snapshots, `entity._walker_ai`'s walker
-  controllers), or a class as a value (`utils.config`, which `traffic.config`,
+  controllers, `entity.fit`'s world and blueprints), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 
