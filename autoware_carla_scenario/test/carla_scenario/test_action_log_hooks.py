@@ -12,15 +12,19 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from autoware_carla_scenario import DespawnAction, RoutingAction, SpawnAction
+from autoware_carla_scenario.actions import _trajectory_run
+from autoware_carla_scenario.actions import spawn as spawn_module
 from autoware_carla_scenario.actions.adversarial_traffic import (
     AdversarialTrafficAction,
 )
 from autoware_carla_scenario.actions.base import BaseAction
+from autoware_carla_scenario.coordinate.poses import CarlaWorldPose
 from autoware_carla_scenario.scenario_runner import ScenarioRunner
 from autoware_carla_scenario.waypoint_arrival import WaypointArrival
 
@@ -62,10 +66,69 @@ def test_the_action_with_something_to_log_overrides_the_hook(
     )
 
 
-def test_a_spawn_is_handed_over_once() -> None:
+class _Parked:
+    """A hidden entity's actor, parked under the map."""
+
+    id = 42
+    bounding_box = SimpleNamespace(extent=SimpleNamespace(x=2.0, y=1.0, z=0.8))
+
+    def get_transform(self) -> Any:
+        return SimpleNamespace(
+            location=SimpleNamespace(x=1.0, y=2.0, z=-500.0),
+            rotation=SimpleNamespace(yaw=0.0),
+        )
+
+
+def _bring_in_with(
+    monkeypatch: pytest.MonkeyPatch, actor: Any
+) -> list[tuple[Any, float, float, float]]:
+    """Have a SpawnAction find *actor* for its entity; the places it is put."""
+    put: list[tuple[Any, float, float, float]] = []
+    monkeypatch.setattr(_trajectory_run, "_entity_actor", lambda name: actor)
+    monkeypatch.setattr(_trajectory_run, "_is_walker", lambda found: False)
+    monkeypatch.setattr(
+        spawn_module,
+        "_put",
+        lambda world, found, x, y, z, yaw, speed: put.append((found, x, y, z)),
+    )
+    return put
+
+
+def test_a_spawn_is_handed_over_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    actor = _Parked()
+    put = _bring_in_with(monkeypatch, actor)
     action = SpawnAction("npc1")
-    action._spawned.append(("npc1", 42))
+    action.tick(object(), 0.0)  # type: ignore[arg-type]
+    assert [p[0] for p in put] == [actor]
     assert action.take_spawns() == [("npc1", 42)]
+    assert action.take_spawns() == []
+    # Fired once: a later tick brings nothing in again.
+    action.tick(object(), 0.05)  # type: ignore[arg-type]
+    assert action.take_spawns() == []
+
+
+def test_a_spawn_that_finds_no_entity_hands_over_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put = _bring_in_with(monkeypatch, None)
+    action = SpawnAction("npc1")
+    assert not action.apply(object())  # type: ignore[arg-type]
+    assert put == []
+    assert action.take_spawns() == []
+
+
+def test_a_prop_is_not_a_spawn_of_an_entity() -> None:
+    action = SpawnAction(name="cone", position=CarlaWorldPose(1.0, 2.0, 0.0, 0.0))
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(filter=lambda name: [name]),
+        try_spawn_actor=lambda blueprint, transform: SimpleNamespace(
+            destroy=lambda: None
+        ),
+    )
+    try:
+        assert action.apply(world, ground=lambda x, y: 0.0)  # type: ignore[arg-type]
+    finally:
+        spawn_module.remove_prop("cone")
     assert action.take_spawns() == []
 
 

@@ -27,6 +27,10 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 2 added the records `map`, `warmup`, `actor_gone`, `markers`, `condition`,
 `action` and `result`, and `schema_version` itself; a file of version 1 has no
 `schema_version` and none of those records, and still follows the schema.
+The records marked (2) in the table below that are not in that list
+(`adversity`, `waypoint_arrival`, `collision`, `walker_fallen`, `spawn`,
+`despawn`) came later within version 2: a reader of version 2 that does not
+know one skips it.
 Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the `type`s it does not know reads
 any later file.
@@ -71,7 +75,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `waypoint_arrival` (2) | when a routed entity has reached a waypoint with a time or a departure condition (`RoutingAction`, any mode), and its target is known | `frame`, `t`, `label` (the action's), `entity`, `vertex` (0-based), `kind` (`time`, or `condition`: the target is when it first held), `mode` (`driver`, `follow`, `position`), `target_t`, `actual_t`, `error_s` (`actual_t - target_t`) |
 | `collision` (2) | when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second) (`npc_collisions`) | `frame`, `t`, `actors` `[role, role]` (type ids where an actor has no role), `ids` `[id, id]`, `impulse` (N*s; at the end, the strongest), `ego` (one side is the ego), `phase` (`start`/`end`), `duration` (s, at the end; null at the start) |
 | `walker_fallen` (2) | once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways) | `frame`, `t`, `id`, `role`, `drop` (m), `tilt` (deg) |
-| `spawn` (2) | on the tick a `SpawnAction` brought an entity spawned hidden into the scene (not for a prop) | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null) |
+| `spawn` (2) | on the tick a `SpawnAction` brought an entity into the scene (one spawned hidden, as a rule; not for a prop) | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null) |
 | `despawn` (2) | on the tick a `DespawnAction` removed an entity, or the run a walker that lay fallen 5 s | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null), `reason` (`action`/`fallen`) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 

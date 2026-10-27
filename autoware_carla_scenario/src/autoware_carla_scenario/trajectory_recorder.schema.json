@@ -855,7 +855,7 @@
     },
     "SpawnRecord": {
       "title": "SpawnRecord",
-      "description": "A `SpawnAction` brought an entity spawned hidden into the scene: put on its place, physics on, moving at its speed. Written on the tick it fired; the entity's `actor` record came earlier, when it was first seen hidden. A prop the action adds is not an entity and has no record. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "description": "A `SpawnAction` brought an entity into the scene (one spawned hidden, as a rule): put on its place, physics on, moving at its speed. Written on the tick it fired; the entity's `actor` record came earlier, when it was first seen hidden. A prop the action adds is not an entity and has no record. Added in version 2, which a reader of version 2 that does not know it skips.",
       "type": "object",
       "properties": {
         "type": {
