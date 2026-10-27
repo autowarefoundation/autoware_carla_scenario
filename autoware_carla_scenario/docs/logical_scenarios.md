@@ -327,6 +327,11 @@ trigger -- with a give-up, e.g.
 if its own is still taken (a route pose shifts when it is on a lane --
 `lane`, `opposite`, `crossing` -- and counted from an anchor).  An entity a Spawn card brings in that is not
 spawned hidden draws a warning (it would stand at its spawn until then).
+To bring one in when the ego comes near its place, whatever its progress,
+trigger the Spawn card on a `distance` condition (*Distance to a place*)
+from the ego to the same `route_pose`, e.g. `distance < 60`; a `despawn`
+card on `entity_distance` from the ego takes it out again once the ego is
+far enough away.
 
 ### Entities in a logical scenario
 

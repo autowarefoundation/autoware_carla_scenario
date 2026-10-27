@@ -3149,8 +3149,16 @@ register_condition_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
-                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+                target="..trajectory.authoring:authored_place",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("route_vertex", "route_pose"),
+                        )
+                    ),
+                ),
             ),
         ),
         visual=ConditionVisual(
@@ -3166,12 +3174,26 @@ register_condition_spec(
         fields=(
             _entity_field("entity", "Subject"),
             FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "The place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet and s."
+                ),
+            ),
+            FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
+                required=False,
                 help=(
-                    "The lanelet holding the place to measure to.  Unlike "
+                    "The lanelet holding the place to measure to (with no route "
+                    "pose).  Unlike "
                     "Position (Lanelet2), which asks whether the entity is on "
                     "a lane, this measures to a point: say where along the "
                     "lanelet with s."

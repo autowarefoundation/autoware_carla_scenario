@@ -288,6 +288,36 @@ class TestValidation:
         assert any("has 1 junction(s)" in m for m in messages)
         assert any("Route vertex 1: junction 2" in m for m in messages)
 
+    def test_a_distance_condition_measures_to_a_route_pose(self) -> None:
+        from autoware_carla_scenario.authoring.builders import instantiate_condition
+        from autoware_carla_scenario.conditions import EntityPositionDistanceCondition
+        from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+        raw = _raw()
+        raw["actions"][0]["trigger"] = {
+            "type": "distance",
+            "params": {
+                "entity": "ego",
+                "route_pose": [
+                    {"kind": "lane", "anchor": "junction:0:entry", "ds": -5.0}
+                ],
+                "rule": "less_than",
+                "distance": 30.0,
+            },
+        }
+        document = ScenarioDocument.model_validate(raw)
+        assert not _messages(document)
+        trigger = compile_document(document).actions[0].trigger
+        assert trigger is not None
+        built = instantiate_condition(trigger, BuildContext(scenario=None))
+        assert isinstance(built, EntityPositionDistanceCondition)
+        assert isinstance(built._at.position, RouteLanePose)
+        raw["actions"][0]["trigger"]["params"]["route_pose"][0]["anchor"] = (
+            "junction:4:entry"
+        )
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("junction" in m for m in messages)
+
     def test_a_traffic_signal_on_a_route_junction(self) -> None:
         from autoware_carla_scenario.actions import (
             TrafficLightTarget,

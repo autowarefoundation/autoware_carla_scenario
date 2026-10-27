@@ -1249,7 +1249,9 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
 
     for root in document.condition_roots():
         for node in root.walk():
-            if node.type == "place_clear" and node.params.get("route_pose"):
+            if node.type in ("place_clear", "distance") and node.params.get(
+                "route_pose"
+            ):
                 route_rows(
                     node.id, node.id, node.params.get("route_pose"), "A route pose is"
                 )
