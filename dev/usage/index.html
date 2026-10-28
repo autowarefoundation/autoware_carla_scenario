@@ -4812,16 +4812,62 @@ one YAML file:</p>
 <li>Provides an API for triggering scenario runs and monitoring progress in real time</li>
 </ol>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Start with default settings (0.0.0.0:9000, current directory)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Start with default settings (127.0.0.1:9000, current directory)</span>
 <a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
 <a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
 <a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="c1"># Custom host and port</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="nv">VIEWER_HOST</span><span class="o">=</span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="nv">VIEWER_PORT</span><span class="o">=</span><span class="m">8080</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 <a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
 <a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Specify results directory</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>/path/to/scenario/outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--base-path<span class="w"> </span>/path/to/scenario/outputs
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="c1"># All options</span>
+<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--help
 </code></pre></div>
 <p>Then open <code>http://localhost:9000</code> (or the configured host/port) in a browser.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Environment variable</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--host</code></td>
+<td><code>VIEWER_HOST</code></td>
+<td><code>127.0.0.1</code></td>
+</tr>
+<tr>
+<td><code>--port</code></td>
+<td><code>VIEWER_PORT</code></td>
+<td><code>9000</code></td>
+</tr>
+<tr>
+<td><code>--base-path</code></td>
+<td><code>VIEWER_BASE_PATH</code></td>
+<td>the working directory</td>
+</tr>
+<tr>
+<td><code>--fetch-rerun-web-viewer [--from TGZ] [--version V]</code></td>
+<td>—</td>
+<td>fetch the Rerun web viewer and exit (<a href="#seeing-a-run-in-the-viewer">below</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Each option defaults to its environment variable, so a flag on the command line
+wins over the environment. An unknown option is an error (exit 2) and serves
+nothing.</p>
+<div class="admonition warning">
+<p class="admonition-title">The viewer listens on this machine only by default</p>
+<p>The viewer has no authentication, and its API starts scenario runs
+(<code>POST /api/run</code>) and SLURM submissions (<code>/api/slurm/...</code>). It therefore
+binds <code>127.0.0.1</code> unless told otherwise. It used to bind <code>0.0.0.0</code>, every
+interface; to serve other machines as before, pass <code>--host 0.0.0.0</code> (or set
+<code>VIEWER_HOST=0.0.0.0</code>) on a network you trust. The viewer prints a warning
+when it listens on anything but a loopback address.</p>
+</div>
 <h3 id="seeing-a-run-in-the-viewer">Seeing a run in the viewer<a class="headerlink" href="#seeing-a-run-in-the-viewer" title="Permanent link">&para;</a></h3>
 <p>A scenario's page shows its run in Rerun's web viewer, embedded in the page:
 the case's trajectory log made into a Rerun recording (<a href="#seeing-a-run">Seeing a run</a>).
@@ -4924,17 +4970,17 @@ sync the environment).</p>
 <tr>
 <td><code>VIEWER_BASE_PATH</code></td>
 <td>Current working directory</td>
-<td>Base path for scanning scenario result files</td>
+<td>Base path for scanning scenario result files (<code>--base-path</code> wins)</td>
 </tr>
 <tr>
 <td><code>VIEWER_HOST</code></td>
-<td><code>0.0.0.0</code></td>
-<td>Server bind address</td>
+<td><code>127.0.0.1</code></td>
+<td>Server bind address (<code>--host</code> wins)</td>
 </tr>
 <tr>
 <td><code>VIEWER_PORT</code></td>
 <td><code>9000</code></td>
-<td>Server listen port</td>
+<td>Server listen port (<code>--port</code> wins)</td>
 </tr>
 <tr>
 <td><code>VIEWER_CACHE_DIR</code></td>
@@ -5128,12 +5174,12 @@ mapping).</p>
 <tr>
 <td><code>VIEWER_HOST</code></td>
 <td>viewer</td>
-<td>Viewer server bind address</td>
+<td>Viewer server bind address (default <code>127.0.0.1</code>; <code>--host</code> wins)</td>
 </tr>
 <tr>
 <td><code>VIEWER_PORT</code></td>
 <td>viewer</td>
-<td>Viewer server listen port</td>
+<td>Viewer server listen port (<code>--port</code> wins)</td>
 </tr>
 <tr>
 <td><code>VIEWER_CACHE_DIR</code></td>
@@ -5173,12 +5219,12 @@ mapping).</p>
 <tr>
 <td><code>SCENARIO_EDITOR_HOST</code></td>
 <td>scenario editor</td>
-<td>Editor server bind address</td>
+<td>Editor server bind address (default <code>127.0.0.1</code>; <code>--host</code> wins)</td>
 </tr>
 <tr>
 <td><code>SCENARIO_EDITOR_PORT</code></td>
 <td>scenario editor</td>
-<td>Editor server listen port</td>
+<td>Editor server listen port (<code>--port</code> wins)</td>
 </tr>
 <tr>
 <td><code>SCENARIO_EDITOR_MAP_VIEWER</code></td>
@@ -5293,7 +5339,7 @@ mapping).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 13:29:07 UTC"><span class="timeago" datetime="2026-10-28T13:29:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 13:29:07 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:55:19 UTC"><span class="timeago" datetime="2026-10-28T21:55:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:55:19 UTC">2026-10-28</span>
   </span>
 
     

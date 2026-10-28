@@ -4052,7 +4052,7 @@ through <code>BaseScenario.derive_goal_from_route()</code>.</p>
 <td>9000</td>
 <td>Viewer Web Server</td>
 <td>HTTP</td>
-<td><code>VIEWER_PORT</code> env var</td>
+<td><code>viewer --port</code>, <code>VIEWER_PORT</code> env var</td>
 <td>FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream.</td>
 </tr>
 </tbody>
@@ -4113,21 +4113,21 @@ through <code>BaseScenario.derive_goal_from_route()</code>.</p>
 <td>No</td>
 <td>Current working directory</td>
 <td>Viewer (<code>ui/__init__.py</code>)</td>
-<td>Base directory that the viewer scans for <code>outputs/</code> and <code>multirun/</code> result directories.</td>
+<td>Base directory that the viewer scans for <code>outputs/</code> and <code>multirun/</code> result directories. <code>viewer --base-path</code> wins over it.</td>
 </tr>
 <tr>
 <td><strong><code>VIEWER_HOST</code></strong></td>
 <td>No</td>
-<td><code>0.0.0.0</code></td>
+<td><code>127.0.0.1</code></td>
 <td>Viewer (<code>ui/__init__.py</code>)</td>
-<td>Bind address for the Uvicorn HTTP server.</td>
+<td>Bind address for the Uvicorn HTTP server. <code>viewer --host</code> wins over it; <code>0.0.0.0</code> serves every interface, with no authentication.</td>
 </tr>
 <tr>
 <td><strong><code>VIEWER_PORT</code></strong></td>
 <td>No</td>
 <td><code>9000</code></td>
 <td>Viewer (<code>ui/__init__.py</code>)</td>
-<td>Listen port for the Uvicorn HTTP server.</td>
+<td>Listen port for the Uvicorn HTTP server. <code>viewer --port</code> wins over it.</td>
 </tr>
 <tr>
 <td><strong><code>SWEEP_RESUME_FROM</code></strong></td>
@@ -4218,7 +4218,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:47:52 UTC"><span class="timeago" datetime="2026-10-28T21:47:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:47:52 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:55:19 UTC"><span class="timeago" datetime="2026-10-28T21:55:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:55:19 UTC">2026-10-28</span>
   </span>
 
     

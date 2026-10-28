@@ -2576,6 +2576,7 @@
 exporting them as self-contained <strong>wheelhouses</strong>. It runs as its own
 application:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-editor<span class="w">          </span><span class="c1"># http://localhost:9100</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-editor<span class="w"> </span>--help<span class="w">   </span><span class="c1"># its options (Configuration below)</span>
 </code></pre></div>
 <p>It is deliberately <strong>separate from the Scenario Result Viewer</strong>
 (<code>uv run viewer</code>). Neither mounts the other, and running one does not start the
@@ -3255,7 +3256,7 @@ entries repeat, such as NADE's adversities, where the first to fire wins:</p>
 </ul>
 <h3 id="the-map-path-is-a-document-field">The map path is a document field<a class="headerlink" href="#the-map-path-is-a-document-field" title="Permanent link">&para;</a></h3>
 <p><code>/draft/&lt;id&gt;/map.osm</code> serves the file the document names, and that name is
-typed by whoever is using the editor -- which binds <code>0.0.0.0</code> by default. Handed
+typed by whoever is using the editor -- which may bind <code>0.0.0.0</code> (<code>--host</code>). Handed
 straight to a <code>FileResponse</code> it was an arbitrary local file read for anyone who
 could reach the port. A path is accepted only when it resolves <strong>inside</strong>
 <code>SCENARIO_EDITOR_MAP_ROOTS</code> (the working directory unless set) and names a
@@ -3407,6 +3408,7 @@ guess.</p>
 <table>
 <thead>
 <tr>
+<th>Option</th>
 <th>Variable</th>
 <th>Default</th>
 <th>Meaning</th>
@@ -3414,37 +3416,54 @@ guess.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>--drafts</code></td>
 <td><code>SCENARIO_EDITOR_DRAFTS</code></td>
 <td><code>./scenario_drafts</code></td>
 <td>Where drafts are stored</td>
 </tr>
 <tr>
+<td><code>--export-dir</code></td>
 <td><code>SCENARIO_EDITOR_EXPORT_DIR</code></td>
 <td><code>./scenario_packages</code></td>
 <td>Where an export's wheelhouse <code>.zip</code> is staged, in a directory per draft, until the browser fetches it</td>
 </tr>
 <tr>
+<td>—</td>
 <td><code>SCENARIO_EDITOR_MAP_ROOTS</code></td>
 <td>the working directory</td>
 <td>Directories a Lanelet2 map may be read from, <code>:</code>-separated</td>
 </tr>
 <tr>
+<td><code>--host</code></td>
 <td><code>SCENARIO_EDITOR_HOST</code></td>
-<td><code>0.0.0.0</code></td>
+<td><code>127.0.0.1</code></td>
 <td>Bind address</td>
 </tr>
 <tr>
+<td><code>--port</code></td>
 <td><code>SCENARIO_EDITOR_PORT</code></td>
 <td><code>9100</code></td>
 <td>Bind port (the result viewer uses 9000)</td>
 </tr>
 <tr>
+<td>—</td>
 <td><code>SCENARIO_EDITOR_MAP_VIEWER</code></td>
 <td>GitHub Pages build</td>
 <td>URL of <code>simple_lanelet2</code>'s <code>viewer.js</code></td>
 </tr>
 </tbody>
 </table>
+<p>An option defaults to its variable, so a flag on the command line wins over the
+environment (<code>uv run scenario-editor --host 0.0.0.0 --port 9200</code>). An unknown
+option is an error (exit 2) and serves nothing.</p>
+<div class="admonition warning">
+<p class="admonition-title">The editor listens on this machine only by default</p>
+<p>The editor has no authentication, so it binds <code>127.0.0.1</code> unless told
+otherwise. It used to bind <code>0.0.0.0</code>, every interface; to serve other
+machines as before, pass <code>--host 0.0.0.0</code> (or set
+<code>SCENARIO_EDITOR_HOST=0.0.0.0</code>) on a network you trust. The editor prints a
+warning when it listens on anything but a loopback address.</p>
+</div>
 <h2 id="running-an-authored-scenario">Running an authored scenario<a class="headerlink" href="#running-an-authored-scenario" title="Permanent link">&para;</a></h2>
 <p>An exported scenario plugs in through the same entry point any scenario package
 uses (see <a href="../architecture/">Architecture</a>) -- installed from its wheelhouse, the
@@ -3505,7 +3524,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 08:44:49 UTC"><span class="timeago" datetime="2026-10-28T08:44:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 08:44:49 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:55:19 UTC"><span class="timeago" datetime="2026-10-28T21:55:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:55:19 UTC">2026-10-28</span>
   </span>
 
     
