@@ -914,17 +914,39 @@ Web UI for browsing and monitoring scenario test results. Starts a FastAPI serve
 ### Usage
 
 ```bash
-# Start with default settings (0.0.0.0:9000, current directory)
+# Start with default settings (127.0.0.1:9000, current directory)
 uv run viewer
 
 # Custom host and port
-VIEWER_HOST=127.0.0.1 VIEWER_PORT=8080 uv run viewer
+uv run viewer --host 127.0.0.1 --port 8080
 
 # Specify results directory
-VIEWER_BASE_PATH=/path/to/scenario/outputs uv run viewer
+uv run viewer --base-path /path/to/scenario/outputs
+
+# All options
+uv run viewer --help
 ```
 
 Then open `http://localhost:9000` (or the configured host/port) in a browser.
+
+| Option | Environment variable | Default |
+|--------|----------------------|---------|
+| `--host` | `VIEWER_HOST` | `127.0.0.1` |
+| `--port` | `VIEWER_PORT` | `9000` |
+| `--base-path` | `VIEWER_BASE_PATH` | the working directory |
+| `--fetch-rerun-web-viewer [--from TGZ] [--version V]` | — | fetch the Rerun web viewer and exit ([below](#seeing-a-run-in-the-viewer)) |
+
+Each option defaults to its environment variable, so a flag on the command line
+wins over the environment. An unknown option is an error (exit 2) and serves
+nothing.
+
+!!! warning "The viewer listens on this machine only by default"
+    The viewer has no authentication, and its API starts scenario runs
+    (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). It therefore
+    binds `127.0.0.1` unless told otherwise. It used to bind `0.0.0.0`, every
+    interface; to serve other machines as before, pass `--host 0.0.0.0` (or set
+    `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
+    when it listens on anything but a loopback address.
 
 ### Seeing a run in the viewer
 
@@ -1034,9 +1056,9 @@ sync the environment).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files |
-| `VIEWER_HOST` | `0.0.0.0` | Server bind address |
-| `VIEWER_PORT` | `9000` | Server listen port |
+| `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files (`--base-path` wins) |
+| `VIEWER_HOST` | `127.0.0.1` | Server bind address (`--host` wins) |
+| `VIEWER_PORT` | `9000` | Server listen port (`--port` wins) |
 | `VIEWER_CACHE_DIR` | `~/.cache/autoware_carla_scenario/viewer` | The web viewer's copy, and recordings of sessions that cannot be written |
 | `VIEWER_RERUN_WEB_VIEWER` | the copy in the cache, else the CDN | Where the Rerun web viewer is loaded from: a directory, a URL, or `none` |
 | `VIEWER_RERUN_MAP_DIR` | `~/autoware_data/maps`, if it exists | Where the converter looks a map up by name when the log's own map file is not on this machine |
@@ -1115,8 +1137,8 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `NISHISHINJUKU_XODR_PATH` | map config | Override default OpenDRIVE file path for nishishinjuku |
 | `NISHISHINJUKU_LANELET2_PATH` | map config | Override default Lanelet2 file path for nishishinjuku |
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |
-| `VIEWER_HOST` | viewer | Viewer server bind address |
-| `VIEWER_PORT` | viewer | Viewer server listen port |
+| `VIEWER_HOST` | viewer | Viewer server bind address (default `127.0.0.1`; `--host` wins) |
+| `VIEWER_PORT` | viewer | Viewer server listen port (`--port` wins) |
 | `VIEWER_CACHE_DIR` | viewer | The viewer's cache (the Rerun web viewer's copy, recordings it could not keep beside their logs) |
 | `VIEWER_RERUN_WEB_VIEWER` | viewer | Where the Rerun web viewer is loaded from (a directory, a URL, or `none`) |
 | `VIEWER_RERUN_MAP_DIR` | viewer | Where the Rerun converter looks maps up by name |
@@ -1124,8 +1146,8 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
 | `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |
-| `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address |
-| `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port |
+| `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address (default `127.0.0.1`; `--host` wins) |
+| `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port (`--port` wins) |
 | `SCENARIO_EDITOR_MAP_VIEWER` | scenario editor | URL of a self-hosted `simple_lanelet2` map viewer |
 | `SCENARIO_EXPORT_FRAMEWORK_VERSION` | package export | Pin exported packages to a published framework release |
 | `SCENARIO_EXPORT_FRAMEWORK_REPOSITORY` | package export | Repository URL recorded for a commit pin |

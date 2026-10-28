@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import os
+import sys
 from pathlib import Path
+
+from ..serve_cli import add_bind_arguments, warn_if_exposed
 
 
 def _fetch_web_viewer(argv: list[str]) -> None:
     """``viewer --fetch-rerun-web-viewer [--from TGZ] [--version V]``: keep a
     copy of Rerun's web viewer for the viewer to serve itself (offline)."""
-    import argparse  # noqa: PLC0415
-
     from .recordings import RecordingError, fetch_web_viewer  # noqa: PLC0415
 
     parser = argparse.ArgumentParser(
@@ -40,26 +42,61 @@ def _fetch_web_viewer(argv: list[str]) -> None:
     print(f"Rerun web viewer kept in {target}")  # noqa: T201
 
 
-def main() -> None:
-    """Entry point for ``uv run viewer``."""
-    import sys  # noqa: PLC0415
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="viewer",
+        description="Scenario Result Viewer: a web UI for browsing scenario "
+        "results and starting runs (FastAPI + Uvicorn).",
+        epilog="Each option defaults to its environment variable. "
+        "VIEWER_CACHE_DIR, VIEWER_RERUN_WEB_VIEWER, VIEWER_RERUN_MAP_DIR and "
+        "VIEWER_SCENARIO_COMMAND are read from the environment only "
+        "(docs/usage.md).",
+    )
+    add_bind_arguments(
+        parser, host_env="VIEWER_HOST", port_env="VIEWER_PORT", default_port=9000
+    )
+    parser.add_argument(
+        "--base-path",
+        type=Path,
+        default=os.environ.get("VIEWER_BASE_PATH") or None,
+        help="directory scanned for outputs/ and multirun/ results "
+        "(env VIEWER_BASE_PATH; default the working directory)",
+    )
+    parser.add_argument(
+        "--fetch-rerun-web-viewer",
+        dest="fetch_args",
+        nargs=argparse.REMAINDER,
+        default=None,
+        metavar="[--from TGZ] [--version V]",
+        help="keep a copy of Rerun's web viewer for offline use, then exit "
+        "instead of serving; it takes the arguments after it "
+        "(viewer --fetch-rerun-web-viewer --help)",
+    )
+    return parser
 
-    if sys.argv[1:2] == ["--fetch-rerun-web-viewer"]:
-        _fetch_web_viewer(sys.argv[2:])
+
+def main(argv: list[str] | None = None) -> None:
+    """Entry point for ``uv run viewer`` (``viewer --help`` for its options)."""
+    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.fetch_args is not None:
+        _fetch_web_viewer(args.fetch_args)
         return
 
+    # Parsed before uvicorn and the app are imported, so --help and a
+    # mistyped option exit without serving.
     import uvicorn  # noqa: PLC0415
 
     from .app import app  # noqa: PLC0415, F811
 
-    # Allow overriding the base path via environment variable.
-    env_base = os.environ.get("VIEWER_BASE_PATH")
-    if env_base:
+    if args.base_path is not None:
         from . import app as app_module  # noqa: PLC0415
 
-        app_module.BASE_PATH = Path(env_base).resolve()
+        app_module.BASE_PATH = Path(args.base_path).resolve()
 
-    host = os.environ.get("VIEWER_HOST", "0.0.0.0")  # noqa: S104
-    port = int(os.environ.get("VIEWER_PORT", "9000"))
-
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    warn_if_exposed(
+        "viewer",
+        args.host,
+        args.port,
+        "browse the results and start scenario runs and SLURM submissions",
+    )
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")

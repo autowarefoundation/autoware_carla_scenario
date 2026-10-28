@@ -223,8 +223,8 @@ def __getattr__(name: str) -> Any:
     """Build the module-level ``app`` on first access.
 
     ``uv run scenario-editor`` goes through :func:`~..editor.main`, which builds
-    its own application from the environment; constructing one eagerly here
-    meant every start built two and threw the env-blind one away.  ``uvicorn
+    its own application from its options and the environment; constructing one
+    eagerly here meant every start built two and threw the env-blind one away.  ``uvicorn
     autoware_carla_scenario.editor.app:app`` still works, and still gets an
     application built with the defaults.
     """
