@@ -76,6 +76,41 @@ def test_a_name_outside_the_base_is_a_404(
     assert SECRET not in response.text
 
 
+_LONG = "x" * 5000
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"/session/single/{_LONG}/{_LONG}",
+        f"/session/single/2026-01-01/{_LONG}/0",
+        f"/session/multirun/2026-01-01/{_LONG}/odd",
+        f"/session/batch/{_LONG}/00-00-00",
+        f"/api/slurm/{_LONG}/{_LONG}/status",
+    ],
+)
+def test_a_name_too_long_for_a_file_is_a_404(
+    base: Path, client: TestClient, url: str
+) -> None:
+    # Not a 500 from stat()'s ENAMETOOLONG.
+    assert client.get(url).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"/compare?s=single/{_LONG}/{_LONG}&s=batch/{_LONG}/{_LONG}",
+        f"/compare/runs?run=single/{_LONG}/{_LONG}/0",
+        # "²".isdigit() is true, but it is no index.
+        "/compare/runs?run=single/2026-01-01/00-00-00/%C2%B2",
+    ],
+)
+def test_a_comparison_ignores_a_ref_it_cannot_read(
+    base: Path, client: TestClient, url: str
+) -> None:
+    assert client.get(url).status_code == 200
+
+
 def test_making_a_recording_outside_the_base_is_a_404(
     base: Path, client: TestClient
 ) -> None:

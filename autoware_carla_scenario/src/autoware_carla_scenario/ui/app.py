@@ -616,7 +616,8 @@ async def compare_runs(request: Request) -> HTMLResponse:
     for value in request.query_params.getlist("run")[:4]:
         ref, _, index = value.strip("/").rpartition("/")
         parsed = _parse_ref(ref)
-        if parsed is None or not index.isdigit():
+        # isascii(): "²".isdigit() is true, and int() refuses it.
+        if parsed is None or not (index.isascii() and index.isdigit()):
             continue
         found = await asyncio.to_thread(
             results.load_results, _base_path(), *parsed, metrics=False
@@ -761,7 +762,8 @@ async def slurm_action(
         for key in ("array_parallelism", "cases_per_task"):
             value = body.get(key)
             if value not in (None, ""):
-                if not str(value).isdigit() or int(value) < 1:
+                text = str(value)
+                if not (text.isascii() and text.isdigit()) or int(text) < 1:
                     return JSONResponse(
                         status_code=400,
                         content={

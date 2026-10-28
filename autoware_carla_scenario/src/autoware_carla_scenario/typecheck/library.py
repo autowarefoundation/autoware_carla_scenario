@@ -530,7 +530,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.recordings": "imports base64, io, tarfile and urllib.request, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (`Any`)",
     "autoware_carla_scenario.ui.scanner": "imports yaml",
     "autoware_carla_scenario.ui.slurm_launch": "imports re, shlex, datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the batch's JSON records of any type (`Any`)",
-    "autoware_carla_scenario.ui.sweep_resolver": "imports omegaconf, hydra",
+    "autoware_carla_scenario.ui.sweep_resolver": "imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
 }
 

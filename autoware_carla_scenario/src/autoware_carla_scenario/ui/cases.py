@@ -42,8 +42,10 @@ __all__ = [
 #: The kinds of session the viewer lists (``scanner.scan_sessions``).
 SESSION_TYPES = ("multirun", "batch", "single")
 
-#: A date or time directory name, or a job index: no separator, no ``..``.
-_COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]+$")
+#: A date or time directory name, or a job index: no separator, no ``..``,
+#: and no longer than a file name may be (NAME_MAX), so that a stat of it
+#: fails as "not found" rather than with ENAMETOOLONG.
+_COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]{1,255}$")
 
 _TRAJECTORY = ".trajectory.jsonl"
 _RESULT = "_result.json"

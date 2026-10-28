@@ -160,3 +160,46 @@ def test_one_failing_scenario_stops_the_run(
         "message": "Sweep resolution failed: b/bad: the map is missing",
     }
     assert "jobs" not in started
+
+
+def test_a_scenario_without_a_sweep_runs_once(
+    started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As in scenario-batch: a concrete scenario is its own one case, rather
+    # than dropped from a sweep run of a glob.
+    from autoware_carla_scenario.sweeper import expand
+
+    monkeypatch.setattr(expand, "expand_config", lambda cfg, *a, **k: [[]])
+    assert sweep_resolver.resolve_sweep("cut_in/left") == [["scenario=cut_in/left"]]
+    response = client.post(
+        "/api/run",
+        json={"scenario": "cut_in/left", "extra_overrides": EXTRA, "sweeper": "x"},
+    )
+    assert response.json() == {"status": "started"}
+    assert started["jobs"] == [["scenario=cut_in/left"]]
+    assert started["extra"] == EXTRA
+
+
+def test_the_scenarios_of_a_run_share_their_odd_draws(
+    started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.odd.sampler import OddDraws
+
+    seen: list[Any] = []
+
+    def resolve(name: str, extra: Any = None, *, drawn: Any = None) -> Any:
+        seen.append(drawn)
+        return [[f"scenario={name}"]]
+
+    monkeypatch.setattr(sweep_resolver, "resolve_sweep", resolve)
+    monkeypatch.setattr(
+        app_module.scanner, "list_scenario_configs", lambda: ["a/one", "b/two"]
+    )
+    response = client.post(
+        "/api/run", json={"scenario": "*/*", "extra_overrides": [], "sweeper": "x"}
+    )
+    assert response.json() == {"status": "started"}
+    assert started["jobs"] == [["scenario=a/one"], ["scenario=b/two"]]
+    assert len(seen) == 2
+    assert isinstance(seen[0], OddDraws)
+    assert seen[0] is seen[1]
