@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from . import cases
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import RAW_OUTPUT_LOG
@@ -168,7 +169,12 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
             if not date_dir.is_dir():
                 continue
             for time_dir in sorted(date_dir.iterdir(), reverse=True):
-                if not time_dir.is_dir():
+                if not time_dir.is_dir() or (
+                    cases.session_dir(
+                        base_path, "multirun", date_dir.name, time_dir.name
+                    )
+                    is None
+                ):
                     continue
                 summary = _scan_multirun_session(time_dir, date_dir.name, time_dir.name)
                 if summary:
@@ -181,7 +187,11 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
             if not date_dir.is_dir():
                 continue
             for time_dir in sorted(date_dir.iterdir(), reverse=True):
-                if not time_dir.is_dir():
+                # "single" and "batch" share outputs/: either type checks it.
+                if not time_dir.is_dir() or (
+                    cases.session_dir(base_path, "single", date_dir.name, time_dir.name)
+                    is None
+                ):
                     continue
                 summary = _scan_outputs_session(time_dir, date_dir.name, time_dir.name)
                 if summary:
@@ -199,34 +209,40 @@ def load_session(
 ) -> list[SessionItem]:
     """Load all scenario items within a session.
 
-    Returns a list of :class:`SessionItem` ordered by index.
+    Returns a list of :class:`SessionItem` ordered by index, empty when the
+    names do not make a session under *base_path*
+    (:func:`~autoware_carla_scenario.ui.cases.session_dir`).
     """
-    cache_key = f"session:{session_type}:{date}:{time}"
+    items: list[SessionItem] = []
+    directory = cases.session_dir(base_path, session_type, date, time)
+    if directory is None:
+        return items
+
+    cache_key = f"session:{base_path}:{session_type}:{date}:{time}"
     if cache_key in _cache:
         return _cache[cache_key]  # type: ignore[return-value]
 
-    items: list[SessionItem] = []
     final = True
 
     if session_type == "multirun":
-        session_dir = base_path / "multirun" / date / time
-        if not session_dir.is_dir():
+        if not directory.is_dir():
             return items
-        job_dirs = sorted(
-            (d for d in session_dir.iterdir() if d.is_dir() and d.name.isdigit()),
-            key=lambda d: int(d.name),
+        indices = sorted(
+            int(d.name) for d in directory.iterdir() if d.is_dir() and d.name.isdigit()
         )
-        for job_dir in job_dirs:
-            index = int(job_dir.name)
-            overrides = _read_overrides(job_dir)
-            result_files = sorted(job_dir.glob("*_result.json"))
+        for index in indices:
+            job = cases.job_dir(base_path, date, time, index)
+            if job is None:
+                continue
+            overrides = _read_overrides(job)
+            result_files = sorted(job.glob("*_result.json"))
             if result_files:
                 data = _read_result_json(result_files[0])
                 if data:
                     items.append(
                         SessionItem(
                             index=index,
-                            scenario_name=_extract_scenario_name(data, job_dir),
+                            scenario_name=_extract_scenario_name(data, job),
                             passed=data.get("passed"),
                             elapsed_seconds=data.get("elapsed_seconds"),
                             overrides=overrides,
@@ -248,7 +264,7 @@ def load_session(
                 items.append(
                     SessionItem(
                         index=index,
-                        scenario_name=_extract_scenario_name(None, job_dir),
+                        scenario_name=_extract_scenario_name(None, job),
                         passed=None,
                         elapsed_seconds=None,
                         overrides=overrides,
@@ -257,12 +273,11 @@ def load_session(
                 )
 
     elif session_type == "batch":
-        session_dir = base_path / "outputs" / date / time
-        found = batch_entries(session_dir)
+        found = batch_entries(directory)
         if found is None:
             return items
         data_list, final = found
-        overrides = _read_overrides(session_dir)
+        overrides = _read_overrides(directory)
         for i, entry in enumerate(data_list):
             items.append(
                 SessionItem(
@@ -276,18 +291,17 @@ def load_session(
             )
 
     elif session_type == "single":
-        session_dir = base_path / "outputs" / date / time
-        if not session_dir.is_dir():
+        if not directory.is_dir():
             return items
-        overrides = _read_overrides(session_dir)
-        result_files = sorted(session_dir.glob("*_result.json"))
+        overrides = _read_overrides(directory)
+        result_files = sorted(directory.glob("*_result.json"))
         if result_files:
             data = _read_result_json(result_files[0])
             if data:
                 items.append(
                     SessionItem(
                         index=0,
-                        scenario_name=_extract_scenario_name(data, session_dir),
+                        scenario_name=_extract_scenario_name(data, directory),
                         passed=data.get("passed"),
                         elapsed_seconds=data.get("elapsed_seconds"),
                         overrides=overrides,
@@ -387,29 +401,35 @@ def _detail_to_condition_node(detail: dict[str, Any]) -> ConditionNode | None:
 def load_scenario(
     base_path: Path, session_type: str, date: str, time: str, index: int
 ) -> ScenarioResultView | None:
-    """Load the full result detail for a single scenario."""
-    cache_key = f"scenario:{session_type}:{date}:{time}:{index}"
+    """Load the full result detail for a single scenario, or ``None`` (also
+    when the names do not make a session under *base_path*,
+    :func:`~autoware_carla_scenario.ui.cases.session_dir`)."""
+    directory = cases.session_dir(base_path, session_type, date, time)
+    if directory is None or index < 0:
+        return None
+    cache_key = f"scenario:{base_path}:{session_type}:{date}:{time}:{index}"
     if cache_key in _cache:
         return _cache[cache_key]  # type: ignore[return-value]
 
     data: dict[str, Any] | None = None
     overrides: list[str] = []
-    job_dir: Path | None = None
+    job_path: Path | None = None
     cacheable = True
 
     if session_type == "multirun":
-        job_dir = base_path / "multirun" / date / time / str(index)
-        if not job_dir.is_dir():
+        job = cases.job_dir(base_path, date, time, index)
+        if job is None or not job.is_dir():
             return None
-        overrides = _read_overrides(job_dir)
-        result_files = sorted(job_dir.glob("*_result.json"))
+        job_path = job
+        overrides = _read_overrides(job_path)
+        result_files = sorted(job_path.glob("*_result.json"))
         if result_files:
             data = _read_result_json(result_files[0])
 
     elif session_type == "batch":
-        job_dir = base_path / "outputs" / date / time
-        overrides = _read_overrides(job_dir)
-        found = batch_entries(job_dir)
+        job_path = directory
+        overrides = _read_overrides(job_path)
+        found = batch_entries(job_path)
         if found is not None:
             data_list, final = found
             if 0 <= index < len(data_list) and not data_list[index].get("pending"):
@@ -418,9 +438,9 @@ def load_scenario(
                 cacheable = False
 
     elif session_type == "single":
-        job_dir = base_path / "outputs" / date / time
-        overrides = _read_overrides(job_dir)
-        result_files = sorted(job_dir.glob("*_result.json"))
+        job_path = directory
+        overrides = _read_overrides(job_path)
+        result_files = sorted(job_path.glob("*_result.json"))
         if result_files and index == 0:
             data = _read_result_json(result_files[0])
 
@@ -428,9 +448,9 @@ def load_scenario(
         # No result JSON (e.g. spawn failed), but the job directory exists.
         # Return a partial view with only the log and overrides so the viewer
         # can still display useful information instead of returning a 500 error.
-        if job_dir is None:
+        if job_path is None:
             return None
-        raw_log = _read_raw_log(job_dir)
+        raw_log = _read_raw_log(job_path)
         if not raw_log and not overrides:
             return None
         result = ScenarioResultView(
@@ -465,7 +485,7 @@ def load_scenario(
             )
         )
 
-    raw_log = _read_raw_log(job_dir) if job_dir else ""
+    raw_log = _read_raw_log(job_path) if job_path else ""
 
     # The run's trajectory log, which a Rerun recording of it is made from: a
     # batch's cases share a directory, each under a stem of its own.

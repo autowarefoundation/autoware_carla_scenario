@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .cases import CaseFiles, case_files, session_dir
+from .cases import CaseFiles, case_files, job_dir, session_dir
 
 __all__ = [
     "CaseResult",
@@ -358,10 +358,14 @@ def load_results(
         )
         for index in indices:
             files = case_files(base, session_type, date, time, index)
-            job = directory / str(index) if session_type == "multirun" else directory
+            job = (
+                job_dir(base, date, time, index)
+                if session_type == "multirun"
+                else directory
+            )
             result = _read_json(files.result) if files else None
             result = result if isinstance(result, dict) else {}
-            overrides = _hydra_overrides(job)
+            overrides = _hydra_overrides(job) if job is not None else []
             label = next(
                 (o.split("=", 1)[1] for o in overrides if o.startswith("scenario=")),
                 files.stem if files else "unknown",

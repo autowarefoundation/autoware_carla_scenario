@@ -308,7 +308,7 @@ surface, but the helper modules are importable for tooling:
 | `ui.scanner` | Discover sessions / scenarios under `outputs/` and `multirun/`, build condition trees. |
 | `ui.runner` | Background `subprocess.run(["uv", "run", "scenario", ...])` orchestration with thread-safe progress. |
 | `ui.sweep_resolver.resolve_sweep` | Resolve a sweep without launching CARLA. |
-| `ui.cases` | Which files are a session's cases: the stem each case's files share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| `ui.cases` | Which files are a session's cases: the stem each case's files share (a SLURM batch's manifest, or matched against `batch_results.json`). `session_dir` / `job_dir` / `contained` are the one check every path the viewer builds from a URL goes through: resolved, it must stay under `multirun/` or `outputs/`, else the route answers 404. |
 | `ui.results` | A session's cases with their case, coverage and metrics (`load_results`, `case_metrics`), the cases in an ODD cell, and sessions compared case by case and cell by cell (`compare`). |
 | `ui.slurm_launch` | Submitting a batch with `launcher=slurm` from the viewer (`build_command`, `start_submit`), a SLURM batch's progress (`batch_status`), and `scenario-slurm` run on it. |
 | `ui.recordings` | A case's Rerun recording, made on demand with `autoware_carla_scenario_rerun` when installed, and where the Rerun web viewer is loaded from. |
