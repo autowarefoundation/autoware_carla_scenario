@@ -3550,7 +3550,7 @@ cannot express is refused at its line, with what to write instead.</p>
 </tr>
 <tr>
 <td><code>f"{x:+.2f}"</code>, <code>f"{n:&gt;{w}d}"</code>, a spec Codon's f-string parser does not know</td>
-<td>the value's own <code>__format__</code>, the f-string a <code>+</code> of its parts: <code>(x).__format__("+.2f")</code>, <code>(n).__format__("&gt;" + str(w) + "d")</code>. A nested field is <code>str(w)</code> (<code>repr(w)</code> for <code>!r</code> and <code>!a</code>); the result is a <code>str</code>, as before. <code>"{:+.2f}".format(x)</code> is rewritten to the f-string first, so it gets the same</td>
+<td>the value's own <code>__format__</code>, the f-string a <code>+</code> of its parts: <code>(x).__format__("+.2f")</code>, <code>(n).__format__("&gt;" + str(w) + "d")</code>. A nested field is <code>str(w)</code> (<code>repr(w)</code> for <code>!r</code> and <code>!a</code>); the result is a <code>str</code>, as before. In an f-string rewritten this way (or for a literal brace or <code>!a</code>), a field whose expression holds a double quote or a backslash is a call too, <code>str(e)</code>, <code>repr(e)</code> or its <code>__format__</code> (#704), where it was refused. <code>"{:+.2f}".format(x)</code> is rewritten to the f-string first, so it gets the same</td>
 <td>a brace or a nested f-string inside an expression of the f-string (below)</td>
 </tr>
 <tr>
@@ -3767,6 +3767,15 @@ cannot express is refused at its line, with what to write instead.</p>
   another of its fields is rewritten (#696).</li>
 <li>Codon has no <code>ascii()</code>, so the <code>!a</code> conversion of a field is checked as
   <code>!r</code> (#701): the type is the same <code>str</code>; only the checked copy changes.</li>
+<li>An f-string that is rewritten (a literal brace, a spec Codon does not
+  parse, <code>!a</code>) is written back as double-quoted strings, so a field whose
+  expression holds a double quote or a backslash (<code>d["it's"]</code>,
+  <code>d['a\\b']</code>) cannot stay a field. It becomes a call instead, whatever its
+  conversion (#704): <code>str(e)</code> with no conversion or <code>!s</code>, <code>repr(e)</code> with <code>!r</code>
+  or <code>!a</code>, and with a spec that call's <code>__format__</code>, or <code>(e).__format__(spec)</code>
+  with no conversion: <code>f"{x:+d} {d['a\\b']!r:&gt;9} {{"</code> is
+  <code>((x).__format__("+d") + " " + repr(d['a\\b']).__format__("&gt;9") + " " + "{")</code>.
+  The value and its <code>str</code> type are the same as Python's.</li>
 <li><strong>F-string format specs (#434).</strong> Codon's parser takes a fill and align,
   <code>#</code>, <code>0</code>, a width, <code>,</code> / <code>_</code>, a precision and a type (<code>f"{x:&gt;8.3f}"</code>,
   <code>f"{n:#010x}"</code>, <code>f"{n:,}"</code>, <code>f"{x!r:^10}"</code>, <code>f"{x=:.2f}"</code>) as they are. It
@@ -3957,7 +3966,7 @@ column kept:</p>
 <tr>
 <td>A string in an f-string's field quoted with the f-string's own quote (PEP 701): <code>f"{cfg.name.replace("_", "-")} {d["k"]}"</code></td>
 <td>the string quoted with the other quote, <code>f"{cfg.name.replace('_', '-')} {d['k']}"</code> (Codon's parser, as Python's before 3.12, ends the f-string at its own quote, and reported <code>unexpected dedent</code> a line later)</td>
-<td>a string that holds the other quote too (<code>f"{d["it's"]}"</code>), and a backslash anywhere in a field (<code>f"{"\n".join(names)}"</code>), which Codon's parser refuses whatever the quotes: bind the value to a local first. A nested f-string is refused as before ("A brace or a nested f-string")</td>
+<td>a string that holds the other quote too (<code>f"{d["it's"]}"</code>), a string of either quote that holds the quote of a single-quoted f-string around it (<code>f'{d["it's"]}'</code>, which Codon's parser ends at that quote too), and a backslash anywhere in a field (<code>f"{"\n".join(names)}"</code>), which Codon's parser refuses whatever the quotes: bind the value to a local first. In an f-string that is rewritten anyway (a literal brace, a spec Codon does not parse, <code>!a</code>), such a field becomes a call and is not refused (#704). A nested f-string is refused as before ("A brace or a nested f-string")</td>
 </tr>
 <tr>
 <td><code>type LaneIds = list[int]</code> (PEP 695), at any level</td>
@@ -6459,7 +6468,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 17:54:55 UTC"><span class="timeago" datetime="2026-10-28T17:54:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 17:54:55 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 19:35:35 UTC"><span class="timeago" datetime="2026-10-28T19:35:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 19:35:35 UTC">2026-10-28</span>
   </span>
 
     
