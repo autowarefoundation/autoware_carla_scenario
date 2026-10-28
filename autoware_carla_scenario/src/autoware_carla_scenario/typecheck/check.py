@@ -1954,8 +1954,9 @@ def _fstring_line(
     (``{x:+.2f}``).  The f-strings of the file are searched for the field
     whose character at that column is the unexpected token, else the first
     field with a format spec, else the first f-string with a literal brace
-    (which Codon's parser has no escape for, #696), else the first f-string;
-    ``None`` if the file holds none.
+    (which Codon's parser has no escape for, #696), else the f-string when
+    the file holds f-strings on one line only; ``None`` otherwise: a guess
+    among several would name a line that is likely not the one at fault.
     """
     try:
         tree = ast.parse(text)
@@ -1986,8 +1987,11 @@ def _fstring_line(
                     fields.append((node.lineno, shown))
     fields.sort()
     if not fields:
-        lines = braced or fstrings
-        return _original_line(origin, min(lines)) if lines else None
+        if braced:
+            return _original_line(origin, min(braced))
+        if len(set(fstrings)) == 1:
+            return _original_line(origin, fstrings[0])
+        return None
     if token is not None and column is not None:
         for line, shown in fields:
             if column < len(shown) and shown[column] == token["token"]:

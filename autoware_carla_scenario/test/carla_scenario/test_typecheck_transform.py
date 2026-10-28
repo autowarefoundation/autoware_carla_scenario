@@ -3307,6 +3307,11 @@ def test_an_fstring_with_an_escaped_brace_becomes_a_concatenation(
         'f"{{min, max}} of {x!r:>6} {{"',
         "f'''{{\n{x}\n}}'''",
         'f"a\\n{{\\t}}{x}"',
+        'rf"\\{{{x}\\}}"',
+        'f"{x=} }}"',
+        'f"{ x = !r:>{len(x) + 4}} {{"',
+        "f'{{{x!a:>6}}}'",
+        "F'{{\"{x}\"}}'",
     ],
 )
 def test_an_fstring_with_an_escaped_brace_keeps_its_value(field: str) -> None:

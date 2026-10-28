@@ -7455,6 +7455,10 @@ def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
         ("a = 1\n\nr = f'{a} {{x}}'\n", 3),
         ("a = 1\nr = f'{{x}}'\ns = f'{a}'\n", 2),
         ("a = 1\nr = f'{a}'\n", 2),
+        ("a = 1\nr = (f'{a}'\n     f'{a}')\n", 2),
+        # Several f-strings, none more likely than another: no line rather
+        # than a guessed one, which would send the author to valid code.
+        ("a = 1\nr = f'{a}'\ns = f'{a}!'\n", None),
         # No f-string at all: no line rather than one before the file's first.
         ("a = 1\n", None),
     ],

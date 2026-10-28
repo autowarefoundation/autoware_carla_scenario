@@ -1674,8 +1674,9 @@ Notes:
   local first (`label = "{:>3}".format(x)`, then `f"{label}"`).
   A syntax error Codon still reports inside an f-string field is shown at
   the line of the f-string that has it (the first f-string with a format
-  spec, else with a literal brace, else any), with no column, and never at a
-  line before the file: with no f-string to blame, it is shown with no line.
+  spec, else with a literal brace, else the file's only f-string line), with
+  no column, and never at a line before the file: with no one f-string to
+  blame, it is shown with no line rather than at a guessed one.
 - **A type error inside an f-string field is shown at the f-string's line,
   with no column (#610).** Codon reports it on the line after the line the
   f-string starts on, at the faulting expression's column plus the length of
