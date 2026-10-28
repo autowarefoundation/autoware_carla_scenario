@@ -38,8 +38,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -1808,8 +1811,70 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
     return resume_from, remaining
 
 
+class _Terminated(KeyboardInterrupt):
+    """The ``KeyboardInterrupt`` a ``SIGTERM`` raises (:func:`_raise_interrupt`).
+
+    It carries the signal, so the run exits ``128 + signal`` (143) rather than
+    as Python ends one Ctrl-C stopped.
+    """
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"signal {signal.Signals(signum).name}")
+        self.signum = signum
+
+
+def _raise_interrupt(signum: int, _frame: object) -> None:
+    """End the run as Ctrl-C does, so its ``with`` blocks stop what they started.
+
+    Once: a second SIGTERM (``docker stop``, a CI runner and systemd may send
+    more than one) must not cut that clean-up short, ``atexit``'s included.
+    As ``slurm.worker._raise_interrupt`` does for a SLURM task.
+    """
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise _Terminated(signum)
+
+
+@contextmanager
+def _interrupt_on_sigterm() -> Iterator[None]:
+    """SIGTERM raises :class:`_Terminated`, a ``KeyboardInterrupt``, in the block (#707).
+
+    Python's default SIGTERM ends the process without unwinding: neither
+    ``with queue`` nor ``atexit`` runs, so the Autoware stack and CARLA are
+    stopped only by their die-with-parent watchdogs, without the run's own
+    clean-up (its results, its Rerun recording).  Installed only over the
+    default action, in the main thread: an embedding program's own handler is
+    left alone.  The default is put back when the block ends, unless a SIGTERM
+    came (it stays ignored for the rest of the clean-up) or the block put a
+    handler of its own in place.
+    """
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
+    ):
+        yield
+        return
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    try:
+        yield
+    finally:
+        if signal.getsignal(signal.SIGTERM) is _raise_interrupt:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def main() -> None:
-    """CLI entry point: detect glob patterns and dispatch accordingly."""
+    """CLI entry point: detect glob patterns and dispatch accordingly.
+
+    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.
+    """
+    try:
+        with _interrupt_on_sigterm():
+            _main()
+    except _Terminated as exc:
+        print(f"Interrupted ({exc})", file=sys.stderr)  # noqa: T201
+        sys.exit(128 + exc.signum)
+
+
+def _main() -> None:
     # First thing in main(), before the run starts its own threads (see
     # _cap_malloc_arenas). Threads the imports start have not allocated yet,
     # so they hold no arenas: glibc ignores a cap set once it has more.

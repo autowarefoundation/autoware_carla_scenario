@@ -76,7 +76,9 @@ The single command does everything:
    time only.
 3. It serves `route_follower`, a reference policy, inside the scenario's own process.
 4. It runs the scenario, prints the pass/fail result, writes it under `outputs/`,
-   and stops CARLA again.
+   and stops CARLA again. It does so even when the run is stopped with
+   `SIGTERM` (it then exits 143) or killed: a CARLA the run launched does not
+   outlive it. A CARLA that was already running is left running.
 
 `ego.entity=carla_driver` hands the ego to a policy over alpasim's
 `egodriver.EgodriverService` contract. `driver.policy` names the policy the

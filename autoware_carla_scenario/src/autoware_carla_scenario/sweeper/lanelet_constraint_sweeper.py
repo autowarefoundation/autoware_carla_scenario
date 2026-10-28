@@ -147,6 +147,11 @@ def _launch_job_isolated(
         except Exception:
             logger.exception("Job raised an exception in child process")
             os._exit(1)
+        except BaseException:
+            # A KeyboardInterrupt (the runner raises one on SIGTERM) must not
+            # unwind into the sweep loop this child was forked from.
+            logger.exception("Job interrupted in child process")
+            os._exit(1)
         # launcher.launch() completes without error even when the scenario
         # *fails* (in --multirun mode _hydra_main does not sys.exit).
         # Hydra catches task-function exceptions internally and stores them
