@@ -30,7 +30,6 @@ from autoware_carla_scenario.slurm.manifest import BatchLayout, sequential_stems
 from autoware_carla_scenario.slurm.ports import (
     PORT_SLOT_WIDTH,
     acquire_slot,
-    carla_processes_on_port,
     first_slot,
 )
 from autoware_carla_scenario.slurm.settings import (
@@ -40,12 +39,12 @@ from autoware_carla_scenario.slurm.settings import (
     snapshot_environment,
 )
 
+from ._slurm_ports import RANGE_SLOTS, fake_carlas, port_range
+
 _DATA = Path(__file__).parent / "data" / "fake_slurm"
 #: A scenario without a sweep of its own: drawing from the ODD needs no map.
 _CONCRETE = "intersection_passing/straight_3npc"
 _SWEEP = ["+sweep.odd_sample.count=6", "+sweep.odd_sample.seed=1"]
-#: Away from the defaults and from a real batch's 20000.
-_PORT_BASE = 30000
 
 _SITECUSTOMIZE = f'''
 """Fakes the world of examples.run in every process that imports it."""
@@ -81,8 +80,15 @@ sys.meta_path.insert(0, _FakeWorld())
 
 
 @pytest.fixture
+def port_base() -> Iterator[int]:
+    """The first of :data:`RANGE_SLOTS` slots no other test uses meanwhile."""
+    with port_range() as base:
+        yield base
+
+
+@pytest.fixture
 def fake_slurm(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port_base: int
 ) -> Iterator[SimpleNamespace]:
     """A fake SLURM on PATH, and the fake world in this process and its tasks."""
     from autoware_carla_scenario.examples import run
@@ -131,6 +137,8 @@ def fake_slurm(
         dirs.append(path)
         return path
 
+    # port_base, a fixture this one depends on, holds the test's ports until
+    # the clean-up below is done.
     yield SimpleNamespace(
         run=run,
         tmp=tmp_path,
@@ -138,18 +146,18 @@ def fake_slurm(
         record=record,
         batch_dir=batch_dir,
         monkeypatch=monkeypatch,
+        port_base=port_base,
     )
     # Nothing a test left behind keeps running: its tasks, their fake CARLAs.
     for job_dir in (state / "jobs").glob("*") if (state / "jobs").is_dir() else []:
         subprocess.run([str(bin_dir / "scancel"), job_dir.name], check=False)
     for carla in record.glob("carla-*.json"):
-        port = json.loads(carla.read_text())["port"]
-        for pid in carla_processes_on_port(port):
+        # Only this test's fake ones: not another test's, nor a real CARLA
+        # that may listen on 2000.
+        for pid in fake_carlas(record, json.loads(carla.read_text())["port"]):
             try:
-                # Only the fake ones: a real CARLA may listen on 2000.
-                if b"--fake-carla" in Path(f"/proc/{pid}/cmdline").read_bytes():
-                    os.kill(pid, 9)
-            except (OSError, ProcessLookupError):
+                os.kill(pid, 9)
+            except OSError:
                 pass
 
 
@@ -169,14 +177,15 @@ def _run_batch(
     return int(exited.value.code or 0), output
 
 
-def _slurm(*extra: str) -> list[str]:
+def _slurm(env: SimpleNamespace, *extra: str) -> list[str]:
+    """A SLURM batch's overrides, on the test's own ports (:func:`port_range`)."""
     return [
         *_SWEEP,
         "launcher=slurm",
         "launcher.array_parallelism=2",
         "launcher.poll_seconds=0.2",
-        f"launcher.port_base={_PORT_BASE}",
-        "launcher.port_slots=50",
+        f"launcher.port_base={env.port_base}",
+        f"launcher.port_slots={RANGE_SLOTS}",
         *extra,
     ]
 
@@ -236,7 +245,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
 ) -> None:
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     local_out = capsys.readouterr().out
-    slurm_status, batch = _run_batch(fake_slurm, "slurm", _slurm())
+    slurm_status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     slurm_out = capsys.readouterr().out
 
     assert slurm_status == local_status
@@ -259,7 +268,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
     ports = sorted(c["port"] for c in slurm_carlas)
     assert len(ports) == 2 and len(set(ports)) == 2
     for carla in slurm_carlas:
-        assert (carla["port"] - _PORT_BASE) % PORT_SLOT_WIDTH == 0
+        assert (carla["port"] - fake_slurm.port_base) % PORT_SLOT_WIDTH == 0
         assert carla["tm_port"] == carla["port"] + 3
         assert f"-carla-streaming-port={carla['port'] + 1}" in carla["extra"]
         assert f"-carla-secondary-port={carla['port'] + 2}" in carla["extra"]
@@ -277,7 +286,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
         assert status is not None and status["state"] == "done"
         assert not layout.task_port(0, task).exists()
     for port in ports:
-        assert carla_processes_on_port(port) == []
+        assert fake_carlas(fake_slurm.record, port) == []
 
 
 def test_each_slurm_task_makes_the_recordings_a_local_batch_makes(
@@ -290,7 +299,9 @@ def test_each_slurm_task_makes_the_recordings_a_local_batch_makes(
         fake_slurm, "local", [*_SWEEP, "rerun.enabled=true"]
     )
     local_out = capsys.readouterr().out
-    slurm_status, batch = _run_batch(fake_slurm, "slurm", _slurm("rerun.enabled=true"))
+    slurm_status, batch = _run_batch(
+        fake_slurm, "slurm", _slurm(fake_slurm, "rerun.enabled=true")
+    )
     slurm_out = capsys.readouterr().out
 
     assert slurm_status == local_status
@@ -309,7 +320,7 @@ def test_the_manifest_rebuilds_each_case_exactly(
 ) -> None:
     from omegaconf import OmegaConf
 
-    _status, batch = _run_batch(fake_slurm, "slurm", _slurm())
+    _status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     manifest = BatchLayout(batch).read_manifest()
     cases = manifest["cases"]
     assert [c["index"] for c in cases] == list(range(6))
@@ -343,7 +354,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
         pytest.skip("the second case errored in the fake world")
     fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", second[:16])
 
-    status, batch = _run_batch(fake_slurm, "slurm", _slurm())
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     out = capsys.readouterr().out
     assert status == 1
     layout = BatchLayout(batch)
@@ -357,7 +368,9 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     task0 = layout.read_task(0, 0)
     assert task0 is not None
     port = task0["ports"]["rpc"]
-    _wait_for(lambda: carla_processes_on_port(port) == [], 20, "the orphaned CARLA")
+    _wait_for(
+        lambda: fake_carlas(fake_slurm.record, port) == [], 20, "the orphaned CARLA"
+    )
     _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
 
     # Resubmitted: the two cases with no result, and those that errored (the
@@ -393,7 +406,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     for carla in fake_slurm.record.glob("carla-*.json"):
         carla.unlink()
     fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
-    status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     out = capsys.readouterr().out
     # --no-wait: submitted, and a collect job after the array.
     assert status == 0
@@ -411,7 +424,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
         json.loads(p.read_text())["port"]
         for p in fake_slurm.record.glob("carla-*.json")
     ]
-    assert all(carla_processes_on_port(port) for port in ports)
+    assert all(fake_carlas(fake_slurm.record, port) for port in ports)
     # The array alone, as a user's own scancel would: its collect job runs.
     subprocess.run(["scancel", str(submission["job_id"])], check=True)
     _wait_for(lambda: _jobs_done(fake_slurm), 30, "the cancelled tasks")
@@ -420,7 +433,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
         # the scheduler's grace period (5 s here) is killed, and the watchdog
         # then needs TERM, up to 5 s of grace, and KILL.  20 s covers both
         # with room for a loaded machine.
-        _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
+        _wait_for(lambda p=port: fake_carlas(fake_slurm.record, p) == [], 20, "CARLA")
     for task in range(2):
         task_status = layout.read_task(0, task)
         assert task_status is not None and task_status["state"] == "cancelled"
@@ -450,7 +463,7 @@ def test_cancel_cancels_every_job_of_the_batch(
     from autoware_carla_scenario.slurm import cli
 
     fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
-    status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     assert status == 0
     submission = BatchLayout(batch).read_submission(0)
     assert cli.main(["cancel", str(batch)]) == 0
@@ -462,7 +475,7 @@ def test_cancel_cancels_every_job_of_the_batch(
     assert not (batch / "batch_results.json").exists()
     for carla in fake_slurm.record.glob("carla-*.json"):
         port = json.loads(carla.read_text())["port"]
-        _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
+        _wait_for(lambda p=port: fake_carlas(fake_slurm.record, p) == [], 20, "CARLA")
 
 
 def test_a_worker_killed_before_it_stopped_carla_leaves_none_running(
@@ -475,7 +488,7 @@ def test_a_worker_killed_before_it_stopped_carla_leaves_none_running(
 
     fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
     fake_slurm.monkeypatch.setenv("FAKE_SLURM_KILL_WAIT", "1")
-    _status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    _status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     records = fake_slurm.record
     _wait_for(lambda: _carla_records(records, 2), 90, "two CARLAs")
     workers = [int(p.stem.rpartition("-")[2]) for p in records.glob("carla-*.json")]
@@ -490,7 +503,7 @@ def test_a_worker_killed_before_it_stopped_carla_leaves_none_running(
             lambda w=worker: not Path(f"/proc/{w}").exists(), 30, "the worker's end"
         )
     for port in ports:
-        _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
+        _wait_for(lambda p=port: fake_carlas(fake_slurm.record, p) == [], 20, "CARLA")
 
 
 def test_no_wait_submits_and_the_collect_job_writes_the_results(
@@ -500,7 +513,7 @@ def test_no_wait_submits_and_the_collect_job_writes_the_results(
 
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     status, batch = _run_batch(
-        fake_slurm, "slurm", _slurm("launcher.cases_per_task=1"), wait=False
+        fake_slurm, "slurm", _slurm(fake_slurm, "launcher.cases_per_task=1"), wait=False
     )
     assert status == 0
     layout = BatchLayout(batch)
@@ -533,7 +546,7 @@ def test_slurm_without_sbatch_is_refused_before_the_batch_expands(
 
     monkeypatch.setattr(fake_slurm.run, "_expand_batch", expanded)
     with pytest.raises(SystemExit) as exited:
-        fake_slurm.run.run_batch([_CONCRETE], _slurm(), expand=True)
+        fake_slurm.run.run_batch([_CONCRETE], _slurm(fake_slurm), expand=True)
     assert exited.value.code == 2
     assert "sbatch" in capsys.readouterr().err
 
@@ -713,8 +726,10 @@ def test_squeue_states_reads_task_lines_and_ranges(
     assert submit.squeue_states("9") == {}
 
 
-def test_port_slots_are_exclusive_and_skip_ports_in_use(tmp_path: Path) -> None:
-    base, slots = 31000, 20
+def test_port_slots_are_exclusive_and_skip_ports_in_use(
+    tmp_path: Path, port_base: int
+) -> None:
+    base, slots = port_base, RANGE_SLOTS
     first = acquire_slot(base, slots, start=3, lock_dir=tmp_path)
     try:
         assert first.index == 3 and first.rpc == base + 30
@@ -741,11 +756,11 @@ def test_port_slots_are_exclusive_and_skip_ports_in_use(tmp_path: Path) -> None:
 
 
 def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
-    tmp_path: Path,
+    tmp_path: Path, port_base: int
 ) -> None:
     from autoware_carla_scenario.slurm.ports import CarlaWatchdog
 
-    base = 31700
+    base = port_base
     slot = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
     watchdog = CarlaWatchdog(slot)
     slot.release(keep_lock=True)
@@ -757,13 +772,13 @@ def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
 
 
 def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
-    tmp_path: Path,
+    tmp_path: Path, port_base: int
 ) -> None:
     """A SIGKILLed worker never removes its ``.port`` file (#525): the watchdog,
     which sees the pipe close without ``done``, does."""
     from autoware_carla_scenario.slurm.ports import CarlaWatchdog
 
-    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    slot = acquire_slot(port_base, 1, start=0, lock_dir=tmp_path)
     port_file = tmp_path / "0-0.port"
     port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
     watchdog = CarlaWatchdog(slot, port_file)
@@ -775,7 +790,7 @@ def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
     assert not port_file.exists()
 
     # A worker that finished cleans up itself: the watchdog leaves the file.
-    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    slot = acquire_slot(port_base, 1, start=0, lock_dir=tmp_path)
     port_file.write_text("x\n", encoding="utf-8")
     watchdog = CarlaWatchdog(slot, port_file)
     slot.release(keep_lock=True)
@@ -962,7 +977,7 @@ def test_resubmit_runs_a_case_named_twice_once(
 
 
 def test_port_locks_go_to_a_node_wide_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port_base: int
 ) -> None:
     from autoware_carla_scenario.slurm import ports
 
@@ -975,7 +990,7 @@ def test_port_locks_go_to_a_node_wide_directory(
     assert ports.default_lock_dir(tmp_path / "missing") == ports.LOCK_DIR
     # A slot taken without a lock directory locks there.
     monkeypatch.setattr(ports, "default_lock_dir", lambda: lock_dir)
-    slot = acquire_slot(31500, 5, start=0)
+    slot = acquire_slot(port_base, RANGE_SLOTS, start=0)
     try:
         assert (lock_dir / f"autoware_carla_scenario-port-{slot.base}.lock").exists()
     finally:
@@ -1092,7 +1107,7 @@ def test_the_manifest_and_job_scripts_are_the_users_alone(
     fake_slurm: SimpleNamespace,
 ) -> None:
     fake_slurm.monkeypatch.setenv("AUTOWARE_API_TOKEN", "do-not-record")
-    _status, batch = _run_batch(fake_slurm, "slurm", _slurm())
+    _status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     layout = BatchLayout(batch)
     assert (layout.manifest.stat().st_mode & 0o777) == 0o600
     script = layout.job_script(0)
@@ -1170,7 +1185,7 @@ def test_a_failing_collect_job_is_reported_not_raised(
         return real(command)
 
     fake_slurm.monkeypatch.setattr(submit, "_run_sbatch", sbatch)
-    status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     captured = capsys.readouterr()
     assert status == 1
     submission = BatchLayout(batch).read_submission(0)
@@ -1492,6 +1507,7 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     mp.setattr(fake_slurm.run, "_make_batch_output_dir", lambda: output)
 
     overrides = _slurm(
+        fake_slurm,
         "launcher.remote_cwd=workspace/OnePlanner",
         "launcher.python=.venv/bin/python",
         "launcher.setup=['echo node setup in $PWD']",
