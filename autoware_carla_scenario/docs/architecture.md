@@ -1290,7 +1290,7 @@ Complex pass/fail criteria are built by composing atomic conditions:
 # Example: pass when ego visits all three road segments
 pass_condition = AndCondition(
     label="all_roads_visited",
-    children=[
+    conditions=[
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "5", ...)),
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "12", ...)),
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "8", ...)),
@@ -1298,7 +1298,7 @@ pass_condition = AndCondition(
 )
 ```
 
-`StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously.
+`StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously. It checks every child on every tick, so each sticky child latches when its own road is reached and the roads may be visited in any order; to require an order, latch the later one on the earlier: `StickyCondition(AndCondition([StickyCondition(on_5), on_12]))`.
 
 ### World Reset for Clean State
 

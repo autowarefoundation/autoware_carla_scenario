@@ -667,14 +667,15 @@ class TestAndCondition:
         assert result.passed is False
 
     def test_fail_does_not_skip_later_children(self) -> None:
-        """A failing child does not stop the later ones being checked (#663)."""
+        """A failing child does not stop the later ones being checked (#663).
+
+        The later child is pending, so the AND has not fired yet.
+        """
         spy = MagicMock(spec=BaseCondition)
         spy.label = "spy"
         spy.check.return_value = None
         cond = AndCondition([AlwaysFailCondition(), spy])
-        result = cond.check(MagicMock(), elapsed=1.0)
-        assert result is not None
-        assert result.passed is False
+        assert cond.check(MagicMock(), elapsed=1.0) is None
         spy.check.assert_called_once()
 
     def test_none_does_not_skip_later_children(self) -> None:

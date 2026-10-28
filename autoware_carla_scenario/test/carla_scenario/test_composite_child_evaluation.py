@@ -21,6 +21,8 @@ from autoware_carla_scenario import (
     PersistentCondition,
     ScenarioResult,
     StandstillCondition,
+    StickyCondition,
+    TimeoutCondition,
 )
 from autoware_carla_scenario.conditions.composition.base import CompositionCondition
 
@@ -90,7 +92,9 @@ class TestAndChecksEveryChild:
     def test_child_after_a_failing_child_is_checked(self) -> None:
         spy = MagicMock(spec=BaseCondition)
         spy.label = "spy"
-        spy.check.return_value = None
+        spy.check.return_value = ScenarioResult(
+            passed=True, message="spy", elapsed_seconds=1.0
+        )
         cond = AndCondition([_Failing(), spy])
 
         result = cond.check(MagicMock(), elapsed=1.0)
@@ -99,9 +103,10 @@ class TestAndChecksEveryChild:
         spy.check.assert_called_once()
 
     @pytest.mark.parametrize("failing_first", [False, True])
-    def test_a_failure_wins_over_a_pending_child_in_either_order(
+    def test_a_pending_child_holds_back_a_failure_in_either_order(
         self, failing_first: bool
     ) -> None:
+        """The AND fires only once every child has (a gate before a fail)."""
         pending = _Scripted(set(), "pending")
         failing = _Failing()
         children: list[BaseCondition] = (
@@ -110,8 +115,28 @@ class TestAndChecksEveryChild:
 
         result = AndCondition(children).check(None, 1.0)  # type: ignore[arg-type]
 
+        assert result is None
+
+    def test_a_failure_fires_once_the_gate_has(self) -> None:
+        gate = _Scripted({2.0}, "gate")
+        cond = AndCondition([gate, _Failing()])
+
+        assert cond.check(None, 1.0) is None  # type: ignore[arg-type]
+        result = cond.check(None, 2.0)  # type: ignore[arg-type]
+
         assert result is not None and result.passed is False
         assert result.message == "failing"
+
+    def test_a_gated_timeout_does_not_fire_on_its_own(self) -> None:
+        """An AND holding a timeout does not bound the run (``_bounds_the_run``)."""
+        cond = AndCondition(
+            [_Scripted(set(), "never"), TimeoutCondition(1.0, label="timeout")]
+        )
+
+        assert all(
+            cond.check(None, t) is None  # type: ignore[arg-type]
+            for t in (0.5, 1.0, 99.0)
+        )
 
     def test_first_failure_in_order_is_returned(self) -> None:
         cond = AndCondition([_Failing("first"), _Failing("second")])
@@ -119,6 +144,37 @@ class TestAndChecksEveryChild:
         result = cond.check(None, 1.0)  # type: ignore[arg-type]
 
         assert result is not None and result.message == "first"
+
+
+class TestAndOfStickyChildren:
+    """Every child is checked, so a sticky child latches whatever the others do."""
+
+    def test_states_visited_in_any_order(self) -> None:
+        first = _Scripted({3.0}, "first")
+        second = _Scripted({1.0}, "second")
+        cond = AndCondition([StickyCondition(first), StickyCondition(second)])
+
+        out = [cond.check(None, t) for t in _TICKS]  # type: ignore[arg-type]
+
+        assert out[:2] == [None, None]
+        assert out[2] is not None and out[2].passed is True
+
+    def test_nested_sticky_requires_the_order(self) -> None:
+        """``Sticky(And([Sticky(a), b]))``: ``b`` counts only from ``a`` on."""
+        a = _Scripted({3.0}, "a")
+        b_early = _Scripted({1.0}, "b")
+        early = StickyCondition(AndCondition([StickyCondition(a), b_early]))
+        assert all(
+            early.check(None, t) is None  # type: ignore[arg-type]
+            for t in _TICKS
+        )
+
+        a = _Scripted({3.0}, "a")
+        b_late = _Scripted({1.0, 4.0}, "b")
+        late = StickyCondition(AndCondition([StickyCondition(a), b_late]))
+        out = [late.check(None, t) for t in _TICKS]  # type: ignore[arg-type]
+        assert out[:3] == [None, None, None]
+        assert out[3] is not None and out[4] is not None
 
 
 # ---------------------------------------------------------------------------

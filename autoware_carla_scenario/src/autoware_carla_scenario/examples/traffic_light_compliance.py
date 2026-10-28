@@ -525,8 +525,8 @@ class TrafficLightComplianceScenario(BaseScenario):
             standstill_speed_mps=cfg.standstill_speed_mps,
         )
 
-        # 1) The ego stood still in the stop zone before the green.  First in
-        #    the AND, so the watch is asked every tick.
+        # 1) The ego stood still in the stop zone before the green.  An AND
+        #    checks every child on every tick, so the watch is asked every tick.
         stopped_in_zone = StoppedInStopZoneCondition(
             watch, label="ego_stopped_in_stop_zone"
         )

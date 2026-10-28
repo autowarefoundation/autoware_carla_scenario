@@ -150,6 +150,7 @@ class TrafficSignalCondition(BaseCondition):
                     mismatches.append((actor.get_opendrive_id(), state))
 
         if match_count == 0:
+            self._last_mismatch = None
             if not self._warned_no_actors:
                 self._warned_no_actors = True
                 logger.warning(
