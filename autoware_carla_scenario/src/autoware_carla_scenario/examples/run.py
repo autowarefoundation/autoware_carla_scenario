@@ -1734,8 +1734,9 @@ def _hydra_main(cfg: DictConfig) -> None:
     try:
         result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
-        if _is_multirun():
-            raise
+        # A refusal ends a --multirun too, with the same 2: the next case
+        # would be refused for the same reason.  Hydra lets SystemExit through
+        # its basic sweeper, and the lanelet sweeper stops on a case's 2.
         print(exc, file=sys.stderr)  # noqa: T201
         sys.exit(2)
     # Only exit for single-run mode. In --multirun, Hydra calls this
@@ -1881,6 +1882,10 @@ def main() -> None:
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
+        # A sweep's verdict is this call's alone, not an earlier main()'s in
+        # this process (tests, an embedding runner).
+        _multirun_failed.clear()
+        _multirun_ran.clear()
         _hydra_main()
         _exit_if_multirun_failed()
 

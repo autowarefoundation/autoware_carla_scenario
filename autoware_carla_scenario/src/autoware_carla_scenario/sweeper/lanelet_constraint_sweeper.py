@@ -11,6 +11,9 @@ sweeper:
 
 Once every case has run, a sweep with a failed (or timed-out) case raises
 :class:`SweepFailedError`, which Hydra reports and turns into exit status 1.
+A refused case (one exiting 2, as ``examples/run.py`` does for a scenario that
+does not type-check or an extra that is not installed) ends the sweep at once
+with exit status 2: every case after it would be refused for the same reason.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import json
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -32,7 +36,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from ..maps import resolve_map_paths
-from ..rerun import require_converter
+from ..rerun import RerunUnavailableError, require_converter
 from .expand import check_constraint_keys, expand_sweep, scenario_controls
 from .map_loader import load_map
 
@@ -41,6 +45,9 @@ logger = logging.getLogger(__name__)
 # Default hard timeout per job (seconds).  Can be overridden via
 # ``sweep.job_timeout_seconds`` in the scenario YAML.
 _DEFAULT_JOB_TIMEOUT = 120
+
+#: The exit status of a refused run (docs/usage.md, "Exit Codes").
+_REFUSED_EXIT_CODE = 2
 
 
 class SweepFailedError(CompactHydraException):
@@ -228,6 +235,8 @@ class LaneletConstraintSweeper(Sweeper):
         Raises:
             SweepFailedError: After every case has run, when one or more of
                 them failed or timed out.
+            SystemExit: With status 2, at once, when the sweep asks for
+                Rerun recordings without the extra or a case is refused.
         """
         assert self.config is not None
         assert self.launcher is not None
@@ -238,7 +247,11 @@ class LaneletConstraintSweeper(Sweeper):
         # the extra, rather than fail every case it forks.  Each case
         # converts its own log (examples/run.py).
         if OmegaConf.select(cfg, "rerun.enabled", default=False):
-            require_converter()
+            try:
+                require_converter()
+            except RerunUnavailableError as exc:
+                print(exc, file=sys.stderr)  # noqa: T201
+                sys.exit(_REFUSED_EXIT_CODE)
 
         # -- 1. Read the sweep section, before any map is fetched --------
         sweep_cfg = OmegaConf.select(cfg, "sweep")
@@ -358,6 +371,15 @@ class LaneletConstraintSweeper(Sweeper):
                 if ok:
                     succeeded = True
                     break
+                if exit_code == _REFUSED_EXIT_CODE:
+                    # The case printed why; the rest would be refused too.
+                    logger.error(
+                        "[%d/%d] Job REFUSED for overrides %s — stopping the " "sweep.",
+                        idx + 1,
+                        idx_offset + len(batches),
+                        batch,
+                    )
+                    sys.exit(_REFUSED_EXIT_CODE)
 
                 # Log based on exit code.
                 if exit_code is None:

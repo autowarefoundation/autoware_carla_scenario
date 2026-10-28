@@ -43,6 +43,10 @@ lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: [
 
 @hydra.main(version_base=None, config_path=None, config_name=None)
 def task(cfg: DictConfig) -> None:
+    print(f"case {cfg.case}", flush=True)
+    if cfg.get("refuse", False):
+        # What examples/run.py:_hydra_main does for a refused scenario.
+        raise SystemExit(2)
     passed = not cfg.get("fail", False)
     # Where ScenarioRunner writes it: the sweeper reads the verdict there.
     output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -63,6 +67,9 @@ from autoware_carla_scenario.examples import run
 
 
 def fake_run_scenario(cfg, **_):
+    if str(cfg.verdict) == "refuse":
+        print("case verdict=refuse", flush=True)
+        raise run.ScenarioTypeError("does not type-check")
     passed = str(cfg.verdict) == "pass"
     print(f"case verdict={cfg.verdict}", flush=True)
     return SimpleNamespace(passed=passed)
@@ -135,3 +142,45 @@ def test_basic_sweeper_exit_code(
     assert proc.returncode == returncode, output
     if returncode:
         assert "1 of 3 case(s) failed" in output, output
+
+
+def test_lanelet_sweeper_stops_with_2_on_a_refused_case(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+refuse=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 2, output
+    # The second case would be refused too: it does not run.
+    assert "case 1" in output, output
+    assert "case 2" not in output, output
+    assert "REFUSED" in output, output
+
+
+def test_basic_sweeper_stops_with_2_on_a_refused_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    proc = _run(_BASIC_APP, tmp_path, "+verdict=refuse,pass")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 2, output
+    assert "does not type-check" in output, output
+    assert output.count("case verdict=") == 1, output
+
+
+def test_main_does_not_exit_for_an_earlier_calls_failed_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verdicts recorded are those of this main() call alone."""
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(run, "_multirun_failed", ["+verdict=fail"])
+    monkeypatch.setattr(run, "_multirun_ran", ["+verdict=fail"])
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: False)
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_hydra_main", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["scenario", "--multirun", "+verdict=pass"])
+    run.main()  # no SystemExit

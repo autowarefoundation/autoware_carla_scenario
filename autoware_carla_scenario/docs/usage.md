@@ -741,14 +741,12 @@ The same codes hold however the cases run: a single run, a glob batch, a
 `hydra/sweeper=lanelet_constraint`, or Hydra's own sweeper over
 comma-separated values) and `launcher=slurm`, which waits for the array and
 collects it. A sweep runs every case before it exits, so 1 means at least
-one case failed; the summary names how many. The exceptions:
+one case failed; the summary names how many. A refusal ends a sweep at once
+with 2, since every case after it would be refused too. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
   `hydra/sweeper=`), a case that raises an exception ends the sweep at once
   with 1, as Hydra does; a case that runs and fails does not.
-- Under a Hydra sweeper (`hydra/sweeper=lanelet_constraint` or Hydra's own),
-  a refusal (a type error, a missing extra) is reported as a failed case or a
-  failed sweep, with 1 rather than 2.
 - `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
   verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
 

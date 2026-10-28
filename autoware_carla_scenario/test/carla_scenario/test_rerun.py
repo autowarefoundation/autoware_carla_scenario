@@ -117,7 +117,7 @@ def test_convert_outputs_without_the_extra_is_refused(
 
 
 def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
-    no_converter: None,
+    no_converter: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from omegaconf import OmegaConf
 
@@ -132,9 +132,12 @@ def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
         patch(
             "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper.resolve_map_paths"
         ) as resolve,
-        pytest.raises(RerunUnavailableError),
+        pytest.raises(SystemExit) as exited,
     ):
         sweeper.sweep([])
+    # Refused, as a single run is: exit status 2, saying how to install it.
+    assert exited.value.code == 2
+    assert INSTALL_HINT in capsys.readouterr().err
     resolve.assert_not_called()
 
 
