@@ -62,6 +62,7 @@ from autoware_carla_scenario import (
     TrafficSinkAction,
     TrafficSourceAction,
 )
+import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas
@@ -1717,6 +1718,14 @@ def _run_scenario(
     return result
 
 
+#: The cases of a ``--multirun`` run in this process (Hydra's basic sweeper)
+#: that failed, and how many ran: :func:`main` exits 1 when any failed.  The
+#: lanelet sweeper runs its cases in forked children, which this does not see;
+#: it raises ``SweepFailedError`` itself.
+_multirun_failed: list[str] = []
+_multirun_ran: list[str] = []
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def _hydra_main(cfg: DictConfig) -> None:
     """Hydra entry point that dispatches to the selected scenario."""
@@ -1726,14 +1735,37 @@ def _hydra_main(cfg: DictConfig) -> None:
     try:
         result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
-        if _is_multirun():
-            raise
+        # A refusal ends a --multirun too, with the same 2: the next case
+        # would be refused for the same reason.  Hydra lets SystemExit through
+        # its basic sweeper, and the lanelet sweeper stops on a case's 2.
         print(exc, file=sys.stderr)  # noqa: T201
         sys.exit(2)
     # Only exit for single-run mode. In --multirun, Hydra calls this
-    # function repeatedly; sys.exit() would kill the entire sweep.
+    # function repeatedly; sys.exit() would kill the entire sweep.  Hydra
+    # discards what a job returns, so the verdict is recorded for main().
     if not _is_multirun():
         sys.exit(0 if result.passed else 1)
+    case = " ".join(HydraConfig.get().overrides.task)
+    _multirun_ran.append(case)
+    if not result.passed:
+        _multirun_failed.append(case)
+
+
+def _exit_if_multirun_failed() -> None:
+    """Exit 1 when a ``--multirun`` case run in this process failed.
+
+    After the sweep, so a failed case does not stop the ones after it.
+    """
+    if not _multirun_failed:
+        return
+    print(  # noqa: T201
+        f"Sweep failed: {len(_multirun_failed)} of {len(_multirun_ran)} "
+        "case(s) failed:",
+        file=sys.stderr,
+    )
+    for case in _multirun_failed:
+        print(f"  {case}", file=sys.stderr)  # noqa: T201
+    sys.exit(1)
 
 
 def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
@@ -1851,7 +1883,12 @@ def main() -> None:
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
+        # A sweep's verdict is this call's alone, not an earlier main()'s in
+        # this process (tests, an embedding runner).
+        _multirun_failed.clear()
+        _multirun_ran.clear()
         _hydra_main()
+        _exit_if_multirun_failed()
 
 
 if __name__ == "__main__":
