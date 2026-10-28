@@ -409,6 +409,14 @@ def test_a_crash_is_kept_for_the_process_only(cache_dir: Path) -> None:
     assert not (cache_dir / "k.json").exists()
 
 
+def test_a_killed_build_is_kept_nowhere(cache_dir: Path) -> None:
+    # SIGKILL (the out-of-memory killer) is no verdict, like a timeout (#694).
+    killed = TypeCheckResult("pkg.MyScenario", ok=False, crashed=True, killed=True)
+    assert _store("k", killed, _sources("/run1")) is killed
+    assert _cached("k", _sources("/run1")) is None
+    assert not (cache_dir / "k.json").exists()
+
+
 def test_an_unreadable_entry_is_a_miss(cache_dir: Path) -> None:
     cache_dir.mkdir()
     (cache_dir / "k.json").write_text("{not json", encoding="utf-8")

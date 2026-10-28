@@ -507,6 +507,10 @@ class TypeCheckResult:
     #: The verdict is one an earlier run kept (the library check's cache
     #: hit); :attr:`seconds` is then the time this run took, not the compile's.
     cached: bool = False
+    #: Codon was killed from outside (SIGKILL: the out-of-memory killer), with
+    #: :attr:`crashed`: no verdict at all, so, like a compile that timed out,
+    #: it is kept nowhere and the next check of the program compiles it again.
+    killed: bool = False
 
     def format(self) -> str:
         if self.skipped is not None:
@@ -1949,7 +1953,9 @@ def _fstring_line(
     file's first one; the column is within the field's text
     (``{x:+.2f}``).  The f-strings of the file are searched for the field
     whose character at that column is the unexpected token, else the first
-    field with a format spec; ``None`` if the file holds none.
+    field with a format spec, else the first f-string with a literal brace
+    (which Codon's parser has no escape for, #696), else the first f-string;
+    ``None`` if the file holds none.
     """
     try:
         tree = ast.parse(text)
@@ -1957,8 +1963,16 @@ def _fstring_line(
         return None
     token = _UNEXPECTED_TOKEN.search(message)
     fields: list[tuple[int, str]] = []
+    braced: list[int] = []
+    fstrings: list[int] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr):
+            fstrings.append(node.lineno)
+            if any(
+                isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}")
+                for v in node.values
+            ):
+                braced.append(node.lineno)
             for value in node.values:
                 if isinstance(value, ast.FormattedValue) and value.format_spec:
                     inner = value.format_spec
@@ -1972,7 +1986,8 @@ def _fstring_line(
                     fields.append((node.lineno, shown))
     fields.sort()
     if not fields:
-        return None
+        lines = braced or fstrings
+        return _original_line(origin, min(lines)) if lines else None
     if token is not None and column is not None:
         for line, shown in fields:
             if column < len(shown) and shown[column] == token["token"]:
@@ -2379,10 +2394,15 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             )
             if found is not None:
                 original = found
-        if original >= 1:
-            texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
-            if texts is not None:
-                moved[(file, line)] = texts
+                # Codon's column within the field, not of the line (#696).
+                in_fields.add((file, line))
+        if original < 1:
+            # Still no line of the file (a position before its first line):
+            # reported with none rather than a negative one (#696).
+            return (ws.files[rel], 0, True, None)
+        texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
+        if texts is not None:
+            moved[(file, line)] = texts
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
@@ -2466,7 +2486,7 @@ _CACHE: dict[str, TypeCheckResult] = {}
 _CHECKED_FOR: dict[str, dict[str, str]] = {}
 #: The verdict of each key being made right now, for the checks of the same
 #: key that start meanwhile to wait for (``scenario-check`` runs configs in
-#: threads side by side); ``None`` when the compile timed out.
+#: threads side by side); ``None`` when the compile timed out or was killed.
 _IN_FLIGHT: dict[str, Future[TypeCheckResult | None]] = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
@@ -2581,9 +2601,15 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
     """Keep *result* under *key*; in ``$CACHE_DIR_ENV`` too unless Codon crashed.
 
     A crash says nothing about the program (Codon may have run out of memory),
-    so it is not worth keeping for another run. The file is written whole or
-    not at all: workers that compile the same program race harmlessly.
+    so it is not worth keeping for another run. A Codon killed from outside
+    (:attr:`TypeCheckResult.killed`) is not kept at all, not even for this
+    process: the next check of the same program (the next case of a sweep,
+    which has the same key) compiles it again (#694). The file is written
+    whole or not at all: workers that compile the same program race
+    harmlessly.
     """
+    if result.killed:
+        return result
     _CACHE[key] = result
     path = _cache_file(key)
     if path is None or result.crashed:
@@ -3042,8 +3068,8 @@ def _typecheck(
         return _reused(name, key, rendered.case, cached)
     # scenario-check runs configs side by side: one of the same shape that is
     # being compiled right now is waited for rather than compiled again. A
-    # compile that timed out is no verdict: who waited for it compiles under
-    # its own timeout.
+    # compile that timed out or was killed is no verdict: who waited for it
+    # compiles under its own timeout.
     while True:
         with _IN_FLIGHT_LOCK:
             pending = _IN_FLIGHT.get(key)
@@ -3068,7 +3094,9 @@ def _typecheck(
         owned.set_exception(exc)
         raise
     else:
-        owned.set_result(result)
+        # A killed compile is no verdict either: who waited for it compiles
+        # under its own timeout, as after a timeout (#694).
+        owned.set_result(None if result is not None and result.killed else result)
     finally:
         with _IN_FLIGHT_LOCK:
             del _IN_FLIGHT[key]
@@ -3134,6 +3162,8 @@ def _none_checked(
     the stubs are written from), so a kept verdict holds the check's too.
     """
     checked = _with_none_misuses(result, none_check)
+    if checked.killed:  # no verdict: kept nowhere, like a timeout (#694)
+        return checked
     if len(checked.warnings) > len(result.warnings):
         # The None check did not run (mypy missing, out of time): a verdict
         # for this process only, so the next run checks it again.
@@ -3494,6 +3524,7 @@ def _compile(
         crashed=crashed,
         output=output,
         seconds=seconds,
+        killed=killed,
     )
 
 

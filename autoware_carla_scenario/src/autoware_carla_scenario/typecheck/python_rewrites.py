@@ -584,8 +584,12 @@ def _keyword_dict(node: ast.AST) -> bool:
 
 
 def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
+    """Whether Codon's parser refuses *node* as written: a field it does not
+    take, or a literal brace (``{{`` / ``}}``), which it has no escape for
+    and refuses with no position of the file (#696)."""
     return any(
-        isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v)
+        (isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v))
+        or (isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}"))
         for v in node.values
     )
 

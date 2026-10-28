@@ -7342,6 +7342,27 @@ def test_fstring_format_specs_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_fstring_escaped_braces_compile(tmp_path: Path) -> None:
+    """A literal brace with no field the check rewrites otherwise (#696)."""
+    setup = """
+        name = "ab"
+        a = f"{name} {{x}}"
+        b = f"{{x}}"
+        c = f"{{{name}}}"
+        d = f"{{min, max}} of {name!r:>6} {{"
+        e = f'''{{
+        {name}
+        }}'''
+        for text in (a, b, c, d, e):
+            assert len(text) > 0
+        k: str = f"}}{name}{{"
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
     """The driver's copy of a class-level default is rewritten too (#434, #433)."""
     definitions = """
@@ -7425,6 +7446,36 @@ def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
     assert diagnostic.path == "/user/scenario.py"
     assert diagnostic.line == 4
     assert diagnostic.message == message
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # An f-string with no format spec: still the f-string's line (#696).
+        ("a = 1\n\nr = f'{a} {{x}}'\n", 3),
+        ("a = 1\nr = f'{{x}}'\ns = f'{a}'\n", 2),
+        ("a = 1\nr = f'{a}'\n", 2),
+        # No f-string at all: no line rather than one before the file's first.
+        ("a = 1\n", None),
+    ],
+)
+def test_an_unplaced_syntax_error_is_never_before_the_first_line(
+    tmp_path: Path, source: str, expected: int | None
+) -> None:
+    """Codon's bare parser error on an f-string it cannot read (#696)."""
+    from autoware_carla_scenario.typecheck import check
+
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(check.PRELUDE + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = list(range(1, source.count("\n") + 1))
+    message = "syntax error, expecting '(', '(', '[', '{', '...'."
+    (diagnostic,) = check._parse_output(f"{rel}:1 (1): error: {message}\n", ws)
+    assert diagnostic.path == "/user/scenario.py"
+    assert diagnostic.line == expected
+    assert diagnostic.column is None
 
 
 def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
@@ -11102,6 +11153,41 @@ def test_codon_killed_by_the_oom_killer_blames_no_code(
     assert "killed (SIGKILL)" in message
     assert "out-of-memory killer" in message
     assert "annotate it" not in checked.format()
+
+
+def test_a_build_killed_by_the_oom_killer_is_compiled_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A SIGKILL is no verdict on the code, as a timeout is none: it is not
+    # kept, in this process or on disk, so the next check of the same program
+    # (the next case of a sweep, which shares its key) runs Codon again (#694).
+    from autoware_carla_scenario.typecheck import check
+
+    cache = tmp_path / "cache"
+    monkeypatch.setenv(check.CACHE_DIR_ENV, str(cache))
+    monkeypatch.setattr(check, "_CACHE", {})
+    run = subprocess.run
+    builds: list[object] = []
+
+    def killed_once(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        if len(args) > 1 and args[1] == "build":
+            builds.append(args)
+            code = -9 if len(builds) == 1 else 0
+            return subprocess.CompletedProcess(args, code, "", "")
+        return run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", killed_once)
+    scenario, config, _ = _write_case(tmp_path, "pass\n")
+    first = typecheck_scenario(scenario, config)
+    assert first.crashed and "killed (SIGKILL)" in first.format()
+    assert not list(cache.glob("*.json"))
+    second = typecheck_scenario(scenario, config)
+    assert len(builds) == 2, "the kill was kept as the verdict"
+    assert second.ok, second.format()
+    # A verdict Codon did reach is kept as before.
+    assert typecheck_scenario(scenario, config).ok
+    assert len(builds) == 2
+    assert len(list(cache.glob("*.json"))) == 1
 
 
 # ---------------------------------------------------------------------------

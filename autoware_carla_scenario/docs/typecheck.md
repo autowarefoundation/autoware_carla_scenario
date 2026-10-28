@@ -98,6 +98,10 @@ cannot be written). A verdict read back is the program's, and is reported
 for the check that read it (#652): a scenario check's line names that
 scenario, and a library check's names the modules this run was given and
 says `cached`, with the time this run took rather than the compile's.
+A Codon crash is kept for its process only. A compile that timed out, or a
+Codon killed with SIGKILL (the out-of-memory killer), is no verdict and is
+kept nowhere: the next check of the same program, such as the next case of
+a sweep, compiles it again (#694).
 Nothing prunes the directory; delete it, or its files
 not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
@@ -1132,7 +1136,8 @@ scenario has to do itself:
     killed with SIGKILL (exit status -9: the out-of-memory killer, as when
     two library checks of about 8 GB each run at once) is no crash of the
     code: the check says so, names no local, and should be run again with
-    more memory free.
+    more memory free. Like a timeout, it is not kept as the verdict, so the
+    next check of the same program in the process compiles it again (#694).
 
     The same holds where a conditional expression tests the local before it
     is rebound, the previous value of a loop (`prev = None`, then `d = v -
@@ -1645,8 +1650,10 @@ Notes:
   which passes `k`, is refused (with a hint naming this). A default after a non-literal one is bound the
   same way, so positional calls keep their meaning. Use `functools.partial`
   where you pass the captured value.
-- Codon's f-strings have no `{{` / `}}`: a literal brace becomes a string
-  joined with `+`.
+- Codon's f-strings have no `{{` / `}}`: an f-string with a literal brace
+  becomes a `+` of its parts, the brace a string of its own
+  (`f"{name} {{x}}"` is `(f"{name} " + "{" + "x" + "}")`), whether or not
+  another of its fields is rewritten (#696).
 - **F-string format specs (#434).** Codon's parser takes a fill and align,
   `#`, `0`, a width, `,` / `_`, a precision and a type (`f"{x:>8.3f}"`,
   `f"{n:#010x}"`, `f"{n:,}"`, `f"{x!r:^10}"`, `f"{x=:.2f}"`) as they are. It
@@ -1666,7 +1673,9 @@ Notes:
   and reports a position that is no line of your file. Bind the value to a
   local first (`label = "{:>3}".format(x)`, then `f"{label}"`).
   A syntax error Codon still reports inside an f-string field is shown at
-  the line of the f-string that has it, not at a line before the file.
+  the line of the f-string that has it (the first f-string with a format
+  spec, else with a literal brace, else any), with no column, and never at a
+  line before the file: with no f-string to blame, it is shown with no line.
 - **A type error inside an f-string field is shown at the f-string's line,
   with no column (#610).** Codon reports it on the line after the line the
   f-string starts on, at the faulting expression's column plus the length of
@@ -4022,9 +4031,6 @@ What Codon 0.19 needs that Python does not, beyond
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (`RoutingAction` passes `waypoints=` only when there
   are some, in a call of its own).
-- **No escaped brace in an f-string** (`f"{{min, max}} of {name}"`): Codon's
-  parser rejects it, even in a function it never compiles. Concatenate the
-  literal part (`"{min, max}" + f" of {name}"`, as `Range.parse` does).
 - **`Literal["a", "b"]` is checked as the type of its values** (`str`), an
   annotation and a module-level alias alike (`route.model`'s `Tristate`):
   Codon's own `Literal` types a compile-time value of `int`, `bool` or `str`

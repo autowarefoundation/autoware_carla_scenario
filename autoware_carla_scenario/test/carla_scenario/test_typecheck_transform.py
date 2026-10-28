@@ -3282,6 +3282,45 @@ def test_an_fstring_codon_parses_is_left_alone(field: str) -> None:
     assert _rewritten(f"r = {field}\n") == f"r = {field}\n"
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ('f"{x} {{y}}"', '(f"{x} " + "{" + "y" + "}")'),
+        ('f"{{y}}"', '("{" + "y" + "}")'),
+        ('f"{{{x}}}"', '("{" + f"{x}" + "}")'),
+        ('f"}}{x!r:>6}{{"', '("}" + f"{x!r:>6}" + "{")'),
+    ],
+)
+def test_an_fstring_with_an_escaped_brace_becomes_a_concatenation(
+    field: str, expected: str
+) -> None:
+    # Codon's f-string parser has no `{{` / `}}` (#696).
+    assert _rewritten(f"r = {field}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        'f"{x} {{y}}"',
+        'f"{{y}}"',
+        'f"{{{x}}}"',
+        'f"{{min, max}} of {x!r:>6} {{"',
+        "f'''{{\n{x}\n}}'''",
+        'f"a\\n{{\\t}}{x}"',
+    ],
+)
+def test_an_fstring_with_an_escaped_brace_keeps_its_value(field: str) -> None:
+    source = f"r = {field}\n"
+    text, _ = python_rewrites(source)
+    assert "{{" not in text and "}}" not in text
+    assert python_rewrite_refusals(source) == []
+    written: dict[str, Any] = {"x": "ab"}
+    checked: dict[str, Any] = {"x": "ab"}
+    exec(source, written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert checked["r"] == written["r"]
+
+
 def test_a_rewritten_fstring_keeps_its_lines() -> None:
     source = 'r = f"""a\n{x:+.2f}\nb"""\nz = 1\nt = (f"{x:+d}"\n     f"{y}")\n'
     text, _ = python_rewrites(source)
