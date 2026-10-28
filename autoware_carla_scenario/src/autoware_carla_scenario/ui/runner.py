@@ -63,8 +63,13 @@ def start_run(
     base_path: Path | None = None,
     extra_overrides: list[str] | None = None,
     group_as_multirun: bool = False,
-) -> None:
+) -> bool:
     """Start scenario execution in a background thread.
+
+    The run counts as running from the moment this returns, before the
+    worker thread is scheduled, and its progress replaces the previous
+    run's: a second call refuses to start a run while one is in progress,
+    and the progress stream does not end on the last run's ``done`` (#664).
 
     Args:
         overrides_list: List of override lists. Each inner list is passed
@@ -75,10 +80,14 @@ def start_run(
             ``multirun/{date}/{time}/`` directory with numbered
             subdirectories (0, 1, 2, …) instead of each writing to
             its own ``outputs/`` directory.
+
+    Returns:
+        ``True`` if the run was started, ``False`` if it was refused
+        because another run is still in progress.
     """
-    if is_running():
+    if not _claim_run(len(overrides_list)):
         logger.warning("A scenario run is already in progress")
-        return
+        return False
 
     # `extra_overrides or []`, in a form Codon can type.
     extras: list[str] = []
@@ -95,6 +104,26 @@ def start_run(
         daemon=True,
     )
     thread.start()
+    return True
+
+
+def _claim_run(total: int) -> bool:
+    """Mark a run of *total* jobs as running, unless one already is.
+
+    The check and the set happen under one lock acquisition, so two callers
+    can never both claim a run.  The progress is reset with them, so that
+    nobody sees the previous run's final ``done`` as this run's.
+    """
+    with _lock:
+        global _running  # noqa: PLW0603
+        global _progress  # noqa: PLW0603
+        if _running:
+            return False
+        _running = True
+        _progress = RunProgress(
+            current=0, total=total, scenario_name="", status="running"
+        )
+        return True
 
 
 def _run_worker(
@@ -103,8 +132,11 @@ def _run_worker(
     extra_overrides: list[str],
     group_as_multirun: bool,
 ) -> None:
-    """Background worker that executes scenarios sequentially."""
-    _set_running(True)
+    """Background worker that executes scenarios sequentially.
+
+    :func:`start_run` has marked the run as running; the worker clears that
+    when it ends.
+    """
     total = len(overrides_list)
     cwd = str(base_path) if base_path else None
 

@@ -1,14 +1,19 @@
-"""ui.runner's helpers, as spelled for the Codon check (#132)."""
+"""ui.runner: its helpers, as spelled for the Codon check (#132), and how a
+run starts (#664)."""
 
 from __future__ import annotations
 
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import runner
+from autoware_carla_scenario.ui.models import RunProgress
 
 
 @pytest.mark.parametrize(
@@ -69,3 +74,104 @@ def test_a_run_appends_the_extra_overrides(
     assert progress is not None
     assert (progress.current, progress.total, progress.status) == (2, 2, "done")
     assert not runner.is_running()
+
+
+# ── Starting a run (#664) ──────────────────────────────────────────────────
+
+
+class _UnstartedThread:
+    """A worker thread the OS has not scheduled yet: start() runs nothing.
+
+    The test runs the worker itself, with :meth:`run`, when it chooses to.
+    """
+
+    made: list[_UnstartedThread] = []
+
+    def __init__(self, target: Any, args: tuple[Any, ...], daemon: bool) -> None:
+        self.target = target
+        self.args = args
+        self.started = False
+        _UnstartedThread.made.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def run(self) -> None:
+        self.target(*self.args)
+
+
+@pytest.fixture
+def unstarted_threads(monkeypatch: pytest.MonkeyPatch) -> list[_UnstartedThread]:
+    """The runner's worker threads, none of them running until the test says.
+
+    The previous run is over and its progress is ``done``.
+    """
+    monkeypatch.setattr(_UnstartedThread, "made", [])
+    monkeypatch.setattr(runner.threading, "Thread", _UnstartedThread)
+    monkeypatch.setattr(runner, "_running", False)
+    monkeypatch.setattr(
+        runner,
+        "_progress",
+        RunProgress(current=1, total=1, scenario_name="", status="done"),
+    )
+
+    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    return _UnstartedThread.made
+
+
+def test_a_started_run_is_running_before_its_worker_is(
+    unstarted_threads: list[_UnstartedThread],
+) -> None:
+    started = runner.start_run([["scenario=a"], ["scenario=b"]])
+    assert [t.started for t in unstarted_threads] == [True]
+    running, progress = runner.get_status()
+    # What /api/run/progress streams now: the new run, not the last one's done.
+    assert running
+    assert progress is not None
+    assert (progress.current, progress.total, progress.status) == (0, 2, "running")
+    assert started is True
+
+
+def test_a_second_run_is_refused_until_the_first_ends(
+    unstarted_threads: list[_UnstartedThread],
+) -> None:
+    first = runner.start_run([["scenario=a"]])
+    second = runner.start_run([["scenario=b"]])
+    assert len(unstarted_threads) == 1
+    assert (first, second) == (True, False)
+    progress = runner.get_progress()
+    assert progress is not None and progress.status == "running"
+
+    unstarted_threads[0].run()
+    assert not runner.is_running()
+    progress = runner.get_progress()
+    assert progress is not None and progress.status == "done"
+
+    assert runner.start_run([["scenario=b"]]) is True
+    assert len(unstarted_threads) == 2
+
+
+def test_the_api_answers_409_to_a_refused_run(
+    unstarted_threads: list[_UnstartedThread],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    client = TestClient(app_module.app)
+
+    first = client.post("/api/run", json={"scenario": "a"})
+    assert first.status_code == 200
+    assert first.json() == {"status": "started"}
+
+    second = client.post("/api/run", json={"scenario": "b"})
+    assert second.status_code == 409
+    assert second.json()["status"] == "busy"
+    assert len(unstarted_threads) == 1
+    assert unstarted_threads[0].args[0] == [["scenario=a"]]
+
+    status = client.get("/api/run/status").json()
+    assert status["running"] is True
+    assert status["progress"]["status"] == "running"
