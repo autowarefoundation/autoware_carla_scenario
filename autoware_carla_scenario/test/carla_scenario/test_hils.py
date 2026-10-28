@@ -1377,9 +1377,12 @@ def test_the_bridge_stops_what_its_cuts_name_together(world: _World, dbc: Path) 
 
 
 class _ScriptedBridge:
-    """Accepts one run, greets it, and answers its ``start`` with *answers*."""
+    """Accepts *runs* runs in turn, greets each, and answers its ``start`` with
+    *answers*."""
 
-    def __init__(self, answers: List[dict[str, Any]], protocol: int = 1) -> None:
+    def __init__(
+        self, answers: List[dict[str, Any]], protocol: int = 1, runs: int = 1
+    ) -> None:
         import socket
 
         from autoware_carla_scenario.hils.protocol import LineReader, encode
@@ -1392,21 +1395,23 @@ class _ScriptedBridge:
         self._encode = encode
         self._reader_type = LineReader
         self.conn: Optional[Any] = None
+        self._runs = runs
         threading.Thread(target=self._serve, daemon=True).start()
 
     def _serve(self) -> None:
-        conn, _ = self.server.accept()
-        self.conn = conn
-        conn.sendall(self._encode({"type": "hello", "protocol": self._protocol}))
-        reader = self._reader_type(conn)
-        while not reader.closed:
-            for message in reader.read(timeout=0.05):
-                self.received.append(message)
-                if message["type"] == "start":
-                    for answer in self._answers:
-                        conn.sendall(self._encode(answer))
-                elif message["type"] == "end":
-                    conn.sendall(self._encode({"type": "ended"}))
+        for _ in range(self._runs):
+            conn, _ = self.server.accept()
+            self.conn = conn
+            conn.sendall(self._encode({"type": "hello", "protocol": self._protocol}))
+            reader = self._reader_type(conn)
+            while not reader.closed:
+                for message in reader.read(timeout=0.05):
+                    self.received.append(message)
+                    if message["type"] == "start":
+                        for answer in self._answers:
+                            conn.sendall(self._encode(answer))
+                    elif message["type"] == "end":
+                        conn.sendall(self._encode({"type": "ended"}))
 
     def send(self, message: dict[str, Any]) -> None:
         assert self.conn is not None
@@ -1472,6 +1477,24 @@ def test_a_stale_command_brakes_or_holds(on_stale: str) -> None:
     entity.on_scenario_end(None)
     assert [m["type"] for m in bridge.received] == ["start", "end"]
     assert bridge.received[0]["ego_id"] == 1
+
+
+def test_a_retry_numbers_its_cuts_afresh_and_waits_for_a_command() -> None:
+    # A retried scenario reuses the entity (#672): the bridge restored the
+    # previous attempt's cuts, and its command does not drive this one.
+    command = {"type": "command", "mode": "control", "throttle": 0.6, "gear": 3}
+    bridge = _ScriptedBridge([{"type": "ready"}, command], runs=2)
+    entity = _entity(bridge.port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    assert entity.disconnect("can") == "1"
+    entity.on_scenario_end(None)
+
+    entity.on_scenario_start(None)  # type: ignore[arg-type]
+
+    assert entity.command is None
+    assert not entity.is_initialized
+    assert entity.disconnect("can") == "1"
+    entity.on_scenario_end(None)
 
 
 def test_an_ackermann_command_drives_carlas_controller() -> None:
