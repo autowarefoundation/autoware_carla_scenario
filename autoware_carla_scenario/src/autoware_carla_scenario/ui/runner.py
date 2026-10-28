@@ -46,12 +46,6 @@ def _set_progress(p: RunProgress) -> None:
         _progress = p
 
 
-def _set_running(state: bool) -> None:
-    with _lock:
-        global _running  # noqa: PLW0603
-        _running = state
-
-
 def is_running() -> bool:
     """Return ``True`` if a scenario run is currently in progress."""
     with _lock:
@@ -103,7 +97,15 @@ def start_run(
         ),
         daemon=True,
     )
-    thread.start()
+    # A thread that does not start (``RuntimeError: can't start new
+    # thread``) never runs the worker, which would end the run: end it here.
+    started = False
+    try:
+        thread.start()
+        started = True
+    finally:
+        if not started:
+            _end_run()
     return True
 
 
@@ -126,6 +128,26 @@ def _claim_run(total: int) -> bool:
         return True
 
 
+def _end_run() -> None:
+    """Mark the run as over, and its progress as ``done`` if it is not yet.
+
+    The progress stream ends only on ``done``: a run that stops before it
+    publishes one (an exception in the worker, or a worker that never
+    started) must not leave the stream following it forever.
+    """
+    with _lock:
+        global _running  # noqa: PLW0603
+        global _progress  # noqa: PLW0603
+        _running = False
+        p = _progress
+        if p is None:
+            _progress = RunProgress(current=0, total=0, scenario_name="", status="done")
+        elif p.status != "done":
+            _progress = RunProgress(
+                current=p.current, total=p.total, scenario_name="", status="done"
+            )
+
+
 def _run_worker(
     overrides_list: list[list[str]],
     base_path: Path | None,
@@ -134,20 +156,20 @@ def _run_worker(
 ) -> None:
     """Background worker that executes scenarios sequentially.
 
-    :func:`start_run` has marked the run as running; the worker clears that
-    when it ends.
+    :func:`start_run` has marked the run as running; the worker ends it
+    (:func:`_end_run`) however it stops.
     """
     total = len(overrides_list)
     cwd = str(base_path) if base_path else None
 
-    # When grouping as multirun, create a shared timestamped directory.
-    multirun_dir: str | None = None
-    if group_as_multirun and total > 0:
-        now = datetime.now()  # noqa: DTZ005
-        multirun_dir = _multirun_dir(now)
-        logger.info("Grouping %d jobs under %s", total, multirun_dir)
-
     try:
+        # When grouping as multirun, create a shared timestamped directory.
+        multirun_dir: str | None = None
+        if group_as_multirun and total > 0:
+            now = datetime.now()  # noqa: DTZ005
+            multirun_dir = _multirun_dir(now)
+            logger.info("Grouping %d jobs under %s", total, multirun_dir)
+
         for i, overrides in enumerate(overrides_list):
             scenario_name = _extract_scenario_name(overrides)
             _set_progress(
@@ -211,7 +233,7 @@ def _run_worker(
             )
         )
     finally:
-        _set_running(False)
+        _end_run()
 
 
 def _multirun_dir(now: datetime) -> str:

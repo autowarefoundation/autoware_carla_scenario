@@ -175,3 +175,37 @@ def test_the_api_answers_409_to_a_refused_run(
     status = client.get("/api/run/status").json()
     assert status["running"] is True
     assert status["progress"]["status"] == "running"
+
+
+def test_a_run_whose_thread_does_not_start_is_over(
+    unstarted_threads: list[_UnstartedThread],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def start(self: _UnstartedThread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(_UnstartedThread, "start", start)
+    with pytest.raises(RuntimeError):
+        runner.start_run([["scenario=a"]])
+    running, progress = runner.get_status()
+    # The stream ends instead of following a run that never runs.
+    assert not running
+    assert progress is not None and progress.status == "done"
+
+
+def test_a_worker_that_raises_ends_its_run(
+    unstarted_threads: list[_UnstartedThread],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert runner.start_run([["scenario=a"], ["scenario=b"]]) is True
+    with pytest.raises(ValueError):
+        unstarted_threads[0].run()
+    running, progress = runner.get_status()
+    assert not running
+    assert progress is not None
+    assert (progress.current, progress.total, progress.status) == (1, 2, "done")
+    assert runner.start_run([["scenario=b"]]) is True
