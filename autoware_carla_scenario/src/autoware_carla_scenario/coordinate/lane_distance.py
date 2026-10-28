@@ -57,11 +57,14 @@ import heapq
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .map_manager import MapManager
 from .poses import CarlaWorldPose, OpenDrivePose
 from .transform import to_opendrive
+
+if TYPE_CHECKING:
+    from pyxodr.road_objects.network import RoadNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -441,11 +444,15 @@ def _road_length(road_id: str) -> Optional[float]:
 #:
 #: Keyed by the identity of the loaded network rather than by a map name: a
 #: scenario queue re-initializes :class:`MapManager`, and a stale graph would
-#: measure against the previous run's roads.
-_links_for: "Optional[tuple[int, dict[tuple[str, str], list[tuple[str, str]]]]]" = None
+#: measure against the previous run's roads.  The network itself is held and
+#: compared with ``is``, as :func:`.transform._ref_lines` does: keyed by its
+#: ``id`` alone, a new network allocated at a freed one's address would be
+#: handed the old map's graph.
+_links_for: "Optional[tuple[RoadNetwork, dict[tuple[str, str], list[tuple[str, str]]]]]" = None
 
-#: Roads that sit inside a junction, by id, for the loaded network.
-_junction_roads_for: "Optional[tuple[int, set[str]]]" = None
+#: Roads that sit inside a junction, by id, for the loaded network (held, as
+#: in :data:`_links_for`).
+_junction_roads_for: "Optional[tuple[RoadNetwork, set[str]]]" = None
 
 
 def _link_graph() -> "dict[tuple[str, str], list[tuple[str, str]]]":
@@ -492,7 +499,7 @@ def _link_graph() -> "dict[tuple[str, str], list[tuple[str, str]]]":
         network = MapManager.get_instance().road_network
     except RuntimeError:
         return {}
-    if _links_for is not None and _links_for[0] == id(network):
+    if _links_for is not None and _links_for[0] is network:
         return _links_for[1]
 
     explicit: "dict[tuple[str, str], list[tuple[str, str]]]" = {}
@@ -527,7 +534,7 @@ def _link_graph() -> "dict[tuple[str, str], list[tuple[str, str]]]":
             if way not in ways:
                 ways.append(way)
         graph[node] = ways
-    _links_for = (id(network), graph)
+    _links_for = (network, graph)
     return graph
 
 
@@ -543,7 +550,7 @@ def _junction_roads() -> "set[str]":
         network = MapManager.get_instance().road_network
     except RuntimeError:
         return set()
-    if _junction_roads_for is not None and _junction_roads_for[0] == id(network):
+    if _junction_roads_for is not None and _junction_roads_for[0] is network:
         return _junction_roads_for[1]
 
     inside = {
@@ -551,7 +558,7 @@ def _junction_roads() -> "set[str]":
         for road_id, road in network.road_ids_to_object.items()
         if str(road.road_xml.get("junction", "-1")) not in ("-1", "")
     }
-    _junction_roads_for = (id(network), inside)
+    _junction_roads_for = (network, inside)
     return _junction_roads_for[1]
 
 

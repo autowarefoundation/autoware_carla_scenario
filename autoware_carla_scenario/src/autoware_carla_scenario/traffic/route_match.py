@@ -193,6 +193,10 @@ def _transition(
     for side in (graph.left(a), graph.right(a)):
         if side is not None and side.id == b.id:
             return _LANE_CHANGE_COST
+    # Only what the two lanelets decide is cached -- the length of the
+    # lanelets strictly between them, ``None`` with no path -- since *paths*
+    # is shared by every pair of samples on them: where on *a* and *b* this
+    # pair sits is added for this pair alone.
     key = (int(a.id), int(b.id))
     if key not in paths:
         path = graph.shortestPath(a, b)
@@ -201,11 +205,11 @@ def _transition(
         else:
             found: "lanelet2.routing.LaneletPath" = path
             lanelets = list(found)
-            middle = sum(_length(ll, lengths) for ll in lanelets[1:-1])
-            paths[key] = middle + (_length(a, lengths) - before.s) + after.s
-    driven = paths[key]
-    if driven is None:
+            paths[key] = sum(_length(ll, lengths) for ll in lanelets[1:-1])
+    middle = paths[key]
+    if middle is None:
         return math.inf
+    driven = middle + (_length(a, lengths) - before.s) + after.s
     x0, y0, _ = samples[index]
     x1, y1, _ = samples[index + 1]
     straight = math.hypot(x1 - x0, y1 - y0)

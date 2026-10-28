@@ -963,3 +963,65 @@ class TestTheShortestChainAnswers:
         assert reach is not None
         assert reach.distance == pytest.approx(19.0)
         assert reach.through_junction is True
+
+
+class _XodrNetwork:
+    """Stands in for pyxodr's RoadNetwork: its roads, each with its XML."""
+
+    def __init__(self, xml: str) -> None:
+        from types import SimpleNamespace
+
+        from lxml import etree
+
+        self.road_ids_to_object = {
+            road.get("id"): SimpleNamespace(road_xml=road)
+            for road in etree.fromstring(xml).iter("road")
+        }
+
+
+_MAP_A = """<OpenDRIVE>
+  <road id="1"><link><successor elementType="road" elementId="2"/></link></road>
+  <road id="2" junction="-1"/>
+</OpenDRIVE>"""
+_MAP_B = """<OpenDRIVE>
+  <road id="1"><link><successor elementType="road" elementId="7"/></link></road>
+  <road id="7" junction="5"/>
+</OpenDRIVE>"""
+
+
+class TestCachesFollowTheLoadedNetwork:
+    """A new road network gets its own link graph and junction roads, even
+    one that takes the old network's ``id`` once that is freed (#670)."""
+
+    @pytest.fixture
+    def holder(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        holder = MagicMock()
+        monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: holder))
+        monkeypatch.setattr(lane_distance, "_links_for", None)
+        monkeypatch.setattr(lane_distance, "_junction_roads_for", None)
+        # Every network has the same id, as one allocated at a freed
+        # network's address does: only identity tells them apart.
+        monkeypatch.setattr(lane_distance, "id", lambda _obj: 1, raising=False)
+        return holder
+
+    def test_the_link_graph_is_rebuilt_for_a_new_network(
+        self, holder: MagicMock
+    ) -> None:
+        holder.road_network = _XodrNetwork(_MAP_A)
+        assert lane_distance._link_graph()[("1", "end")] == [("2", "start")]
+
+        holder.road_network = _XodrNetwork(_MAP_B)
+        assert lane_distance._link_graph()[("1", "end")] == [("7", "start")]
+
+    def test_the_junction_roads_are_reread_for_a_new_network(
+        self, holder: MagicMock
+    ) -> None:
+        holder.road_network = _XodrNetwork(_MAP_A)
+        assert lane_distance._junction_roads() == set()
+
+        holder.road_network = _XodrNetwork(_MAP_B)
+        assert lane_distance._junction_roads() == {"7"}
+
+    def test_the_same_network_reuses_its_link_graph(self, holder: MagicMock) -> None:
+        holder.road_network = _XodrNetwork(_MAP_A)
+        assert lane_distance._link_graph() is lane_distance._link_graph()
