@@ -50,7 +50,7 @@ def entry_speeds() -> dict[int, float]:
 
 
 def _clear_entry_speeds() -> None:
-    """Forget the entry speeds, for the runner at the end of a run."""
+    """Forget the entry speeds, for the runner at the start and end of a run."""
     _entry_speeds.clear()
 
 

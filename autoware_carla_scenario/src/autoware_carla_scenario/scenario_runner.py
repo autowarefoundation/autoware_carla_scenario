@@ -1216,9 +1216,14 @@ class ScenarioRunner:
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
         # entity from the last run still answering to "npc1" would be worse
-        # than no entity at all.  So are the props a SpawnAction placed.
+        # than no entity at all.  So are the props a SpawnAction placed, and
+        # the entry speeds and warm-up flag: the end of a run clears them too,
+        # but a spawn card ticked outside any run (a test, a tool) holds a
+        # speed for an actor id this run's world may reuse.
         clear_entities()
         clear_props()
+        _set_warmup_done(False)
+        _clear_entry_speeds()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
