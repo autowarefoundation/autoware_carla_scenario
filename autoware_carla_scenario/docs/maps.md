@@ -25,6 +25,41 @@ Only the repository is required. `@REF` selects a branch, tag or commit and
 defaults to the repository's own default branch; `#PATH` selects the directory
 holding the map and defaults to the repository root.
 
+How the string is split:
+
+1. A leading `git+` is dropped.
+2. `#PATH` is everything after the first `#`.
+3. `@REF` is everything after the **last `@` of the repository path**. The
+   repository path starts after the host part — after `scheme://host/` for a
+   URL, after `user@host:` for an scp-like URL — so an `@` in the host part is
+   the user name, never a ref. A ref may therefore contain `/`:
+
+| URI | Repository | Ref | Path |
+| --- | --- | --- | --- |
+| `git+https://github.com/o/r@feature/x#maps` | `https://github.com/o/r` | `feature/x` | `maps` |
+| `https://user@example.com/o/r@v1` | `https://user@example.com/o/r` | `v1` | |
+| `git@github.com:o/r.git@release/1.0#maps/T` | `git@github.com:o/r.git` | `release/1.0` | `maps/T` |
+| `git@example.com:maps.git@v1` | `git@example.com:maps.git` | `v1` | |
+| `file:///srv/maps@main#T` | `file:///srv/maps` | `main` | `T` |
+
+Because the last `@` decides, a ref may not contain an `@`, and neither may
+the path of a remote repository (write one as `%40`:
+`https://example.com/o/a%40b@v1`).
+
+A local repository — a plain absolute path or a `file://` URL — may have an
+`@` in a directory name (a Nix store path, a `user@domain` home directory), so
+there the filesystem decides:
+
+1. a path that is an existing directory as a whole has no ref:
+   `/srv/maps@2/repo` is the repository `/srv/maps@2/repo`;
+2. otherwise the ref follows the last `@` whose left-hand side is an existing
+   directory: `/srv/maps@2/repo@feature/x` is the repository
+   `/srv/maps@2/repo` at `feature/x`;
+3. if no such `@` exists on this machine, the last `@` decides, as above.
+
+To take the filesystem out of it, write the `@` of a directory name as `%40`
+in a `file://` URL (`file:///srv/maps%402/repo@main`); git decodes it.
+
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's
 `/tree/`, `/resolve/` and `/raw/` forms all parse. Paste the page you are

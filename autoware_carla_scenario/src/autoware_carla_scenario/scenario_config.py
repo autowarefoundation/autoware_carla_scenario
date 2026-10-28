@@ -533,7 +533,8 @@ class SweepConfig:
     """Optional sweep section for lanelet-constraint-based multirun.
 
     ``constraints`` maps a target key (e.g. ``ego.spawn_lanelet_id``) to a
-    list of constraint dicts.  ``bindings`` maps a target key
+    list of constraint dicts; it holds one key, the parameter swept (a
+    second is refused when the sweep is expanded).  ``bindings`` maps a target key
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
     ``odd_sample`` draws the settings of each case from the ODD.
     """
