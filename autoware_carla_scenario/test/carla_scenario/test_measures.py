@@ -289,11 +289,11 @@ def test_a_replacement_may_spell_the_unit_another_way() -> None:
 def test_a_retry_starts_from_the_measures_before_the_first_attempt() -> None:
     scenario = _scenario()
     scenario.register_measure("from_init", lambda w: 1.0)
-    scenario._restore_measures()  # first attempt: remembered
+    scenario._reset_registrations()  # first attempt: remembered
     scenario.register_measure("from_setup", lambda w: 2.0)
     scenario.register_measure(VEHICLE_AHEAD_GAP_M, lambda w: 3.0)
 
-    scenario._restore_measures()  # the retry
+    scenario._reset_registrations()  # the retry
 
     assert "from_init" in scenario.measures
     assert "from_setup" not in scenario.measures

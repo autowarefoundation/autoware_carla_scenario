@@ -60,6 +60,7 @@ __all__ = [
     "TIME_DOMAINS",
     "VertexRow",
     "authored_goal",
+    "authored_place",
     "authored_route",
     "authored_timing",
     "authored_trajectory",
@@ -351,7 +352,7 @@ ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
     "opposite": (RouteOppositePose, ("ds", "lane", "offset", "yaw", "anchor")),
     "crossing": (
         RouteCrossingPose,
-        ("junction", "approach", "distance", "turn", "offset", "yaw"),
+        ("junction", "approach", "distance", "turn", "offset", "yaw", "d_lane", "path"),
     ),
     "crosswalk": (RouteCrosswalkPose, ("junction", "leg", "side", "along", "yaw")),
     "roadside": (
@@ -363,9 +364,9 @@ ROUTE_ROW_FIELDS: dict[str, tuple[type, tuple[str, ...]]] = {
 #: Keys holding text, not numbers.
 _TEXT_KEYS = frozenset({"approach", "turn", "leg", "side", "anchor"})
 #: Keys holding a whole number.
-_WHOLE_KEYS = frozenset({"d_lane", "lane", "junction"})
+_WHOLE_KEYS = frozenset({"d_lane", "lane", "junction", "path"})
 #: Keys that may be left unstated (``None``).
-_OPTIONAL_KEYS = frozenset({"yaw", "turn", "anchor"})
+_OPTIONAL_KEYS = frozenset({"yaw", "turn", "anchor", "path"})
 #: Keys the editor's text always writes out, default or not: they say *which*.
 _ALWAYS_WRITTEN = frozenset({"junction", "approach", "leg", "side"})
 
@@ -675,6 +676,36 @@ def authored_goal(
     if path_source != "goal":
         return None
     return Lanelet2Pose(lanelet_id=int(lanelet_id or 0), s=float(s or 0.0))
+
+
+def authored_place(
+    lanelet_id: Optional[int] = 0,
+    s: Optional[float] = 0.0,
+    t: Optional[float] = 0.0,
+    heading: Optional[float] = 0.0,
+    route_vertex: Any = None,
+) -> Any:
+    """A ``spawn`` or ``place_clear`` card's place: the route pose its
+    ``route_pose`` names (one route vertex, as a ``route_vertices`` row),
+    placed on the scenario's route when it is used; else *s* metres along
+    lanelet *lanelet_id*, *t* off its centreline, turned *heading*.
+
+    Raises:
+        ValueError: For a ``route_pose`` of more than one vertex.
+    """
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
+    rows = parse_route_vertices(route_vertex)
+    if len(rows) > 1:
+        raise ValueError(f"a place is one route vertex, got {len(rows)}")
+    if rows:
+        return route_pose(rows[0])
+    return Lanelet2Pose(
+        lanelet_id=int(lanelet_id or 0),
+        s=float(s or 0.0),
+        t=float(t or 0.0),
+        heading=float(heading or 0.0),
+    )
 
 
 def authored_waypoints(

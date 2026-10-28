@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ..coordinate.poses import Lanelet2Pose
+from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from ..trajectory.model import (
+    MapPose,
+    RelativeLanePose,
+    RouteCrossingPose,
+    RouteCrosswalkPose,
+    RouteLanePose,
+    RouteOppositePose,
+    RouteRoadsidePose,
+    TrajectoryVertex,
+)
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
@@ -20,30 +30,47 @@ class PlaceClearCondition(BaseCondition):
     """Pass condition that holds while no vehicle's or walker's bounding box
     comes within *margin* of a rectangle *length* by *width* at *position*.
 
-    The rectangle faces along the lane at *position*, turned by its
-    ``heading``.  An actor parked under the map (spawned out of sight) does
+    The rectangle faces along the lane at a Lanelet2 *position*, turned by
+    its ``heading``; any other position faces the way it resolves to (a
+    route pose is placed on the scenario's route when the place is first
+    looked at).  An actor parked under the map (spawned out of sight) does
     not count; one put on the place this very tick, which the world's snapshot
     does not show yet, does.  Typically an entity's appearance spot, so that it
     is not brought in on top of another road user.
 
     Args:
-        position: The place's centre, on a lanelet.
+        position: The place's centre: a Lanelet2 pose, or any position a
+            trajectory vertex takes (a route pose, say).
         length: Its length (m), along its heading.
         width: Its width (m).
         margin: How near (m) another's outline may come.
     """
 
     # Declared for the static check (docs/typecheck.md).
-    _position: Lanelet2Pose
+    # The position, held as a vertex: Codon types an attribute of a union
+    # through it (docs/typecheck.md).
+    _at: TrajectoryVertex
     _length: float
     _width: float
     _margin: float
     _spot: Optional[tuple[float, float, float]]
+    _unplaced: bool
     _said_blocker: int
 
     def __init__(
         self,
-        position: Lanelet2Pose,
+        position: Union[
+            CarlaWorldPose,
+            Lanelet2Pose,
+            OpenDrivePose,
+            MapPose,
+            RelativeLanePose,
+            RouteLanePose,
+            RouteOppositePose,
+            RouteCrossingPose,
+            RouteCrosswalkPose,
+            RouteRoadsidePose,
+        ],
         length: float,
         width: float,
         margin: float = 0.3,
@@ -55,22 +82,34 @@ class PlaceClearCondition(BaseCondition):
             raise ValueError("length and width must be positive")
         if margin < 0.0:
             raise ValueError("margin must be non-negative")
-        self._position = position
+        self._at = TrajectoryVertex(position)
         self._length = float(length)
         self._width = float(width)
         self._margin = float(margin)
         self._spot = None
+        self._unplaced = False
         self._said_blocker = -1
 
     def get_details(self) -> dict[str, Any]:
-        return {
-            "lanelet_id": int(self._position.lanelet_id),
-            "s": float(self._position.s),
-            "t": float(self._position.t),
+        details: dict[str, Any] = {
             "length": self._length,
             "width": self._width,
             "margin": self._margin,
         }
+        position = self._at.position
+        if isinstance(position, Lanelet2Pose):
+            # Named as the class: Codon does not narrow a union by isinstance()
+            # (docs/typecheck.md).
+            lane: Lanelet2Pose = position
+            details["lanelet_id"] = int(lane.lanelet_id)
+            details["s"] = float(lane.s)
+            details["t"] = float(lane.t)
+        else:
+            details["position"] = type(position).__name__
+        spot = self._spot
+        if spot is not None:
+            details["x"], details["y"] = spot[0], spot[1]
+        return details
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result while the place is clear.
@@ -85,10 +124,33 @@ class PlaceClearCondition(BaseCondition):
         """
         spot = self._spot
         if spot is None:
-            from ..coordinate.transform import to_carla_world  # noqa: PLC0415
+            if self._unplaced:
+                return None
+            from ..trajectory.resolve import resolve_position  # noqa: PLC0415
 
-            pose = to_carla_world(self._position)
-            spot = (pose.x, pose.y, pose.yaw)
+            try:
+                x0, y0, _z, yaw0 = resolve_position(self._at.position)
+            except ValueError as exc:
+                # Said once: the place will not resolve on a later tick.
+                self._unplaced = True
+                logger.warning("%s: no place to look at: %s", self.label, exc)
+                return None
+            # Branched: Codon types no conditional expression of a None and a
+            # float.
+            yaw_deg = 0.0
+            if yaw0 is not None:
+                yaw_deg = float(yaw0)
+            else:
+                # No heading of its own (a route pose without a yaw): along
+                # the lane it is on, where it is on one.
+                from ..route.active import lane_place  # noqa: PLC0415
+
+                along = lane_place(self._at.position)
+                if along is not None:
+                    _lx, _ly, _lz, lane_yaw = resolve_position(along)
+                    if lane_yaw is not None:
+                        yaw_deg = float(lane_yaw)
+            spot = (x0, y0, yaw_deg)
             self._spot = spot
         x, y, yaw = spot
         blocker = _occupant(

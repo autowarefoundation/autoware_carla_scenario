@@ -47,7 +47,9 @@ __all__ = [
     "ConstraintNode",
     "CountRange",
     "EgoDriver",
+    "AUTO_MODEL",
     "Entity",
+    "EntitySize",
     "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
@@ -394,6 +396,19 @@ class GoalSpec(LaneletChoice):
     s: float = 0.0
 
 
+#: An entity's ``vehicle_type`` that names no blueprint: the vehicle of the
+#: running CARLA nearest the entity's :attr:`Entity.size`, chosen when it is
+#: spawned (:mod:`autoware_carla_scenario.entity.fit`).
+AUTO_MODEL = "auto"
+
+
+class EntitySize(_Node):
+    """The size of the box an entity is to fill, in metres."""
+
+    length: float = Field(gt=0.0)
+    width: float = Field(gt=0.0)
+
+
 class Entity(_Node):
     """A vehicle taking part in the scenario.
 
@@ -410,12 +425,19 @@ class Entity(_Node):
     thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
     kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
     are the ones whose spec names its kind.
+
+    A vehicle other than the ego may have ``vehicle_type: auto`` and a
+    :attr:`size`: it is then the vehicle of the running CARLA whose bounding
+    box is nearest that size, chosen when it is spawned -- whatever the
+    server's version and assets -- and the kind's default where there is none.
     """
 
     id: str
     kind: EntityKind = "vehicle"
     title: str = ""
     vehicle_type: str = "vehicle.mini.cooper"
+    #: The box a ``vehicle_type: auto`` vehicle is to fill (a recorded one).
+    size: Optional[EntitySize] = None
     initial_speed_kmh: float = 0.0
     spawn: SpawnSpec = Field(default_factory=SpawnSpec)
     #: Which stack drives the ego.  Only the ego is driven by anything the
@@ -1024,6 +1046,9 @@ class JunctionPath(_Node):
 
     approach: Literal["same", "left", "right", "opposite"]
     turn: Literal["left", "right", "straight"]
+    before: LengthRange = Field(default_factory=LengthRange)
+    after: LengthRange = Field(default_factory=LengthRange)
+    path: Optional[int] = Field(default=None, ge=1)
 
 
 class JunctionSegment(_Node):
@@ -1041,6 +1066,7 @@ class JunctionSegment(_Node):
     crosswalk_entry: Tristate = "any"
     crosswalk_exit: Tristate = "any"
     paths: list[JunctionPath] = Field(default_factory=list)
+    length: LengthRange = Field(default_factory=LengthRange)
 
     _yes_no = field_validator(
         "traffic_light",
@@ -1055,6 +1081,8 @@ class JunctionSegment(_Node):
     def summary(self) -> str:
         """One line for the editor: what this segment asks for."""
         parts = [f"junction, turn {self.turn}"]
+        if self.length.min is not None or self.length.max is not None:
+            parts.append(f"length {_range_text(self.length, 'm')}")
         for name, label in (
             ("traffic_light", "traffic light"),
             ("crossing_from_left", "crossing from left"),
@@ -1067,7 +1095,14 @@ class JunctionSegment(_Node):
             if value != "any":
                 parts.append(f"{label}: {value}")
         for path in self.paths:
-            parts.append(f"path from {path.approach} turning {path.turn}")
+            text = f"path from {path.approach} turning {path.turn}"
+            if path.path is not None:
+                text += f" (path {path.path} from the left)"
+            for name in ("before", "after"):
+                reach = _range_text(getattr(path, name), "m")
+                if reach != "any":
+                    text += f" ({name} {reach})"
+            parts.append(text)
         return ", ".join(parts)
 
 
@@ -1138,6 +1173,12 @@ class RouteSearch(_Node):
         for segment in out.get("segments", []):
             if segment.get("paths") == []:
                 del segment["paths"]
+            if segment.get("kind") == "junction" and segment.get("length") == {}:
+                del segment["length"]
+            for path in segment.get("paths", []):
+                for name in ("before", "after"):
+                    if path.get(name) == {}:
+                        del path[name]
         return out
 
 

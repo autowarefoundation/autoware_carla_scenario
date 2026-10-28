@@ -35,7 +35,10 @@ class _FakeTransform:
 class _FakeTrafficLight:
     """Minimal traffic light stub."""
 
+    _ids = iter(range(1, 1_000_000))
+
     def __init__(self, opendrive_id: str = "") -> None:
+        self.id = next(_FakeTrafficLight._ids)
         self._state: object = None
         self._frozen: bool = False
         self._opendrive_id = opendrive_id
@@ -330,3 +333,75 @@ class TestTrafficSignalActionTick:
         tl._state = None
         action.tick(world, elapsed=1.0)
         assert tl._state is state
+
+
+# ---------------------------------------------------------------------------
+# TrafficSignalAction -- a Lanelet2 light no controller is named after
+# ---------------------------------------------------------------------------
+
+_PATCH_STOP_LINE = "autoware_carla_scenario.actions.traffic_signal.stop_line_in_carla"
+
+
+@dataclass
+class _FakeVector:
+    x: float = 0.0
+    y: float = 0.0
+
+
+@dataclass
+class _FakeWaypointTransform:
+    location: _FakeLocation
+    forward: _FakeVector
+
+    def get_forward_vector(self) -> _FakeVector:
+        return self.forward
+
+
+@dataclass
+class _FakeWaypoint:
+    transform: _FakeWaypointTransform
+
+
+class _FakeStopLight(_FakeTrafficLight):
+    """A light whose lane stops at (x, y), heading (fx, fy)."""
+
+    def __init__(self, x: float, y: float, fx: float, fy: float) -> None:
+        super().__init__(opendrive_id="")
+        self._stop = _FakeWaypoint(
+            _FakeWaypointTransform(_FakeLocation(x, y), _FakeVector(fx, fy))
+        )
+
+    def get_stop_waypoints(self) -> list:
+        return [self._stop]
+
+
+class TestTrafficSignalActionByStopLine:
+    def test_the_light_whose_lane_stops_on_the_line_is_set(self) -> None:
+        # The stop line runs across a northbound road at y = 0, x 0..7.
+        own = _FakeStopLight(3.5, 0.5, 0.0, 1.0)
+        # The road beside: its lane stops by the line's end, running along it.
+        beside = _FakeStopLight(8.0, 1.0, -1.0, 0.0)
+        # The opposite approach's, across the junction.
+        opposite = _FakeStopLight(-3.5, 20.0, 0.0, -1.0)
+        world = _FakeWorld([own, beside, opposite])
+        state = MagicMock(name="Red")
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=None),
+            patch(_PATCH_STOP_LINE, return_value=((0.0, 0.0), (7.0, 0.0))),
+        ):
+            TrafficSignalAction(
+                state=state, lanelet2_traffic_light_ids=[77], label="stop_line"
+            ).execute(world)
+        assert own._state is state and own._frozen
+        assert beside._state is None and opposite._state is None
+
+    def test_no_stop_line_sets_nothing(self) -> None:
+        light = _FakeStopLight(3.5, 0.5, 0.0, 1.0)
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=None),
+            patch(_PATCH_STOP_LINE, return_value=None),
+        ):
+            TrafficSignalAction(
+                state=MagicMock(), lanelet2_traffic_light_ids=[77], label="none"
+            ).execute(_FakeWorld([light]))
+        assert light._state is None

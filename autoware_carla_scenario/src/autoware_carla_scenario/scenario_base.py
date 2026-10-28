@@ -101,6 +101,49 @@ class EgoConfig(VehicleEntityConfig):
         self.waypoint_poses = poses
 
 
+class _Registrations:
+    """A copy of what a scenario had registered when its first run started.
+
+    That is what its ``__init__`` registered, which every run starts from
+    (:meth:`BaseScenario._reset_registrations`).  The scenario copies each
+    list on the way in and on the way out, so a run that appends to the
+    scenario's lists leaves this one as it was.  Filled field by field rather
+    than through a constructor: Codon cannot express a parameter of a list of
+    callables (docs/typecheck.md), only an attribute declared as one.
+    """
+
+    entities: List[VehicleEntity]
+    init_callbacks: List[Callable[[carla.World], None]]
+    init_actions: List[BaseAction]
+    pre_tick_callbacks: List[Callable[[carla.World], None]]
+    post_tick_callbacks: List[Callable[[carla.World], None]]
+    follows_tire_friction: bool
+    pre_tick_actions: List[BaseAction]
+    post_tick_actions: List[BaseAction]
+    pass_conditions: List[BaseCondition]
+    fail_conditions: List[BaseCondition]
+    cover_items: List[CoverItem]
+    cross_items: List[CrossItem]
+    measures: dict[str, Measure]
+
+    def __init__(self) -> None:
+        # Empty, to be filled; an explicit __init__, or Codon makes one that
+        # takes every field.
+        self.entities = []
+        self.init_callbacks = []
+        self.init_actions = []
+        self.pre_tick_callbacks = []
+        self.post_tick_callbacks = []
+        self.follows_tire_friction = False
+        self.pre_tick_actions = []
+        self.post_tick_actions = []
+        self.pass_conditions = []
+        self.fail_conditions = []
+        self.cover_items = []
+        self.cross_items = []
+        self.measures = {}
+
+
 class BaseScenario(ABC):
     """Abstract base class for CARLA test scenarios.
 
@@ -140,7 +183,7 @@ class BaseScenario(ABC):
     _cover_items: List[CoverItem]
     _cross_items: List[CrossItem]
     _measures: dict[str, Measure]
-    _initial_measures: dict[str, Measure]
+    _initial_registrations: Optional[_Registrations]
 
     def __init__(
         self,
@@ -209,6 +252,9 @@ class BaseScenario(ABC):
         self._cover_items = []
         self._cross_items = []
         self._measures = dict(BUILT_IN_MEASURES)
+        # Taken when the first run starts, after a subclass's __init__ has
+        # registered what it registers there (_reset_registrations).
+        self._initial_registrations = None
 
     # ------------------------------------------------------------------
     # Ego construction
@@ -665,6 +711,12 @@ class BaseScenario(ABC):
             cb(world)
         for action in self._init_actions:
             action.tick(world, 0.0)
+        # The phase has no ticks for an action's lifecycle to step through: one
+        # that fired is settled now -- complete, or for one that runs on, under
+        # way -- so what waits on it (the route of an entity a spawn card
+        # brought in) starts with the run rather than never.
+        for action in self._init_actions:
+            action._settle_start(world, 0.0)
 
     def register_pre_tick(
         self, cb: Union[BaseAction, Callable[["carla.World"], None]]
@@ -847,21 +899,57 @@ class BaseScenario(ABC):
             version = built_in.version
         self._measures[key] = Measure(key, read, unit, text, version)
 
-    def _restore_measures(self) -> None:
-        """Back to the measures the scenario had before its first attempt.
+    def _reset_registrations(self) -> None:
+        """Back to what the scenario had registered before its first run.
 
-        Called by the runner before every attempt: the first remembers them,
-        so a measure ``setup()`` registered -- one reading that attempt's NPC,
-        say -- does not outlive it into a retry, while those registered in
-        ``__init__`` stay.
+        Called by :class:`ScenarioRunner` before every :meth:`setup`.  A
+        retry (``ScenarioQueue`` runs the scenario object whose attempt raised
+        again) and a re-run (``run_all()`` on the same scenarios) call
+        :meth:`setup` on the same object once more, and that attempt must see
+        only what it registers itself: not the earlier attempt's conditions
+        -- a sticky one that latched there would pass this one on its first
+        tick -- nor its actions, callbacks, entities, coverage and measures,
+        which would otherwise be there twice.
+
+        The first call remembers what the scenario holds, which is what its
+        ``__init__`` registered, and every later call restores that.  Every
+        per-run registry is reset here, so a new one is added here too.
+        Constructor arguments and the ego config are not registrations and
+        are kept.  An action or condition registered in ``__init__`` is the
+        same object on every run, so it keeps whatever state an earlier run
+        left in it.
         """
-        # Declared, never set in __init__: absent until the first attempt.
-        try:
-            initial = self._initial_measures
-        except AttributeError:
-            self._initial_measures = dict(self._measures)
-        else:
-            self._measures = dict(initial)
+        initial = self._initial_registrations
+        if initial is None:
+            taken = _Registrations()
+            taken.entities = list(self._entities)
+            taken.init_callbacks = list(self._init_callbacks)
+            taken.init_actions = list(self._init_actions)
+            taken.pre_tick_callbacks = list(self._pre_tick_callbacks)
+            taken.post_tick_callbacks = list(self._post_tick_callbacks)
+            taken.follows_tire_friction = self._follows_tire_friction
+            taken.pre_tick_actions = list(self._pre_tick_actions)
+            taken.post_tick_actions = list(self._post_tick_actions)
+            taken.pass_conditions = list(self._pass_conditions)
+            taken.fail_conditions = list(self._fail_conditions)
+            taken.cover_items = list(self._cover_items)
+            taken.cross_items = list(self._cross_items)
+            taken.measures = dict(self._measures)
+            self._initial_registrations = taken
+            return
+        self._entities = list(initial.entities)
+        self._init_callbacks = list(initial.init_callbacks)
+        self._init_actions = list(initial.init_actions)
+        self._pre_tick_callbacks = list(initial.pre_tick_callbacks)
+        self._post_tick_callbacks = list(initial.post_tick_callbacks)
+        self._follows_tire_friction = initial.follows_tire_friction
+        self._pre_tick_actions = list(initial.pre_tick_actions)
+        self._post_tick_actions = list(initial.post_tick_actions)
+        self._pass_conditions = list(initial.pass_conditions)
+        self._fail_conditions = list(initial.fail_conditions)
+        self._cover_items = list(initial.cover_items)
+        self._cross_items = list(initial.cross_items)
+        self._measures = dict(initial.measures)
 
     def measure(self, key: str, world: "carla.World") -> Optional[float]:
         """This scenario's measure *key* in *world*.
@@ -1148,11 +1236,15 @@ class BaseScenario(ABC):
         What :meth:`set_initial_speed` will apply: the registered entities and
         the ego.  A vehicle not named starts still.
         """
+        from .entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+
         speeds = {
             entity.actor.id: entity.initial_speed_kmh / 3.6
             for entity in self._entities
             if entity.actor is not None and entity.initial_speed_kmh > 0.0
         }
+        # The vehicles a spawn card brought in before the clock started.
+        speeds.update(entry_speeds())
         if ego_actor is not None and self.ego_config.initial_speed_kmh > 0.0:
             speeds[ego_actor.id] = self.ego_config.initial_speed_kmh / 3.6
         return speeds
@@ -1182,3 +1274,14 @@ class BaseScenario(ABC):
 
         if ego_actor is not None:
             _apply(ego_actor, self.ego_config.initial_speed_kmh)
+            # The vehicles a spawn card brought in before the clock started,
+            # held still since: at the speed they entered at.
+            from .entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+
+            held = entry_speeds()
+            if len(held) > 0:
+                world = ego_actor.get_world()
+                for actor_id, speed in held.items():
+                    actor = world.get_actor(actor_id)
+                    if actor is not None:
+                        _apply(actor, speed * 3.6)

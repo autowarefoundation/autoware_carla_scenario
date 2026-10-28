@@ -80,6 +80,7 @@ __all__ = [
     "OPPOSITE_MIN_TURN_DEG",
     "OPPOSITE_SEARCH_M",
     "approach_of",
+    "paths_from_left",
 ]
 
 #: A stop line further than this (m) beyond a lanelet's end is not on it.
@@ -111,6 +112,8 @@ _MAX_LANES = 12
 _MAX_ABREAST_HOPS = 20
 #: The most junction lanelets walked back to where another path enters.
 _MAX_JUNCTION_HOPS = 4
+#: How far (m) a path's road is walked before and after its junction.
+PATH_REACH_MAX_M = 500.0
 #: Lanelet subtypes that are not for vehicles.
 #: Lanelets a pedestrian walks, by subtype.
 _WALKABLE = frozenset({"crosswalk", "walkway", "stairs"})
@@ -323,6 +326,52 @@ class MapFeatures:
         return _straightest(
             self.graph.previous(lanelet), _start_heading(lanelet), ahead=False
         )
+
+    def path_reach(self, entry: ConstLanelet) -> tuple[float, float, float]:
+        """``(before, through, after)`` of the path entering a junction on
+        *entry* (its first junction lanelet), in metres: the road before it,
+        back to the junction before or a dead end; its junction lanelets from
+        *entry* on; the road after them, on to the next junction or a dead
+        end.  Each walked the straightest way, as a crossing pose's
+        ``distance`` is, and no further than :data:`PATH_REACH_MAX_M`.
+        """
+        seen = {int(entry.id)}
+        before = 0.0
+        current: ConstLanelet = entry
+        while before < PATH_REACH_MAX_M:
+            back = self.straightest_previous(current)
+            if back is None:
+                break
+            previous: ConstLanelet = back
+            if self.is_junction(previous) or int(previous.id) in seen:
+                break
+            seen.add(int(previous.id))
+            before += self.length(previous)
+            current = previous
+        through = self.length(entry)
+        current = entry
+        for _hop in range(_MAX_JUNCTION_HOPS):
+            on = self.straightest_following(current)
+            if on is None:
+                break
+            following: ConstLanelet = on
+            if not self.is_junction(following) or int(following.id) in seen:
+                break
+            seen.add(int(following.id))
+            through += self.length(following)
+            current = following
+        after = 0.0
+        while after < PATH_REACH_MAX_M:
+            on = self.straightest_following(current)
+            if on is None:
+                break
+            road: ConstLanelet = on
+            if self.is_junction(road) or int(road.id) in seen:
+                break
+            seen.add(int(road.id))
+            after += self.length(road)
+            current = road
+        return before, through, after
 
     def straightest_following(self, lanelet: ConstLanelet) -> Optional[ConstLanelet]:
         """The successor that turns least out of it, or ``None``."""
@@ -914,3 +963,29 @@ def _slice(
             out.append((x1, y1))
     out.append(_point_at(points, end))
     return out
+
+
+def paths_from_left(members: list[JunctionMember]) -> list[JunctionMember]:
+    """*members* -- paths entering a junction from one approach -- from the
+    left to the right as they enter it: by where each first lanelet starts,
+    across the way they come in (their mean heading there)."""
+    if len(members) < 2:
+        return list(members)
+    starts = []
+    hx = hy = 0.0
+    for member in members:
+        points = _centreline(member.lanelet)
+        (x0, y0), (x1, y1) = points[0], points[1]
+        span = math.hypot(x1 - x0, y1 - y0)
+        if span > 1e-9:
+            hx += (x1 - x0) / span
+            hy += (y1 - y0) / span
+        starts.append((x0, y0))
+    # Left of the way in, in the map's right-handed frame.
+    lx, ly = -hy, hx
+    keyed = [
+        (-(x * lx + y * ly), int(member.lanelet.id), index)
+        for index, (member, (x, y)) in enumerate(zip(members, starts))
+    ]
+    keyed.sort()
+    return [members[index] for _left, _id, index in keyed]

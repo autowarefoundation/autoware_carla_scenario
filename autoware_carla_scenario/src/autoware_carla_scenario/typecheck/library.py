@@ -520,6 +520,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.traffic.sumo.backend": "imports traci, sumolib, libsumo",
     "autoware_carla_scenario.traffic.sumo.network": "imports roadgen, sumo",
     "autoware_carla_scenario.trajectory.authoring": "parses document values of `Any` (YAML rows, editor fields) into `dict[str, Any]`, which Codon cannot express",
+    "autoware_carla_scenario.entity.fit": "reads blueprints and their attributes off a world held as `Any` (it spawns each to read a box no attribute carries); declarative uses it, which is not checked either",
     "autoware_carla_scenario.trajectory_recorder": "writes JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) serialised with orjson (module level; `orjson.JSONEncodeError`), reads the projector's settings with yaml (inside `_projector_info`), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it",
     "autoware_carla_scenario.ui": "imports uvicorn and ui.app (fastapi) inside main(), and argparse and ui.recordings (tarfile) inside a function",
     "autoware_carla_scenario.ui.app": "imports fastapi, asyncio, fnmatch",
