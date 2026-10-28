@@ -2117,6 +2117,10 @@ cannot be written). A verdict read back is the program's, and is reported
 for the check that read it (#652): a scenario check's line names that
 scenario, and a library check's names the modules this run was given and
 says <code>cached</code>, with the time this run took rather than the compile's.
+A Codon crash is kept for its process only. A compile that timed out, or a
+Codon killed with SIGKILL (the out-of-memory killer), is no verdict and is
+kept nowhere: the next check of the same program, such as the next case of
+a sweep, compiles it again (#694).
 Nothing prunes the directory; delete it, or its files
 not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
@@ -3094,7 +3098,8 @@ candidate, not a verdict: the crash may have another cause. A Codon
 killed with SIGKILL (exit status -9: the out-of-memory killer, as when
 two library checks of about 8 GB each run at once) is no crash of the
 code: the check says so, names no local, and should be run again with
-more memory free.</p>
+more memory free. Like a timeout, it is not kept as the verdict, so the
+next check of the same program in the process compiles it again (#694).</p>
 <p>The same holds where a conditional expression tests the local before it
 is rebound, the previous value of a loop (<code>prev = None</code>, then <code>d = v -
 prev if prev is not None else None</code> and <code>prev = v</code>, #629): Codon decides
@@ -3751,8 +3756,10 @@ cannot express is refused at its line, with what to write instead.</p>
   which passes <code>k</code>, is refused (with a hint naming this). A default after a non-literal one is bound the
   same way, so positional calls keep their meaning. Use <code>functools.partial</code>
   where you pass the captured value.</li>
-<li>Codon's f-strings have no <code>{{</code> / <code>}}</code>: a literal brace becomes a string
-  joined with <code>+</code>.</li>
+<li>Codon's f-strings have no <code>{{</code> / <code>}}</code>: an f-string with a literal brace
+  becomes a <code>+</code> of its parts, the brace a string of its own
+  (<code>f"{name} {{x}}"</code> is <code>(f"{name} " + "{" + "x" + "}")</code>), whether or not
+  another of its fields is rewritten (#696).</li>
 <li><strong>F-string format specs (#434).</strong> Codon's parser takes a fill and align,
   <code>#</code>, <code>0</code>, a width, <code>,</code> / <code>_</code>, a precision and a type (<code>f"{x:&gt;8.3f}"</code>,
   <code>f"{n:#010x}"</code>, <code>f"{n:,}"</code>, <code>f"{x!r:^10}"</code>, <code>f"{x=:.2f}"</code>) as they are. It
@@ -3772,7 +3779,10 @@ cannot express is refused at its line, with what to write instead.</p>
   and reports a position that is no line of your file. Bind the value to a
   local first (<code>label = "{:&gt;3}".format(x)</code>, then <code>f"{label}"</code>).
   A syntax error Codon still reports inside an f-string field is shown at
-  the line of the f-string that has it, not at a line before the file.</li>
+  the line of the f-string that has it (the first f-string with a format
+  spec, else with a literal brace, else the file's only f-string line), with
+  no column, and never at a line before the file: with no one f-string to
+  blame, it is shown with no line rather than at a guessed one.</li>
 <li><strong>A type error inside an f-string field is shown at the f-string's line,
   with no column (#610).</strong> Codon reports it on the line after the line the
   f-string starts on, at the faulting expression's column plus the length of
@@ -6161,9 +6171,6 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (<code>RoutingAction</code> passes <code>waypoints=</code> only when there
   are some, in a call of its own).
-- <strong>No escaped brace in an f-string</strong> (<code>f"{{min, max}} of {name}"</code>): Codon's
-  parser rejects it, even in a function it never compiles. Concatenate the
-  literal part (<code>"{min, max}" + f" of {name}"</code>, as <code>Range.parse</code> does).
 - <strong><code>Literal["a", "b"]</code> is checked as the type of its values</strong> (<code>str</code>), an
   annotation and a module-level alias alike (<code>route.model</code>'s <code>Tristate</code>):
   Codon's own <code>Literal</code> types a compile-time value of <code>int</code>, <code>bool</code> or <code>str</code>
@@ -6445,7 +6452,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 13:29:07 UTC"><span class="timeago" datetime="2026-10-28T13:29:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 13:29:07 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 16:11:11 UTC"><span class="timeago" datetime="2026-10-28T16:11:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 16:11:11 UTC">2026-10-28</span>
   </span>
 
     
