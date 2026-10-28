@@ -153,6 +153,16 @@ devices:
 | `devices` | | one entry per device, by name |
 | `lifecycle` | none | steps around the bridge and each scenario: see [Lifecycle](#lifecycle) |
 
+Names, addresses and raw bytes are text. YAML reads some unquoted values as
+something else: `0102` is the octal number 66, `0x10` is 16, `1.10` is 1.1,
+and `On`, `Off`, `Yes` and `No` are booleans. The text as written is lost, so
+the bridge refuses such a value instead of guessing, and asks for quotes. This
+covers device names, `url`, `codec`, message, input and step names, field names
+(a DBC signal called `On` is written `"On": 1`), `signal:` and `field:`,
+`carla.host`, `ego.role_name`, `runner.listen`, `canvas`, `clock`,
+`commands.mode` and a raw frame's `data`. Field *values* and `id` are numbers
+and stay unquoted (`id: 0x7DF`).
+
 A device is one hilspy channel: `url` (the transport), `codec` (`raw` when
 omitted) and `options` (codec options), exactly what `hilspy.open(url, codec,
 **options)` takes. It has `messages` (periodic messages filled from the ego's
@@ -355,6 +365,11 @@ lifecycle:
     - send: power
       data: "4F 55 54 30 0A"
 ```
+
+A raw frame's `data` is a quoted string of hex bytes, with or without spaces
+(`data: "0102"` or `data: "01 02"`). Unquoted, YAML reads it as a number
+(`0102` is octal 66, `0x10` is 16), so the bridge refuses it rather than send
+other bytes.
 
 A `wait` is satisfied by a matching message received since its phase began, so
 an ECU that answers a `send` at once is not missed. While steps run the bridge
