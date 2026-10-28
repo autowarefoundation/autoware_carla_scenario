@@ -622,6 +622,52 @@ def test_an_adversity_nade_sampled_is_written_on_its_tick(tmp_path) -> None:
     }
 
 
+def test_a_spawn_and_a_despawn_are_written_on_their_tick(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    world.frame = 140
+    recorder.record(world, 2.0)
+    recorder.record_spawn("npc1_enters", "npc1", 7)
+    recorder.record_spawn("npc2_enters", "npc2", -1)
+    recorder.record_despawn("npc1_leaves", "npc1", 7)
+    recorder.close()
+
+    written = [r for r in _lines(recorder.path) if r["type"] in ("spawn", "despawn")]
+    assert written == [
+        {
+            "type": "spawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc1_enters",
+            "entity": "npc1",
+            "id": 7,
+        },
+        {
+            "type": "spawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc2_enters",
+            "entity": "npc2",
+            "id": None,
+        },
+        {
+            "type": "despawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc1_leaves",
+            "entity": "npc1",
+            "id": 7,
+            "reason": "action",
+        },
+    ]
+
+
+def test_a_spawn_is_not_written_when_not_recording(tmp_path) -> None:
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.record_spawn("npc1_enters", "npc1", 7)  # never started: nothing
+    assert not recorder.path.exists()
+
+
 def test_conditions_are_written_when_first_checked_and_when_they_change(
     tmp_path,
 ) -> None:
@@ -701,6 +747,8 @@ def test_the_new_records_never_fail_the_run(tmp_path) -> None:
     recorder.record_condition("pass", 0, "x", True)
     recorder.record_result(MagicMock())
     recorder.record_warmup(1, 0, 1)
+    recorder.record_spawn("s", "npc1", 1)
+    recorder.record_despawn("d", "npc1", 1)
 
 
 def test_a_map_file_that_cannot_be_read_leaves_its_field_null(tmp_path) -> None:

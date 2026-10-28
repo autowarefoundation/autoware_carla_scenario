@@ -459,11 +459,6 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         ),
     },
     "SpawnAction": {
-        "take_spawns": (
-            "the entities brought in, kept for a log; the runner does not read "
-            "it (the trajectory log records despawns, not spawns), and neither "
-            "does a scenario"
-        ),
         "apply": (
             "spawns at once with a blueprint library and a ground lookup shared "
             "by many props, what ConstructionZoneAction does; a scenario "

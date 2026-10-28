@@ -175,6 +175,9 @@ class BaseAction:
         elif name == "take_waypoint_arrivals":
             _acs_expect_return(r, List[WaypointArrival],
                                "BaseAction.take_waypoint_arrivals() returns List[WaypointArrival]")
+        elif name == "take_spawns":
+            _acs_expect_return(r, List[Tuple[str, int]],
+                               "BaseAction.take_spawns() returns List[Tuple[str, int]]")
         elif name == "take_despawns":
             _acs_expect_return(r, List[Tuple[str, int]],
                                "BaseAction.take_despawns() returns List[Tuple[str, int]]")
@@ -215,6 +218,9 @@ class BaseAction:
         raise NotImplementedError()
 
     def take_waypoint_arrivals(self) -> List[WaypointArrival]:
+        raise NotImplementedError()
+
+    def take_spawns(self) -> List[Tuple[str, int]]:
         raise NotImplementedError()
 
     def take_despawns(self) -> List[Tuple[str, int]]:

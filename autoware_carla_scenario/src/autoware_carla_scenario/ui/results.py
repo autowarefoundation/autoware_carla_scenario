@@ -226,6 +226,11 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                     if str(record.get("role", "")).lower() == "ego":
                         ego = int(record["id"])
                     continue
+                # The text test above lets through any record whose label or
+                # role reads "tick" or "actor" (a spawn's, a despawn's, ...):
+                # only ticks carry poses.
+                if record.get("type") != "tick":
+                    continue
                 control = record.get("control") or {}
                 if ego is None and control:
                     ego = int(next(iter(control)))
