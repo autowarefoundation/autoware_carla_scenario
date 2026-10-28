@@ -92,6 +92,19 @@ def test_scaffolded_package_parses(tmp_path: Path, description: str) -> None:
     assert docstring is not None and docstring.startswith(description + "\n")
 
 
+@pytest.mark.parametrize("scenario_name", ["null", "true", "on", "no"])
+def test_a_scenario_named_like_a_yaml_literal_stays_a_string(
+    tmp_path: Path, scenario_name: str
+) -> None:
+    result = create_scenario_package(
+        "my_pkg", scenario_name=scenario_name, output_dir=tmp_path
+    )
+    (default,) = result.root.rglob("default.yaml")
+    assert yaml.safe_load(default.read_text("utf-8"))["scenario"]["name"] == (
+        scenario_name
+    )
+
+
 @pytest.mark.parametrize(
     "pin",
     [

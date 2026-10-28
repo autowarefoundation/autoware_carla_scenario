@@ -176,10 +176,13 @@ def _pin(name: str, version: str, source: dict[str, Any]) -> str:
         # or tag, which can move) is only the fallback when none was recorded.
         revision = source.get("commit") or source.get("requested")
         if revision:
-            return (
+            pin = (
                 f"{name} @ {source['vcs']}+{source['url']}@{revision}"
                 f"{_fragment(source)}"
             )
+            if not source.get("commit"):
+                pin += f"  # requested {revision}, no commit recorded: may move"
+            return pin
     if kind == "archive":
         return f"{name} @ {source['url']}{_fragment(source)}"
     if kind in ("editable", "local"):

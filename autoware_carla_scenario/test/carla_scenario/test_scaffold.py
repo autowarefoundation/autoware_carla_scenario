@@ -58,7 +58,7 @@ class TestResolveNames:
         assert names["scenario_class"] == "OvertakeScenario"
         assert names["config_class"] == "OvertakeConfig"
 
-    @pytest.mark.parametrize("bad", ["123", "class", "!!!", ""])
+    @pytest.mark.parametrize("bad", ["123", "class", "!!!", "", "café"])
     def test_invalid_names_raise(self, bad: str) -> None:
         with pytest.raises(ValueError):
             resolve_names(bad)
@@ -96,7 +96,7 @@ class TestCreateScenarioPackage:
 
         # YAML binds the scenario name (assert on text; avoids a yaml stub dep).
         yaml_text = yaml_path.read_text(encoding="utf-8")
-        assert "name: reach_goal" in yaml_text
+        assert 'name: "reach_goal"' in yaml_text
 
     def test_mentions_the_static_check(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

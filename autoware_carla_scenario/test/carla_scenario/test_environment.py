@@ -114,8 +114,9 @@ COMMIT = "9e15ebae" + "0" * 32
 def _pin_of(direct_url: dict[str, Any]) -> tuple[dict[str, Any], str]:
     source = _source(_Dist(direct_url))  # type: ignore[arg-type]
     pin = _pin("autoware-carla-scenario", "2.63.0", source)
-    # Whatever the lock writes has to be a requirement pip and uv accept.
-    assert Requirement(pin).name == "autoware-carla-scenario"
+    # Whatever the lock writes has to be a requirement pip and uv accept (a
+    # requirements file drops a comment after whitespace).
+    assert Requirement(pin.split("  #")[0]).name == "autoware-carla-scenario"
     return source, pin
 
 
@@ -145,7 +146,11 @@ def test_a_git_pin_without_a_commit_falls_back_to_the_requested_revision() -> No
     _, pin = _pin_of(
         {"url": REPOSITORY, "vcs_info": {"vcs": "git", "requested_revision": "v1"}}
     )
-    assert pin == f"autoware-carla-scenario @ git+{REPOSITORY}@v1"
+    # A branch or tag can move, so the lock says the pin is not a commit.
+    assert pin == (
+        f"autoware-carla-scenario @ git+{REPOSITORY}@v1"
+        "  # requested v1, no commit recorded: may move"
+    )
 
 
 @pytest.mark.parametrize(
