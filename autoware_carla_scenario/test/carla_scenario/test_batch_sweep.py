@@ -200,6 +200,9 @@ def test_multirun_on_a_glob_expands_the_batch_instead_of_reaching_hydra(
 ) -> None:
     from autoware_carla_scenario.examples import run
 
+    # main() exports --resume-from for the sweeper: undone after the test, so
+    # it does not reach the sweeps later tests in this worker run.
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
     calls: list[tuple[list[str], list[str], dict[str, object]]] = []
     monkeypatch.setattr(
         run,

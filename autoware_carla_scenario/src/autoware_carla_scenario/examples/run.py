@@ -1717,6 +1717,14 @@ def _run_scenario(
     return result
 
 
+#: The cases of a ``--multirun`` run in this process (Hydra's basic sweeper)
+#: that failed, and how many ran: :func:`main` exits 1 when any failed.  The
+#: lanelet sweeper runs its cases in forked children, which this does not see;
+#: it raises ``SweepFailedError`` itself.
+_multirun_failed: list[str] = []
+_multirun_ran: list[str] = []
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def _hydra_main(cfg: DictConfig) -> None:
     """Hydra entry point that dispatches to the selected scenario."""
@@ -1731,9 +1739,31 @@ def _hydra_main(cfg: DictConfig) -> None:
         print(exc, file=sys.stderr)  # noqa: T201
         sys.exit(2)
     # Only exit for single-run mode. In --multirun, Hydra calls this
-    # function repeatedly; sys.exit() would kill the entire sweep.
+    # function repeatedly; sys.exit() would kill the entire sweep.  Hydra
+    # discards what a job returns, so the verdict is recorded for main().
     if not _is_multirun():
         sys.exit(0 if result.passed else 1)
+    case = " ".join(HydraConfig.get().overrides.task)
+    _multirun_ran.append(case)
+    if not result.passed:
+        _multirun_failed.append(case)
+
+
+def _exit_if_multirun_failed() -> None:
+    """Exit 1 when a ``--multirun`` case run in this process failed.
+
+    After the sweep, so a failed case does not stop the ones after it.
+    """
+    if not _multirun_failed:
+        return
+    print(  # noqa: T201
+        f"Sweep failed: {len(_multirun_failed)} of {len(_multirun_ran)} "
+        "case(s) failed:",
+        file=sys.stderr,
+    )
+    for case in _multirun_failed:
+        print(f"  {case}", file=sys.stderr)  # noqa: T201
+    sys.exit(1)
 
 
 def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
@@ -1852,6 +1882,7 @@ def main() -> None:
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
         _hydra_main()
+        _exit_if_multirun_failed()
 
 
 if __name__ == "__main__":

@@ -276,6 +276,10 @@ uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compl
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
 not `outputs/`. The result viewer scans both directories.
 
+A failed, crashed or timed-out case does not stop the sweep: every case runs,
+the sweeper logs `Sweep complete: P/N succeeded, F failed (T timed out).`, and
+the process then exits 1 when any case failed (see [Exit Codes](#exit-codes)).
+
 To get the concrete scenarios without running them (for example, to fan them
 out over a cluster), use `scenario-expand`. It takes the same arguments as
 `scenario` and prints JSON with one list of Hydra overrides per concrete
@@ -730,6 +734,23 @@ condition's message.
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error |
+| 2 | Refused before anything ran: the scenario does not type-check, or an extra it asks for (`rerun`, `t4`) is not installed |
+
+The same codes hold however the cases run: a single run, a glob batch, a
+`--multirun` (each case of the scenario's sweep in one batch,
+`hydra/sweeper=lanelet_constraint`, or Hydra's own sweeper over
+comma-separated values) and `launcher=slurm`, which waits for the array and
+collects it. A sweep runs every case before it exits, so 1 means at least
+one case failed; the summary names how many. The exceptions:
+
+- Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
+  `hydra/sweeper=`), a case that raises an exception ends the sweep at once
+  with 1, as Hydra does; a case that runs and fails does not.
+- Under a Hydra sweeper (`hydra/sweeper=lanelet_constraint` or Hydra's own),
+  a refusal (a type error, a missing extra) is reported as a failed case or a
+  failed sweep, with 1 rather than 2.
+- `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
+  verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
 
 ---
 

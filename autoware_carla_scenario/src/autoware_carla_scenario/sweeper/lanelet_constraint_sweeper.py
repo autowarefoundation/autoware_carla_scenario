@@ -8,6 +8,9 @@ sweeper:
 3. For each match, resolves bindings from ``sweep.bindings`` to compute
    derived parameters (e.g. ``ego.spawn_s``).
 4. Constructs per-lanelet Hydra override batches and launches them.
+
+Once every case has run, a sweep with a failed (or timed-out) case raises
+:class:`SweepFailedError`, which Hydra reports and turns into exit status 1.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Any
 
 from hydra.core.plugins import Plugins
 from hydra.core.utils import JobReturn, JobStatus
+from hydra.errors import CompactHydraException
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import HydraContext
 from omegaconf import DictConfig, OmegaConf
@@ -37,6 +41,18 @@ logger = logging.getLogger(__name__)
 # Default hard timeout per job (seconds).  Can be overridden via
 # ``sweep.job_timeout_seconds`` in the scenario YAML.
 _DEFAULT_JOB_TIMEOUT = 120
+
+
+class SweepFailedError(CompactHydraException):
+    """One or more cases of a sweep failed, crashed or timed out.
+
+    Raised by :meth:`LaneletConstraintSweeper.sweep` once every case has run
+    and the summary is logged.  Hydra returns nothing of a ``--multirun`` to
+    its caller, so raising is how a sweep reports failure: Hydra prints the
+    message and exits with status 1 (docs/usage.md, "Exit Codes"), as a glob
+    batch does.  Being a :class:`~hydra.errors.CompactHydraException`, it is
+    printed without a traceback.
+    """
 
 
 def _check_result_json_in_dir(working_dir: str | None) -> bool | None:
@@ -208,6 +224,10 @@ class LaneletConstraintSweeper(Sweeper):
 
         Returns:
             The aggregated results from all launched jobs.
+
+        Raises:
+            SweepFailedError: After every case has run, when one or more of
+                them failed or timed out.
         """
         assert self.config is not None
         assert self.launcher is not None
@@ -400,6 +420,11 @@ class LaneletConstraintSweeper(Sweeper):
             failed_count,
             timed_out_count,
         )
+        if failed_count:
+            raise SweepFailedError(
+                f"Sweep failed: {failed_count} of {executed} case(s) failed "
+                f"({timed_out_count} timed out)."
+            )
         return all_returns
 
 
