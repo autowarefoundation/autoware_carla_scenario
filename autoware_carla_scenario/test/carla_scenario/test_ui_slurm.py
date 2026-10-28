@@ -23,6 +23,8 @@ from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import scanner, slurm_launch
 from autoware_carla_scenario.ui.slurm_launch import SlurmOptions
 
+from ._slurm_ports import RANGE_SLOTS, fake_carlas, port_range
+
 _DATA = Path(__file__).parent / "data" / "fake_slurm"
 
 
@@ -339,7 +341,16 @@ sys.meta_path.insert(0, _FakeWorld())
 
 
 @pytest.fixture
-def fake_slurm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def port_base() -> Iterator[int]:
+    """Ports no other test uses meanwhile (#699), held past fake_slurm's clean-up."""
+    with port_range() as base:
+        yield base
+
+
+@pytest.fixture
+def fake_slurm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port_base: int
+) -> Iterator[Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for command in ("sbatch", "squeue", "scancel", "scontrol"):
@@ -370,6 +381,12 @@ def fake_slurm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path
     yield bin_dir
     for job_dir in (state / "jobs").glob("*") if (state / "jobs").is_dir() else []:
         subprocess.run([str(bin_dir / "scancel"), job_dir.name], check=False)
+    for carla in record.glob("carla-*.json"):
+        for pid in fake_carlas(record, json.loads(carla.read_text())["port"]):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
 
 
 def _wait(
@@ -385,7 +402,7 @@ def _wait(
 
 
 def test_a_batch_submitted_from_the_viewer_is_followed_and_collected(
-    client: TestClient, fake_slurm: Path
+    client: TestClient, fake_slurm: Path, port_base: int
 ) -> None:
     run = client.post(
         "/api/run",
@@ -395,8 +412,8 @@ def test_a_batch_submitted_from_the_viewer_is_followed_and_collected(
                 "+sweep.odd_sample.count=4",
                 "+sweep.odd_sample.seed=1",
                 "launcher.poll_seconds=0.2",
-                "launcher.port_base=31000",
-                "launcher.port_slots=50",
+                f"launcher.port_base={port_base}",
+                f"launcher.port_slots={RANGE_SLOTS}",
             ],
             "sweeper": "lanelet_constraint",
             "launcher": "slurm",
