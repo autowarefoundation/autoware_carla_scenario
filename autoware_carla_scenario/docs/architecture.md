@@ -1235,7 +1235,7 @@ graph LR
 |------|---------|-----------|----------|----------------|-------------|
 | **2000** | 2000 | CARLA RPC Server | TCP | `server.port` (Hydra), `--port` CLI arg | Main communication channel between `carla.Client` and the CARLA simulator. Used for world control, actor spawning, recording, etc. |
 | **8100** | 8100 | CARLA TrafficManager | TCP | `traffic_manager.port` (Hydra), `tm_port` constructor arg | RPC port for the TrafficManager, which controls NPC vehicle autopilot behavior. The CARLA default is 8000, but this project uses 8100 to avoid conflicts with other services (e.g., VS Code). |
-| **9000** | 9000 | Viewer Web Server | HTTP | `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
+| **9000** | 9000 | Viewer Web Server | HTTP | `viewer --port`, `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
 
 !!! note
     The CARLA RPC port and TrafficManager port are used within the **scenario subprocess**, not the viewer process. The viewer communicates with CARLA only indirectly through `subprocess.run(["uv", "run", "scenario", ...])`.
@@ -1249,9 +1249,9 @@ graph LR
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
 | **`NISHISHINJUKU_LANELET2_PATH`** | No | `data/nishishinjuku.osm` | Map config YAML (`${oc.env:...}`) | Path to the Lanelet2 `.osm` file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation. |
-| **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. |
-| **`VIEWER_HOST`** | No | `0.0.0.0` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. |
-| **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. |
+| **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. `viewer --base-path` wins over it. |
+| **`VIEWER_HOST`** | No | `127.0.0.1` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. `viewer --host` wins over it; `0.0.0.0` serves every interface, with no authentication. |
+| **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. `viewer --port` wins over it. |
 | **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed). A glob batch reads the flag directly instead. |
 
 #### Dynamic Map Path Variables

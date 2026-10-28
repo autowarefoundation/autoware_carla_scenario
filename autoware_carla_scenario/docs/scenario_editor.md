@@ -6,6 +6,7 @@ application:
 
 ```bash
 uv run scenario-editor          # http://localhost:9100
+uv run scenario-editor --help   # its options (Configuration below)
 ```
 
 It is deliberately **separate from the Scenario Result Viewer**
@@ -676,7 +677,7 @@ FieldSpec(
 ### The map path is a document field
 
 `/draft/<id>/map.osm` serves the file the document names, and that name is
-typed by whoever is using the editor -- which binds `0.0.0.0` by default. Handed
+typed by whoever is using the editor -- which may bind `0.0.0.0` (`--host`). Handed
 straight to a `FileResponse` it was an arbitrary local file read for anyone who
 could reach the port. A path is accepted only when it resolves **inside**
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) and names a
@@ -835,14 +836,25 @@ guess.
 
 ## Configuration
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
-| `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
-| `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
-| `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
-| `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
+| Option | Variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `--drafts` | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
+| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
+| — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
+| `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
+| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
+| — | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
+
+An option defaults to its variable, so a flag on the command line wins over the
+environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
+option is an error (exit 2) and serves nothing.
+
+!!! warning "The editor listens on this machine only by default"
+    The editor has no authentication, so it binds `127.0.0.1` unless told
+    otherwise. It used to bind `0.0.0.0`, every interface; to serve other
+    machines as before, pass `--host 0.0.0.0` (or set
+    `SCENARIO_EDITOR_HOST=0.0.0.0`) on a network you trust. The editor prints a
+    warning when it listens on anything but a loopback address.
 
 ## Running an authored scenario
 

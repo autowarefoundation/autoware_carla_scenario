@@ -2364,7 +2364,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 214 of
-the package's 317 modules (68%; about 49,800 of 90,300 lines) are `CHECKED`:
+the package's 318 modules (67%; about 49,800 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2464,12 +2464,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 103 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 78 import what Codon cannot
+which the check has no value of). The 104 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 79 import what Codon cannot
 compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **78 import what Codon cannot compile**:
+- **79 import what Codon cannot compile**:
   pydantic, pickle, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -2478,7 +2478,8 @@ for), so each is counted once, in the first group that fits it:
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
-  the tooling around a run (the editor, the UI, authoring, the sweeper's
+  the tooling around a run (the editor, the UI and the command line they
+  share (`serve_cli`), authoring, the sweeper's
   expansion and Hydra sweeper, the patch that lets Hydra's command-line
   parser build on Python 3.14 (`hydra_compat`), the pyxodr road network cache, the Autoware
   stack's dev container, the
