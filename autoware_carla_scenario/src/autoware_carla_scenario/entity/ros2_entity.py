@@ -214,6 +214,14 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._transport.open()
         self._open = True
         self._turn_command = None
+        # A retried scenario runs this entity again: nothing the previous
+        # attempt received or tracked drives this one.
+        self._arbiter = CommandArbiter(self._config.sources)
+        self._follower.reset()
+        self._active = None
+        self._active_fresh = False
+        self._planned = None
+        self._tracking = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
         mount: "carla.Actor" = actor

@@ -172,7 +172,10 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._reset_termination()
         self._ready = False
         self._command = None
+        self._command_at = 0.0
         self._stale = False
+        # The bridge restores every cut at the scenario's end: number afresh.
+        self._cuts = 0
         cfg = self._config
         try:
             sock = socket.create_connection(

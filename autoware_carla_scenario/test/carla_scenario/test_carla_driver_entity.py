@@ -1132,6 +1132,41 @@ def test_a_retry_waits_for_the_stack_again() -> None:
     assert not entity.is_initialized
 
 
+def _run_attempt(entity: CarlaDriverEntity, world: MagicMock, ticks: int) -> None:
+    """One attempt of a scenario: start, *ticks* ticks, end."""
+    entity.on_scenario_start(world)
+    for tick in range(ticks):
+        entity.on_tick(world, tick * _TICK_S)
+    entity.on_scenario_end(world)
+
+
+def test_a_retry_starts_its_session_clock_at_zero() -> None:
+    # A retried scenario reuses the entity (#672): its new session must see
+    # the clock and the policy steps the first attempt saw, not continue them.
+    entity, client = _entity(policy_timestep_s=0.1)
+    world = _world_with_route()
+
+    _run_attempt(entity, world, 40)
+    first = list(client.drives)
+    first_count = entity.drive_count
+    client.drives.clear()
+
+    _run_attempt(entity, world, 40)
+
+    assert client.drives == first
+    assert entity.drive_count == first_count
+
+
+def test_a_retry_shows_no_plan_before_its_first_policy_step() -> None:
+    entity, _ = _entity()
+    world = _world_with_route()
+    _run_attempt(entity, world, 3)
+
+    entity.on_scenario_start(world)
+
+    assert not entity.debug_markers()
+
+
 def _composed(overrides: List[str]):
     from pathlib import Path
 
