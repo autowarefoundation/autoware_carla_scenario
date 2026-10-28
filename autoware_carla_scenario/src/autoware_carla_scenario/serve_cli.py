@@ -46,21 +46,32 @@ def add_bind_arguments(
 
 
 def is_loopback(host: str) -> bool:
-    """Whether *host* is reachable from this machine only."""
-    if host == "localhost":
+    """Whether *host* is reachable from this machine only.
+
+    An IPv4 or IPv6 loopback address (``127.0.0.0/8``, ``::1``, bracketed or
+    not, or IPv4-mapped ``::ffff:127.0.0.1``) or ``localhost``.  Any other
+    host name may resolve to anything, so it is not; nor is ``::``, every
+    IPv6 interface.
+    """
+    if host.lower().rstrip(".") == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
+        address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return False  # A host name: it may resolve to anything.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped.is_loopback
+    return address.is_loopback
 
 
 def warn_if_exposed(prog: str, host: str, port: int, what: str) -> None:
     """Warn on stderr that *prog* is about to serve beyond this machine."""
     if is_loopback(host):
         return
+    # An IPv6 address is bracketed, so its port reads apart from it.
+    shown = f"[{host}]" if ":" in host and not host.startswith("[") else host
     print(  # noqa: T201
-        f"{prog}: WARNING: listening on {host}:{port} with no authentication; "
+        f"{prog}: WARNING: listening on {shown}:{port} with no authentication; "
         f"anyone who can reach this port can {what}. Pass --host 127.0.0.1 to "
         "serve this machine only.",
         file=sys.stderr,

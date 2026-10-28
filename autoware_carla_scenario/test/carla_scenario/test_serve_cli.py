@@ -17,6 +17,7 @@ from typing import Any, Callable
 import pytest
 
 from autoware_carla_scenario import editor, ui
+from autoware_carla_scenario.serve_cli import is_loopback, warn_if_exposed
 
 _ENV = (
     "VIEWER_HOST",
@@ -178,6 +179,15 @@ class TestViewer:
         assert fetched == [["--from", "x.tgz", "--version", "1"]]
         assert served == []
 
+    def test_fetch_help_is_the_fetch_commands_own(
+        self, served: list[dict[str, Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc:
+            ui.main(["--fetch-rerun-web-viewer", "--help"])
+        assert exc.value.code == 0
+        assert "--from" in capsys.readouterr().out
+        assert served == []
+
     def test_a_mistyped_fetch_flag_is_an_error(
         self, served: list[dict[str, Any]]
     ) -> None:
@@ -208,6 +218,36 @@ class TestEditor:
         assert made == [
             {"draft_dir": tmp_path / "drafts", "export_dir": tmp_path / "env"}
         ]
+
+
+@pytest.mark.parametrize(
+    ("host", "loopback"),
+    [
+        ("127.0.0.1", True),
+        ("127.0.0.2", True),
+        ("::1", True),
+        ("[::1]", True),
+        ("::ffff:127.0.0.1", True),
+        ("localhost", True),
+        ("LOCALHOST", True),
+        ("0.0.0.0", False),  # noqa: S104
+        ("::", False),
+        ("[::]", False),
+        ("192.168.0.1", False),
+        ("::ffff:192.168.0.1", False),
+        ("example.com", False),
+        ("", False),
+    ],
+)
+def test_is_loopback(host: str, loopback: bool) -> None:
+    assert is_loopback(host) is loopback
+
+
+def test_the_warning_brackets_an_ipv6_address(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    warn_if_exposed("viewer", "::", 9000, "do things")
+    assert "listening on [::]:9000" in capsys.readouterr().err
 
 
 def _free_port() -> int:

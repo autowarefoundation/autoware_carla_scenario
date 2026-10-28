@@ -284,8 +284,8 @@ def lanelet2_source(
     therefore the one place that has to refuse the wrong one.
 
     Every path is checked the same way: it must resolve inside one of
-    :func:`map_roots` and name a ``.osm``.  The editor binds ``0.0.0.0`` with no
-    authentication, so without that, ``/draft/<id>/map.osm`` is an arbitrary
+    :func:`map_roots` and name a ``.osm``.  The editor has no authentication
+    and may bind ``0.0.0.0`` (``--host``), so without that, ``/draft/<id>/map.osm`` is an arbitrary
     local file read for anyone who can reach the port.
 
     A *typed* path is the obvious way in -- create a draft, point it at
