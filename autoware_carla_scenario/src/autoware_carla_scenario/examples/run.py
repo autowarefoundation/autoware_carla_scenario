@@ -62,6 +62,7 @@ from autoware_carla_scenario import (
     TrafficSinkAction,
     TrafficSourceAction,
 )
+import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas

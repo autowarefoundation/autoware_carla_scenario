@@ -35,6 +35,7 @@ from hydra.types import HydraContext
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
+from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
 from .expand import check_constraint_keys, expand_sweep, scenario_controls
