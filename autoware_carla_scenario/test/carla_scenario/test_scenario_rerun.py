@@ -293,6 +293,36 @@ class TestRunScenarioStartsFromACleanSlate:
             "default_timeout",
         ]
 
+    def test_entry_speeds_held_before_the_run_are_forgotten(
+        self, tmp_path: Any
+    ) -> None:
+        """A spawn card ticked outside any run holds an entry speed for an
+        actor id; the next run starts without it (#697), and without a
+        warm-up flag left set."""
+        from autoware_carla_scenario.entity import vehicle_entity
+
+        vehicle_entity.hold_entry_speed(17, 5.0)
+        vehicle_entity._set_warmup_done(True)
+        runner = _runner(tmp_path)
+        scenario = _Registers(ego_entity=_fake_ego())
+        held: list[dict[int, float]] = []
+
+        def clock(world: Any) -> None:
+            held.append(vehicle_entity.entry_speeds())
+            raise _Stop("clock")
+
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            patch("autoware_carla_scenario.scenario_runner._ScenarioClock", clock),
+        ):
+            # A MagicMock world hands set_initial_speed a mock actor for id
+            # 17, which carla.Vector3D refuses: had the speed been kept, the
+            # run would raise TypeError before its clock.
+            with pytest.raises(_Stop):
+                runner.run_scenario(scenario, timeout_seconds=12.0, reset_world=False)
+
+        assert held == [{}]
+
     def test_a_queue_retry_sees_only_its_own_registrations(self, tmp_path: Any) -> None:
         """The first attempt raises after setup(); the retry runs the same
         object and sees one copy of each registration."""

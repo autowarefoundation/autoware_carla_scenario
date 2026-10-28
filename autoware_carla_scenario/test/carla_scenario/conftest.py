@@ -113,11 +113,10 @@ def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     """Forget the entry speeds and the warm-up flag a test left behind.
 
     Both are process-wide and only a ``ScenarioRunner.run_scenario`` clears
-    them, at the end of its run.  A test that executes a ``SpawnAction`` with a
-    speed outside a run holds that speed for its actor id, and the next
-    ``run_scenario`` in the same xdist worker would hand it to whatever actor
-    its world returns for that id: a ``MagicMock`` world's mock actor, which
-    ``carla.Vector3D`` refuses.
+    them, at the start and end of its run.  A test that executes a
+    ``SpawnAction`` with a speed outside a run holds that speed for its actor
+    id, which any later test in the same xdist worker that reads the entry
+    speeds or the flag without going through a run would see (#697).
     """
     from autoware_carla_scenario.entity import vehicle_entity
 
