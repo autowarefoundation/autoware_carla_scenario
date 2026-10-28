@@ -42,6 +42,16 @@ def _base_path() -> Path:
     return BASE_PATH
 
 
+def _session_dir_or_404(session_type: str, date: str, time: str) -> Path:
+    """The session's directory, or 404 when the URL's names do not make one
+    under the base (:func:`cases.session_dir`: an unknown type, ``..``, a
+    separator, or a path that resolves outside ``multirun/`` / ``outputs/``)."""
+    directory = cases.session_dir(_base_path(), session_type, date, time)
+    if directory is None:
+        raise HTTPException(status_code=404)
+    return directory
+
+
 def _resolve_scenario_names(scenario: str) -> list[str]:
     """Expand a scenario pattern to concrete config names.
 
@@ -78,6 +88,7 @@ async def session_detail(
     request: Request, session_type: str, date: str, time: str
 ) -> HTMLResponse:
     """Session detail page showing all scenarios in the session."""
+    directory = _session_dir_or_404(session_type, date, time)
     items = scanner.load_session(_base_path(), session_type, date, time)
     passed_count = sum(1 for it in items if it.passed is True)
     total_count = len(items)
@@ -96,10 +107,7 @@ async def session_detail(
             "pending_count": pending_count,
             "page": "session",
             "slurm": session_type == "batch"
-            and (
-                _base_path() / "outputs" / date / time / "slurm" / "manifest.json"
-            ).is_file()
-            and cases.session_dir(_base_path(), session_type, date, time) is not None,
+            and (directory / "slurm" / "manifest.json").is_file(),
         },
     )
 
@@ -113,6 +121,7 @@ async def scenario_detail(
     request: Request, session_type: str, date: str, time: str, index: int
 ) -> HTMLResponse:
     """Individual scenario detail page with condition tree."""
+    _session_dir_or_404(session_type, date, time)
     result = scanner.load_scenario(_base_path(), session_type, date, time, index)
     # Also load session items for navigation context
     items = scanner.load_session(_base_path(), session_type, date, time)
@@ -237,36 +246,49 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
         return _submit_slurm(scenario, extra_overrides, sweeper, body.get("slurm"))
 
     if sweeper:
-        # Resolve sweep constraints in-process (lightweight, no CARLA).
-        # This expands the scenario + constraints into concrete per-job
-        # override lists, which are then run as individual subprocesses.
-        from .sweep_resolver import resolve_sweep  # noqa: PLC0415
+        # Expand each scenario's sweep in-process (no CARLA), as
+        # scenario-batch does (sweeper.expand.expand_config): constraints,
+        # route searches and ODD draws alike.  Each job is then run as a
+        # plain single-scenario run.
+        from ..odd.sampler import OddDraws  # noqa: PLC0415
+        from .sweep_resolver import SweepResolutionError, resolve_sweep  # noqa: PLC0415
 
         scenario_names = _resolve_scenario_names(scenario)
         if not scenario_names:
             return {"status": "error", "message": f"No scenarios match '{scenario}'"}
 
         overrides_list: list[list[str]] = []
+        errors: list[str] = []
+        # Scenarios on one ODD go on from each other's draws.
+        drawn = OddDraws()
         for name in scenario_names:
             try:
-                batches = resolve_sweep(name, extra_overrides)
-                overrides_list.extend(batches)
-            except Exception as exc:  # noqa: BLE001
+                overrides_list.extend(resolve_sweep(name, extra_overrides, drawn=drawn))
+            except SweepResolutionError as exc:
                 logger.error("Sweep resolution failed for %s: %s", name, exc)
+                errors.append(str(exc))
 
+        if errors:
+            # Nothing runs: a run missing some of the scenarios asked for
+            # would look like a complete one.
+            return {
+                "status": "error",
+                "message": "Sweep resolution failed: " + "; ".join(errors),
+            }
         if not overrides_list:
             return {
                 "status": "error",
-                "message": "No jobs generated (no lanelets matched constraints)",
+                "message": "No jobs generated: the sweep matched no lanelets "
+                "or routes",
             }
 
-        # Jobs already contain scenario= and sweep overrides;
-        # run without sweeper flag (each is a plain single-scenario run).
-        # Group results under a shared multirun/ directory.
+        # The jobs were resolved with the extra overrides, and run with them
+        # too, after each job's own (as /api/run/preview shows, and as
+        # scenario-batch orders them).  Group results under one multirun/.
         started = runner.start_run(
             overrides_list,
             base_path=_base_path(),
-            extra_overrides=[],
+            extra_overrides=extra_overrides,
             group_as_multirun=True,
         )
     else:
@@ -462,8 +484,7 @@ async def session_odd(
     """A session's results on its ODD: openodd's coverage matrix (cells
     coloured by what the runs in them did; a click drills into a cell), its
     plot of the drawn cases, and the cases in the cell drilled into."""
-    if cases.session_dir(_base_path(), session_type, date, time) is None:
-        raise HTTPException(status_code=404)
+    _session_dir_or_404(session_type, date, time)
     found = await asyncio.to_thread(
         results.load_results, _base_path(), session_type, date, time
     )
@@ -595,7 +616,8 @@ async def compare_runs(request: Request) -> HTMLResponse:
     for value in request.query_params.getlist("run")[:4]:
         ref, _, index = value.strip("/").rpartition("/")
         parsed = _parse_ref(ref)
-        if parsed is None or not index.isdigit():
+        # isascii(): "²".isdigit() is true, and int() refuses it.
+        if parsed is None or not (index.isascii() and index.isdigit()):
             continue
         found = await asyncio.to_thread(
             results.load_results, _base_path(), *parsed, metrics=False
@@ -740,7 +762,8 @@ async def slurm_action(
         for key in ("array_parallelism", "cases_per_task"):
             value = body.get(key)
             if value not in (None, ""):
-                if not str(value).isdigit() or int(value) < 1:
+                text = str(value)
+                if not (text.isascii() and text.isdigit()) or int(text) < 1:
                     return JSONResponse(
                         status_code=400,
                         content={

@@ -786,9 +786,9 @@ graph TB
 | **`app.py`** | `ui/app.py` | FastAPI routes, template rendering, SSE streaming |
 | **`scanner.py`** | `ui/scanner.py` | Scan `outputs/` and `multirun/` directories for result JSON files. Build session lists and condition trees. |
 | **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread. Track progress with thread-safe global state. |
-| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Resolve sweep constraints into concrete override lists without launching CARLA. Lightweight Hydra Compose API usage. |
+| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Expand a scenario's sweep into concrete per-job override lists without launching CARLA, through the CLI's `sweeper.expand.expand_config` (constraints, route searches, ODD draws); a failure is reported to the Run panel. The jobs run with the Run panel's extra overrides. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
-| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404). |
 | **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
 | **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
 | **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
@@ -905,12 +905,15 @@ sequenceDiagram
 
     alt With sweeper
         A->>A: sweep_resolver.resolve_sweep()
-        Note over A: Expand constraints into<br/>concrete override lists
+        Note over A: expand_config, as the CLI: constraints,<br/>route searches, ODD draws
+        opt A scenario fails to expand
+            A-->>B: {"status": "error", "message": ...}
+        end
     else Without sweeper
         A->>A: Expand glob to scenario names
     end
 
-    A->>R: start_run(overrides_list)
+    A->>R: start_run(overrides_list, extra_overrides)
     Note over R: Marks the run as running and resets<br/>its progress under one lock
     alt Another run in progress
         A-->>B: 409 {"status": "busy"}

@@ -32,6 +32,8 @@ __all__ = [
     "batch_case_files",
     "batch_entries",
     "case_files",
+    "contained",
+    "job_dir",
     "match_batch_stems",
     "session_dir",
     "stem_order",
@@ -40,8 +42,10 @@ __all__ = [
 #: The kinds of session the viewer lists (``scanner.scan_sessions``).
 SESSION_TYPES = ("multirun", "batch", "single")
 
-#: A date or time directory name, or a job index: no separator, no ``..``.
-_COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]+$")
+#: A date or time directory name, or a job index: no separator, no ``..``,
+#: and no longer than a file name may be (NAME_MAX), so that a stat of it
+#: fails as "not found" rather than with ENAMETOOLONG.
+_COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]{1,255}$")
 
 _TRAJECTORY = ".trajectory.jsonl"
 _RESULT = "_result.json"
@@ -89,13 +93,39 @@ def _safe(component: str) -> bool:
     return bool(_COMPONENT.match(component)) and component not in (".", "..")
 
 
+def contained(root: Path, *parts: str) -> Path | None:
+    """*root* joined with *parts*, or ``None`` when that leaves *root*.
+
+    The joined path is resolved (``..`` and symlinks followed) and must be
+    *root*, resolved, or under it: the one check every path the viewer builds
+    from a request value goes through, so a URL cannot name a file outside the
+    viewer's base.
+    """
+    path = root.joinpath(*parts)
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return path
+
+
 def session_dir(base: Path, session_type: str, date: str, time: str) -> Path | None:
     """The directory of a session, or ``None`` when the names do not make one
-    under *base* (an unknown type, or a name with a separator or ``..``)."""
+    under *base* (an unknown type, a name with a separator or ``..``, or one
+    that resolves outside ``multirun/`` or ``outputs/``, as a symlink can)."""
     if session_type not in SESSION_TYPES or not (_safe(date) and _safe(time)):
         return None
     root = "multirun" if session_type == "multirun" else "outputs"
-    return base / root / date / time
+    return contained(base / root, date, time)
+
+
+def job_dir(base: Path, date: str, time: str, index: int) -> Path | None:
+    """The directory of job *index* of multirun session *date*/*time*, or
+    ``None`` when the names do not make one under *base*."""
+    directory = session_dir(base, "multirun", date, time)
+    if directory is None or index < 0:
+        return None
+    return contained(directory, str(index))
 
 
 def stem_order(stem: str) -> tuple[str, int]:
@@ -295,7 +325,8 @@ def case_files(
     if directory is None or index < 0:
         return None
     if session_type == "multirun":
-        return _only_case(directory / str(index))
+        job = job_dir(base, date, time, index)
+        return _only_case(job) if job is not None else None
     if session_type == "single":
         return _only_case(directory) if index == 0 else None
     files = batch_case_files(directory)
