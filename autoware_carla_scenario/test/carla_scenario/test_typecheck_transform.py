@@ -3420,6 +3420,84 @@ def test_an_ascii_conversion_keeps_its_type(source: str, value: str) -> None:
         assert checked["r"] != written["r"]
 
 
+#: Rewritten f-strings with a field whose expression ast.unparse writes with a
+#: double quote, valid on Python 3.10 (#704).
+_QUOTED_FIELDS = [
+    ("f'''{d[\"it's\"]} {{x}}'''", '(str(d["it\'s"]) + " " + "{" + "x" + "}")'),
+    ("f'''{d[\"it's\"]!s} {{'''", '(str(d["it\'s"]) + " " + "{")'),
+    ("f'''{d[\"it's\"]!r} {{'''", '(repr(d["it\'s"]) + " " + "{")'),
+    ("f'''{d[\"it's\"]:>6} {{'''", '((d["it\'s"]).__format__(">6") + " " + "{")'),
+    ("f'''{d[\"it's\"]!s:>6}{{'''", '(str(d["it\'s"]).__format__(">6") + "{")'),
+    ("f'''{d[\"it's\"]!r:>9}{{'''", '(repr(d["it\'s"]).__format__(">9") + "{")'),
+    ("f'''{x:+d} {d[\"it's\"]}'''", '((x).__format__("+d") + " " + str(d["it\'s"]))'),
+    ("f'''{d[\"it's\"]=}{{'''", '("d[\\"it\'s\\"]=" + repr(d["it\'s"]) + "{")'),
+    (
+        "f'''{n[\"it's\"]:+d}|{e[\"it's\"]:>8.2f}|{n[\"it's\"]}'''",
+        '((n["it\'s"]).__format__("+d") + "|" + (e["it\'s"]).__format__(">8.2f")'
+        ' + "|" + str(n["it\'s"]))',
+    ),
+    (
+        "f'''{e[\"it's\"]!r:^9} {e[\"it's\"]} {{'''",
+        '(repr(e["it\'s"]).__format__("^9") + " " + str(e["it\'s"]) + " " + "{")',
+    ),
+]
+
+#: The same with PEP 701 syntax: the f-string's own quote and a backslash in
+#: a field (Python 3.12+), kept as text so this file parses on 3.10.
+_QUOTED_FIELDS_312 = [
+    ('f"{d["it\'s"]} {{x}}"', '(str(d["it\'s"]) + " " + "{" + "x" + "}")'),
+    ("f\"{x:+d} {d['a\\\\b']}\"", '((x).__format__("+d") + " " + str(d[\'a\\\\b\']))'),
+    (
+        "f\"{d['a\\\\b']!r:>9} {{\"",
+        '(repr(d[\'a\\\\b\']).__format__(">9") + " " + "{")',
+    ),
+    (
+        "f\"{d['a\\\\b']!s:<4}|{d['a\\\\b']:>4}}}\"",
+        '(str(d[\'a\\\\b\']).__format__("<4") + "|"'
+        ' + (d[\'a\\\\b\']).__format__(">4") + "}")',
+    ),
+    ('f"{"\\n".join(xs)} {{"', '(str(\'\\n\'.join(xs)) + " " + "{")'),
+]
+
+_PEP_701 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 701)"
+)
+_ALL_QUOTED_FIELDS = [pytest.param(*case, id=case[0]) for case in _QUOTED_FIELDS] + [
+    pytest.param(*case, id=case[0], marks=_PEP_701) for case in _QUOTED_FIELDS_312
+]
+
+
+@pytest.mark.parametrize(("source", "expected"), _ALL_QUOTED_FIELDS)
+def test_a_quoted_field_of_a_rewritten_fstring_becomes_a_call(
+    source: str, expected: str
+) -> None:
+    # The rewrite writes double-quoted strings: a field whose expression holds
+    # a double quote or a backslash is a call, whatever its conversion (#704).
+    assert python_rewrite_refusals(f"r = {source}\n") == []
+    assert _rewritten(f"r = {source}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(("source", "expected"), _ALL_QUOTED_FIELDS)
+def test_a_quoted_field_of_a_rewritten_fstring_keeps_its_value(
+    source: str, expected: str
+) -> None:
+    del expected
+    text, _ = python_rewrites(f"r = {source}\n")
+    values = {"it's": "q'\"z", "a\\b": "v", "k": 1}
+    written: dict[str, Any] = {
+        "x": 5,
+        "xs": ["a", "b"],
+        "d": values,
+        "n": {"it's": -12},
+        "e": {"it's": 3.14159},
+    }
+    checked: dict[str, Any] = dict(written)
+    exec(f"r = {source}\n", written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert type(checked["r"]) is str and type(written["r"]) is str
+    assert checked["r"] == written["r"]
+
+
 def test_open_text_keywords_are_dropped() -> None:
     assert _rewritten('open(p, "r", encoding="utf-8")\n') == 'open(p, "r")\n'
     assert _rewritten('open(p, encoding="utf-8", errors="x")\n') == "open(p)\n"
@@ -7145,7 +7223,7 @@ def test_fstring_requoting_leaves_source_before_3_12_syntax_alone() -> None:
         ),
         ("x = f'{d['k']}'\n", "x = f'{d[\"k\"]}'\n"),
         ('x = f"a" f"{d["k"]}"\n', 'x = f"a" f"{d[\'k\']}"\n'),
-        ('x = f"{x!r:>{w}} {rb"x"}"\n', "x = f\"{x!r:>{w}} {rb'x'}\"\n"),
+        ('x = f"{x!r:>8} {rb"x"}"\n', "x = f\"{x!r:>8} {rb'x'}\"\n"),
         ('x = f"{f"{a}"}"\n', "x = f\"{f'{a}'}\"\n"),
         (
             'x = f"""{d["k"]} {f"{a}"}"""\n',
@@ -7187,6 +7265,51 @@ def test_an_fstring_field_that_cannot_be_requoted_is_refused(
 ) -> None:
     ((line, message),) = typing_rewrite_refusals(source)
     assert line == 2 and hint in message
+
+
+@_PY312
+@pytest.mark.parametrize(
+    "line",
+    [
+        'y = f"{d["it\'s"]} {{x}}"',
+        "y = f\"{x:+d} {d['a\\\\b']}\"",
+        'y = f"{"\\n".join(xs)!r:>9} {d["it\'s"]!s}}}"',
+        'y = "é" + f"{d["k"]} {d["it\'s"]!a} {{"',
+        'y = f"{{" f"{d["it\'s"]}"',
+        # A nested spec field: rewritten, so not requoted either.
+        'y = f"{x!r:>{w}} {rb"x"}"',
+        # Not requoted: the text of `{d['k']=}` keeps its quotes.
+        "y = f'{d['k']=} {d[\"it's\"]!r} {{'",
+    ],
+)
+def test_a_field_of_an_fstring_written_as_calls_is_not_refused(line: str) -> None:
+    # python_rewrites writes these f-strings as `+` parts, the field a call
+    # that needs no quote (#704): nothing for the requote to refuse.
+    source = f"x = 1\n{line}\n"
+    assert typing_rewrite_refusals(source) == []
+    assert python_rewrite_refusals(source) == []
+    assert typing_rewrites(source) == source  # neither requoted
+    text, _ = python_rewrites(typing_rewrites(source))
+    assert text.count("\n") == source.count("\n")
+    values: dict[str, Any] = {
+        "x": 5,
+        "w": 6,
+        "xs": ["a"],
+        "d": {"k": 1, "it's": 2, "a\\b": 3},
+    }
+    written, checked = dict(values), dict(values)
+    exec(source, written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert checked["y"] == written["y"] and type(checked["y"]) is str
+    # No f-string field with a quote or a backslash is left for Codon.
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.FormattedValue):
+            assert not any(c in ast.unparse(node.value) for c in '"\\')
+    # The f-string that is not rewritten is still refused where it cannot be
+    # requoted.
+    assert [
+        n for n, _ in typing_rewrite_refusals(source + 'w = f"{d["it\'s"]}"\n')
+    ] == [3]
 
 
 @_PY312

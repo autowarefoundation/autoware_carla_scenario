@@ -1579,7 +1579,7 @@ cannot express is refused at its line, with what to write instead.
 | `class MyError(Exception): ...` | the same with `pass` for `...` | |
 | `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
 | `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`: write the f-string, which is rewritten), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
-| `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r` and `!a`); the result is a `str`, as before. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below) |
+| `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r` and `!a`); the result is a `str`, as before. In an f-string rewritten this way (or for a literal brace or `!a`), a field whose expression holds a double quote or a backslash is a call too, `str(e)`, `repr(e)` or its `__format__` (#704), where it was refused. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below) |
 | An f-string (or `"{}".format(...)`, `{x=}`) in the body of a lambda that reads a name the lambda does not bind: `lambda v: f"{v}{p}"`, `sorted(xs, key=lambda e: f"{e}{p}")`, `lambda v, lab=cfg.name: f"{v}{lab}"` (#470) | `str()` parts joined by `+`: `str(v) + str(p)`; `repr(p)` for `!r`, `(p).__format__(spec)` for a spec, `"p=" + repr(p)` for `{p=}`, `repr(p)` for `!a` (as for `ascii()`). Each value is evaluated once, in order, and the result is a `str`. Codon looks the names of an f-string up in the lambda's own scope ("name 'p' is not defined"); a `def` or a comprehension does not have that limit. An f-string of the lambda's own parameters is left as written | a brace or a nested f-string inside an expression (as above) |
 | `f"{x!a}"`, `f"{x!a:>6}"`, `f"{{{x!a}}}"`, `"{!a}".format(x)` (#701) | the same field with `!r`: `f"{x!r}"`, `f"{x!r:>6}"`; a field rewritten to a call (a spec Codon does not parse, an expression holding a quote) is `repr(x)`, as `ascii(x)` is. Codon 0.19 has no `ascii()` ("name 'ascii' is not defined"); `repr` gives the same `str` type, and only the checked copy changes, so the escaping of non-ASCII characters is unchanged at run time | |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
@@ -1657,6 +1657,15 @@ Notes:
   another of its fields is rewritten (#696).
 - Codon has no `ascii()`, so the `!a` conversion of a field is checked as
   `!r` (#701): the type is the same `str`; only the checked copy changes.
+- An f-string that is rewritten (a literal brace, a spec Codon does not
+  parse, `!a`) is written back as double-quoted strings, so a field whose
+  expression holds a double quote or a backslash (`d["it's"]`,
+  `d['a\\b']`) cannot stay a field. It becomes a call instead, whatever its
+  conversion (#704): `str(e)` with no conversion or `!s`, `repr(e)` with `!r`
+  or `!a`, and with a spec that call's `__format__`, or `(e).__format__(spec)`
+  with no conversion: `f"{x:+d} {d['a\\b']!r:>9} {{"` is
+  `((x).__format__("+d") + " " + repr(d['a\\b']).__format__(">9") + " " + "{")`.
+  The value and its `str` type are the same as Python's.
 - **F-string format specs (#434).** Codon's parser takes a fill and align,
   `#`, `0`, a width, `,` / `_`, a precision and a type (`f"{x:>8.3f}"`,
   `f"{n:#010x}"`, `f"{n:,}"`, `f"{x!r:^10}"`, `f"{x=:.2f}"`) as they are. It
@@ -1837,7 +1846,7 @@ column kept:
 
 | Python 3.12+ | What the check makes of it | Refused (with a hint, at its line) |
 |---|---|---|
-| A string in an f-string's field quoted with the f-string's own quote (PEP 701): `f"{cfg.name.replace("_", "-")} {d["k"]}"` | the string quoted with the other quote, `f"{cfg.name.replace('_', '-')} {d['k']}"` (Codon's parser, as Python's before 3.12, ends the f-string at its own quote, and reported `unexpected dedent` a line later) | a string that holds the other quote too (`f"{d["it's"]}"`), and a backslash anywhere in a field (`f"{"\n".join(names)}"`), which Codon's parser refuses whatever the quotes: bind the value to a local first. A nested f-string is refused as before ("A brace or a nested f-string") |
+| A string in an f-string's field quoted with the f-string's own quote (PEP 701): `f"{cfg.name.replace("_", "-")} {d["k"]}"` | the string quoted with the other quote, `f"{cfg.name.replace('_', '-')} {d['k']}"` (Codon's parser, as Python's before 3.12, ends the f-string at its own quote, and reported `unexpected dedent` a line later) | a string that holds the other quote too (`f"{d["it's"]}"`), and a backslash anywhere in a field (`f"{"\n".join(names)}"`), which Codon's parser refuses whatever the quotes: bind the value to a local first. In an f-string that is rewritten anyway (a literal brace, a spec Codon does not parse, `!a`), such a field becomes a call and is not refused (#704). A nested f-string is refused as before ("A brace or a nested f-string") |
 | `type LaneIds = list[int]` (PEP 695), at any level | `LaneIds = list[int]`, as `X: TypeAlias = T` is | a generic alias, `type Pair[T] = tuple[T, T]`: Codon has no generic alias; write the type out, or make the alias concrete |
 | Type parameters of a function, a method or a class (PEP 695): `def first[T](xs: list[T]) -> T`, `class Box[K, V]:` | kept: they are Codon's own generics syntax. A bound, constraints or a default (`[B: Base]`, `[N: (int, float)]`, `[T = int]`) are dropped, as a `TypeVar`'s are, since Codon reads `[T: int]` as a static integer parameter | `*Ts` and `**P` (PEP 646, PEP 612): Codon has no variadic generics |
 
