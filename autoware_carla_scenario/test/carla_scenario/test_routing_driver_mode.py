@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -873,6 +874,26 @@ def test_a_stepped_walker_gives_way_to_a_walker_in_its_way() -> None:
     _walker_ai.release(70)
 
 
+def test_a_vehicle_in_the_next_lane_is_not_in_the_way_ahead() -> None:
+    """Outlines, not circles, ahead too (first_box_in_way): a car 3.5 m to
+    the side of a lane-wide rectangle ahead is not in it, as first_in_way's
+    circles have it; one ahead in it is."""
+    from autoware_carla_scenario.utils import clearance
+
+    world = _SnapshotWorld(
+        {
+            1: ("vehicle.mini", 4.0, 3.5, 0.0),
+            2: ("vehicle.mini", 9.0, 0.5, 0.0),
+        }
+    )
+    world.id = 9812  # type: ignore[misc]
+    found = clearance.first_box_in_way(world, 99, 0.0, 0.0, 0.0, "vehicle", 6.0, 1.3)
+    assert found is None
+    assert clearance.first_in_way(world, 99, 0.0, 0.0, 0.0, "vehicle", 6.0, 1.3)
+    found = clearance.first_box_in_way(world, 99, 0.0, 0.0, 0.0, "vehicle", 8.0, 1.3)
+    assert found is not None and found.id == 2
+
+
 def test_a_walker_off_its_controller_has_its_physics_and_collisions_back() -> None:
     """Its controller's start set both off; stepping without collisions drops
     the walker through the ground."""
@@ -1007,12 +1028,12 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
     from autoware_carla_scenario.conditions import PlaceClearCondition
     from autoware_carla_scenario.conditions import place_clear as place_module
     from autoware_carla_scenario.coordinate import Lanelet2Pose
-    from autoware_carla_scenario.coordinate import transform as transform_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
 
     monkeypatch.setattr(
-        transform_module,
-        "to_carla_world",
-        lambda pose: SimpleNamespace(x=10.0, y=2.0, z=0.0, yaw=90.0),
+        resolve_module,
+        "resolve_position",
+        lambda position, reference=None: (10.0, 2.0, 0.0, 90.0),
     )
     seen: list[tuple[float, ...]] = []
     occupant = {"id": 7}
@@ -1035,6 +1056,136 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
         PlaceClearCondition(Lanelet2Pose(3, 5.0), 0.0, 2.0, label="p")
 
 
+def test_a_place_clear_condition_on_a_route_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose is placed (on the scenario's route) when the place is
+    first looked at, and once; one that cannot be placed holds nothing."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
+    from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+    placed: list[Any] = []
+
+    def resolve(position: Any, reference: Any = None) -> tuple[float, ...]:
+        placed.append(position)
+        if position.ds < 0.0:
+            raise ValueError("before the route's start")
+        return (4.0, -3.0, 0.0, 180.0)
+
+    monkeypatch.setattr(resolve_module, "resolve_position", resolve)
+    seen: list[tuple[float, float, float]] = []
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append((x, y, yaw))
+        return -1
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    pose = RouteLanePose(ds=5.0, anchor="start")
+    condition = PlaceClearCondition(pose, 4.0, 2.0, label="p")
+    assert condition.check(None, 0.0) is not None  # type: ignore[arg-type]
+    assert condition.check(None, 0.1) is not None  # type: ignore[arg-type]
+    assert placed == [pose]
+    assert seen == [(4.0, -3.0, 180.0)] * 2
+    details = condition.get_details()
+    assert (details["position"], details["x"], details["y"]) == (
+        "RouteLanePose",
+        4.0,
+        -3.0,
+    )
+    nowhere = PlaceClearCondition(
+        RouteLanePose(ds=-5.0, anchor="start"), 4.0, 2.0, label="q"
+    )
+    assert nowhere.check(None, 0.0) is None  # type: ignore[arg-type]
+
+
+def test_a_place_with_no_heading_faces_along_its_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose without a yaw: the rectangle lies along the lane it is on."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.route import active as active_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
+    from autoware_carla_scenario.trajectory.model import RouteOppositePose
+
+    monkeypatch.setattr(
+        resolve_module,
+        "resolve_position",
+        lambda position, reference=None: (
+            (4.0, -3.0, 0.0, -90.0)
+            if isinstance(position, Lanelet2Pose)
+            else (4.0, -3.0, 0.0, None)
+        ),
+    )
+    monkeypatch.setattr(
+        active_module, "lane_place", lambda position: Lanelet2Pose(7, 2.0)
+    )
+    seen: list[float] = []
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append(yaw)
+        return -1
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    pose = RouteOppositePose(ds=5.0, lane=1, anchor="start")
+    PlaceClearCondition(pose, 4.0, 2.0, label="p").check(None, 0.0)  # type: ignore[arg-type]
+    assert seen == [-90.0]
+
+
+def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose on a lane shifts as the Lanelet2 place the route gives it,
+    and with no yaw of its own faces along that lane."""
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+    pose = RouteCrossingPose(approach="same", turn="right", distance=-5.0)
+    monkeypatch.setattr(
+        spawn_module,
+        "lane_place",
+        lambda position: Lanelet2Pose(3, 10.0) if position == pose else None,
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "resolve_position",
+        lambda position, reference: (
+            (float(position.s), 0.0, 0.0, 90.0)
+            if isinstance(position, Lanelet2Pose)
+            else (10.0, 0.0, 0.0, None)
+        ),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_along_lane",
+        lambda lane, d, lanes=None: Lanelet2Pose(lane.lanelet_id, lane.s + d),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: 5 if x < 14.0 else -1,
+    )
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    action = SpawnAction("npc1", position=pose, shift_max=30.0)
+    assert action._place(None, 1, 2.0, 1.0)[0] == 14.0  # type: ignore[arg-type,index]
+    # Its own place, clear, faces along its lane: 90 deg here.
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: -1,
+    )
+    assert action._place(None, 1, 2.0, 1.0) == (10.0, 0.0, 0.0, 90.0)  # type: ignore[arg-type]
+
+
 def test_the_place_clear_card_builds_its_condition() -> None:
     """The card's lanelet pose and footprint reach the condition."""
     from autoware_carla_scenario.authoring import _builders_generated as builders
@@ -1050,6 +1201,7 @@ def test_the_place_clear_card_builds_its_condition() -> None:
             "length": 0.5,
             "width": 0.4,
             "margin": 0.3,
+            "route_pose": None,
         },
     )
     built = builders.build_place_clear_condition(compiled, [], None)  # type: ignore[arg-type]
@@ -1057,6 +1209,17 @@ def test_the_place_clear_card_builds_its_condition() -> None:
     details = built.get_details()
     assert (details["lanelet_id"], details["s"], details["t"]) == (12, 3.0, -1.5)
     assert (details["length"], details["width"], details["margin"]) == (0.5, 0.4, 0.3)
+    routed = SimpleNamespace(
+        label="q",
+        params={
+            **compiled.params,
+            "route_pose": [
+                {"kind": "crossing", "junction": 0, "approach": "same", "turn": "right"}
+            ],
+        },
+    )
+    on_route = builders.build_place_clear_condition(routed, [], None)  # type: ignore[arg-type]
+    assert on_route.get_details()["position"] == "RouteCrossingPose"
 
 
 def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(
@@ -1371,3 +1534,271 @@ def test_a_stepped_walker_waits_for_a_vehicle_standing_in_its_way_only(
     walker.get_world = lambda: coming  # type: ignore[assignment]
     assert not _walker_ai.give_way(walker, path_of(20.0), 0.0, here)
     _walker_ai.release(70)
+
+
+def test_a_vehicle_brought_in_before_the_clock_starts_keeps_its_speed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The init phase holds every vehicle still: one a spawn card brings in
+    then starts the run at the speed it entered at, a walker as it walks."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions import _trajectory_run
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.entity import vehicle_entity
+
+    monkeypatch.setattr(
+        _trajectory_run, "_is_walker", lambda actor: actor.type_id.startswith("walker.")
+    )
+    car = SimpleNamespace(id=41, type_id="vehicle.a.b")
+    walker = SimpleNamespace(id=42, type_id="walker.pedestrian.0001")
+    vehicle_entity._clear_entry_speeds()
+    try:
+        vehicle_entity._set_warmup_done(False)
+        spawn_module._keep_entry_speed(car, 10.1)
+        spawn_module._keep_entry_speed(walker, 1.3)
+        spawn_module._keep_entry_speed(
+            SimpleNamespace(id=43, type_id="vehicle.c.d"), 0.0
+        )
+        assert vehicle_entity.entry_speeds() == {41: 10.1}
+        # On the clock it moves at once: nothing to hold for it.
+        vehicle_entity._set_warmup_done(True)
+        spawn_module._keep_entry_speed(
+            SimpleNamespace(id=44, type_id="vehicle.c.d"), 8.0
+        )
+        assert vehicle_entity.entry_speeds() == {41: 10.1}
+    finally:
+        vehicle_entity._set_warmup_done(False)
+        vehicle_entity._clear_entry_speeds()
+    assert vehicle_entity.entry_speeds() == {}
+
+
+@pytest.mark.parametrize(("stop_at_goal", "told"), [(True, 0.0), (False, 36.0)])
+def test_a_driven_vehicle_at_its_route_end_stops_if_asked(
+    vehicle: _Vehicle, stop_at_goal: bool, told: float
+) -> None:
+    """At its route's end, a driver-mode vehicle given stop_at_goal is told no
+    speed -- it stops and stays (a road user replayed from a recording waits
+    where it was last seen going); without, its driver drives on at its own."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions._route_pacing import RoutePacer
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    action = RoutingAction(
+        "npc1", Lanelet2Pose(3, 7.0), speed=10.0, stop_at_goal=stop_at_goal
+    )
+    action._path = ResolvedTrajectory([0.0, 20.0], [0.0, 0.0], [0.0, 0.0], [None, None])
+    action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    at_end = SimpleNamespace(
+        get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=20.0, y=0.0)),
+        get_speed_limit=lambda: 50.0,
+    )
+    action._pace_vehicle(_WORLD, vehicle, at_end)  # type: ignore[arg-type]
+    assert vehicle.speeds[-1] == pytest.approx(told)
+
+
+def test_a_vehicle_stopping_at_its_goal_is_driven_there_exactly(
+    vehicle: _Vehicle,
+) -> None:
+    """Near its goal (within _FINISH_M), a stop_at_goal vehicle hands the rest
+    of its route as written -- its last point the exact goal, off the lane's
+    middle as it may be -- to its backend to drive and stop on (finish_at)."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions import routing as routing_module
+    from autoware_carla_scenario.actions._route_pacing import RoutePacer
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    asked: list = []
+
+    def finish_at(world: object, points: list) -> bool:
+        asked.append(points)
+        return True
+
+    vehicle.finish_at = finish_at  # type: ignore[attr-defined]
+    action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0, stop_at_goal=True)
+    action._path = ResolvedTrajectory([0.0, 40.0], [0.0, 0.0], [0.0, 0.0], [None, None])
+    # As written: it ends 1 m off the lane's middle.
+    action._resolved = ResolvedTrajectory(
+        [0.0, 30.0, 40.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [None, None, None]
+    )
+    action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+
+    def at(x: float):
+        return SimpleNamespace(
+            get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=x, y=0.0)),
+            get_speed_limit=lambda: 50.0,
+        )
+
+    action._pace_vehicle(_WORLD, vehicle, at(10.0))  # type: ignore[arg-type]
+    assert asked == []  # 30 m short: still its driver's
+    action._pace_vehicle(_WORLD, vehicle, at(40.0 - routing_module._FINISH_M + 1.0))  # type: ignore[arg-type]
+    (points,) = asked
+    assert (points[-1].x, points[-1].y) == pytest.approx((40.0, 1.0), abs=0.05)
+    action._pace_vehicle(_WORLD, vehicle, at(38.0))  # type: ignore[arg-type]
+    assert len(asked) == 1  # asked once
+
+
+def test_a_walker_waits_for_a_vehicle_standing_in_its_way() -> None:
+    """A car stopped 1 m ahead of a cyclist, in its line, is in its way; one in
+    the next lane, or behind it, is not."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions._trajectory_run import _vehicle_before_walker
+
+    def walker_on(world):
+        return SimpleNamespace(
+            id=99,
+            get_transform=lambda: SimpleNamespace(
+                location=SimpleNamespace(x=0.0, y=0.0, z=0.0),
+                rotation=SimpleNamespace(yaw=0.0),
+            ),
+            get_velocity=lambda: SimpleNamespace(x=2.0, y=0.0, z=0.0),
+            bounding_box=SimpleNamespace(extent=SimpleNamespace(x=0.9, y=0.3, z=0.9)),
+            get_world=lambda: world,
+        )
+
+    ahead = _SnapshotWorld({1: ("vehicle.mini", 3.5, 0.2, 0.0)})
+    ahead.id = 9813  # type: ignore[misc]
+    assert _vehicle_before_walker(walker_on(ahead))  # type: ignore[arg-type]
+    beside = _SnapshotWorld({1: ("vehicle.mini", 3.5, 3.0, 0.0)})
+    beside.id = 9814  # type: ignore[misc]
+    assert not _vehicle_before_walker(walker_on(beside))  # type: ignore[arg-type]
+    behind = _SnapshotWorld({1: ("vehicle.mini", -4.0, 0.0, 0.0)})
+    behind.id = 9815  # type: ignore[misc]
+    assert not _vehicle_before_walker(walker_on(behind))  # type: ignore[arg-type]
+
+
+def test_a_vehicle_stopping_at_its_goal_is_driven_from_before_its_last_lane_change() -> (
+    None
+):
+    """A route crossing to the lane beside 30 m before its end is driven from
+    5 m before the crossing; one with no crossing, from _FINISH_M."""
+    from autoware_carla_scenario.actions import routing as routing_module
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    straight = ResolvedTrajectory(
+        [0.0, 20.0, 40.0, 60.0], [0.0] * 4, [0.0] * 4, [None] * 4
+    )
+    assert routing_module._finish_from(straight) == routing_module._FINISH_M
+    across = ResolvedTrajectory(
+        [0.0, 20.0, 30.0, 60.0], [0.0, 0.0, 3.5, 3.5], [0.0] * 4, [None] * 4
+    )
+    crossing_at = across.vertex_distance(1)
+    assert routing_module._finish_from(across) == pytest.approx(
+        across.length - crossing_at + 5.0
+    )
+
+
+def test_a_spawn_at_speed_keeps_its_place_behind_one_driving_away(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entering at 6.2 m/s 11 m behind vehicle_117 doing 7.6 m/s the same way,
+    vehicle_135 needs no room to stop short of it: it keeps its place, not one
+    18 m on past it.  Behind one standing there it keeps its place too, and
+    enters slower; only a place it would stand on is given up."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+    monkeypatch.setattr(
+        spawn_module,
+        "resolve_position",
+        lambda position, reference: (float(position.s), 0.0, 0.0, 0.0),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_along_lane",
+        lambda pose, d, lanes=None: Lanelet2Pose(pose.lanelet_id, pose.s + d),
+    )
+    ahead_x = 11.0
+    # Taken while the room looked ahead reaches the one ahead (half lengths
+    # 2.3 m each): the room needed is the question.
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+            5 if x <= ahead_x <= x + hl + ahead + 2.3 else -1
+        ),
+    )
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    speed = {"x": 7.6}
+    world = SimpleNamespace(
+        get_actor=lambda actor_id: SimpleNamespace(
+            get_velocity=lambda: SimpleNamespace(x=speed["x"], y=0.0)
+        )
+    )
+
+    action = SpawnAction("npc1", position=Lanelet2Pose(3, 0.0), shift_max=30.0)
+
+    def place() -> Any:
+        action._ahead = 6.16 * 6.16 / 8.0 + 2.0
+        action._speed = 6.16
+        return action._place(world, 1, 2.3, 1.0)  # type: ignore[arg-type]
+
+    assert place()[0] == 0.0 and action._speed == pytest.approx(6.16)
+    speed["x"] = 0.0
+    assert place()[0] == 0.0 and action._speed < 6.16
+    ahead_x = 3.0  # on the place itself: moved on past it
+    assert place()[0] > ahead_x
+
+
+def test_a_vehicle_stopping_at_its_goal_keeps_to_its_lanes_round_a_corner(
+    vehicle: _Vehicle,
+) -> None:
+    """Its waypoints joined straight cut the corner its lanes turn (vehicle_41
+    onto the kerb): the points driven follow the lanes, moved over to the
+    recording's end only bit by bit, and the last is that end."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.actions._route_pacing import RoutePacer
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    asked: list = []
+
+    def finish_at(world: Any, points: Any) -> bool:
+        asked.append(points)
+        return True
+
+    vehicle.finish_at = finish_at  # type: ignore[attr-defined]
+    action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0, stop_at_goal=True)
+    # Lanes: 10 m east, then 10 m south (CARLA's y down).
+    action._path = ResolvedTrajectory(
+        [0.0, 10.0, 10.0], [0.0, 0.0, 10.0], [0.0] * 3, [None] * 3
+    )
+    # As written: straight across the corner, ending 0.5 m east of the lane.
+    action._resolved = ResolvedTrajectory(
+        [0.0, 10.5], [0.0, 10.0], [0.0, 0.0], [None, None]
+    )
+    action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    here = SimpleNamespace(x=0.0, y=0.0)
+    action._finish_exactly(_WORLD, vehicle, here)  # type: ignore[arg-type]
+    (points,) = asked
+    assert (points[-1].x, points[-1].y) == pytest.approx((10.5, 10.0))
+    # On the lanes (moved over at most the 0.5 m it ends off them), not
+    # across the corner.
+    lanes = action._path
+    for point in points[:-1]:
+        on = lanes.at_distance(lanes.project(point.x, point.y))
+        assert math.hypot(point.x - on.x, point.y - on.y) <= 0.5 + 1e-6
+    assert any(p.x > 9.5 and p.y < 2.0 for p in points)  # round the corner
+
+
+def test_a_vehicle_stopping_at_its_goal_moves_over_where_its_waypoints_do() -> None:
+    """Waypoints 2 m apart, moved over to the next lane early (vehicle_96
+    passing vehicle_88), are driven as written, not along the lane's middle."""
+    from autoware_carla_scenario.actions import routing as routing_module
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    xs = [float(x) for x in range(0, 21, 2)]
+    ys = [0.0, 1.0, 2.5, 3.5] + [3.5] * (len(xs) - 4)
+    written = ResolvedTrajectory(xs, ys, [0.0] * len(xs), [None] * len(xs))
+    lanes = ResolvedTrajectory([0.0, 20.0], [0.0, 0.0], [0.0, 0.0], [None, None])
+    points = routing_module._finish_points(written, lanes, 0.0, 0.0)
+    for x, y, _z in points:
+        on = written.at_distance(written.project(x, y))
+        assert math.hypot(x - on.x, y - on.y) < 1e-6
+    assert any(y > 3.0 and x < 8.0 for x, y, _z in points)  # over early

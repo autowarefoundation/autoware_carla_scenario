@@ -181,7 +181,8 @@ one to four consecutive lanelets carrying `turn_direction`:
 | `traffic_light` | `any` / `yes` / `no` | A traffic-light regulatory element on one of its lanelets or on the lanelet entering it. |
 | `crossing_from_left` / `_right` / `_opposite` | `any` / `yes` / `no` | Whether a lanelet of the same junction, entering it **from that approach, conflicts** with the ego's way (see *Junctions* below). |
 | `crosswalk_entry` / `crosswalk_exit` | `any` / `yes` / `no` | Whether a crosswalk crosses the ego's path on the way in / out (see *Crosswalks* below). |
-| `paths` | list of `{approach, turn}` (default none) | Other paths through the junction it must have: a member entering from `approach` (`same`, `left`, `right`, `opposite`) whose path turns `turn` (`left`, `right`, `straight`). It need not conflict with the ego's way. What a `crossing` pose with that approach and turn needs (see *Junctions* below). |
+| `length` | `{min, max}` (m) | The length of the ego's way through the junction (its junction lanelets' centrelines); open by default. |
+| `paths` | list of `{approach, turn, before, after, path}` (default none) | Other paths through the junction it must have: a member entering from `approach` (`same`, `left`, `right`, `opposite`) whose path turns `turn` (`left`, `right`, `straight`). It need not conflict with the ego's way. `before` / `after` (ranges, m, open by default) bound the road the path runs on before the junction and after it (see *Junctions* below). What a `crossing` pose with that approach and turn needs. With `path` (from 1) the junction has at least that many such paths, and `before` / `after` bound the `path`-th from the left: what a crossing pose naming that `path` needs. |
 
 Unknown keys are refused (`extra="forbid"`), so a typo is an error, not a
 silently ignored constraint. A junction segment does not take lane keys and
@@ -199,7 +200,7 @@ their defaults. At least two vertices.
 |--------|----------------|--------------|
 | `lane` | `ds` (0), `offset` (0), `d_lane` (0), `yaw` (null), `anchor` (null) | `RouteLanePose` |
 | `opposite` | `ds` (0), `lane` (1), `offset` (0), `yaw` (null), `anchor` (null) | `RouteOppositePose` |
-| `crossing` | `junction` (0), `approach` (`left`), `distance` (0), `turn` (null), `offset` (0), `yaw` (null) | `RouteCrossingPose` |
+| `crossing` | `junction` (0), `approach` (`left`), `distance` (0), `turn` (null), `offset` (0), `yaw` (null), `d_lane` (0), `path` (null) | `RouteCrossingPose` |
 | `crosswalk` | `junction` (0), `leg` (`entry`), `side` (`right`), `along` (0), `yaw` (null) | `RouteCrosswalkPose` |
 | `roadside` | `ds` (0), `side` (`left`), `kerb_distance` (0.5), `yaw` (null), `anchor` (null) | `RouteRoadsidePose` |
 
@@ -224,8 +225,13 @@ from 0.
 * **`crossing`** -- a lanelet of junction `junction` entering from `approach`
   (`same`, `left`, `right` or `opposite`, seen from the ego; `same` is the
   ego's own approach: its lane turning another way, or a lane beside it),
-  whose path through the junction turns `turn` if given; of several, one whose path conflicts with
-  the ego's way wins, then the lowest id. `distance` is metres along that path
+  whose path through the junction turns `turn` if given, `d_lane` lanes
+  across from that path's own lane (positive to its left: another lane of
+  the road it is on); of several, one whose path conflicts with
+  the ego's way wins, then the lowest id -- or, given `path` (from 1), that
+  one of them counted from the left as they enter the junction (by where
+  their first junction lanelets start, across the way they come in): two
+  lanes turning the same way, say. `distance` is metres along that path
   from where it enters the junction (its first junction lanelet's start):
   negative is back on its approach road (straightest predecessors), positive
   through the junction and beyond.
@@ -284,20 +290,51 @@ assertion, inside `all`/`any`/`not`, and as a **waypoint condition**
 (`advance_conditions`) -- a vertex departs when the ego has progressed to the
 recorded point.
 
+### Traffic lights: the `traffic_signal` card on a route junction
+
+A **Set Traffic Signal** card with `target: route` sets the lights of a path
+through a junction of the route, not lights named by their Lanelet2 ids: the
+paths through junction `route_junction` (from 0) that enter it from
+`route_approach` (`same` -- the ego's own approach --, `left`, `right`,
+`opposite`) and turn `route_turn` (`any`, `left`, `right`, `straight`). Their
+lights are the traffic light regulatory elements on each such path's first
+junction lanelet and on the lanelet entering it (for `same`, on the ego's own
+way through the junction and the lanelet it enters on too, when it turns
+so), found on the map the run is on when the card fires. A junction the route
+search does not have is a validation error; a path with no light there is
+said and changes nothing. `freeze` (default on) keeps CARLA's own cycle off
+those lights.
+
+```yaml
+- id: ego_light_red        # no trigger: on the first tick
+  type: traffic_signal
+  params: {state: Red, target: route, route_junction: 0, route_approach: same,
+           route_turn: any, freeze: true}
+```
+
 ### Bringing an entity in: the `spawn` card
 
 An entity spawned `hidden` is brought into the scene by a **Spawn** card
 (`SpawnAction`, the counterpart of `despawn`; `appear_on_start` until 1.0):
-set on its place (`lanelet_id`, `s`, `t`, `heading`; none: where it was
-declared to spawn), physics on, facing its heading, moving at `speed_ms`.
+set on its place (`lanelet_id`, `s`, `t`, `heading`; or `route_pose`, one
+route vertex as `route_vertices` takes them, placed on the scenario's route
+-- what keeps a logical scenario map-independent; none: where it was declared
+to spawn), physics on, facing its heading, moving at `speed_ms`.
 Its *Set Goal* card is triggered on the Spawn card completing (`action_state`
 `completeState`) and routes it from where it stands.  To wait until its place
-is clear, put a `place_clear` condition on the same place in the Spawn card's
+is clear, put a `place_clear` condition on the same place (`route_pose` too)
+in the Spawn card's
 trigger -- with a give-up, e.g.
 `all(<progress>, any(place_clear, persistent(sticky(<progress>), 20)))`; with
 `shift_max` it then takes the nearest clear place that far on along its lane
-if its own is still taken.  An entity a Spawn card brings in that is not
+if its own is still taken (a route pose shifts when it is on a lane --
+`lane`, `opposite`, `crossing` -- and counted from an anchor).  An entity a Spawn card brings in that is not
 spawned hidden draws a warning (it would stand at its spawn until then).
+To bring one in when the ego comes near its place, whatever its progress,
+trigger the Spawn card on a `distance` condition (*Distance to a place*)
+from the ego to the same `route_pose`, e.g. `distance < 60`; a `despawn`
+card on `entity_distance` from the ego takes it out again once the ego is
+far enough away.
 
 ### Entities in a logical scenario
 
@@ -310,6 +347,14 @@ spawned hidden draws a warning (it would stand at its spawn until then).
   one map only.
 * A route search and a lanelet constraint search cannot both drive the
   expansion (validation error).
+* A vehicle other than the ego with `vehicle_type: auto` and a `size`
+  (`{length, width}`, m -- a recorded box, say) is the vehicle of the running
+  CARLA whose bounding box is nearest that size, chosen when it is spawned:
+  each candidate (a car, van, truck or bus; no emergency vehicle) is spawned
+  once out of sight to read its box, so the choice follows the server's
+  version and assets rather than a table written for one (`entity.fit`).
+  With none fitting, it is the kind's default. `auto` on a pedestrian, or
+  without a size, is a validation error.
 
 ## Matching semantics
 
@@ -370,9 +415,19 @@ its first lanelet's heading where it enters:
 `crossing_from_X: yes` needs a member from approach X with a lanelet that
 **directly conflicts** with one of the ego's junction lanelets (`X` is never
 `same`). A `paths` entry `{approach: A, turn: T}` needs a member from approach
-A whose path turns T, conflicting or not. A `crossing` *pose* takes any member
+A whose path turns T, conflicting or not; with `path: K`, at least K of them,
+and its `before` / `after` then bound the K-th from the left. Its `before` and `after` bound the
+**reach** of the one a crossing pose takes (conflicting first, then the
+lowest id): `before` is the road before its first junction lanelet, walked
+back through the straightest predecessor to the junction before it (or a
+dead end); `after` the road after its junction lanelets, walked on through
+the straightest successor to the next junction (or a dead end); each walked
+no further than **500 m**. A crossing pose at `distance` -D (before the
+junction) or T + D (past its junction lanelets, T long) lies D m into that
+road. A `crossing` *pose* takes any member
 from that approach, of that turn if it names one (conflicting ones first,
-then the lowest id).
+then the lowest id), or the `path`-th of them from the left; a match with
+fewer such members leaves a pose naming a later one unresolved.
 
 ### Crosswalks
 

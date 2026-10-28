@@ -32,11 +32,18 @@ from ..trajectory.relative_lane import (
     shift_lanes,
 )
 from .frame import RouteFrame
+from .geometry import paths_from_left
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
 
-__all__ = ["RoutePose", "resolve_route_pose", "route_base_s"]
+__all__ = [
+    "RoutePose",
+    "junction_traffic_lights",
+    "paths_from_left",
+    "resolve_route_pose",
+    "route_base_s",
+]
 
 RoutePose = Union[
     RouteLanePose,
@@ -184,14 +191,71 @@ def _crossing(pose: RouteCrossingPose, frame: RouteFrame) -> Lanelet2Pose:
             f"junction {pose.junction} of the route has no lanelet entering it "
             f"from the {pose.approach}{turning}"
         )
-    # Traffic that actually crosses the ego's way first, then by id.
-    chosen = min(members, key=lambda m: (not m.conflicts, int(m.lanelet.id)))
+    if pose.path is not None:
+        ordered = paths_from_left(members)
+        if pose.path > len(ordered):
+            raise ValueError(
+                f"junction {pose.junction} of the route has {len(ordered)} "
+                f"path(s) from the {pose.approach} turning {pose.turn}; there "
+                f"is no path {pose.path}"
+            )
+        chosen = ordered[pose.path - 1]
+    else:
+        # Traffic that actually crosses the ego's way first, then by id.
+        chosen = min(members, key=lambda m: (not m.conflicts, int(m.lanelet.id)))
     lanelet_id, along = advance_along_lane(
         frame.map, frame.graph, int(chosen.lanelet.id), 0.0, float(pose.distance)
     )
+    if pose.d_lane:
+        lanelet_id, along = shift_lanes(
+            frame.map, frame.graph, lanelet_id, along, pose.d_lane
+        )
     return Lanelet2Pose(
         lanelet_id=lanelet_id, s=along, t=float(pose.offset), heading=_yaw(pose.yaw)
     )
+
+
+def junction_traffic_lights(
+    frame: RouteFrame, junction: int, approach: str, turn: Optional[str]
+) -> list[int]:
+    """The traffic lights (regulatory element ids) of the paths through
+    junction *junction* of the route that enter it from *approach* and turn
+    *turn* (``None``: any way) -- on their first junction lanelet and on the
+    lanelet entering it; for ``same``, the ego's own way too when it turns
+    so.  In order found, each once.
+
+    Raises:
+        ValueError: If the route has no such junction.
+    """
+    from .geometry import MapFeatures  # noqa: PLC0415
+    from .search import junction_turn  # noqa: PLC0415
+
+    way, entry, _exit = frame.junction_way(junction)
+    features = frame.features
+    lanelets: list[ConstLanelet] = []
+    if approach == "same" and (turn is None or junction_turn(features, way) == turn):
+        for own in way:
+            lanelets.append(own)
+        if entry is not None:
+            entering: ConstLanelet = entry
+            lanelets.append(entering)
+    for member in features.junction_members(way):
+        if member.approach != approach:
+            continue
+        if turn is not None and member.turn != turn:
+            continue
+        lanelets.append(member.lanelet)
+        before = features.straightest_previous(member.lanelet)
+        if before is not None:
+            previous: ConstLanelet = before
+            lanelets.append(previous)
+    ids: list[int] = []
+    for lanelet in lanelets:
+        for element in lanelet.regulatoryElements:
+            key = int(element.id)
+            if MapFeatures.is_traffic_light(element) and key not in ids:
+                ids.append(key)
+    return ids
 
 
 def _crosswalk(pose: RouteCrosswalkPose, frame: RouteFrame) -> MapPose:

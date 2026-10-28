@@ -508,7 +508,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "CarlaDriverEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
-        "config debug_markers debug_state destroy drive_count follow_route forget_lane_change "
+        "config debug_markers debug_state destroy drive_count finish_at follow_route forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
         "on_scenario_start on_tick release_from_traffic require_microscopic "
         "requires_goal resume_traffic route_to set_client set_desired_speed "

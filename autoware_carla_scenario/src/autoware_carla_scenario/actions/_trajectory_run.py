@@ -1166,6 +1166,87 @@ def _walker_in_way(
     return found is not None
 
 
+#: A walker walking at least this fast (m/s) across a vehicle's way, away from
+#: it, is leaving the way.
+_LEAVING_MPS = 0.3
+
+
+def _in_way_ahead(
+    world: "carla.World",
+    own: int,
+    x: float,
+    y: float,
+    heading: float,
+    kind: str,
+    distance: float,
+    half_width: float,
+    behind: tuple[float, float, float, float],
+    body_half_width: float = 0.0,
+) -> int:
+    """The *kind* actor other than *own* standing within *distance* ahead of
+    ``(x, y)`` facing *heading* (deg, CARLA), *half_width* across -- one piece
+    of a path looked along (traffic.final_approach) -- or ``-1``.  One behind
+    *behind* -- ``(x, y, heading_deg, back_m)``: the vehicle's own centre,
+    heading and how far behind its centre counts as behind it -- does not
+    count: a
+    path's first piece, from where the vehicle stands to the route's next
+    point, may run off sideways.  A walker walking away from the piece, off
+    the vehicle's own *body_half_width*, does not count either: it is leaving
+    the way (pedestrian_66, walking off the corner vehicle_56 turned round)."""
+    from ..utils.clearance import first_box_in_way  # noqa: PLC0415
+
+    try:
+        found = first_box_in_way(world, own, x, y, heading, kind, distance, half_width)
+    except (AttributeError, RuntimeError):
+        return -1
+    if found is None:
+        return -1
+    bx, by, bheading, rear = behind
+    yaw = math.radians(bheading)
+    if (found.x - bx) * math.cos(yaw) + (found.y - by) * math.sin(yaw) < -rear:
+        return -1
+    if kind == "walker" and abs(found.side) > body_half_width:
+        across = 0.0
+        try:
+            other = world.get_actor(int(found.id))
+            if other is not None:
+                velocity = other.get_velocity()
+                across = -float(velocity.x) * math.sin(math.radians(heading)) + float(
+                    velocity.y
+                ) * math.cos(math.radians(heading))
+        except (AttributeError, RuntimeError):
+            across = 0.0
+        if across * found.side > 0.0 and abs(across) >= _LEAVING_MPS:
+            return -1
+    return int(found.id)
+
+
+def _vehicle_before_walker(walker: "carla.Actor") -> bool:
+    """Whether a vehicle's outline stands within 1.5 m (and a second's walk)
+    ahead of *walker*, the way it faces, across its width and 0.2 m: one it
+    would walk (or ride) into."""
+    from ..utils.clearance import first_box_in_way  # noqa: PLC0415
+
+    try:
+        transform = walker.get_transform()
+        velocity = walker.get_velocity()
+        extent = walker.bounding_box.extent
+        reach = 1.5 + math.hypot(float(velocity.x), float(velocity.y)) + float(extent.x)
+        found = first_box_in_way(
+            walker.get_world(),
+            int(walker.id),
+            transform.location.x,
+            transform.location.y,
+            transform.rotation.yaw,
+            "vehicle",
+            reach,
+            float(extent.y) + 0.2,
+        )
+    except (AttributeError, RuntimeError):
+        return False
+    return found is not None
+
+
 def _vehicle_in_way(
     actor: "carla.Actor", transform: "carla.Transform", speed: float
 ) -> bool:

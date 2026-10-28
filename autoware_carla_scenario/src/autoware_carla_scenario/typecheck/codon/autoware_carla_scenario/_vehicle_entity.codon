@@ -140,6 +140,9 @@ class VehicleEntity:
     def follow_route(self, world: carla.World, stops: List[Lanelet2Pose]) -> None:
         raise NotImplementedError()
 
+    def finish_at(self, world: carla.World, points: List[carla.Location]) -> bool:
+        raise NotImplementedError()
+
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 

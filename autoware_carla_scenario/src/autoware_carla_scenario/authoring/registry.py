@@ -1327,7 +1327,7 @@ register_action_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
+                target="..trajectory.authoring:authored_place",
                 parts=(
                     BuiltPart(
                         args=(
@@ -1335,12 +1335,25 @@ register_action_spec(
                             ("s", "s"),
                             ("t", "t"),
                             ("heading", "heading"),
+                            ("route_vertex", "route_pose"),
                         ),
                     ),
                 ),
             ),
         ),
         fields=(
+            FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "Its place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet, s, t and heading."
+                ),
+            ),
             FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
@@ -2691,7 +2704,7 @@ register_action_spec(
                     "lane ds= offset= d_lane= yaw= anchor= | "
                     "opposite ds= lane= offset= yaw= anchor= | "
                     "crossing junction= approach=same|left|right|opposite distance= "
-                    "turn= offset= yaw= | "
+                    "turn= offset= yaw= d_lane= | "
                     "crosswalk junction= leg=entry|exit side=left|right along= "
                     "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
                     "ds counts from the anchor (start, end, segment:K:start|end, "
@@ -2711,6 +2724,17 @@ register_action_spec(
                     "reference, and after a waypoint condition once the next "
                     "time has passed. Empty: its driver's own speed (Driver), "
                     "the speed it has when the action starts (Follow, Position)."
+                ),
+            ),
+            FieldSpec(
+                name="stop_at_goal",
+                label="Stop at the goal",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "Driver mode, a vehicle: stop where the route ends and stay "
+                    "there, rather than drive on at its driver's own speed."
                 ),
             ),
             FieldSpec(
@@ -2802,6 +2826,9 @@ register_action_spec(
                 cases=(
                     ArgumentCase("all", constant="..actions:TrafficLightTarget.ALL"),
                     ArgumentCase("ids", field="lanelet2_traffic_light_ids"),
+                    ArgumentCase(
+                        "route", constant="..actions:TrafficLightTarget.ROUTE"
+                    ),
                 ),
             ),
         ),
@@ -2823,6 +2850,7 @@ register_action_spec(
                 options=(
                     SelectOption("all", "All traffic lights"),
                     SelectOption("ids", "Selected Lanelet2 IDs"),
+                    SelectOption("route", "A route junction's path"),
                 ),
             ),
             FieldSpec(
@@ -2841,8 +2869,50 @@ register_action_spec(
                 required=False,
                 help="Stop the TrafficManager from overriding the state.",
             ),
+            FieldSpec(
+                name="route_junction",
+                label="Route junction",
+                kind="int",
+                default=0,
+                required=False,
+                help=(
+                    "With Target 'A route junction's path': which junction of the "
+                    "route, from 0."
+                ),
+            ),
+            FieldSpec(
+                name="route_approach",
+                label="Approach",
+                kind="select",
+                default="same",
+                required=False,
+                options=(
+                    SelectOption("same", "The ego's own"),
+                    SelectOption("left", "From the left"),
+                    SelectOption("right", "From the right"),
+                    SelectOption("opposite", "Opposite"),
+                ),
+                help="Where the path enters the junction, seen from the ego.",
+            ),
+            FieldSpec(
+                name="route_turn",
+                label="Turn",
+                kind="select",
+                default="any",
+                required=False,
+                options=(
+                    SelectOption("any", "Any"),
+                    SelectOption("left", "Left"),
+                    SelectOption("right", "Right"),
+                    SelectOption("straight", "Straight"),
+                ),
+                help="Which way the path turns.",
+            ),
         ),
-        description="Set traffic lights by Lanelet2 regulatory element ID.",
+        description=(
+            "Set traffic lights by Lanelet2 regulatory element ID, or those of "
+            "a path through a junction of the scenario's route."
+        ),
     )
 )
 
@@ -3090,8 +3160,16 @@ register_condition_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
-                parts=(BuiltPart(args=(("lanelet_id", "lanelet_id"), ("s", "s"))),),
+                target="..trajectory.authoring:authored_place",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("route_vertex", "route_pose"),
+                        )
+                    ),
+                ),
             ),
         ),
         visual=ConditionVisual(
@@ -3107,12 +3185,26 @@ register_condition_spec(
         fields=(
             _entity_field("entity", "Subject"),
             FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "The place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet and s."
+                ),
+            ),
+            FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
+                required=False,
                 help=(
-                    "The lanelet holding the place to measure to.  Unlike "
+                    "The lanelet holding the place to measure to (with no route "
+                    "pose).  Unlike "
                     "Position (Lanelet2), which asks whether the entity is on "
                     "a lane, this measures to a point: say where along the "
                     "lanelet with s."
@@ -3973,7 +4065,7 @@ register_condition_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
+                target="..trajectory.authoring:authored_place",
                 parts=(
                     BuiltPart(
                         args=(
@@ -3981,6 +4073,7 @@ register_condition_spec(
                             ("s", "s"),
                             ("t", "t"),
                             ("heading", "heading"),
+                            ("route_vertex", "route_pose"),
                         )
                     ),
                 ),
@@ -3994,17 +4087,31 @@ register_condition_spec(
         ),
         fields=(
             FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "The place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet, s, t and heading."
+                ),
+            ),
+            FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
-                help="The lanelet holding the place's centre.",
+                required=False,
+                help="The lanelet holding the place's centre (with no route pose).",
             ),
             FieldSpec(
                 name="s",
                 label="s",
                 kind="number",
                 default=0.0,
+                required=False,
                 unit="m",
                 help="Along the lanelet from its start.",
             ),
