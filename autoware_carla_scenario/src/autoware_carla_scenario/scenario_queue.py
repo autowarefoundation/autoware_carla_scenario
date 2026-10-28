@@ -517,7 +517,20 @@ class ScenarioQueue:
         default) the call is effectively a no-op — it just records that the
         server was reused and returns immediately.  Only the queue that
         *owns* its server will stop it in :meth:`stop`.
+
+        If it fails (the runner cannot connect, the map name is unknown, the
+        Lanelet2 map does not load, Ctrl-C), it calls :meth:`stop` before the
+        error propagates: the server it owns is stopped and the Autoware
+        launcher closed, since a failed ``__enter__`` skips ``__exit__``.
         """
+        try:
+            self._start()
+        except BaseException:
+            self.stop()
+            raise
+
+    def _start(self) -> None:
+        """:meth:`start`, without the clean-up when it fails."""
         if self._autoware_launcher is not None:
             # First: a workspace that has to be built takes far longer than
             # CARLA to start, and one that cannot run a scenario at all is

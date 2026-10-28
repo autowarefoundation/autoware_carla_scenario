@@ -38,8 +38,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -1808,8 +1811,48 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
     return resume_from, remaining
 
 
+def _raise_interrupt(signum: int, _frame: object) -> None:
+    """End the run as Ctrl-C does, so its ``with`` blocks stop what they started.
+
+    Once: a second SIGTERM (``docker stop``, a CI runner and systemd may send
+    more than one) must not cut that clean-up short.  As
+    ``slurm.worker._raise_interrupt`` does for a SLURM task.
+    """
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise KeyboardInterrupt(f"signal {signal.Signals(signum).name}")
+
+
+@contextmanager
+def _interrupt_on_sigterm() -> Iterator[None]:
+    """SIGTERM raises :class:`KeyboardInterrupt` within the block (#707).
+
+    Python's default SIGTERM ends the process without unwinding: neither
+    ``with queue`` nor ``atexit`` runs, so the Autoware stack and CARLA are
+    stopped only by their die-with-parent watchdogs, without the run's own
+    clean-up (its results, its Rerun recording).  Installed only over the
+    default action, in the main thread: an embedding program's own handler is
+    left alone.  The handler found is put back when the block ends.
+    """
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
+    ):
+        yield
+        return
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly."""
+    with _interrupt_on_sigterm():
+        _main()
+
+
+def _main() -> None:
     # First thing in main(), before the run starts its own threads (see
     # _cap_malloc_arenas). Threads the imports start have not allocated yet,
     # so they hold no arenas: glibc ignores a cap set once it has more.
