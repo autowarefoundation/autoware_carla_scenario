@@ -3717,6 +3717,22 @@ not <code>outputs/</code>. The result viewer scans both directories.</p>
 <p>A failed, crashed or timed-out case does not stop the sweep: every case runs,
 the sweeper logs <code>Sweep complete: P/N succeeded, F failed (T timed out).</code>, and
 the process then exits 1 when any case failed (see <a href="#exit-codes">Exit Codes</a>).</p>
+<p>The sweeper runs each case in a forked process of its own. With
+<code>server.cooldown_max_retries</code> it runs a case again only when it could not run:
+its run raised (CARLA went away, a spawn failed), timed out
+(<code>sweep.job_timeout_seconds</code>) or crashed. A case whose scenario ran to a
+FAILED verdict is final and is not retried, as in a batch. The sweeper owns
+these retries: the case's own queue does not retry it as well, so a case runs
+at most <code>1 + server.cooldown_max_retries</code> times, as in a batch.</p>
+<p>A sweep with no case to run exits 1 before anything runs, as a batch with no
+case left does: its constraints, route or ODD sample match nothing on the map
+(<code>the sweep expands to no case</code>), or <code>--resume-from</code> / <code>sweep.resume_from</code> is
+past its last case.</p>
+<p>Ctrl-C or <code>SIGTERM</code> stops the sweep and the case it is running. The case is
+sent <code>SIGTERM</code>, so it stops its CARLA server and Autoware stack as on Ctrl-C,
+and <code>SIGKILL</code> if it is still running 30 s later (a second Ctrl-C does not
+wait). The sweep then exits 130 (Ctrl-C) or 143 (<code>SIGTERM</code>) and names the case
+to resume from.</p>
 <p>To get the concrete scenarios without running them (for example, to fan them
 out over a cluster), use <code>scenario-expand</code>. It takes the same arguments as
 <code>scenario</code> and prints JSON with one list of Hydra overrides per concrete
@@ -3864,7 +3880,7 @@ in a <code>--multirun</code> batch it counts the expanded cases:</p>
 <td><code>server.cooldown_max_retries</code></td>
 <td>int</td>
 <td><code>0</code></td>
-<td>Maximum retries on failure</td>
+<td>Maximum retries of a run that raised (not of one that ran and failed)</td>
 </tr>
 <tr>
 <td><code>server.world_reset</code></td>
@@ -4583,6 +4599,10 @@ condition's message.</p>
 <td>2</td>
 <td>Refused before anything ran: the scenario does not type-check, or an extra it asks for (<code>rerun</code>, <code>t4</code>) is not installed</td>
 </tr>
+<tr>
+<td>130, 143</td>
+<td>A <code>hydra/sweeper=lanelet_constraint</code> sweep stopped by Ctrl-C (130) or <code>SIGTERM</code> (143), after it stopped the case it was running</td>
+</tr>
 </tbody>
 </table>
 <p>The same codes hold however the cases run: a single run, a glob batch, a
@@ -4591,7 +4611,9 @@ condition's message.</p>
 comma-separated values) and <code>launcher=slurm</code>, which waits for the array and
 collects it. A sweep runs every case before it exits, so 1 means at least
 one case failed; the summary names how many. A refusal ends a sweep at once
-with 2, since every case after it would be refused too. The exceptions:</p>
+with 2, since every case after it would be refused too. A run with no case
+to run (nothing expanded, or <code>--resume-from</code> past the last case) exits 1:
+exit 0 always means something ran and passed. The exceptions:</p>
 <ul>
 <li>Under Hydra's own sweeper (<code>scenario --multirun key=a,b</code>, no
   <code>hydra/sweeper=</code>), a case that raises an exception ends the sweep at once
@@ -5339,7 +5361,7 @@ mapping).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:55:19 UTC"><span class="timeago" datetime="2026-10-28T21:55:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:55:19 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 23:19:31 UTC"><span class="timeago" datetime="2026-10-28T23:19:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 23:19:31 UTC">2026-10-28</span>
   </span>
 
     
