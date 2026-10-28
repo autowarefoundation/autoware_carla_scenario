@@ -1663,6 +1663,22 @@ def run_scenario(
         _finish_rerun(rerun)
 
 
+def _queue_retries(cfg: DictConfig) -> int:
+    """How often the run's queue retries a run that raised.
+
+    ``server.cooldown_max_retries``, except in a case the lanelet sweeper
+    forked: the sweeper retries that case itself, so the queue does not.
+    """
+    # Loads Lanelet2, as the run does anyway.
+    from ..sweeper.lanelet_constraint_sweeper import (  # noqa: PLC0415
+        SWEEPER_OWNS_RETRIES_ENV,
+    )
+
+    if os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
+        return 0
+    return int(cfg.server.get("cooldown_max_retries", 0))
+
+
 def _run_scenario(
     cfg: DictConfig,
     rerun: RerunConverter | None,
@@ -1676,7 +1692,7 @@ def _run_scenario(
 
     map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
-    cooldown_max_retries = int(cfg.server.get("cooldown_max_retries", 0))
+    cooldown_max_retries = _queue_retries(cfg)
     world_reset, reload_every = world_reset_settings(cfg)
 
     # Retrieve the Hydra output directory (works regardless of

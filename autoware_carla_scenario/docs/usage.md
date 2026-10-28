@@ -280,6 +280,25 @@ A failed, crashed or timed-out case does not stop the sweep: every case runs,
 the sweeper logs `Sweep complete: P/N succeeded, F failed (T timed out).`, and
 the process then exits 1 when any case failed (see [Exit Codes](#exit-codes)).
 
+The sweeper runs each case in a forked process of its own. With
+`server.cooldown_max_retries` it runs a case again only when it could not run:
+its run raised (CARLA went away, a spawn failed), timed out
+(`sweep.job_timeout_seconds`) or crashed. A case whose scenario ran to a
+FAILED verdict is final and is not retried, as in a batch. The sweeper owns
+these retries: the case's own queue does not retry it as well, so a case runs
+at most `1 + server.cooldown_max_retries` times, as in a batch.
+
+A sweep with no case to run exits 1 before anything runs, as a batch with no
+case left does: its constraints, route or ODD sample match nothing on the map
+(`the sweep expands to no case`), or `--resume-from` / `sweep.resume_from` is
+past its last case.
+
+Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
+sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
+and `SIGKILL` if it is still running 30 s later (a second Ctrl-C does not
+wait). The sweep then exits 130 (Ctrl-C) or 143 (`SIGTERM`) and names the case
+to resume from.
+
 To get the concrete scenarios without running them (for example, to fan them
 out over a cluster), use `scenario-expand`. It takes the same arguments as
 `scenario` and prints JSON with one list of Hydra overrides per concrete
@@ -388,7 +407,7 @@ Defines the default config group composition:
 | `server.host` | str | `localhost` | CARLA server hostname |
 | `server.port` | int | `2000` | CARLA server port |
 | `server.cooldown_seconds` | float | `2.0` | Wait time between consecutive scenario runs |
-| `server.cooldown_max_retries` | int | `0` | Maximum retries on failure |
+| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed) |
 | `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
 | `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
 
@@ -735,6 +754,7 @@ condition's message.
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error |
 | 2 | Refused before anything ran: the scenario does not type-check, or an extra it asks for (`rerun`, `t4`) is not installed |
+| 130, 143 | A `hydra/sweeper=lanelet_constraint` sweep stopped by Ctrl-C (130) or `SIGTERM` (143), after it stopped the case it was running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
 `--multirun` (each case of the scenario's sweep in one batch,
@@ -742,7 +762,9 @@ The same codes hold however the cases run: a single run, a glob batch, a
 comma-separated values) and `launcher=slurm`, which waits for the array and
 collects it. A sweep runs every case before it exits, so 1 means at least
 one case failed; the summary names how many. A refusal ends a sweep at once
-with 2, since every case after it would be refused too. The exceptions:
+with 2, since every case after it would be refused too. A run with no case
+to run (nothing expanded, or `--resume-from` past the last case) exits 1:
+exit 0 always means something ran and passed. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
   `hydra/sweeper=`), a case that raises an exception ends the sweep at once
