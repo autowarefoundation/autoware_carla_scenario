@@ -20,6 +20,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.skipif(
 _LAUNCH_APP = """
 import os, signal, sys, time
 from pathlib import Path
+from typing import Any
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
 from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as s
@@ -60,6 +62,7 @@ print(s._launch_job_isolated(Launcher(), ("a=1",), 0, timeout=600), flush=True)
 _SWEEP_APP = """
 import os, time
 from pathlib import Path
+from typing import Any
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
 
@@ -222,3 +225,36 @@ def test_an_interrupted_sweep_stops_its_case_and_exits_128_plus_the_signal(
     finally:
         _kill(job)
         _kill(sweeper.pid)
+
+
+def test_a_stop_signal_held_off_across_the_fork_reaches_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop signals are blocked across the fork, then delivered, not lost.
+
+    A SIGTERM that reaches the child before it has its own handler (here: as
+    it leaves the sweep's process group) waits until the handler is in place,
+    and then stops the job as the sweep's own SIGTERM does: exit 143, not
+    death by the signal under whatever handler the child inherited.  The
+    parent's signal mask is left as it was.
+    """
+    from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as s
+
+    class Launcher:
+        def launch(self, batches: Any, initial_job_idx: int) -> Any:
+            (tmp_path / "ran").write_text("yes")
+            return []
+
+    setpgrp = os.setpgrp
+
+    def setpgrp_then_sigterm() -> None:
+        setpgrp()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    # Only the forked child calls it.
+    monkeypatch.setattr(s.os, "setpgrp", setpgrp_then_sigterm)
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    ok, code = s._launch_job_isolated(Launcher(), ("a=1",), 0, timeout=30)
+    assert (ok, code) == (False, 128 + signal.SIGTERM)
+    assert not (tmp_path / "ran").exists()
+    assert signal.pthread_sigmask(signal.SIG_BLOCK, []) == before

@@ -284,7 +284,9 @@ The sweeper runs each case in a forked process of its own. With
 `server.cooldown_max_retries` it runs a case again only when it could not run:
 its run raised (CARLA went away, a spawn failed), timed out
 (`sweep.job_timeout_seconds`) or crashed. A case whose scenario ran to a
-FAILED verdict is final and is not retried, as in a batch.
+FAILED verdict is final and is not retried, as in a batch. The sweeper owns
+these retries: the case's own queue does not retry it as well, so a case runs
+at most `1 + server.cooldown_max_retries` times, as in a batch.
 
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map

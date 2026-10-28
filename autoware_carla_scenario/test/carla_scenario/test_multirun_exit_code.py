@@ -25,6 +25,7 @@ import pytest
 #: whose CARLA went away does.
 _SWEEPER_APP = """
 import json
+import os
 from pathlib import Path
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
@@ -47,6 +48,8 @@ lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: (
 @hydra.main(version_base=None, config_path=None, config_name=None)
 def task(cfg: DictConfig) -> None:
     print(f"case {cfg.case}", flush=True)
+    owns = os.environ.get("AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES")
+    print(f"queue retries owned by the sweeper: {owns}", flush=True)
     raised = Path.cwd() / f"raised{cfg.case}"
     if cfg.get("raise_once", False) and not raised.exists():
         raised.write_text("yes")
@@ -174,6 +177,22 @@ def test_lanelet_sweeper_retries_a_case_that_raised(tmp_path: Path) -> None:
     assert "2/2 succeeded, 0 failed" in output, output
 
 
+def test_lanelet_sweeper_turns_off_the_retries_of_its_cases_queue(
+    tmp_path: Path,
+) -> None:
+    """The sweeper retries a case; its queue must not too, or retries stack."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=2",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert output.count("queue retries owned by the sweeper: 1") == 2, output
+
+
 def test_lanelet_sweeper_that_raised_on_every_attempt_fails(tmp_path: Path) -> None:
     proc = _run(
         _SWEEPER_APP,
@@ -284,3 +303,23 @@ def test_main_does_not_exit_for_an_earlier_calls_failed_cases(
     monkeypatch.setattr(run, "_hydra_main", lambda: None)
     monkeypatch.setattr(sys, "argv", ["scenario", "--multirun", "+verdict=pass"])
     run.main()  # no SystemExit
+
+
+@pytest.mark.parametrize(("owned", "retries"), [(False, 2), (True, 0)])
+def test_a_case_forked_by_the_sweeper_runs_its_queue_without_retries(
+    monkeypatch: pytest.MonkeyPatch, owned: bool, retries: int
+) -> None:
+    """``run_scenario``'s queue leaves a sweeper case's retries to the sweeper."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        SWEEPER_OWNS_RETRIES_ENV,
+    )
+
+    if owned:
+        monkeypatch.setenv(SWEEPER_OWNS_RETRIES_ENV, "1")
+    else:
+        monkeypatch.delenv(SWEEPER_OWNS_RETRIES_ENV, raising=False)
+    cfg = OmegaConf.create({"server": {"cooldown_max_retries": 2}})
+    assert run._queue_retries(cfg) == retries

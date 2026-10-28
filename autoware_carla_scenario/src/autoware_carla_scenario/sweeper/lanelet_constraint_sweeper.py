@@ -72,6 +72,18 @@ _FAILED_VERDICT_EXIT_CODE = 3
 #: stopped, sends it ``SIGTERM``.  It is sent ``SIGKILL`` after that.
 _STOP_GRACE_SECONDS = 30.0
 
+#: Set in the environment of each case the sweeper forks: the sweeper retries
+#: the case itself (``server.cooldown_max_retries``), so the case's own queue
+#: runs it with no retries (``examples/run.py``).  Without it a case that
+#: raises would be retried by both, and run ``(1 + r)**2`` times, not ``1 + r``.
+SWEEPER_OWNS_RETRIES_ENV = "AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES"
+
+#: The signals that stop a sweep or its case.  Held off across the fork until
+#: the parent is ready to stop the case and the case is ready to be stopped:
+#: one arriving in between would otherwise leave the case running unwatched,
+#: or interrupt the child before it could leave the sweep's frames.
+_STOP_SIGNALS = frozenset({signal.SIGINT, signal.SIGTERM})
+
 
 class SweepFailedError(CompactHydraException):
     """One or more cases of a sweep failed, crashed or timed out.
@@ -200,12 +212,18 @@ def _die_with_parent(parent_pid: int) -> None:
 
 
 def _run_job_in_child(
-    launcher: Any, batch: tuple[str, ...], idx: int, parent_pid: int
+    launcher: Any,
+    batch: tuple[str, ...],
+    idx: int,
+    parent_pid: int,
+    signal_mask: set[int | signal.Signals],
 ) -> None:
     """Run one case in the forked child and ``os._exit`` with its status.
 
     Never returns: whatever the case does, the child must not unwind into the
-    sweep's own frames, which it shares with the parent after the fork.
+    sweep's own frames, which it shares with the parent after the fork.  It
+    starts with :data:`_STOP_SIGNALS` blocked and restores *signal_mask* once
+    its handlers are in place.
     """
     code = 1
     try:
@@ -218,6 +236,12 @@ def _run_job_in_child(
         # case's `with` blocks stop what it started.
         signal.signal(signal.SIGTERM, _raise_interrupted)
         _die_with_parent(parent_pid)
+        # The sweep retries the case itself (server.cooldown_max_retries): the
+        # case's own queue must not retry it again, or a case that raises
+        # would run (1 + r)**2 times instead of 1 + r.
+        os.environ[SWEEPER_OWNS_RETRIES_ENV] = "1"
+        # A stop signal that came in since the fork is delivered here.
+        signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
         code = _job_exit_code(launcher.launch([batch], initial_job_idx=idx))
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
@@ -228,6 +252,8 @@ def _run_job_in_child(
         logger.exception("Job raised an exception in child process")
         code = 1
     finally:
+        # No stop signal may raise past here and skip os._exit.
+        signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
@@ -317,10 +343,20 @@ def _launch_job_isolated(
         timeout.
     """
     parent_pid = os.getpid()
-    child_pid = os.fork()
+    # Held off until the parent is inside the try that stops the case, and the
+    # child has its process group, handlers and PR_SET_PDEATHSIG.
+    signal_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
+    try:
+        child_pid = os.fork()
+    except BaseException:
+        signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
+        raise
 
     if child_pid == 0:
-        _run_job_in_child(launcher, batch, idx, parent_pid)
+        try:
+            _run_job_in_child(launcher, batch, idx, parent_pid, signal_mask)
+        finally:
+            os._exit(1)  # never reached unless the child's own exit was skipped
 
     # ---- parent process ----
     timed_out = False
@@ -344,6 +380,9 @@ def _launch_job_isolated(
         if timeout > 0:
             signal.signal(signal.SIGALRM, _kill_child)
             signal.alarm(timeout)
+        # A stop signal that came in since the fork is delivered here, where
+        # the except below stops the case.
+        signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
 
         _, status = os.waitpid(child_pid, 0)
     except BaseException:
@@ -355,6 +394,7 @@ def _launch_job_isolated(
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, prev_handler)
+        signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
 
     if timed_out:
         return False, None
