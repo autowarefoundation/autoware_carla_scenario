@@ -1,0 +1,2841 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/19.8.6/adversity/">
+      
+      
+        <link rel="prev" href="../t4_dataset/">
+      
+      
+        <link rel="next" href="../logical_scenarios/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Adversarial Actions and NADE - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adversarial-actions-and-nade" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Adversarial Actions and NADE
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../ros2/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ROS 2 over DDS
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../hils/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HILS Bridge
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory_log/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectory Log
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../t4_dataset/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  T4 Dataset
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Adversarial Actions and NADE
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../slurm/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Running a Batch on SLURM
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../metrics/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Metrics
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrating
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ros2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS 2 over DDS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HILS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory_log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectory Log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../t4_dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    T4 Dataset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial Actions and NADE
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial Actions and NADE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The kinds
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The kinds">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-an-action-fires" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When an action fires
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-a-merging-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is a merging lane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-crosswalks-light" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A crosswalk's light
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NADE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NADE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stalled-objects-and-collisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stalled objects and collisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Construction zones
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Construction zones">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#urban-construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Urban construction zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coordinate-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coordinate conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#differences-from-terasim" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Differences from TeraSim
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../slurm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running a Batch on SLURM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The kinds
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The kinds">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-an-action-fires" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When an action fires
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-a-merging-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is a merging lane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-crosswalks-light" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A crosswalk's light
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NADE
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NADE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stalled-objects-and-collisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stalled objects and collisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Construction zones
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Construction zones">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#urban-construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Urban construction zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coordinate-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coordinate conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#differences-from-terasim" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Differences from TeraSim
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adversarial-actions-and-nade">Adversarial Actions and NADE<a class="headerlink" href="#adversarial-actions-and-nade" title="Permanent link">&para;</a></h1>
+<p>The framework ports <a href="https://github.com/mcity/TeraSim">TeraSim</a>'s adversarial
+behaviour generation (#385). There are three ways to use it:</p>
+<ul>
+<li><strong>An adversarial action</strong>: one named NPC or pedestrian does one adversarial
+  thing when its trigger holds. For example, it brakes hard in front of a
+  follower, or cuts in.</li>
+<li><strong>NADE</strong>: an environment action that picks, every tick, which agent near
+  the ego carries out which adversity. It samples them more often than they
+  happen naturally, and keeps the importance-sampling weight that makes the
+  run's statistics unbiased.</li>
+<li><strong>Scheduled static adversities</strong>: a stalled vehicle, or the aftermath of a
+  collision, from one time to another.</li>
+</ul>
+<h2 id="the-layers">The layers<a class="headerlink" href="#the-layers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Module</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Observation</td>
+<td><code>adversity.observation</code></td>
+<td>Builds a <code>Scene</code> of the agents in the Lanelet2 map frame. It answers TeraSim's traci questions: the leader and follower within 40 m, the lanes beside, the next signal, a pedestrian's crosswalk and nearest road.</td>
+</tr>
+<tr>
+<td>Triggers</td>
+<td><code>adversity.triggers</code></td>
+<td>One pure function per kind. Each takes what the agent sees and returns an <code>AdversarialCommand</code>, or <code>None</code>. <code>adversity_command</code> applies the location gate first, then the kind's trigger.</td>
+</tr>
+<tr>
+<td>Location</td>
+<td><code>adversity.location</code></td>
+<td><code>AdversityLocation</code>: <code>ANY</code>, <code>INTERSECTION</code>, <code>HIGHWAY</code>, <code>ROUNDABOUT</code>. These are read from the map by the ODD's own probes, so an adversity fires where coverage records that location.</td>
+</tr>
+<tr>
+<td>Commands</td>
+<td><code>adversity.command</code></td>
+<td>An acceleration, a lane change or a path, planned along the lanes into a timed path (<code>plan_command</code>, <code>predict_command</code>).</td>
+</tr>
+<tr>
+<td>Execution</td>
+<td><code>actions._adversarial_execution</code></td>
+<td>Drives the path: it takes the vehicle from its traffic backend, follows the path, then hands the vehicle back.</td>
+</tr>
+<tr>
+<td>NADE</td>
+<td><code>adversity.nade</code>, <code>adversity.avoidance</code></td>
+<td>Candidates, prediction, challenge, avoidability, importance sampling and the victims' response.</td>
+</tr>
+<tr>
+<td>Actions</td>
+<td><code>actions.adversarial</code>, <code>actions.adversarial_traffic</code>, <code>actions.stalled_object</code></td>
+<td>What a scenario registers.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-kinds">The kinds<a class="headerlink" href="#the-kinds" title="Permanent link">&para;</a></h2>
+<p>The numbers are TeraSim's defaults; each can be overridden in
+<code>TriggerThresholds</code>. The accelerations come from the Intelligent Driver Model
+(<code>adversity.idm</code>), which stands in for SUMO's car-following model.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Action</th>
+<th>TeraSim</th>
+<th>Fires when</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BRAKE_CHECK</code></td>
+<td><code>AdversarialBrakeAction</code></td>
+<td>Follower</td>
+<td>A follower is close behind, and neither is stopped. The agent is not speeding up, and the follower is not slowing.</td>
+<td>Brakes at the emergency deceleration (9 m/s²) for 2 s.</td>
+</tr>
+<tr>
+<td><code>IGNORE_LEADER</code></td>
+<td><code>IgnoreLeaderAction</code></td>
+<td>Leader</td>
+<td>Its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s.</td>
+<td>Accelerates at the free-flow rate for 2 s.</td>
+</tr>
+<tr>
+<td><code>CUT_IN</code></td>
+<td><code>AdversarialCutInAction</code></td>
+<td>LaneChange</td>
+<td>A lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap).</td>
+<td>Changes into that lane in 1 s.</td>
+</tr>
+<tr>
+<td><code>LANE_CHANGE_ABORT</code></td>
+<td><code>LaneChangeAbortAction</code></td>
+<td>LanechangeAbort</td>
+<td>Blocked as for <code>CUT_IN</code>. The agent is moving, and its lanelet lasts at least 1 s more at its speed.</td>
+<td>Drifts half a lane toward that side and back in 1 s.</td>
+</tr>
+<tr>
+<td><code>HEAD_ON</code></td>
+<td><code>HeadOnAction</code></td>
+<td>Headon</td>
+<td>As for <code>IGNORE_LEADER</code>, but the agent's lanelet and its leader's start more than 120° apart.</td>
+<td>Uses <code>IGNORE_LEADER</code>'s command.</td>
+</tr>
+<tr>
+<td><code>TRAFFIC_RULE</code></td>
+<td><code>RunTrafficRuleAction</code></td>
+<td>TrafficRule</td>
+<td>It is stopping for a red or yellow light rather than for its leader.</td>
+<td>Drives on through at the free-flow rate for 2 s.</td>
+</tr>
+<tr>
+<td><code>MERGE</code></td>
+<td><code>AdversarialMergeAction</code></td>
+<td>Merge</td>
+<td>It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane).</td>
+<td>One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s², for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway.</td>
+</tr>
+<tr>
+<td><code>JAYWALKING</code></td>
+<td><code>JaywalkAction</code></td>
+<td>Jaywalking</td>
+<td>A pedestrian is off any crosswalk, with a road within 10 m.</td>
+<td>Walks straight across at its speed (1.4 m/s if it stands) × U(0.5, 2.0), for up to 5 s.</td>
+</tr>
+<tr>
+<td><code>RUNNING_RED_LIGHT</code></td>
+<td><code>PedestrianRunRedLightAction</code></td>
+<td>RunningRedLight</td>
+<td>A pedestrian is waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red.</td>
+<td>Crosses it end to end at 2.8 m/s.</td>
+</tr>
+<tr>
+<td><code>STOP_CROSSING</code></td>
+<td><code>StopCrossingAction</code></td>
+<td>StopCrossing</td>
+<td>A pedestrian is on a crosswalk.</td>
+<td>Stands still for N(2 s, 0.5 s), then walks a crosswalk's length on along its heading at 2.8 m/s.</td>
+</tr>
+</tbody>
+</table>
+<p>The pedestrian kinds (<code>PEDESTRIAN_KINDS</code>) are only ever a pedestrian's, and
+the other kinds only a vehicle's.</p>
+<h3 id="when-an-action-fires">When an action fires<a class="headerlink" href="#when-an-action-fires" title="Permanent link">&para;</a></h3>
+<p>Each adversarial action takes the entity and a required <code>location</code>. Its
+default trigger is an <code>AdversityFeasibleCondition</code> of its kind at that
+location, which holds while the kind's trigger would fire. When the action
+fires, the command the condition found is planned on the map and driven
+(<code>following_mode</code>: <code>FOLLOW</code> by default, or <code>POSITION</code>, as TeraSim's
+<code>moveToXY</code> does). At the end of the path the vehicle is handed back to its
+traffic backend.</p>
+<p>A <code>condition</code> given instead decides when the action fires. On that tick
+the adversity's own trigger is still asked; when it does not hold, nothing is
+done and a warning is logged. To require both, give the <code>AndCondition</code> of
+the two.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">AdversarialCutInAction</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">AdversityLocation</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Cuts in on a highway whenever the gap allows it.</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">AdversarialCutInAction</span><span class="p">(</span><span class="s2">"npc1"</span><span class="p">,</span> <span class="n">AdversityLocation</span><span class="o">.</span><span class="n">HIGHWAY</span><span class="p">))</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Asked once, 3 s in: cuts in if it can then, else logs a warning.</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">AdversarialCutInAction</span><span class="p">(</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        <span class="s2">"npc2"</span><span class="p">,</span> <span class="n">AdversityLocation</span><span class="o">.</span><span class="n">ANY</span><span class="p">,</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"later"</span><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="p">)</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="p">)</span>
+</code></pre></div>
+<h3 id="what-is-a-merging-lane">What is a merging lane<a class="headerlink" href="#what-is-a-merging-lane" title="Permanent link">&para;</a></h3>
+<p>TeraSim recognises a ramp by its SUMO edge name, which contains <code>"Ramp"</code>.
+Lanelet2 has no such name, so <code>MapFeatures.merges</code> defines a merging lane as
+a lane that ends into the lane on its left. It either ends beside that lane,
+or shares what follows with it. This holds at the lanelet itself, or along
+its straightest successors within 100 m (<code>MERGE_WINDOW_M</code>).</p>
+<h3 id="a-crosswalks-light">A crosswalk's light<a class="headerlink" href="#a-crosswalks-light" title="Permanent link">&para;</a></h3>
+<p><code>RUNNING_RED_LIGHT</code> reads the Lanelet2 traffic-light regulatory element that
+the crosswalk lanelet carries. That is the pedestrian signal in an Autoware
+map. A crosswalk without one has no red light to run.</p>
+<h2 id="nade">NADE<a class="headerlink" href="#nade" title="Permanent link">&para;</a></h2>
+<p><code>AdversarialTrafficAction</code> runs TeraSim's NADE loop on every tick of the run:</p>
+<ol>
+<li><strong>Candidates</strong>: the <code>max_controlled</code> (5) vehicles nearest the ego within
+   <code>control_radius</code> (50 m), and every pedestrian there.</li>
+<li><strong>Adversity</strong>: each candidate's adversity is the first entry of
+   <code>adversities</code> whose trigger fires. That gives <code>{normal: 1 - p,
+   adversarial: p}</code>.</li>
+<li><strong>Prediction</strong>: <code>horizon</code> (5 s) every <code>resolution</code> (0.5 s). The ego is
+   predicted normal: it holds its acceleration along its lane, or changes
+   lane when its turn indicator says so.</li>
+<li><strong>Challenge</strong>: the candidate's adversarial future conflicts with the
+   ego's normal future (TeraSim's AV-centred NADE). With <code>challenge_npcs</code>, it
+   is also checked against the other candidates' futures.</li>
+<li><strong>Avoidability</strong>: if no victim can brake out of the conflict (emergency
+   brake, with a 0.5 m buffer), <code>p</code> is multiplied by 3e-4 and the magnitude
+   by 40.</li>
+<li><strong>Importance sampling</strong>: <code>q = clip(p × magnitude (20), 0,
+   max_is_probability (0.05))</code>, or <code>fixed_is_probability</code> when that is set.
+   At most one adversity is sampled per tick, the nearest challenger first,
+   and none for <code>cooldown</code> (5.5 s) after one.</li>
+<li><strong>Response</strong>: the sampled adversity's NPC victims avoid it with
+   probability q = 0.2 (p = 0.99) by braking at the emergency deceleration
+   for 3 s, or else accept it and hold their speed for 2 s. That response
+   carries its own weight. An ego victim is never driven.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">AdversarialTrafficAction</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">AdversityKind</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">AdversityLocation</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">NadeAdversity</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">AdversarialTrafficAction</span><span class="p">(</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="p">[</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>            <span class="n">NadeAdversity</span><span class="p">(</span><span class="n">AdversityKind</span><span class="o">.</span><span class="n">CUT_IN</span><span class="p">,</span> <span class="n">AdversityLocation</span><span class="o">.</span><span class="n">HIGHWAY</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">),</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>            <span class="n">NadeAdversity</span><span class="p">(</span><span class="n">AdversityKind</span><span class="o">.</span><span class="n">BRAKE_CHECK</span><span class="p">,</span> <span class="n">AdversityLocation</span><span class="o">.</span><span class="n">ANY</span><span class="p">,</span> <span class="mf">0.001</span><span class="p">),</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="p">],</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="n">seed</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="p">)</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="p">)</span>
+</code></pre></div>
+<p>It drives the NPCs and pedestrians a scenario registers, and with
+<code>drive_background</code> (the default) the traffic backend's background vehicles in
+the world too (#417): the TrafficManager's background traffic
+(<code>background&lt;N&gt;</code>), SUMO's ambient vehicles (<code>sumo:&lt;id&gt;</code>). One that carries out
+an adversity, or responds to one, is taken over for as long as its path lasts
+-- off autopilot, or published into SUMO from CARLA like a released entity --
+and handed back to the backend after. SUMO's mesoscopic vehicles have no actor
+to take over, and SUMO's pedestrians are not driven.</p>
+<h3 id="the-weight">The weight<a class="headerlink" href="#the-weight" title="Permanent link">&para;</a></h3>
+<p>Each tick of a run multiplies the run's likelihood ratio by one factor:</p>
+<ul>
+<li><code>p / q</code> when an adversity is sampled;</li>
+<li><code>(1 - p) / (1 - q)</code> for each candidate whose adversity challenged a victim
+  but was not drawn;</li>
+<li>the response's own factor, when one is drawn.</li>
+</ul>
+<p>A statistic weighted by this ratio is the naturalistic one. The action's
+<code>weight</code> is the ratio. <code>BaseScenario.importance_sampling_weight</code> is the
+product of every action's weight, which is 1.0 without NADE. You can read it:</p>
+<ul>
+<li>as the built-in metric <code>importance_sampling_weight</code> (aggregation <code>last</code>;
+  see <a href="../metrics/">Metrics</a>);</li>
+<li>in the trajectory log, where each sampled adversity is an <code>adversity</code>
+  record with its <code>p</code>, its <code>q</code>, the weight at that point, the victims and the
+  response (see <a href="../trajectory_log/">Trajectory Log</a>).</li>
+<li>in the run's coverage file, as <code>outcome.weight</code>: a run is importance
+  sampled when one of its actions is (<code>BaseScenario.outcome_weight</code>; NADE
+  is), and only such a run records a weight.</li>
+</ul>
+<p>To count which kinds were sampled, register a coverage item on
+<code>AdversarialTrafficAction.sampled_kind</code> (see <a href="../coverage/">Coverage</a>).
+Merging a batch's coverage files (<code>scenario-coverage</code>) then estimates the
+naturalistic failure rate per scenario and environment: the mean of the
+weighted failures with its 95% interval, the relative half width it has
+converged to (TeraSim's NADE stops below 0.3), the self-normalised rate and
+the effective number of runs (openodd's weighted outcomes, see
+<a href="../coverage/">Coverage</a>).</p>
+<h2 id="stalled-objects-and-collisions">Stalled objects and collisions<a class="headerlink" href="#stalled-objects-and-collisions" title="Permanent link">&para;</a></h2>
+<p>TeraSim's <code>StalledObjectAdversity</code> and <code>CollisionAdversity</code> are scheduled,
+not sampled. <code>StalledObjectAction</code> stands a vehicle still at a pose from
+<code>start_time</code> to <code>end_time</code> (scenario seconds; <code>None</code> means it is never
+removed). Outside that window the vehicle is out of the world.</p>
+<p>A vehicle cannot be spawned once a run has started, so the scenario spawns it
+in <code>setup</code>, preferably out of the world (<code>spawn.hidden</code>). The action is a
+trajectory run (the engine of <code>RoutingAction</code>'s <code>position</code> mode) of a held pose, with <code>hidden_outside_trajectory</code>.
+<code>collision_objects</code> creates two of them for a collision's aftermath.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span><span class="p">,</span> <span class="n">StalledObjectAction</span><span class="p">,</span> <span class="n">collision_objects</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">StalledObjectAction</span><span class="p">(</span><span class="s2">"stalled1"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">),</span> <span class="n">start_time</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">for</span> <span class="n">crashed</span> <span class="ow">in</span> <span class="n">collision_objects</span><span class="p">(</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="s2">"npc3"</span><span class="p">,</span> <span class="s2">"npc4"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">12.0</span><span class="p">),</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">17.0</span><span class="p">,</span> <span class="n">heading</span><span class="o">=</span><span class="mf">0.4</span><span class="p">),</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">end_time</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">):</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">crashed</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="construction-zones">Construction zones<a class="headerlink" href="#construction-zones" title="Permanent link">&para;</a></h2>
+<p><code>ConstructionZoneAction</code> lays out TeraSim's <code>ConstructionAdversity</code> along a
+lane (<code>adversity.construction</code>): from <code>start_s</code> to <code>end_s</code> metres along it,
+past its lanelet's end on along the straightest successors. These are the zones:</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Where</th>
+<th>Objects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>warning</td>
+<td><code>warning_zone_length</code> (100 m) before the start</td>
+<td>signs on the shoulder, every <code>warning_zone_spacing</code> (30 m)</td>
+</tr>
+<tr>
+<td>taper_in</td>
+<td><code>taper_length_in</code> (60 m) from the start</td>
+<td>cones, from 0.3 m inside the lane's edge to the work zone's offset</td>
+</tr>
+<tr>
+<td>buffer</td>
+<td><code>buffer_zone_length</code> (10 m)</td>
+<td>cone, cone, barrier</td>
+</tr>
+<tr>
+<td>work</td>
+<td>to <code>taper_length_out</code> (30 m) before the end</td>
+<td><code>construction_type</code>: cone, barrier, or mixed</td>
+</tr>
+<tr>
+<td>taper_out</td>
+<td>to the end</td>
+<td>cones, back to the edge</td>
+</tr>
+<tr>
+<td>termination</td>
+<td><code>termination_zone_length</code> (30 m) after the end</td>
+<td>signs</td>
+</tr>
+</tbody>
+</table>
+<p><code>spacing</code> (20 m) is the distance between objects, scaled by 0.7 in a taper
+and 0.8 in the buffer. With <code>use_dynamic_spacing</code> and <code>speed_limit_mph</code>,
+MUTCD's spacings apply instead. A taper can be <code>linear</code> or <code>curved</code> (an
+s-curve). The zone closes in from <code>side</code>, <code>"right"</code> by default; TeraSim instead
+picked the side from the SUMO lane's index.</p>
+<p>From <code>start_time</code> to <code>end_time</code> (<code>None</code>: never removed) the objects stand in
+the world as CARLA props, each added by a <code>SpawnAction</code> and named
+<code>&lt;label&gt;/&lt;zone&gt;/&lt;n&gt;</code> (<code>docs/api.md</code>). Unlike a vehicle, a prop may appear
+while a run is under way. When the zone appears, two things happen:</p>
+<ul>
+<li><code>clear_traffic</code> takes the backend's background vehicles in the zone off the
+  road;</li>
+<li><code>close_lane</code> tells the backend the lane is closed. SUMO then disallows
+  every vehicle class on it, as TeraSim's <code>full_lane</code> mode does. The
+  TrafficManager cannot close a lane, and says so; a <code>TrafficSinkAction</code> on
+  the zone keeps its traffic out.</li>
+</ul>
+<p>TeraSim's <code>full_lane</code> mode places no object. Here the objects are always
+placed: a closure Autoware cannot see is one it drives into. At <code>end_time</code> the
+props are removed and the lane is reopened; when the run ends, the lane is
+reopened and the runner takes the props away with every other.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConstructionSettings</span><span class="p">,</span> <span class="n">ConstructionZoneAction</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="mi">1043</span><span class="p">,</span> <span class="n">start_s</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">end_s</span><span class="o">=</span><span class="mf">260.0</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        <span class="n">settings</span><span class="o">=</span><span class="n">ConstructionSettings</span><span class="p">(</span><span class="n">construction_type</span><span class="o">=</span><span class="s2">"mixed"</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">),</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="p">)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+</code></pre></div>
+<h3 id="urban-construction-zones">Urban construction zones<a class="headerlink" href="#urban-construction-zones" title="Permanent link">&para;</a></h3>
+<p><code>layout="urban"</code> lays out TeraSim's <code>UrbanConstructionAdversity</code>
+(<code>adversity/static/urban_construction.py</code>) instead (#445). TeraSim builds a
+corridor of SUMO edges across several intersections and lays out each edge
+on its own. Here one <code>ConstructionZoneAction</code> is one approach of that
+corridor: <code>start_s</code> is where the approach begins and <code>end_s</code> is the
+intersection it ends at. For a corridor, add one action per approach. Lane
+closure, clearing traffic and the props are the same as above. These are the
+zones:</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Where</th>
+<th>Objects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>warning</td>
+<td>from the start, <code>warning_zone_length</code> (200 m) but at most 0.3 of the approach</td>
+<td>at most three signs, every <code>warning_zone_spacing</code> (30 m)</td>
+</tr>
+<tr>
+<td>work</td>
+<td>to the merge taper (with no merge taper, to 0.9 of the approach)</td>
+<td>along the closed side, 0.5 m inside the lane's edge, every <code>spacing</code> (10 m); for <code>construction_type="cone"</code>, every fifth object is a barrier</td>
+</tr>
+<tr>
+<td>merge_signs</td>
+<td>before the merge taper</td>
+<td><code>merge_signs</code> (2) signs, 50 m apart, none before the start</td>
+</tr>
+<tr>
+<td>merge_taper</td>
+<td>the last <code>merge_distance</code> (150 m) before the end</td>
+<td>cones every half <code>spacing</code> (5 m), from 0.3 m inside the closed side's edge across to 0.3 m inside the other edge, shutting the lane before the intersection (TeraSim's <code>merge_before</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>An urban zone has no taper in, buffer or termination zone, and no
+<code>work_zone_offset</code> or MUTCD spacing. <code>taper_type="curved"</code> shapes the merge
+taper. The warning zone and the merge taper include their end, as TeraSim's
+do, so with a whole number of steps the last cone stands at the intersection.
+The work zone does too when there is no merge taper; with one, it stops
+short of its end, where the merge taper's first cone stands.</p>
+<p><code>URBAN_CONSTRUCTION</code> holds TeraSim's urban values. They come from the
+<code>UrbanConstructionAdversity</code> source and its Ann Arbor example
+(<code>examples/scenarios/ann_arbor/urban_construction.yaml</code>): cones every 10 m in
+the work zone and every 5 m in the merge taper, three warning signs 30 m
+apart, merge signs 50 m apart, signs 2 m out on the shoulder, a 200 m warning
+zone and a 150 m merge taper. In the editor, the <code>urban_construction_zone</code>
+action starts from these values.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">URBAN_CONSTRUCTION</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">ConstructionSettings</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># The 300 m approach to an intersection, closed from the right.</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">ConstructionZoneAction</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">300.0</span><span class="p">,</span> <span class="n">URBAN_CONSTRUCTION</span><span class="p">))</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1"># Closed from the left, with a shorter merge taper and three signs before it.</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="mi">1051</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="n">ConstructionSettings</span><span class="p">(</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>            <span class="n">layout</span><span class="o">=</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">spacing</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">warning_zone_length</span><span class="o">=</span><span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>            <span class="n">warning_sign_offset</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>            <span class="n">merge_distance</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">merge_signs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="p">),</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="p">)</span>
+</code></pre></div>
+<h2 id="coordinate-conventions">Coordinate conventions<a class="headerlink" href="#coordinate-conventions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Triggers and NADE</strong>: everything is in the Lanelet2 map frame: x East,
+  y North, yaw in radians counter-clockwise from +x. Gaps run bumper to
+  bumper along the lanes. A lane's <code>s</code> is measured along its centreline, and
+  <code>t</code> is positive to the left.</li>
+<li><strong>Execution</strong>: planned paths are <code>MapPose</code> vertices in that frame. The
+  trajectory follower places them in CARLA's left-handed world (y South, yaw
+  in degrees clockwise) through the map's offset, as for any trajectory.</li>
+<li><strong>Signals</strong>: a light's state is keyed by its Lanelet2 traffic-light
+  regulatory element's id, and read off CARLA by <code>adversity.snapshot</code>.</li>
+</ul>
+<h2 id="differences-from-terasim">Differences from TeraSim<a class="headerlink" href="#differences-from-terasim" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>TeraSim (SUMO)</th>
+<th>Here (Lanelet2 and CARLA)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SUMO's car-following model</td>
+<td>The Intelligent Driver Model, with TeraSim's gains as defaults</td>
+</tr>
+<tr>
+<td><code>getLeader</code>, <code>getLaneChangeStatePretty</code></td>
+<td><code>Scene</code>: lane chains of the routing graph, with SUMO's secure gap for "blocked"</td>
+</tr>
+<tr>
+<td><code>convert2D</code> along an edge</td>
+<td>The lanelet's centreline and its normal</td>
+</tr>
+<tr>
+<td>A ramp by its edge name <code>"Ramp"</code></td>
+<td><code>MapFeatures.merges</code> (above)</td>
+</tr>
+<tr>
+<td>A walking area controlled by a TLS link</td>
+<td>The crosswalk lanelet's own traffic light</td>
+</tr>
+<tr>
+<td>A person's SUMO <code>maxSpeed</code></td>
+<td><code>pedestrian_max_speed</code>, 2.8 m/s (the fastest jaywalker)</td>
+</tr>
+<tr>
+<td>StopCrossing counts steps at dt = 0.1</td>
+<td>The wait is in seconds</td>
+</tr>
+<tr>
+<td><code>is_lane_changing</code>: heading 5° or more off the SUMO lane's angle</td>
+<td>The same, off the Lanelet2 lanelet's direction (<code>LanePosition.heading</code>)</td>
+</tr>
+<tr>
+<td>Background vehicles are adversarial</td>
+<td>So are they, with <code>drive_background</code> (default): the backend's background vehicles in the world (#417)</td>
+</tr>
+<tr>
+<td>Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane</td>
+<td>CARLA props (<code>static.prop.*</code>), always placed, plus the lane closed to the backend (#402)</td>
+</tr>
+<tr>
+<td><code>UrbanConstructionAdversity</code>: a corridor of edges across <code>num_intersections</code>, found by the edges' road priority, with a merge taper before each intersection</td>
+<td>One approach per <code>ConstructionZoneAction</code> (<code>layout="urban"</code>), from <code>start_s</code> to the intersection at <code>end_s</code>; a corridor is one action per approach (#445)</td>
+</tr>
+<tr>
+<td>Urban work zone: a barrier added beside every fifth cone</td>
+<td>The barrier replaces that cone, so the two props do not overlap</td>
+</tr>
+<tr>
+<td>Urban work zone up to the merge taper's start inclusive, where the taper's first cone stands too</td>
+<td>Short of it, so the two props do not overlap</td>
+</tr>
+<tr>
+<td>Urban spacings hard-coded: warning signs 30 m, work zone 10 m, merge taper 5 m; the merge taper always linear</td>
+<td><code>warning_zone_spacing</code>, <code>spacing</code> and half <code>spacing</code> (the same with <code>URBAN_CONSTRUCTION</code>); <code>taper_type="curved"</code> shapes the merge taper</td>
+</tr>
+<tr>
+<td>Urban warning zone of no length: one sign at the edge's start</td>
+<td>No warning zone, no sign</td>
+</tr>
+<tr>
+<td>Urban signs: always on the right shoulder; merge signs named by <code>merge_signs</code> texts</td>
+<td>On the closed side's shoulder; <code>merge_signs</code> is how many, all the same prop</td>
+</tr>
+<tr>
+<td>Urban construction vehicles and workers (excavator, dump trucks, warning vehicles)</td>
+<td>Not placed</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 11:51:38 UTC"><span class="timeago" datetime="2026-10-27T11:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 11:51:38 UTC">2026-10-27</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 17:37:22 UTC"><span class="timeago" datetime="2026-10-20T17:37:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 17:37:22 UTC">2026-10-20</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
