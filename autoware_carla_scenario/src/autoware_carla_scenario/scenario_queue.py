@@ -517,7 +517,24 @@ class ScenarioQueue:
         default) the call is effectively a no-op — it just records that the
         server was reused and returns immediately.  Only the queue that
         *owns* its server will stop it in :meth:`stop`.
+
+        If it fails (the runner cannot connect, the map name is unknown, the
+        Lanelet2 map does not load, Ctrl-C), it calls :meth:`stop` before the
+        error propagates: the server it owns is stopped and the Autoware
+        launcher closed, since a failed ``__enter__`` skips ``__exit__``.  An
+        error in that clean-up is logged; the one from the start propagates.
         """
+        try:
+            self._start()
+        except BaseException:
+            try:
+                self.stop()
+            except Exception:
+                logger.exception("Stopping the queue after its failed start failed")
+            raise
+
+    def _start(self) -> None:
+        """:meth:`start`, without the clean-up when it fails."""
         if self._autoware_launcher is not None:
             # First: a workspace that has to be built takes far longer than
             # CARLA to start, and one that cannot run a scenario at all is
@@ -607,10 +624,13 @@ class ScenarioQueue:
         # The map loaded for this queue's runs is not the next queue's: one
         # that loads no lanelet map would read this one's (run_carla_map).
         MapManager.reset()
-        if self._autoware_launcher is not None:
-            self._autoware_launcher.close()
-        if self._owns_server:
-            self._server.stop()
+        try:
+            if self._autoware_launcher is not None:
+                self._autoware_launcher.close()
+        finally:
+            # Even when the launcher's close() raises, against its contract.
+            if self._owns_server:
+                self._server.stop()
 
     # ------------------------------------------------------------------
     # pytest fixture factory
