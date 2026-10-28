@@ -37,7 +37,12 @@ are refused, so a typo fails loudly instead of being ignored.
 Names, addresses and raw bytes are text, and a value YAML reads as something
 else is refused rather than turned back into text: unquoted, ``0102`` is the
 octal number 66, ``0x10`` is 16 and ``On`` is ``True``, and what was written is
-lost.  Quote them (``data: "02 10 01"``, ``fields: {"On": 1}``).
+lost.  Quote them (``data: "02 10 01"``, ``fields: {"On": 1}``).  Message,
+input and step names also take a whole number (RTCM's ``1005``).
+:func:`load_config` further refuses, anywhere in the file, the unquoted YAML
+1.1 forms that do not mean what they look like (octal ``0102``, sexagesimal
+``1:30``, ``yes``/``no``/``on``/``off``), so ``Gear: Off`` in a field value is
+refused too instead of becoming ``False``.
 """
 
 from __future__ import annotations
@@ -310,11 +315,19 @@ def _only(section: Mapping[str, Any], allowed: Tuple[str, ...], where: str) -> N
         )
 
 
-def _text(value: Any, where: str) -> str:
+def _text(value: Any, where: str, *, number: bool = False) -> str:
     """*value*, which must be a string: YAML reads an unquoted ``0102``,
-    ``0x10``, ``1.10`` or ``On`` as a number or a bool, whose text is lost."""
+    ``0x10``, ``1.10`` or ``On`` as a number or a bool, whose text is lost.
+
+    With *number*, an integer is also taken, as its decimal text: a message
+    name can be a number (RTCM's ``1005``), and :func:`load_config` has
+    already refused the YAML 1.1 forms (octal ``0102``) whose number is not
+    the one written.
+    """
     if isinstance(value, str):
         return value
+    if number and isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
     raise HilsConfigError(
         f"{where}: expected text, got the {type(value).__name__} {value!r}; "
         "YAML reads an unquoted number or yes/no/on/off as that type, so quote it "
@@ -381,7 +394,7 @@ def _message(value: Any, where: str) -> MessageSpec:
         _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
     )
     return MessageSpec(
-        name=_text(section["name"], f"{where}.name"),
+        name=_text(section["name"], f"{where}.name", number=True),
         period=period,
         fields={k: _field(v, f"{where}.fields.{k}") for k, v in fields.items()},
     )
@@ -490,7 +503,7 @@ def _input(value: Any, mode: str, where: str) -> InputSpec:
                 f"expected {', '.join(allowed)}"
             )
     return InputSpec(
-        name=_text(section["name"], f"{where}.name"),
+        name=_text(section["name"], f"{where}.name", number=True),
         command={
             str(k): _input_source(v, f"{where}.command.{k}") for k, v in command.items()
         },
@@ -528,7 +541,7 @@ def _step(
         _only(section, ("wait", "name", "fields", "timeout"), where)
         if not name:
             raise HilsConfigError(f"{where}: a wait names the message")
-        name = _text(name, f"{where}.name")
+        name = _text(name, f"{where}.name", number=True)
         match = _keys(
             _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
         )
@@ -553,25 +566,14 @@ def _step(
             f"{where}: a send has either a name (and fields) or raw data"
         )
     if "data" in section:
-        raw = section["data"]
-        if not isinstance(raw, str):
-            raise HilsConfigError(
-                f"{where}.data: expected the bytes as a quoted hex string "
-                f'(data: "02 10 01"), got the {type(raw).__name__} {raw!r}; YAML '
-                "reads unquoted digits as a number (0102 is octal 66, 0x10 is 16), "
-                "so quote it"
-            )
-        try:
-            data = bytes.fromhex(raw)
-        except ValueError as exc:
-            raise HilsConfigError(f"{where}.data: not hexadecimal bytes") from exc
+        data = _data(section["data"], f"{where}.data")
         frame_id = section.get("id")
         if frame_id is not None and (
             isinstance(frame_id, bool) or not isinstance(frame_id, int)
         ):
             raise HilsConfigError(f"{where}.id: expected an integer")
         return StepSpec(kind="send", device=device, data=data, frame_id=frame_id)
-    name = _text(name, f"{where}.name")
+    name = _text(name, f"{where}.name", number=True)
     fields = {
         k: _field(v, f"{where}.fields.{k}")
         for k, v in _keys(
@@ -586,6 +588,30 @@ def _step(
                 f"is no ego at {phase}"
             )
     return StepSpec(kind="send", device=device, name=name, fields=fields)
+
+
+def _data(raw: Any, where: str) -> bytes:
+    """A raw frame's bytes: a quoted hex string or a list of byte values."""
+    if isinstance(raw, list):
+        if not all(
+            isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 0xFF
+            for b in raw
+        ):
+            raise HilsConfigError(
+                f"{where}: a list holds byte values (0-255), got {raw!r}"
+            )
+        return bytes(raw)
+    if not isinstance(raw, str):
+        raise HilsConfigError(
+            f"{where}: expected the bytes as a quoted hex string "
+            f'(data: "02 10 01") or a list (data: [0x02, 0x10, 0x01]), got the '
+            f"{type(raw).__name__} {raw!r}; YAML reads unquoted digits as a "
+            "number (0102 is octal 66, 0x10 is 16), so quote it"
+        )
+    try:
+        return bytes.fromhex(raw)
+    except ValueError as exc:
+        raise HilsConfigError(f"{where}: not hexadecimal bytes") from exc
 
 
 def _lifecycle(
@@ -687,7 +713,12 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     runner = _mapping(root.get("runner"), "runner")
     _only(runner, ("listen",), "runner")
     listen = runner.get("listen", f"0.0.0.0:{DEFAULT_PORT}")
-    listen = "" if listen is None else _text(listen, "runner.listen")
+    if listen is not None and not isinstance(listen, str):
+        raise HilsConfigError(
+            f"runner.listen: expected host:port text, got {listen!r}; quote it "
+            f'(listen: "0.0.0.0:{DEFAULT_PORT}"), or null for no run link'
+        )
+    listen = "" if listen is None else listen
     commands = _mapping(root.get("commands"), "commands")
     _only(commands, ("mode",), "commands")
     mode = _text(commands.get("mode", "control"), "commands.mode")
@@ -728,8 +759,90 @@ def load_config(path: Union[str, Path]) -> HilsConfig:
     path = Path(path).expanduser()
     if not path.is_file():
         raise HilsConfigError(f"{path} is not a file")
+    loader = yaml.SafeLoader(path.read_text(encoding="utf-8"))
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        node = loader.get_single_node()
+        if node is not None:
+            _refuse_yaml11_scalars(node, path)
+        document = None if node is None else loader.construct_document(node)
     except yaml.YAMLError as exc:
         raise HilsConfigError(f"{path}: {exc}") from exc
+    finally:
+        loader.dispose()
     return parse_config(document, path.resolve().parent)
+
+
+_YAML_INT = "tag:yaml.org,2002:int"
+_YAML_FLOAT = "tag:yaml.org,2002:float"
+_YAML_BOOL = "tag:yaml.org,2002:bool"
+
+
+def _yaml11_reading(tag: str, text: str) -> Optional[str]:
+    """What YAML 1.1 makes of the plain scalar *text* (resolved to *tag*) when
+    that is not what it looks like, and how to write it instead; else None.
+
+    These are the forms YAML 1.2 reads differently: ``0102`` (octal 66),
+    ``1:30`` (sexagesimal 90) and ``yes``/``no``/``on``/``off`` (booleans).
+    ``0x7DF``, ``1_000``, ``1.5`` and ``true`` mean what they say.
+    """
+    digits = text.lstrip("+-").replace("_", "")
+    if tag == _YAML_BOOL and text.lower() in ("yes", "no", "on", "off"):
+        truth = text.lower() in ("yes", "on")
+        return f"the boolean {truth}; write {str(truth).lower()}"
+    if tag in (_YAML_INT, _YAML_FLOAT) and ":" in digits:
+        return "a sexagesimal (base 60) number; write it in decimal"
+    if (
+        tag == _YAML_INT
+        and len(digits) > 1
+        and digits[0] == "0"
+        and digits[1] in "01234567"
+    ):
+        value = int(digits, 8) * (-1 if text.startswith("-") else 1)
+        return f"the octal number {value}; write {value} or {value:#x}"
+    return None
+
+
+def _refuse_yaml11_scalars(node: Any, file: Path) -> None:
+    """Refuse the plain scalars under *node* that YAML 1.1 reads as something
+    other than what they look like (:func:`_yaml11_reading`), naming each one's
+    place in the configuration and the file.
+
+    ``yaml.safe_load`` is YAML 1.1: unquoted, ``Gear: Off`` is ``False`` and
+    ``data: 0102`` is 66, in a field value or a codec option as much as in a
+    name, and nothing after loading can tell ``66`` from ``0102``.
+    """
+    import yaml  # noqa: PLC0415
+
+    seen: set[int] = set()
+
+    def check(scalar: Any, where: str) -> None:
+        if scalar.style is not None:  # quoted, a block scalar, or flow text
+            return
+        reading = _yaml11_reading(scalar.tag, scalar.value)
+        if reading is not None:
+            mark = scalar.start_mark
+            raise HilsConfigError(
+                f"{file}:{mark.line + 1}:{mark.column + 1}: {where or 'configuration'}: "
+                f"unquoted, YAML reads {scalar.value} as {reading}, or quote it "
+                f'("{scalar.value}") if it is text'
+            )
+
+    def walk(item: Any, where: str) -> None:
+        if id(item) in seen:  # an alias
+            return
+        seen.add(id(item))
+        if isinstance(item, yaml.ScalarNode):
+            check(item, where)
+        elif isinstance(item, yaml.SequenceNode):
+            for index, child in enumerate(item.value):
+                walk(child, f"{where}[{index}]")
+        elif isinstance(item, yaml.MappingNode):
+            for key, child in item.value:
+                if isinstance(key, yaml.ScalarNode):
+                    check(key, f"{where}: key" if where else "key")
+                    walk(child, f"{where}.{key.value}" if where else key.value)
+                else:
+                    walk(key, where)
+                    walk(child, where)
+
+    walk(node, "")

@@ -51,7 +51,7 @@ def test_quoted_data_is_the_bytes_written(data: str, expected: bytes) -> None:
 
 
 @pytest.mark.parametrize(
-    "data", ["0102", "0x10", "1234", "00", "1.5", "true", "[1, 2]"]
+    "data", ["0102", "0x10", "1234", "00", "1.5", "true", "{a: 1}"]
 )
 def test_unquoted_data_is_refused_with_a_hint_to_quote_it(data: str) -> None:
     # 0102 was sent as b"\x66", 0x10 as b"\x16"; 00 was refused as "not
@@ -90,7 +90,7 @@ def _parse(text: str) -> None:
         ),
         (
             "devices:\n  can:\n    url: mem://x\n"
-            "    messages: [{name: 0102, fields: {Level: 1}}]\n",
+            "    messages: [{name: 1.10, fields: {Level: 1}}]\n",
             r"devices\.can\.messages\[0\]\.name",
         ),
         (
@@ -99,7 +99,7 @@ def _parse(text: str) -> None:
             r"lifecycle\.startup\[0\]\.fields",
         ),
         (
-            _BASE + "lifecycle:\n  startup:\n    - {send: can, name: 0x10}\n",
+            _BASE + "lifecycle:\n  startup:\n    - {send: can, name: true}\n",
             r"lifecycle\.startup\[0\]\.name",
         ),
         (
@@ -108,7 +108,7 @@ def _parse(text: str) -> None:
             r"lifecycle\.scenario_start\[0\]\.fields",
         ),
         (
-            _BASE + "lifecycle:\n  scenario_start:\n    - {wait: can, name: 1234}\n",
+            _BASE + "lifecycle:\n  scenario_start:\n    - {wait: can, name: 1.5}\n",
             r"lifecycle\.scenario_start\[0\]\.name",
         ),
         (
@@ -123,7 +123,7 @@ def _parse(text: str) -> None:
         (
             "commands: {mode: control}\n"
             "devices:\n  can:\n    url: mem://x\n"
-            "    inputs: [{name: 0x10, command: {throttle: Throttle}}]\n",
+            "    inputs: [{name: On, command: {throttle: Throttle}}]\n",
             r"devices\.can\.inputs\[0\]\.name",
         ),
         (
@@ -174,6 +174,173 @@ def test_load_config_refuses_unquoted_data(tmp_path: Path) -> None:
     path.write_text(_SEND.format(data="0102"), encoding="utf-8")
     with pytest.raises(HilsConfigError, match="quote"):
         load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [("[0x01, 0x02]", b"\x01\x02"), ("[]", b""), ("[255, 0]", b"\xff\x00")],
+)
+def test_data_can_be_a_list_of_byte_values(data: str, expected: bytes) -> None:
+    assert _frame(data) == expected
+
+
+@pytest.mark.parametrize("data", ["[256]", "[-1]", "[true]", "['01']", "[1.0]"])
+def test_a_list_of_data_holds_bytes(data: str) -> None:
+    with pytest.raises(HilsConfigError, match=r"\.data: a list holds byte values"):
+        _frame(data)
+
+
+def test_a_numeric_message_name_is_its_decimal_text() -> None:
+    # RTCM names its messages by number: `name: 1005` is message "1005".
+    config = parse_config(
+        yaml.safe_load(
+            """
+devices:
+  rtk:
+    url: mem://x
+    codec: rtcm
+    messages: [{name: 1005, fields: {}}]
+    inputs: [{name: 1077, command: {throttle: 0.0}}]
+lifecycle:
+  startup:
+    - {send: rtk, name: 1005}
+    - {wait: rtk, name: 1077}
+"""
+        )
+    )
+    [device] = config.devices
+    assert device.messages[0].name == "1005"
+    assert device.inputs[0].name == "1077"
+    assert [s.name for s in config.steps("startup")] == ["1005", "1077"]
+
+
+def test_runner_listen_takes_host_and_port_text() -> None:
+    with pytest.raises(HilsConfigError, match=r"runner\.listen: expected host:port"):
+        _parse("runner: {listen: 7700}\n" + _BASE)
+
+
+_YAML11 = """\
+devices:
+  can:
+    url: mem://x
+    options: {strict: yes}
+    messages:
+      - name: Gear
+        fields: {Position: Off, Mode: 1:30, Code: -012}
+lifecycle:
+  startup:
+    - {send: can, id: 0x7DF, data: 00}
+"""
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "where", "reading"),
+    [
+        (
+            "{strict: yes}",
+            "{strict: true}",
+            r":4:23: devices\.can\.options\.strict",
+            "the boolean True; write true",
+        ),
+        (
+            "Position: Off",
+            "Position: P",
+            r":7:28: devices\.can\.messages\[0\]\.fields\.Position",
+            "the boolean False; write false",
+        ),
+        (
+            "Mode: 1:30",
+            "Mode: 90",
+            r":7:37: devices\.can\.messages\[0\]\.fields\.Mode",
+            "a sexagesimal",
+        ),
+        (
+            "Code: -012",
+            "Code: -10",
+            r":7:47: devices\.can\.messages\[0\]\.fields\.Code",
+            "the octal number -10; write -10 or -0xa",
+        ),
+        (
+            "data: 00",
+            'data: "00"',
+            r":10:36: lifecycle\.startup\[0\]\.data",
+            "the octal number 0",
+        ),
+    ],
+)
+def test_load_config_refuses_yaml11_scalars_anywhere(
+    tmp_path: Path, old: str, new: str, where: str, reading: str
+) -> None:
+    """Each YAML 1.1-only form is refused where it is, with its line and path;
+    the others are fixed so each case finds only its own."""
+    text = _YAML11
+    for o, n in [
+        ("{strict: yes}", "{strict: true}"),
+        ("Position: Off", "Position: P"),
+        ("Mode: 1:30", "Mode: 90"),
+        ("Code: -012", "Code: -10"),
+        ("data: 00", 'data: "00"'),
+    ]:
+        if o != old:
+            text = text.replace(o, n)
+    path = tmp_path / "hils.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(HilsConfigError) as info:
+        load_config(path)
+    message = str(info.value)
+    assert re.search(where, message), message
+    assert reading in message
+    assert "quote it" in message
+    # Fixed, the file loads.
+    path.write_text(text.replace(old, new), encoding="utf-8")
+    load_config(path)
+
+
+def test_load_config_refuses_a_yaml11_key(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(
+        "devices:\n  can:\n    url: mem://x\n"
+        "    messages: [{name: M, fields: {On: 1}}]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        HilsConfigError, match=r"devices\.can\.messages\[0\]\.fields: key: .*True"
+    ):
+        load_config(path)
+
+
+def test_load_config_takes_what_yaml_12_reads_alike(tmp_path: Path) -> None:
+    """Hex, underscores, floats, true/false, quoted text and the example."""
+    path = tmp_path / "hils.yaml"
+    path.write_text(
+        """\
+runner: {listen: 0.0.0.0:7700}
+carla: {host: 10.0.0.1, timeout: 1.5}
+devices:
+  can:
+    url: mem://x
+    messages:
+      - name: M
+        fields: {A: 0x1F, B: 1_000, C: true, D: "Off", E: '0102', F: 0, G: 08}
+lifecycle:
+  startup:
+    - {send: can, id: 0x7DF, data: "0102"}
+""",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    [device] = config.devices
+    fields = {k: v.constant for k, v in device.messages[0].fields.items()}
+    assert fields == {
+        "A": 31,
+        "B": 1000,
+        "C": True,
+        "D": "Off",
+        "E": "0102",
+        "F": 0,
+        "G": "08",
+    }
+    assert config.steps("startup")[0].data == b"\x01\x02"
 
 
 def _yaml_blocks(text: str) -> list[tuple[int, str]]:
