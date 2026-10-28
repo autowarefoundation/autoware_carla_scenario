@@ -679,9 +679,10 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
             body = _expression_text(value.value)
             unsafe = any(c in body for c in '"\\{}')
             if _field_needs_rewrite(value) or (value.conversion == _ASCII and unsafe):
-                # An `!a` field Codon parses as written (`d["it's"]`, which
-                # ast.unparse spells with a double quote) is `repr(...)`
-                # rather than refused: a call needs no quote of its own.
+                # An `!a` field whose expression cannot go in the f-string
+                # written here (`d["it's"]`, which ast.unparse spells with a
+                # double quote) is `repr(...)` rather than refused: a call
+                # needs no quote of its own.
                 flush()
                 parts.append(_formatted(value))
                 continue
