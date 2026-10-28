@@ -2372,6 +2372,21 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 </tr>
 </tbody>
 </table>
+<p>Names, addresses and raw bytes are text. YAML 1.1, which the bridge reads,
+turns some unquoted values into something else: <code>0102</code> is the octal number 66,
+<code>1:30</code> is 90, and <code>on</code>, <code>off</code>, <code>yes</code> and <code>no</code> are booleans. What was written
+is then lost, so the bridge refuses these forms anywhere in the file, field
+values and codec options included, naming the line and the key (write
+<code>true</code>/<code>false</code>, a decimal or <code>0x</code> number, or quote the text). <code>0x7DF</code>, <code>1.5</code>
+and <code>true</code> mean what they say and are taken.</p>
+<p>Where text is expected, a value YAML reads as a number or a boolean is also
+refused (<code>carla.host: 10.0</code> is the number 10.0) and must be quoted. This
+covers device names, <code>url</code>, <code>codec</code>, field names (a DBC signal called <code>On</code> is
+written <code>"On": 1</code>), <code>signal:</code> and <code>field:</code>, <code>carla.host</code>, <code>ego.role_name</code>,
+<code>runner.listen</code>, <code>canvas</code>, <code>clock</code>, <code>commands.mode</code> and a raw frame's <code>data</code>.
+Message, input and step names also take a whole number, as its decimal text
+(RTCM's <code>name: 1005</code>). Field <em>values</em> and <code>id</code> are numbers and stay unquoted
+(<code>id: 0x7DF</code>).</p>
 <p>A device is one hilspy channel: <code>url</code> (the transport), <code>codec</code> (<code>raw</code> when
 omitted) and <code>options</code> (codec options), exactly what <code>hilspy.open(url, codec,
 **options)</code> takes. It has <code>messages</code> (periodic messages filled from the ego's
@@ -2657,6 +2672,11 @@ and forwards it to the run whenever an input arrives. The fields:</p>
 <a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">send</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">power</span>
 <a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="w">      </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">"4F</span><span class="nv"> </span><span class="s">55</span><span class="nv"> </span><span class="s">54</span><span class="nv"> </span><span class="s">30</span><span class="nv"> </span><span class="s">0A"</span>
 </code></pre></div>
+<p>A raw frame's <code>data</code> is a quoted string of hex bytes, with or without spaces
+(<code>data: "0102"</code> or <code>data: "01 02"</code>), or a list of byte values
+(<code>data: [0x01, 0x02]</code>). Unquoted, YAML reads a hex string as a number (<code>0102</code>
+is octal 66, <code>0x10</code> is 16), so the bridge refuses it rather than send other
+bytes.</p>
 <p>A <code>wait</code> is satisfied by a matching message received since its phase began, so
 an ECU that answers a <code>send</code> at once is not missed. While steps run the bridge
 does not follow the world, and with <code>clock: simulation</code> its clock follows the
@@ -2804,7 +2824,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 15:09:55 UTC"><span class="timeago" datetime="2026-10-27T15:09:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 15:09:55 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 15:13:19 UTC"><span class="timeago" datetime="2026-10-28T15:13:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 15:13:19 UTC">2026-10-28</span>
   </span>
 
     
