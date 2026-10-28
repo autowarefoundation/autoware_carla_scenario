@@ -96,9 +96,15 @@ _WATCHDOG_GRACE_S = 10.0
 
 
 def _dying_with_this_process(argv: List[str]) -> List[str]:
-    """*argv*, run under :data:`_WATCHDOG`: stopped when this process dies."""
+    """*argv*, run under :data:`_WATCHDOG`: stopped when this process dies.
+
+    ``-I``: the watchdog imports nothing from the run's directory or
+    ``PYTHONPATH`` -- a scenario package's ``signal.py`` must not stand in for
+    the standard library's.
+    """
     return [
         sys.executable,
+        "-I",
         "-c",
         _WATCHDOG,
         str(os.getpid()),

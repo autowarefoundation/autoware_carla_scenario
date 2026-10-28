@@ -299,6 +299,12 @@ def test_the_sigterm_handler_is_installed_only_over_the_default(
                 time.sleep(5)
             # Once: a second SIGTERM must not cut the clean-up short.
             assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+        # Nor the atexit clean-up that follows the block.
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with run_module._interrupt_on_sigterm():
+            assert signal.getsignal(signal.SIGTERM) is run_module._raise_interrupt
         assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
 
         def own(signum: int, frame: object) -> None:
@@ -308,5 +314,34 @@ def test_the_sigterm_handler_is_installed_only_over_the_default(
         with run_module._interrupt_on_sigterm():
             assert signal.getsignal(signal.SIGTERM) is own
         assert signal.getsignal(signal.SIGTERM) is own
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_a_run_stopped_by_sigterm_exits_143(monkeypatch: pytest.MonkeyPatch) -> None:
+    def terminated() -> None:
+        raise run_module._Terminated(signal.SIGTERM)
+
+    monkeypatch.setattr(run_module, "_main", terminated)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            run_module.main()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert exit_info.value.code == 143
+
+
+def test_ctrl_c_still_ends_a_run_as_a_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupted() -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_module, "_main", interrupted)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_module.main()
     finally:
         signal.signal(signal.SIGTERM, previous)

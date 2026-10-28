@@ -629,6 +629,38 @@ def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
     assert events == ["prepare", "start", "runner", "close", "stop"]
 
 
+def test_a_failed_stop_does_not_hide_why_start_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    queue, events = _failing_start_queue(
+        monkeypatch, tmp_path, RuntimeError("map 'Town99' is unknown")
+    )
+
+    def broken_stop() -> None:
+        events.append("broken stop")
+        raise OSError("stop failed")
+
+    monkeypatch.setattr(queue, "stop", broken_stop)
+    with pytest.raises(RuntimeError, match="Town99"):
+        queue.start()
+    assert events == ["prepare", "start", "runner", "broken stop"]
+
+
+def test_stop_stops_the_owned_server_when_the_launcher_close_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    queue, events = _failing_start_queue(monkeypatch, tmp_path, RuntimeError())
+
+    def broken_close() -> None:
+        events.append("close")
+        raise OSError("close failed")
+
+    monkeypatch.setattr(queue._autoware_launcher, "close", broken_close)
+    with pytest.raises(OSError, match="close failed"):
+        queue.stop()
+    assert events == ["close", "stop"]
+
+
 # ---------------------------------------------------------------------------
 # Integration tests – real CARLA (skipped if CARLA unavailable)
 # ---------------------------------------------------------------------------
