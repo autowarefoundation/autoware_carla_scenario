@@ -231,3 +231,21 @@ def test_run_refuses_ros2_without_its_group() -> None:
 
     with pytest.raises(ValueError, match="'ros2' config group"):
         build_ego_entity(OmegaConf.create({"ego": {"entity": "ros2"}}))
+
+
+def test_pair_window_s_defaults_to_measured_and_takes_null_or_seconds() -> None:
+    base = {
+        "name": "vp",
+        "kind": "steer_accel",
+        "steering_topic": "/s",
+        "acceleration_topic": "/a",
+    }
+    assert CommandSourceConfig.from_mapping(base).pair_window_s is None
+    assert (
+        CommandSourceConfig.from_mapping({**base, "pair_window_s": None}).pair_window_s
+        is None
+    )
+    assert (
+        CommandSourceConfig.from_mapping({**base, "pair_window_s": 0.03}).pair_window_s
+        == 0.03
+    )
