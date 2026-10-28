@@ -215,7 +215,7 @@ runs:
           ${{ inputs.build-args }}
         labels: ${{ inputs.labels }}
         cache-from: ${{ inputs.cache == 'true' && format('type=gha,scope={0}', steps.plan.outputs.cache-scope) || '' }}
-        cache-to: ${{ inputs.cache == 'true' && format('type=gha,mode=max,scope={0}', steps.plan.outputs.cache-scope) || '' }}
+        cache-to: ${{ inputs.cache == 'true' && format('type=gha,mode=max,scope={0},ignore-error=true', steps.plan.outputs.cache-scope) || '' }}
 
     - name: Smoke-test the image
       if: inputs.smoke-test == 'true'
