@@ -320,7 +320,7 @@ graph LR
 Key features:
 
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
-- **Retry**: Failed scenarios are retried up to `cooldown_max_retries` times before raising an error.
+- **Retry**: A scenario whose run raises is retried up to `cooldown_max_retries` times before raising an error; one that runs and fails is not. The lanelet sweeper follows the same rule for its forked cases.
   A retry runs the same scenario object again, and so does a second `run_all()`: before each `setup()` the runner resets what an earlier attempt registered (`BaseScenario._reset_registrations()`) -- its conditions, actions, callbacks, entities, coverage and measures -- back to what the scenario's `__init__` registered, so a condition that latched in a failed attempt cannot decide the retry.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), the world is reloaded, and the queue goes on with the next one.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.

@@ -17,13 +17,17 @@ from pathlib import Path
 import pytest
 
 #: A minimal ``@hydra.main`` app swept by LaneletConstraintSweeper, with the
-#: map loading and the expansion stubbed to two cases.  Its task fails when
-#: ``+fail=true`` is given, writing the result JSON a scenario writes; as
-#: ``examples/run.py:_hydra_main`` does in ``--multirun``, it neither raises
-#: nor ``sys.exit``s for a failed scenario.
+#: map loading and the expansion stubbed to two cases (none with
+#: ``+sweep.none=true``).  Its task fails when ``+fail=true`` is given, writing
+#: the result JSON a scenario writes; as ``examples/run.py:_hydra_main`` does in
+#: ``--multirun``, it neither raises nor ``sys.exit``s for a failed scenario.
+#: With ``+raise_once=true`` each case raises the first time it runs, as a run
+#: whose CARLA went away does.
 _SWEEPER_APP = """
 import json
 from pathlib import Path
+
+from autoware_carla_scenario import hydra_compat  # noqa: F401
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -35,15 +39,18 @@ lcs.check_constraint_keys = lambda sweep: None
 lcs.resolve_map_paths = lambda cfg: None
 lcs.load_map = lambda paths: object()
 lcs.scenario_controls = lambda cfg: None
-lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: [
-    ["+case=1", *arguments],
-    ["+case=2", *arguments],
-]
+lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: (
+    [] if sweep.get("none") else [["+case=1", *arguments], ["+case=2", *arguments]]
+)
 
 
 @hydra.main(version_base=None, config_path=None, config_name=None)
 def task(cfg: DictConfig) -> None:
     print(f"case {cfg.case}", flush=True)
+    raised = Path.cwd() / f"raised{cfg.case}"
+    if cfg.get("raise_once", False) and not raised.exists():
+        raised.write_text("yes")
+        raise RuntimeError("CARLA went away")
     if cfg.get("refuse", False):
         # What examples/run.py:_hydra_main does for a refused scenario.
         raise SystemExit(2)
@@ -81,11 +88,16 @@ run.main()
 """
 
 
-def _run(app: str, tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    app: str, tmp_path: Path, *args: str, resume_from: int | None = None
+) -> subprocess.CompletedProcess[str]:
     script = tmp_path / "app.py"
     script.write_text(textwrap.dedent(app), encoding="utf-8")
     # A resume point would skip the cases.
     env = {k: v for k, v in os.environ.items() if k != "SWEEP_RESUME_FROM"}
+    if resume_from is not None:
+        # What `scenario --resume-from N` passes the sweeper.
+        env["SWEEP_RESUME_FROM"] = str(resume_from)
     return subprocess.run(
         [
             sys.executable,
@@ -125,6 +137,94 @@ def test_lanelet_sweeper_exit_code(
     assert proc.returncode == returncode, output
     if returncode:
         assert "2 of 2 case(s) failed" in output, output
+
+
+def test_lanelet_sweeper_does_not_retry_a_case_that_ran_and_failed(
+    tmp_path: Path,
+) -> None:
+    """A FAILED verdict is final, as in ScenarioQueue: only a raise is retried (#709)."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=2",
+        "+fail=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert output.count("case 1") == 1, output
+    assert output.count("case 2") == 1, output
+    assert "0/2 succeeded, 2 failed" in output, output
+
+
+def test_lanelet_sweeper_retries_a_case_that_raised(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+raise_once=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert output.count("case 1") == 2, output
+    assert output.count("case 2") == 2, output
+    assert "2/2 succeeded, 0 failed" in output, output
+
+
+def test_lanelet_sweeper_that_raised_on_every_attempt_fails(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+raise_once=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert "0/2 succeeded, 2 failed" in output, output
+
+
+@pytest.mark.parametrize(
+    ("args", "resume_from", "message"),
+    [
+        (("+sweep.none=true",), None, "expands to no case"),
+        ((), 3, "--resume-from 3 is past the sweep's 2 case(s)"),
+        ((), 9999, "--resume-from 9999 is past the sweep's 2 case(s)"),
+    ],
+)
+def test_lanelet_sweeper_that_runs_no_case_exits_1(
+    tmp_path: Path, args: tuple[str, ...], resume_from: int | None, message: str
+) -> None:
+    """As a glob batch with no case left to run does (#710)."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        *args,
+        resume_from=resume_from,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert message in output, output
+    assert "case 1" not in output, output
+
+
+def test_lanelet_sweeper_resumes_at_its_last_case(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        resume_from=2,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert "case 1" not in output, output
+    assert "case 2" in output, output
 
 
 @pytest.mark.parametrize(
