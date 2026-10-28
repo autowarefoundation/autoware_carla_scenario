@@ -166,6 +166,46 @@ class TestMapSource:
                 "maps/T",
             ),
             ("https://example.com/o/n", "https://example.com/o/n", "", ""),
+            # A ref may contain '/': everything after the last '@' of the
+            # repository path is the ref (#671).
+            (
+                "git+https://github.com/o/r@feature/x#maps",
+                "https://github.com/o/r",
+                "feature/x",
+                "maps",
+            ),
+            (
+                "https://user@example.com/o/n@release/1.0",
+                "https://user@example.com/o/n",
+                "release/1.0",
+                "",
+            ),
+            (
+                "git@github.com:o/r.git@feature/x#maps/T",
+                "git@github.com:o/r.git",
+                "feature/x",
+                "maps/T",
+            ),
+            (
+                "https://github.com/o/n/tree/dev/maps/T@feature/x",
+                "https://github.com/o/n",
+                "feature/x",
+                "maps/T",
+            ),
+            # An scp-like URL with no '/' at all is still a repository (#671).
+            ("git@example.com:maps.git@v1", "git@example.com:maps.git", "v1", ""),
+            ("git@example.com:maps.git", "git@example.com:maps.git", "", ""),
+            ("git@github.com:o/r", "git@github.com:o/r", "", ""),
+            ("git@github.com:o/r@main", "git@github.com:o/r", "main", ""),
+            (
+                "ssh://git@github.com/o/r.git@v2",
+                "ssh://git@github.com/o/r.git",
+                "v2",
+                "",
+            ),
+            ("file:///srv/maps@main#T", "file:///srv/maps", "main", "T"),
+            ("/srv/maps@main", "/srv/maps", "main", ""),
+            ("/srv/maps", "/srv/maps", "", ""),
         ],
     )
     def test_parses_the_urls_people_actually_have(
@@ -184,6 +224,10 @@ class TestMapSource:
 
     def test_userinfo_is_not_mistaken_for_a_ref(self) -> None:
         assert MapSource.parse("https://user@example.com/o/n").ref == ""
+
+    def test_a_ref_with_a_slash_round_trips(self) -> None:
+        source = MapSource(repo_url="https://github.com/o/r", ref="feature/x", path="m")
+        assert MapSource.parse(source.uri) == source
 
     def test_only_a_full_commit_counts_as_pinned(self) -> None:
         base = "https://example.com/o/n"

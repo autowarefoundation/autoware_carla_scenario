@@ -8,7 +8,10 @@ document.  The canonical form is::
     \______________ repository ____________/ \ref/ \path/
 
 Only the repository is required; ``@ref`` defaults to the default branch and
-``#path`` to the repository root.  A ref that is a full commit hash *pins* the
+``#path`` to the repository root.  ``#path`` is everything after the first
+``#``, and ``@ref`` everything after the last ``@`` of the repository path --
+the part after ``scheme://host/`` or an scp-like ``user@host:`` -- so a ref may
+contain ``/`` (``@feature/x``) but neither it nor the repository path an ``@``.  A ref that is a full commit hash *pins* the
 map -- the same URI names the same bytes forever, which is what makes a
 scenario's result reproducible -- so :meth:`MapSource.pinned` is what the rest
 of this package asks before taking any shortcut that could hand back a different
@@ -49,20 +52,45 @@ _HF_REPO_PREFIXES = ("datasets", "spaces")
 
 _SCP_LIKE = re.compile(r"^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:(?!/)")
 
+#: The ``user@host:`` prefix of an scp-like URL, absolute path or not.
+_SCP_HOST = re.compile(r"^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:")
+
 #: A full git object name.  Abbreviated hashes are deliberately not pins: they
 #: are not guaranteed to stay unambiguous as a repository grows.
 _FULL_COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
+def _repository_path_start(url: str) -> int:
+    """Index in *url* where the repository path begins.
+
+    Everything before it is the host part, whose ``@`` is userinfo and never a
+    ref: past ``scheme://authority`` for a URL (the authority ends at the first
+    ``/``), past ``user@host:`` for an scp-like URL, and the whole string for a
+    plain path.
+    """
+    scheme_end = url.find("://")
+    if scheme_end != -1:
+        authority_start = scheme_end + 3
+        slash = url.find("/", authority_start)
+        return len(url) if slash == -1 else slash
+    scp = _SCP_HOST.match(url)
+    if scp is not None:
+        return scp.end()
+    return 0
+
+
 def _split_trailing_ref(url: str) -> tuple[str, str]:
     """Split ``...repo@ref`` into ``(repo, ref)``.
 
-    Only an ``@`` *after* the last ``/`` is a ref, which is what keeps this from
-    eating the userinfo in ``https://user@host/owner/repo`` and the user in an
-    scp-like ``git@github.com:owner/repo``.
+    The ref is the text after the *last* ``@`` of the repository path (see
+    :func:`_repository_path_start`), so it may contain ``/`` (``feature/x``)
+    while the userinfo in ``https://user@host/owner/repo`` and the user in an
+    scp-like ``git@host:repo.git`` are left alone.  The last ``@`` is
+    unambiguous for every ref git creates in practice; the price is that a ref
+    cannot contain ``@`` and the repository path cannot either (write it as
+    ``%40`` in a URL).
     """
-    tail_start = url.rfind("/") + 1
-    at = url.find("@", tail_start)
+    at = url.rfind("@", _repository_path_start(url))
     if at == -1:
         return url, ""
     return url[:at], url[at + 1 :]

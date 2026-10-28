@@ -105,8 +105,9 @@ def expand_sweep(
 
     Raises:
         ValueError: If ``sweep`` has none of constraints, a route search and
-            ``odd_sample``, or both constraints and a route search, or a
-            ``case_index`` past the cases it expands to.
+            ``odd_sample``, or both constraints and a route search, or
+            constraints for more than one target key, or a ``case_index``
+            past the cases it expands to.
     """
     odd_sample = sweep.get("odd_sample") or {}
     if sweep.get("route"):
@@ -423,7 +424,17 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
     """One override list per lanelet the constraints match, bindings applied."""
     constraints_cfg = sweep.get("constraints") or {}
     # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id);
-    # each value is a list of constraint dicts.
+    # each value is a list of constraint dicts.  A sweep enumerates one
+    # parameter: the others a case needs are derived from its lanelet by the
+    # bindings.  A second key used to be ANDed into the first one's search and
+    # dropped, so it is refused rather than half honoured.
+    keys = [str(key) for key in constraints_cfg]
+    if len(keys) > 1:
+        raise ValueError(
+            "sweep.constraints sweeps one parameter; got keys "
+            f"{keys}. Keep the constraints of one key and derive the others "
+            "from its lanelet with sweep.bindings."
+        )
     constraints: list[Constraint] = []
     target_key: str | None = None
     for target_key, constraint_list in constraints_cfg.items():

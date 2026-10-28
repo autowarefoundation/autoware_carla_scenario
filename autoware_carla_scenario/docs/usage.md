@@ -256,6 +256,12 @@ optionally deriving per-job parameters via "bindings". Each scenario
 YAML may declare its own `sweep:` section (see
 `traffic_light_compliance.yaml` for an example).
 
+`sweep.constraints` sweeps **one** parameter: it holds a single target key
+(such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
+parameter a case needs is derived from the matched lanelet by
+`sweep.bindings`. A `sweep.constraints` with a second key is refused with an
+error when the sweep is expanded, rather than searched together with the first.
+
 ```bash
 # Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`
 # satisfies the scenario's `sweep.constraints`.

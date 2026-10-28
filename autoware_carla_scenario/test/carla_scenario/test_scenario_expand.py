@@ -81,6 +81,21 @@ class TestExpandSweep:
         with pytest.raises(ValueError, match="empty"):
             expand_sweep({"constraints": {}}, lanelet_map=object())
 
+    def test_a_second_constraint_key_is_refused(self, _matching) -> None:
+        # Two keys used to be ANDed into one search with only the last key
+        # written, silently leaving the first at its default (#673).
+        _matching([5], {})
+        sweep = {
+            "constraints": {
+                "ego.spawn_lanelet_id": [{"type": "turn_direction", "value": "right"}],
+                "scenario.npc_lanelet_id": [{"type": "has_adjacent", "value": "left"}],
+            }
+        }
+        with pytest.raises(ValueError, match="one parameter") as error:
+            expand_sweep(sweep, lanelet_map=object())
+        assert "ego.spawn_lanelet_id" in str(error.value)
+        assert "scenario.npc_lanelet_id" in str(error.value)
+
 
 class TestCaseIndex:
     """``sweep.case_index`` keeps one case of the expansion."""

@@ -25,6 +25,26 @@ Only the repository is required. `@REF` selects a branch, tag or commit and
 defaults to the repository's own default branch; `#PATH` selects the directory
 holding the map and defaults to the repository root.
 
+How the string is split:
+
+1. A leading `git+` is dropped.
+2. `#PATH` is everything after the first `#`.
+3. `@REF` is everything after the **last `@` of the repository path**. The
+   repository path starts after the host part — after `scheme://host/` for a
+   URL, after `user@host:` for an scp-like URL — so an `@` in the host part is
+   the user name, never a ref. A ref may therefore contain `/`:
+
+| URI | Repository | Ref | Path |
+| --- | --- | --- | --- |
+| `git+https://github.com/o/r@feature/x#maps` | `https://github.com/o/r` | `feature/x` | `maps` |
+| `https://user@example.com/o/r@v1` | `https://user@example.com/o/r` | `v1` | |
+| `git@github.com:o/r.git@release/1.0#maps/T` | `git@github.com:o/r.git` | `release/1.0` | `maps/T` |
+| `git@example.com:maps.git@v1` | `git@example.com:maps.git` | `v1` | |
+| `file:///srv/maps@main#T` | `file:///srv/maps` | `main` | `T` |
+
+Because the last `@` decides, neither the ref nor the repository path may
+contain an `@` (in an `https://` URL, write one in the path as `%40`).
+
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's
 `/tree/`, `/resolve/` and `/raw/` forms all parse. Paste the page you are
