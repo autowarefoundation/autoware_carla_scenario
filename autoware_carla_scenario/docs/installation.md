@@ -27,8 +27,10 @@ This guide will help you install the `autoware-carla-scenario` package.
   so a `@hydra.main` command would fail before it parses anything (#692).
   `autoware_carla_scenario.hydra_compat` works around it: the `scenario`
   entry point and the lanelet sweeper import it, and it has Hydra build its
-  parser with that help as a plain string. On Python 3.10 to 3.13 importing
-  it changes nothing. A `@hydra.main` app of your own that runs on 3.14
+  parser with an `ArgumentParser` subclass that skips argparse's check for
+  help that is not a string (argparse itself is left as it is, and
+  `--hydra-help` still shows the completion instructions). On Python 3.10
+  to 3.13 importing it changes nothing. A `@hydra.main` app of your own that runs on 3.14
   imports it before calling the decorated function:
   `import autoware_carla_scenario.hydra_compat  # noqa: F401`.
 
