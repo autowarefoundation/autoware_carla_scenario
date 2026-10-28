@@ -2601,3 +2601,16 @@ class TestMapActionsKeepConcurrentEdits:
 
         assert results and "changed while" in results[0].text
         assert _document(store, draft_id).map.name == "UserTown"
+
+    def test_a_draft_lock_lives_only_while_it_is_used(self, tmp_path: Path) -> None:
+        """Lock keys come from URLs, so the table must not keep one per id
+        ever asked for; two edits of one draft still share one lock."""
+        service = create_app(tmp_path / "drafts", tmp_path / "packages").state.service
+        with service.editing("draft_a"):
+            assert service._lock("draft_a") is service._lock("draft_a")
+            assert "draft_a" in service._locks
+        for draft_id in ("draft_b", "draft_c"):
+            with service.editing(draft_id):
+                pass
+        assert "draft_a" not in service._locks
+        assert len(service._locks) == 0

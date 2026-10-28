@@ -16,9 +16,11 @@ import logging
 import math
 import os
 import shutil
+import stat
 import tempfile
 import threading
 import uuid
+import weakref
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -180,13 +182,26 @@ class EditorService:
             if export_dir is not None
             else Path.cwd() / "scenario_packages"
         )
-        self._locks: dict[str, threading.Lock] = {}
+        # Weak, so a lock lives only while someone holds or waits on it: the
+        # keys come from URLs, and a table of every id ever asked for would
+        # grow for as long as the server runs.
+        self._locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._locks_guard = threading.Lock()
 
     def _lock(self, key: str) -> threading.Lock:
-        """Return the lock for *key*, creating it on first use."""
+        """Return the lock for *key*, creating it on first use.
+
+        The caller must keep the returned lock referenced for as long as it
+        holds it, which ``with self._lock(key):`` does.
+        """
         with self._locks_guard:
-            return self._locks.setdefault(key, threading.Lock())
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
 
     @contextmanager
     def editing(self, draft_id: str) -> "Iterator[None]":
@@ -230,8 +245,17 @@ class EditorService:
         directory = self._archive_dir(draft.id)
         if not directory.is_dir():
             return None
-        staged = [p for p in directory.glob(f"*{_ARCHIVE_SUFFIX}") if p.is_file()]
-        return max(staged, key=lambda p: p.stat().st_mtime_ns, default=None)
+        staged: list[tuple[int, Path]] = []
+        for path in directory.glob(f"*{_ARCHIVE_SUFFIX}"):
+            try:
+                status = path.stat()
+            except OSError:
+                # Removed by an export staging under a new scenario id
+                # between the listing and the stat.
+                continue
+            if stat.S_ISREG(status.st_mode):
+                staged.append((status.st_mtime_ns, path))
+        return max(staged)[1] if staged else None
 
     def _stage_archive(self, source: Path, draft: Draft) -> Path:
         """Zip *source* and move it into place as *draft*'s archive.
