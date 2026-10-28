@@ -35,7 +35,12 @@ Python 3.12+ syntax (#624):
   f-string's own quote (PEP 701: ``f"{d["k"]}"``) is quoted with the other
   quote (:func:`requote_fstring_fields`), on the same columns: Codon 0.19's
   parser, as Python's before 3.12, ends the f-string at its own quote.  One
-  that cannot be (it holds the other quote too, or a backslash) is refused.
+  that cannot be (it holds the other quote too, or a backslash) is refused,
+  as is a literal that holds the quote of a single-quoted f-string around it
+  (``f'{d["it's"]}'``), which Codon's parser ends the f-string at too,
+  unless its f-string is one :mod:`.python_rewrites` writes as ``+`` parts
+  (a literal brace, a spec Codon does not parse, ``!a``), where such a field
+  becomes a call and the quotes no longer matter (#704).
 * ``type X = T`` becomes ``X = T``.  A generic alias (``type Pair[T] =
   tuple[T, T]``) is refused: Codon has no generic alias.
 * The type parameters of a function or class (PEP 695: ``def first[T](xs:
@@ -845,6 +850,13 @@ _FSTRING_QUOTE_REFUSAL = (
     "holds too: put the value in a variable before the f-string "
     """(`key = "it's"`, then `f"{d[key]}"`)"""
 )
+_FSTRING_HELD_QUOTE_REFUSAL = (
+    "an f-string's replacement field holds a string that holds the "
+    "f-string's own quote (Python 3.12+, PEP 701), which Codon 0.19 cannot "
+    "parse: Codon's parser ends the f-string there. Put the value in a "
+    "variable before the f-string "
+    """(`key = "it's"`, then `f'{d[key]}'`)"""
+)
 _FSTRING_BACKSLASH_REFUSAL = (
     "an f-string's replacement field holds a backslash (Python 3.12+, PEP "
     "701), which Codon 0.19 cannot parse: put the value in a variable before "
@@ -863,9 +875,14 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
     quote, so Codon reports "unexpected dedent" on a later line.  A nested
     f-string is requoted in the same way (its opening and closing quote).
     Only the quote characters change, so every line and column stays.  A
-    literal that holds the other quote, a triple-quoted one inside an
-    f-string of its quote, and a backslash anywhere in a field (which
-    Codon's parser refuses too) are refused, and then nothing is requoted.  Before Python 3.12 the
+    literal that holds the other quote, one of any quote that holds the
+    quote of a single-quoted f-string around it (``f'{d["it's"]}'``), a
+    triple-quoted one inside an f-string of its quote, and a backslash
+    anywhere in a field (which Codon's parser refuses too) are refused, and then nothing is requoted,
+    except in an f-string that :mod:`.python_rewrites` writes as ``+``
+    parts (:func:`_rewritten_fstring_spans`): its fields are written back
+    from the tree there, the field that cannot be requoted as a call
+    (#704), so nothing of it is refused here.  Before Python 3.12 the
     tokenizer has no f-string tokens, and such source does not parse: the
     source is returned as it is.
     """
@@ -880,6 +897,10 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
     # The tokenizer's rows: split at "\n" only, as `str.splitlines` would
     # also split at a form feed or "\u2028" a line of the source may hold.
     lines = io.StringIO(source).readlines()
+    rewritten = _rewritten_fstring_spans(source, lines)
+    #: Whether the outermost f-string the token is in is in *rewritten*:
+    #: nothing of it is refused or requoted.
+    exempt = False
     #: (row, column, the quote there now, the quote to put there).
     changes: list[tuple[int, int, str, str]] = []
     refused: list[tuple[int, str]] = []
@@ -888,8 +909,14 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
     opened: list[tuple[str, bool, str]] = []
 
     def refuse(line: int, message: str) -> None:
-        if (line, message) not in refused:
+        if not exempt and (line, message) not in refused:
             refused.append((line, message))
+
+    def change(row: int, col: int, quote: str, new: str) -> None:
+        # An exempt f-string is written back from the tree: as written, its
+        # `{x=}` text keeps its own quotes.
+        if not exempt:
+            changes.append((row, col, quote, new))
 
     def quote_of(text: str) -> tuple[str, str, bool]:
         """(prefix, quote character, triple) of a literal or FSTRING_START."""
@@ -904,8 +931,14 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
         if triple:
             if quote in every:
                 refuse(line, _FSTRING_QUOTE_REFUSAL)
+            elif single & set(body):
+                refuse(line, _FSTRING_HELD_QUOTE_REFUSAL)
             return quote
         if quote not in single:
+            # `f'{d["it's"]}'`: the f-string's own quote, inside a literal of
+            # the other one, ends the f-string before Python 3.12 as well.
+            if single & set(body):
+                refuse(line, _FSTRING_HELD_QUOTE_REFUSAL)
             return quote
         other = "'" if quote == '"' else '"'
         if other in single or other in body:
@@ -917,11 +950,13 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
         name = tokenize.tok_name[token.type]
         row, col = token.start
         if name == "FSTRING_START":
+            if not opened:
+                exempt = any(start <= token.start < end for start, end in rewritten)
             prefix, quote, triple = quote_of(token.string)
             new = requoted(quote, triple, "", row) if opened else quote
             if new != quote:
                 at = col + len(prefix)
-                changes.append((row, at, quote, new))
+                change(row, at, quote, new)
             opened.append((new, triple, quote))
         elif name == "FSTRING_MIDDLE" and len(opened) > 1:
             new, _, quote = opened[-1]
@@ -932,7 +967,7 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
         elif name == "FSTRING_END" and opened:
             new, _, quote = opened.pop()
             if new != quote:
-                changes.append((row, col, quote, new))
+                change(row, col, quote, new)
         elif token.type == tokenize.STRING and opened:
             if "\\" in token.string:
                 refuse(row, _FSTRING_BACKSLASH_REFUSAL)
@@ -942,9 +977,9 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
             body = token.string[len(prefix) + size : -size]
             new = requoted(quote, triple, body, row)
             if new != quote:
-                changes.append((row, col + len(prefix), quote, new))
+                change(row, col + len(prefix), quote, new)
                 end_row, end_col = token.end
-                changes.append((end_row, end_col - 1, quote, new))
+                change(end_row, end_col - 1, quote, new)
     if not changes or refused:
         # Refused: the check fails, and the source stays as it parses.
         return source, refused
@@ -952,6 +987,43 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
     for row, col, _, new in changes:
         edited[row - 1][col] = new
     return "".join("".join(line) for line in edited), refused
+
+
+def _rewritten_fstring_spans(
+    source: str, lines: list[str]
+) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    """The (start, end) tokenizer positions of each f-string that
+    :mod:`.python_rewrites` writes as ``+`` parts, its fields rebuilt from the
+    tree: a field whose expression holds a quote or a backslash is a call
+    there (#704), so its quotes need no requoting.  One it refuses (a brace
+    or a nested f-string in an expression) is not among them."""
+    from .python_rewrites import _fstring_hazard, _fstring_needs_rewrite
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    def column(row: int, offset: int) -> int:
+        # ast counts UTF-8 bytes, the tokenizer characters.
+        return len(lines[row - 1].encode()[:offset].decode(errors="replace"))
+
+    spans = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.JoinedStr)
+            and node.end_lineno is not None
+            and node.end_col_offset is not None
+            and _fstring_needs_rewrite(node)
+            and _fstring_hazard(node) is None
+        ):
+            spans.append(
+                (
+                    (node.lineno, column(node.lineno, node.col_offset)),
+                    (node.end_lineno, column(node.end_lineno, node.end_col_offset)),
+                )
+            )
+    return spans
 
 
 def _run(source: str) -> tuple[str, list[tuple[int, str]], list[int]]:

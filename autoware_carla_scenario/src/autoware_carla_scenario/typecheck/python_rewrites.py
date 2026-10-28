@@ -28,7 +28,13 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   is parsed at run time, so a spec Python rejects (``{x:q}``) is accepted by
   the check.  A field with ``!a`` makes the f-string rewritten too, the
   field ``!r`` (``repr(x)`` where it is a call): Codon has no ``ascii()``,
-  and ``repr`` has the same type (#701).  An f-string with a brace or a
+  and ``repr`` has the same type (#701).  In a rewritten f-string, a field
+  whose expression holds a double quote or a backslash (``d["it's"]``,
+  ``d['a\\b']``) cannot go in the double-quoted f-string written there, so
+  it is a call too, whatever its conversion: ``str(e)`` (none, ``!s``),
+  ``repr(e)`` (``!r``, ``!a``), and that call's ``.__format__(spec)``
+  with a spec, ``(e).__format__(spec)`` with no conversion (#704).  An
+  f-string with a brace or a
   nested f-string inside an expression (``f"{'{}'.format(x)}"``,
   ``f"{len({1, 2})}"``) is refused: Codon's f-string parser loses the
   position there.
@@ -507,10 +513,6 @@ def _match_refusal(pattern: ast.AST) -> str | None:
     return None
 
 
-class _Refused(Exception):
-    """An f-string the rewrite cannot express; the message says what to write."""
-
-
 #: A format spec Codon's f-string parser takes, as Python's grammar has it
 #: without the sign: [[fill]align][#][0][width][,|_][.precision][type].
 _CODON_SPEC = re.compile(
@@ -653,10 +655,11 @@ def _spec_expression(spec: ast.expr) -> str:
 
 
 def _fstring_rewrite(node: ast.JoinedStr) -> str:
-    """*node* as ``str`` parts joined by ``+``; raises :class:`_Refused`.
+    """*node* as ``str`` parts joined by ``+``.
 
     A field Codon's parser takes stays in an f-string of its own; the others
-    are ``value.__format__(spec)``, as Python's ``format`` calls it.
+    are calls: ``value.__format__(spec)``, as Python's ``format`` calls it,
+    or ``str(value)`` / ``repr(value)`` without a spec.
     """
     parts: list[str] = []
     chunk = ""
@@ -677,21 +680,16 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
                     chunk += _escaped(piece)
         elif isinstance(value, ast.FormattedValue):
             body = _expression_text(value.value)
-            unsafe = any(c in body for c in '"\\{}')
-            if _field_needs_rewrite(value) or (value.conversion == _ASCII and unsafe):
-                # An `!a` field whose expression cannot go in the f-string
-                # written here (`d["it's"]`, which ast.unparse spells with a
-                # double quote) is `repr(...)` rather than refused: a call
-                # needs no quote of its own.
+            if _field_needs_rewrite(value) or any(c in body for c in '"\\{}'):
+                # A field whose expression cannot go in the double-quoted
+                # f-string written here (`d["it's"]`, which ast.unparse
+                # spells with a double quote; `d['a\\b']`) is a call
+                # instead, `str(...)` / `repr(...)` / `.__format__(spec)`:
+                # a call needs no quote of its own, and has the field's
+                # type (#704).
                 flush()
                 parts.append(_formatted(value))
                 continue
-            if unsafe:
-                raise _Refused(
-                    "an f-string expression holding a double quote, a "
-                    "backslash or a brace cannot be rewritten: bind it to a "
-                    "local first"
-                )
             if value.conversion == _ASCII:
                 body += "!r"  # Codon has no ascii() (#701)
             elif value.conversion in (ord("r"), ord("s")):
@@ -1484,15 +1482,11 @@ class _Pass(ShadowScopes):
             bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
         ) or id(node) in self._decorator_fstrings
         if lambda_lowered or _fstring_needs_rewrite(node):
-            try:
-                text = (
-                    _lambda_fstring_rewrite(node)
-                    if lambda_lowered
-                    else _fstring_rewrite(node)
-                )
-            except _Refused as error:
-                self._refuse(node, str(error))
-                return
+            text = (
+                _lambda_fstring_rewrite(node)
+                if lambda_lowered
+                else _fstring_rewrite(node)
+            )
             start, end = self.edits.node_span(node)
             # The line breaks of a triple-quoted string stay inside the
             # brackets of the replacement.

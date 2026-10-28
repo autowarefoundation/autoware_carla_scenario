@@ -7388,6 +7388,50 @@ def test_fstring_ascii_conversion_compiles(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_fstring_quoted_field_calls_compile(tmp_path: Path) -> None:
+    """A field holding a double quote, in an f-string the check rewrites, is a
+    call whatever its conversion (#704); Python 3.10 syntax."""
+    setup = """
+        n = 7
+        names = {"it's": "ab"}
+        counts = {"it's": -12}
+        sizes = {"it's": 3.25}
+        a = f'''{names["it's"]} {{x}}'''
+        b = f'''{names["it's"]!s} {names["it's"]!r} {{'''
+        c = f'''{names["it's"]:>6} {names["it's"]!s:<6} {names["it's"]!r:^9}{{'''
+        d = f'''{n:+d} {counts["it's"]} {counts["it's"]:+d} {counts["it's"]!r:>5}'''
+        e = f'''{sizes["it's"]:>8.2f} {sizes["it's"]} {sizes["it's"]!s:>6}}}'''
+        f = f'''{counts["it's"]=} {sizes["it's"]=:+.1f} {{'''
+        for text in (a, b, c, d, e, f):
+            assert len(text) > 0
+        k: str = f'''{counts["it's"]!r} {{'''
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 701)")
+def test_fstring_pep701_quoted_field_calls_compile(tmp_path: Path) -> None:
+    """The forms of #704 with the f-string's own quote and a backslash in a
+    field; text here, so this file parses on Python 3.10."""
+    setup = r"""
+        x = 5
+        d = {"it's": "ab", "a\\b": "cd"}
+        xs = ["a", "b"]
+        a = f"{d["it's"]} {{x}}"
+        b = f"{x:+d} {d['a\\b']}"
+        c = f"{d['a\\b']!r:>9} {d["it's"]!s} {{"
+        e = f"{"\n".join(xs)} {d['a\\b']:<4}}}"
+        for text in (a, b, c, e):
+            assert len(text) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
     """The driver's copy of a class-level default is rewritten too (#434, #433)."""
     definitions = """
@@ -7415,8 +7459,21 @@ def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
         ('r = f"{3.5:+.2f}" + 1', "str"),
         ('r: int = f"{3.5!a}"', "int"),
         ('r: int = f"{{{3.5!a:>6}}}"', "int"),
+        ("r: int = f'''{str(\"it's\")} {{'''", "int"),
+        ("r: float = f'''{len(\"it's\")!r:>6}{{'''", "float"),
+        ("r: int = f'''{len(\"it's\"):+d}{{'''", "int"),
     ],
-    ids=["sign", "nested", "format", "operand", "ascii", "ascii-brace"],
+    ids=[
+        "sign",
+        "nested",
+        "format",
+        "operand",
+        "ascii",
+        "ascii-brace",
+        "quoted",
+        "quoted-repr-spec",
+        "quoted-spec",
+    ],
 )
 def test_a_rewritten_fstring_is_still_a_str(
     tmp_path: Path, line: str, message: str
