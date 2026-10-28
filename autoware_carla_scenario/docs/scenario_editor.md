@@ -838,7 +838,7 @@ guess.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged until the browser fetches it |
+| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
 | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
 | `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
 | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |

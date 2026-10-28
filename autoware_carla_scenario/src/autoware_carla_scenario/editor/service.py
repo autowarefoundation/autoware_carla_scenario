@@ -14,12 +14,26 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import shutil
+import stat
 import tempfile
+import threading
+import uuid
+import weakref
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Sequence, get_args
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Mapping,
+    Optional,
+    Sequence,
+    get_args,
+)
 
 from ..authoring.models import (
     ActionNode,
@@ -102,7 +116,6 @@ def _zip_directory(source: Path, archive: Path) -> None:
     say that, hence the explicit loop.
     """
     archive.parent.mkdir(parents=True, exist_ok=True)
-    archive.unlink(missing_ok=True)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
         for path in sorted(source.rglob("*")):
             if path.is_file():
@@ -130,8 +143,28 @@ def _map_errors(prefix: str = "") -> "Iterator[None]":
         raise EditorError(f"{prefix}: {exc}" if prefix else str(exc)) from exc
 
 
+#: Suffix of a staged wheelhouse archive; the stem is the scenario's id.
+_ARCHIVE_SUFFIX = "-wheelhouse.zip"
+
+#: The :class:`MapRef` fields that say *which* map a scenario is on.  A map
+#: operation computes its result from them, so one that changed while the
+#: operation ran makes that result stale -- see
+#: :meth:`EditorService.run_map_operation`.
+_MAP_IDENTITY_FIELDS = frozenset(
+    {"group", "name", "source", "directory", "xodr_path", "lanelet2_path"}
+)
+
+
 class EditorService:
-    """Draft storage plus every document mutation the editor performs."""
+    """Draft storage plus every document mutation the editor performs.
+
+    Requests are served concurrently -- sync routes and map operations run in a
+    threadpool -- so every read-modify-write of a draft happens inside
+    :meth:`editing`, which serialises them per draft.  The lock is held only
+    for the edit itself: anything slow (a map download, an export) works on a
+    snapshot outside it.  It is a lock in this process, which is all the
+    editor's one-process server needs.
+    """
 
     def __init__(self, store: DraftStore, export_dir: Path | None = None) -> None:
         """
@@ -149,14 +182,102 @@ class EditorService:
             if export_dir is not None
             else Path.cwd() / "scenario_packages"
         )
+        # Weak, so a lock lives only while someone holds or waits on it: the
+        # keys come from URLs, and a table of every id ever asked for would
+        # grow for as long as the server runs.
+        self._locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._locks_guard = threading.Lock()
+
+    def _lock(self, key: str) -> threading.Lock:
+        """Return the lock for *key*, creating it on first use.
+
+        The caller must keep the returned lock referenced for as long as it
+        holds it, which ``with self._lock(key):`` does.
+        """
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+            return lock
+
+    @contextmanager
+    def editing(self, draft_id: str) -> "Iterator[None]":
+        """Hold *draft_id* for one read-modify-write.
+
+        Read the draft, change it and save it inside the block; another edit of
+        the same draft waits until this one is saved, so neither writes back a
+        copy that misses the other.  Keep the block short -- it is waited on by
+        every other edit of the draft.
+        """
+        with self._lock(draft_id):
+            yield
 
     # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
+    def _archive_dir(self, draft_id: str) -> Path:
+        """Return the directory holding *draft_id*'s staged archive.
+
+        Keyed by the draft, not the document: every draft made from one starter
+        shares a document id (``cut_in``, ``new_scenario``), and an archive
+        keyed by that was served by every one of them.
+        """
+        return self.export_dir / draft_id
+
     def archive_path(self, draft: Draft) -> Path:
-        """Return where *draft*'s exported wheelhouse is staged."""
-        return self.export_dir / f"{draft.document.id}-wheelhouse.zip"
+        """Return where an export of *draft* stages its wheelhouse now.
+
+        A directory per draft, and a file named after the scenario, so the
+        download is called what the package inside it is called.
+        """
+        return self._archive_dir(draft.id) / f"{draft.document.id}{_ARCHIVE_SUFFIX}"
+
+    def staged_archive(self, draft: Draft) -> Optional[Path]:
+        """Return the wheelhouse the last export of *draft* staged, if any.
+
+        Found by the draft alone, so renaming the scenario afterwards does not
+        orphan it, and it keeps the name of the package it actually holds.
+        """
+        directory = self._archive_dir(draft.id)
+        if not directory.is_dir():
+            return None
+        staged: list[tuple[int, Path]] = []
+        for path in directory.glob(f"*{_ARCHIVE_SUFFIX}"):
+            try:
+                status = path.stat()
+            except OSError:
+                # Removed by an export staging under a new scenario id
+                # between the listing and the stat.
+                continue
+            if stat.S_ISREG(status.st_mode):
+                staged.append((status.st_mtime_ns, path))
+        return max(staged)[1] if staged else None
+
+    def _stage_archive(self, source: Path, draft: Draft) -> Path:
+        """Zip *source* and move it into place as *draft*'s archive.
+
+        Zipped under a name of its own and renamed in, so a download never sees
+        a half-written archive, and two exports running at once each write
+        their own file: whichever renames last is staged, whole.  An archive
+        staged under an earlier scenario id is removed in the same step.
+        """
+        archive = self.archive_path(draft)
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        partial = archive.parent / f".{uuid.uuid4().hex}.zip.partial"
+        try:
+            _zip_directory(source, partial)
+            with self._lock(f"{draft.id}/archive"):
+                os.replace(partial, archive)
+                for stale in archive.parent.glob(f"*{_ARCHIVE_SUFFIX}"):
+                    if stale != archive:
+                        stale.unlink(missing_ok=True)
+        finally:
+            partial.unlink(missing_ok=True)
+        return archive
 
     def export_archive(self, draft: Draft, **options: Any) -> Any:
         """Export *draft* and zip its wheelhouse for download.
@@ -177,8 +298,8 @@ class EditorService:
                 :func:`~autoware_carla_scenario.authoring.package_export.export_package`.
 
         Returns:
-            The :class:`ExportResult`.  The archive itself is at
-            :meth:`archive_path`, which the download route asks for directly.
+            The :class:`ExportResult`.  The archive itself is what
+            :meth:`staged_archive` returns, which the download route serves.
 
         Raises:
             PackageExportError: If the export itself failed, or produced no
@@ -201,7 +322,7 @@ class EditorService:
                     "that can be installed without uv and a network.",
                     log=result.log,
                 )
-            _zip_directory(result.wheelhouse.root, self.archive_path(draft))
+            self._stage_archive(result.wheelhouse.root, draft)
             return result
         finally:
             shutil.rmtree(build_dir, ignore_errors=True)
@@ -250,7 +371,57 @@ class EditorService:
 
     def delete_draft(self, draft_id: str) -> bool:
         """Delete a draft.  Returns whether anything was removed."""
-        return self.store.delete(draft_id)
+        with self.editing(draft_id):
+            return self.store.delete(draft_id)
+
+    def run_map_operation(
+        self, draft_id: str, operation: Callable[[ScenarioDocument], Any]
+    ) -> tuple[Draft, Any]:
+        """Run a slow map *operation* without losing edits made while it runs.
+
+        A map operation can clone a repository or load a CARLA town: tens of
+        seconds, during which the draft stays editable.  So *operation* runs
+        on a snapshot, outside :meth:`editing`, and what it changed in
+        ``document.map`` -- the only part of the document a map operation
+        may change -- is then applied to the draft as it is *now*, re-read
+        under the lock.  Saving the snapshot instead would revert every edit
+        made meanwhile.
+
+        If the map itself was changed meanwhile -- a field saying which map
+        this is, or one the operation also set -- the result describes a map
+        that is no longer the one chosen, so nothing is applied and the
+        operation is refused, for the user to run again.
+
+        Returns:
+            The saved draft and whatever *operation* returned.
+
+        Raises:
+            EditorError: If the operation failed, or the map changed while it
+                ran.  The stored draft is untouched either way.
+        """
+        snapshot = self.require_draft(draft_id)
+        before = snapshot.document.map.model_copy(deep=True)
+        result = operation(snapshot.document)
+        after = snapshot.document.map
+        fields = type(after).model_fields
+        changed = {f for f in fields if getattr(after, f) != getattr(before, f)}
+        with self.editing(draft_id):
+            draft = self.require_draft(draft_id)
+            current = draft.document.map
+            contested = sorted(
+                f
+                for f in _MAP_IDENTITY_FIELDS | changed
+                if getattr(current, f) != getattr(before, f)
+            )
+            if contested:
+                raise EditorError(
+                    "The map settings changed while this ran "
+                    f"({', '.join(contested)}), so its result was not applied. "
+                    "Run it again."
+                )
+            for f in changed:
+                setattr(current, f, getattr(after, f))
+            return self.save(draft), result
 
     def validate(self, draft: Draft) -> ValidationReport:
         """Return the validation report for a draft's document."""
