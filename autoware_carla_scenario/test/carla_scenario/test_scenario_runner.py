@@ -1195,8 +1195,10 @@ class TestRunScenarioRegistersTheDefaultTimeout:
         assert self._labels(scenario) == ["scenario_timeout", "ego_existence"]
 
     def test_a_retry_does_not_add_a_second_default(self, tmp_path):
-        """setup() runs again on the same object; the first default stays."""
+        """setup() runs again on the same object, after the earlier attempt's
+        registrations are reset: the retry is given the default again, once."""
         scenario = self._scenario()
+        scenario._reset_registrations.side_effect = scenario._fail_conditions.clear
         self._run(tmp_path, scenario, 12.0)
         self._run(tmp_path, scenario, 12.0)
         assert self._labels(scenario).count("default_timeout") == 1

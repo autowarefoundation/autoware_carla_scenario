@@ -117,9 +117,10 @@ def _register_default_timeout(
     ``sweep.job_timeout_seconds`` guard over every job.
 
     Registered after ``ego_existence``, as the last fail condition: on a tick
-    where several fire, the result names the first.  On a retry of the same
-    scenario object, the default the first attempt registered is still there
-    and counts as the scenario's own, so it is not added twice.
+    where several fire, the result names the first.  A retry of the same
+    scenario object starts without the earlier attempt's registrations
+    (:meth:`BaseScenario._reset_registrations`), so it is given the default
+    again, once.
 
     Returns:
         Whether the default was registered.
@@ -1322,15 +1323,17 @@ class ScenarioRunner:
                 logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
 
             logger.info("[%s] === Setup start ===", scenario_name)
+            # A retry, or a re-run, of the same scenario object calls setup()
+            # on it again: what the earlier attempt registered -- conditions
+            # that may have latched, actions, callbacks, entities, coverage,
+            # measures -- goes, and what __init__ registered stays.  Before
+            # set_traffic_backend(), so the backend is handed only to actions
+            # this run has.
+            scenario._reset_registrations()
             scenario.set_client(self._client, tm_port=self._backend_tm_port)
             # Before setup(), because setup() is where a scenario spawns and
             # registers its NPCs, and register_entity() passes the backend on.
             scenario.set_traffic_backend(backend)
-            # setup() declares the cover items again on a retry of the same
-            # scenario, so the ones from an attempt that failed are dropped.
-            scenario._cover_items.clear()
-            scenario._cross_items.clear()
-            scenario._restore_measures()
             # A logical scenario's route is process-wide, like the signal
             # controllers: one left by the previous scenario of a batch must
             # not be read as this one's.  A scenario with a route sets its own
