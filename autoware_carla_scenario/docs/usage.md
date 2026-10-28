@@ -288,6 +288,15 @@ FAILED verdict is final and is not retried, as in a batch. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
 at most `1 + server.cooldown_max_retries` times, as in a batch.
 
+A case that timed out or crashed had no chance to stop the CARLA server it
+launched; that server's watchdog stops it within about a second, giving it
+10 s before `SIGKILL`. So before the next attempt -- a retry or the next case
+-- the sweeper waits until nothing answers on `server.host:server.port` any
+more (at most 15 s), rather than only `server.cooldown_seconds`: the next case
+must neither reuse the dying server nor start one while it still holds the
+port. A server that was already answering when the case started (one you
+started yourself) is not stopped by any case, and is not waited for.
+
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` / `sweep.resume_from` is
@@ -754,7 +763,7 @@ condition's message.
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error |
 | 2 | Refused before anything ran: the scenario does not type-check, or an extra it asks for (`rerun`, `t4`) is not installed |
-| 130, 143 | A `hydra/sweeper=lanelet_constraint` sweep stopped by Ctrl-C (130) or `SIGTERM` (143), after it stopped the case it was running |
+| 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
 `--multirun` (each case of the scenario's sweep in one batch,
@@ -771,6 +780,9 @@ exit 0 always means something ran and passed. The exceptions:
   with 1, as Hydra does; a case that runs and fails does not.
 - `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
   verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
+  Interrupted while it waits, it cancels the array and exits with the verdict
+  of what it collects (`slurm.cancel_on_interrupt`, the default), or exits 130
+  and leaves the array running.
 
 ---
 
@@ -942,8 +954,8 @@ uv run viewer
 # Custom host and port
 uv run viewer --host 127.0.0.1 --port 8080
 
-# Specify results directory
-uv run viewer --base-path /path/to/scenario/outputs
+# Scan another project: the directory containing outputs/ and multirun/
+uv run viewer --base-path /path/to/project
 
 # All options
 uv run viewer --help
@@ -1215,8 +1227,9 @@ uv run scenario scenario='intersection_passing/*' map=nishishinjuku
 # 1. Run scenarios
 uv run scenario scenario='*/*'
 
-# 2. Launch the viewer pointing to the outputs directory
-VIEWER_BASE_PATH=outputs uv run viewer
+# 2. Launch the viewer from the project directory: it scans outputs/ and
+#    multirun/ there (from elsewhere: --base-path <dir containing outputs/>)
+uv run viewer
 
 # 3. Open http://localhost:9000 in a browser
 ```

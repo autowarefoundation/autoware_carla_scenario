@@ -23,6 +23,13 @@ only a case that raised, timed out or crashed is retried
 (``server.cooldown_max_retries``).  Ctrl-C or ``SIGTERM`` stops the running
 case (``SIGTERM``, then ``SIGKILL`` after :data:`_STOP_GRACE_SECONDS`) and
 ends the sweep with 130 or 143.
+
+A case that timed out or died of a signal had no chance to stop the CARLA
+server it launched; the server's watchdog stops it instead, within about a
+second and then a grace period.  Before the next attempt the sweeper waits,
+at most :data:`_CARLA_GONE_TIMEOUT_S`, until ``server.host:server.port`` stops
+answering, so the next case neither reuses the dying server nor launches one
+next to it (#717).
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import time
 from pathlib import Path
@@ -47,6 +55,7 @@ from tqdm import tqdm
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
+from ..server import _WATCHDOG_GRACE_S
 from .expand import check_constraint_keys, expand_sweep, scenario_controls
 from .map_loader import load_map
 
@@ -71,6 +80,14 @@ _FAILED_VERDICT_EXIT_CODE = 3
 #: CARLA server and the Autoware stack it started -- after the sweep, being
 #: stopped, sends it ``SIGTERM``.  It is sent ``SIGKILL`` after that.
 _STOP_GRACE_SECONDS = 30.0
+
+#: How long the sweep waits, after a case that timed out or died of a signal,
+#: for the CARLA server that case launched to stop answering
+#: (:func:`_wait_until_carla_gone`).  The server's watchdog notices the case
+#: is gone within about a second, sends CARLA ``SIGTERM`` and ``SIGKILL``
+#: :data:`~autoware_carla_scenario.server._WATCHDOG_GRACE_S` later; the
+#: margin covers the noticing and the kernel releasing the port.
+_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0
 
 #: Set in the environment of each case the sweeper forks: the sweeper retries
 #: the case itself (``server.cooldown_max_retries``), so the case's own queue
@@ -144,6 +161,57 @@ def _read_verdict(output_dir: Path) -> bool | None:
     if not isinstance(data, dict):
         return None
     return bool(data.get("passed", True))
+
+
+def _carla_answers(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Whether something accepts connections on *host*:*port*.
+
+    A plain TCP connect, not a CARLA client: the sweep's own process holds no
+    CARLA state (its cases are forked from it), and a server that still holds
+    the port is in the way of the next one whether or not it still answers RPC.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_until_carla_gone(
+    host: str, port: int, timeout: float = _CARLA_GONE_TIMEOUT_S
+) -> bool:
+    """Wait, at most *timeout* s, until nothing answers on *host*:*port*.
+
+    Called after a case that timed out or died of a signal: the CARLA server
+    it launched is stopped by its watchdog, not by the case, and the next case
+    must not reuse it or race it for the port (#717).
+
+    Returns:
+        Whether the port stopped answering in time.  If it did not, the sweep
+        goes on and logs a warning.
+    """
+    if not _carla_answers(host, port):
+        return True
+    logger.info(
+        "Waiting up to %gs for the CARLA server at %s:%d, which the stopped "
+        "case launched, to go.",
+        timeout,
+        host,
+        port,
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.2)
+        if not _carla_answers(host, port, timeout=0.5):
+            return True
+    logger.warning(
+        "The CARLA server at %s:%d still answers %gs after its case stopped; "
+        "the next case may reuse it.",
+        host,
+        port,
+        timeout,
+    )
+    return False
 
 
 def _get_job_output_dir(ret: JobReturn) -> str | None:
@@ -565,6 +633,10 @@ class LaneletConstraintSweeper(Sweeper):
                 f">= 0, got {max_retries}."
             )
         max_attempts = 1 + max_retries
+        # Where each case's queue looks for CARLA, and launches one when
+        # nothing answers there (examples/run.py, ScenarioQueue).
+        server_host = str(OmegaConf.select(cfg, "server.host", default="localhost"))
+        server_port = int(OmegaConf.select(cfg, "server.port", default=2000))
         resume_from: int = int(
             sweep_dict.get("resume_from", 0) or os.environ.get("SWEEP_RESUME_FROM", "0")
         )
@@ -622,9 +694,18 @@ class LaneletConstraintSweeper(Sweeper):
                     batch,
                 )
 
+                # The case's queue reuses a server that already answers (one
+                # the user started, never stopped by the case) and launches
+                # its own otherwise -- the one its watchdog stops if the case
+                # is killed.
+                launches_carla = not _carla_answers(server_host, server_port)
                 ok, exit_code = _launch_job_isolated(
                     self.launcher, batch, idx, job_timeout
                 )
+                if launches_carla and (exit_code is None or exit_code < 0):
+                    # Timed out or died of a signal: the case did not stop
+                    # the CARLA it launched; its watchdog is stopping it.
+                    _wait_until_carla_gone(server_host, server_port)
                 if ok:
                     succeeded = True
                     break
