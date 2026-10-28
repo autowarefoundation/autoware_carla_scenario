@@ -5,7 +5,8 @@
 # provided by the framework's built-in conf directory; this file only overrides
 # what differs.
 scenario:
-  name: {{ scenario_name }}
+  # Quoted: a scenario called `null`, `true` or `on` is still a name.
+  name: "{{ scenario_name }}"
   goal_lanelet_ids: [460, 265]
   timeout_seconds: 8.0
 
