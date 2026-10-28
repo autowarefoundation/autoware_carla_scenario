@@ -36,7 +36,7 @@ from .measures import set_measured_scenario
 from .metrics import set_importance_sampling_weight
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
-from .entity.vehicle_entity import _set_warmup_done
+from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
@@ -1726,6 +1726,7 @@ class ScenarioRunner:
             set_importance_sampling_weight(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
+            _clear_entry_speeds()
 
             # Let the ego entity tear down its own resources (driver session,
             # sensors) while the world is still alive.

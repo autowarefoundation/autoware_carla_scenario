@@ -19,7 +19,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-__all__ = ["Pose2D", "carla_to_sumo", "sumo_to_carla"]
+__all__ = [
+    "Pose2D",
+    "carla_to_sumo",
+    "carla_xy_to_sumo",
+    "sumo_to_carla",
+    "sumo_xy_to_carla",
+]
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,20 @@ def carla_to_sumo(
         pose.z,
         angle % 360.0,
     )
+
+
+def carla_xy_to_sumo(
+    x: float, y: float, net_offset: tuple[float, float] = (0.0, 0.0)
+) -> tuple[float, float]:
+    """The SUMO point of CARLA's ``(x, y)``: y mirrored, the net offset added."""
+    return x + net_offset[0], -y + net_offset[1]
+
+
+def sumo_xy_to_carla(
+    x: float, y: float, net_offset: tuple[float, float] = (0.0, 0.0)
+) -> tuple[float, float]:
+    """The CARLA point of SUMO's ``(x, y)`` (:func:`carla_xy_to_sumo` undone)."""
+    return x - net_offset[0], -(y - net_offset[1])
 
 
 def _wrap(deg: float) -> float:

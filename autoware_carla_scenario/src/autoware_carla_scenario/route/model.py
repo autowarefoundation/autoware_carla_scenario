@@ -228,15 +228,29 @@ class JunctionPathSpec:
     A path entering the junction from *approach* (seen from the ego coming
     in; ``same`` is another lane of the ego's own approach) that turns
     *turn*: what a ``RouteCrossingPose`` with that approach and turn is
-    placed on.  It need not cross the ego's way.
+    placed on.  It need not cross the ego's way.  Of several, the one a
+    crossing pose takes (conflicting first, then the lowest id) has the
+    *before* and *after* reach (:meth:`~.geometry.MapFeatures.path_reach`).
 
     Attributes:
         approach: One of :data:`PATH_APPROACHES`.
         turn: One of :data:`PATH_TURNS`.
+        before: Metres of road before the path enters the junction, back to
+            the junction before it or a dead end (straightest predecessors).
+        after: Metres of road after it leaves the junction, on to the next
+            junction or a dead end (straightest successors).
+        path: Which of such paths, from the left as they enter the junction
+            (:func:`~.geometry.paths_from_left`): the match has at least this
+            many, and *before* and *after* bound that one's reach -- what a
+            crossing pose naming it (its ``path``) is placed on.  ``None``:
+            the one a crossing pose naming none takes.
     """
 
     approach: str = "left"
     turn: str = "straight"
+    before: Range = field(default_factory=Range)
+    after: Range = field(default_factory=Range)
+    path: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -257,6 +271,8 @@ class JunctionSegmentSpec:
         paths: Other paths through the junction it must have
             (:class:`JunctionPathSpec`), each by where it enters and how it
             turns.
+        length: The length of the ego's way through it (m): its junction
+            lanelets' centrelines.
     """
 
     turn: str = "any"
@@ -267,6 +283,7 @@ class JunctionSegmentSpec:
     crosswalk_entry: str = "any"
     crosswalk_exit: str = "any"
     paths: tuple[JunctionPathSpec, ...] = ()
+    length: Range = field(default_factory=Range)
     kind: str = "junction"
 
     def crossing(self, approach: str) -> str:
@@ -308,11 +325,13 @@ _JUNCTION_KEYS = {
     "crosswalk_entry",
     "crosswalk_exit",
     "paths",
+    "length",
 }
 
 
 def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
-    """A junction segment's ``paths``: a list of ``{approach, turn}``."""
+    """A junction segment's ``paths``: a list of ``{approach, turn[, before,
+    after]}``."""
     if raw is None:
         return ()
     if not isinstance(raw, Sequence) or isinstance(raw, str):
@@ -322,7 +341,7 @@ def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
         at = f"{where}[{i}]"
         if not isinstance(item, Mapping):
             raise ValueError(f"{at} must be a mapping, got {item!r}")
-        unknown = sorted(set(item) - {"approach", "turn"})
+        unknown = sorted(set(item) - {"approach", "turn", "before", "after", "path"})
         if unknown:
             raise ValueError(f"{at}: a path does not take {unknown}")
         approach = str(item.get("approach", "")).strip()
@@ -331,7 +350,23 @@ def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
         turn = str(item.get("turn", "")).strip()
         if turn not in PATH_TURNS:
             raise ValueError(f"{at}.turn must be one of {list(PATH_TURNS)}")
-        out.append(JunctionPathSpec(approach=approach, turn=turn))
+        before = Range.parse(f"{at}.before", item.get("before"))
+        after = Range.parse(f"{at}.after", item.get("after"))
+        raw_path = item.get("path")
+        which: Optional[int] = None
+        if raw_path is not None:
+            if (
+                isinstance(raw_path, bool)
+                or not isinstance(raw_path, int)
+                or raw_path < 1
+            ):
+                raise ValueError(f"{at}.path counts paths from 1, got {raw_path!r}")
+            which = int(raw_path)
+        out.append(
+            JunctionPathSpec(
+                approach=approach, turn=turn, before=before, after=after, path=which
+            )
+        )
     return tuple(out)
 
 
@@ -376,10 +411,16 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
             raise ValueError(f"{where}.turn must be one of {list(TURNS)}")
         values = {
             key: _tristate(f"{where}.{key}", raw.get(key))
-            for key in _JUNCTION_KEYS - {"kind", "turn", "paths"}
+            for key in _JUNCTION_KEYS - {"kind", "turn", "paths", "length"}
         }
+        length = Range.parse(f"{where}.length", raw.get("length"))
+        if (length.min or 0.0) < 0.0:
+            raise ValueError(f"{where}.length.min must not be negative")
         return JunctionSegmentSpec(
-            turn=turn, paths=_parse_paths(f"{where}.paths", raw.get("paths")), **values
+            turn=turn,
+            paths=_parse_paths(f"{where}.paths", raw.get("paths")),
+            length=length,
+            **values,
         )
     raise ValueError(f"{where}.kind must be 'lane' or 'junction', got {kind!r}")
 
@@ -556,8 +597,7 @@ class RouteMatch:
         if kind == "segment":
             if not 0 <= index < len(self.segments):
                 raise ValueError(
-                    f"anchor {anchor!r}: the route has {len(self.segments)} "
-                    "segment(s)"
+                    f"anchor {anchor!r}: the route has {len(self.segments)} segment(s)"
                 )
             segment = self.segments[index]
         else:

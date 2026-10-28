@@ -123,7 +123,13 @@ from ..parameters import (
 from ..mesoscopic import MesoLink, MesoscopicTraffic
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
-from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
+from .geometry import (
+    Pose2D,
+    carla_to_sumo,
+    carla_xy_to_sumo,
+    sumo_to_carla,
+    sumo_xy_to_carla,
+)
 from .network import (
     SignalTable,
     SumoNetwork,
@@ -163,6 +169,42 @@ _LANE_CHANGE_MODE_EXTERNAL = 0
 _LANE_CHANGE_MODE_STRATEGIC = 1537
 #: SUMO's own lane-change mode bits, which ``lane_changes: true`` puts back.
 _LANE_CHANGE_MODE_DEFAULT = 1621
+#: SUMO's own speed mode bits (every check on).
+_SPEED_MODE_DEFAULT = 31
+#: A vehicle this far (m) below the map is parked out of the world (spawned
+#: hidden): it joins SUMO only once a spawn brings it up.
+_HIDDEN_BELOW_M = -100.0
+#: The spacing (m) of the points a route is matched to SUMO's edges along.
+_ROUTE_STEP_M = 2.0
+#: How far (m) from a route's point a lane of SUMO's may be to carry it.
+_ROUTE_LANE_RADIUS_M = 3.0
+#: How far (degrees) a lane may turn from a route's heading to carry it.
+_ROUTE_HEADING_DEG = 60.0
+#: How long (s) a vehicle stopped at its goal (finish_at) stands there.
+_STAND_S = 1.0e6
+#: How near (m) a pedestrian crossing's middle a person is on it.
+_CROSSING_NEAR_M = 2.5
+#: The deceleration (m/s²) a car SUMO drives is held to stopping at by
+#: what stands in its way in CARLA (_guard_speed).
+_GUARD_DECEL = 3.5
+#: The gap (m) it keeps to that, and how far (m) ahead it always looks.
+_GUARD_GAP_M = 1.5
+_GUARD_LOOK_M = 6.0
+#: Its own outline is looked along this much wider each side (m).
+_GUARD_SIDE_M = 0.2
+#: The pieces (m) of its path it is looked along in.
+_GUARD_PIECE_M = 2.0
+#: How long (s) a vehicle SUMO drives stands giving way to scenario vehicles
+#: standing in its junction before it goes on through (_unstick_junctions).
+_JUNCTION_WAIT_S = 2.0
+# How often (s) a vehicle standing that long asks SUMO what it gives way to.
+_JUNCTION_FOES_EVERY_S = 1.0
+#: The speed mode bit by which a vehicle disregards the right of way of
+#: vehicles already in the junction, and the one by which it regards that of
+#: vehicles coming to it (off: vehicle_40, waiting short of its left turn's
+#: own stop, took those standing across the turn for ones coming).
+_SPEED_MODE_THROUGH_JUNCTION = 32
+_SPEED_MODE_RIGHT_OF_WAY = 8
 #: The pedestrian parameters a run can change: the walking speed and the gap
 #: are set on each person, but ``jmDriveAfterRedTime`` only on a type, and
 #: the types are written before SUMO starts.
@@ -340,6 +382,24 @@ def _ride_state(follows: str, states: list[str]) -> str:
     return "r"
 
 
+def _parked(actor: Any) -> bool:
+    """Whether *actor* is parked under the map, out of the world."""
+    return float(actor.get_location().z) < _HIDDEN_BELOW_M
+
+
+def _runs_along(shape: Any, offset: float, heading: float) -> bool:
+    """Whether the polyline *shape* runs within :data:`_ROUTE_HEADING_DEG`
+    of *heading* (degrees) at *offset* metres along it (its last segment
+    past its end)."""
+    from sumolib.geomhelper import polyLength, rotationAtShapeOffset  # noqa: PLC0415
+
+    rotation = rotationAtShapeOffset(shape, min(offset, polyLength(shape)))
+    if rotation is None:
+        return False
+    turn = (math.degrees(rotation) - heading + 180.0) % 360.0 - 180.0
+    return abs(turn) <= _ROUTE_HEADING_DEG
+
+
 class SumoTrafficBackend(TrafficBackend):
     """Traffic driven by SUMO, co-simulated with the CARLA world."""
 
@@ -393,6 +453,46 @@ class SumoTrafficBackend(TrafficBackend):
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
         self._driven: dict[str, Any] = {}
+        #: Vehicles parked under the map at the start, by actor id, with
+        #: their entity (or None): each joins SUMO once it comes up.
+        self._parked: dict[int, tuple[Any, Any]] = {}
+        #: Routes (follow_route) and speeds given to a vehicle before it was
+        #: in SUMO, by id(entity), for when SUMO drives it.
+        self._waiting_routes: dict[int, list[Any]] = {}
+        self._waiting_speeds: dict[int, float] = {}
+        #: Vehicles SUMO drives, just added, to be put exactly where their
+        #: car stands once they are on the road (:meth:`_place_driven`).
+        self._unplaced: dict[str, Any] = {}
+        #: Vehicles added mid-run, not on SUMO's road yet, with their actor
+        #: and entity: nothing is asked of them until they are (libsumo can
+        #: crash on a vehicle changed while it waits to be inserted).
+        self._arriving: dict[str, tuple[Any, Any]] = {}
+        #: start() has put the run's vehicles into SUMO.
+        self._started = False
+        #: Vehicles put where their car is on the last tick, not followed
+        #: till SUMO has moved them, whose waiting speed and route are given
+        #: them then.
+        self._settling: set[str] = set()
+        #: Vehicles driven to their goal in CARLA, published (finish_at).
+        self._approaches: dict[str, Any] = {}
+        #: Vehicles put on their route's junction lane once (_onto_route_lane).
+        self._rerouted: set[str] = set()
+        #: Actors CARLA drives (skipped at start, or finished in CARLA): one
+        #: of them coming back up is published, not driven.
+        self._published_ids: set[int] = set()
+        #: Since when (s) each vehicle SUMO drives has stood, and those going
+        #: on through their junction with the speed mode they had.
+        self._standing_since: dict[str, float] = {}
+        self._foes_asked: dict[str, float] = {}
+        self._unstuck: dict[str, int] = {}
+        #: Vehicles SUMO drives held back for what stands in their car's way,
+        #: and the actor that last stood there.
+        self._held_back: set[str] = set()
+        #: The shapes of the network's pedestrian crossings (_person_angle).
+        # Each crossing's shape and its box widened by _CROSSING_NEAR_M.
+        self._crossings: Optional[
+            list[tuple[Any, tuple[float, float, float, float]]]
+        ] = None
         #: SUMO id -> the actor CARLA's side drives, published into SUMO.
         self._external: dict[str, Any] = {}
         #: CARLA actor id -> the SUMO person standing for a CARLA pedestrian.
@@ -826,8 +926,8 @@ class SumoTrafficBackend(TrafficBackend):
         """Put the run's vehicles into SUMO, warm the traffic up and go."""
         if not self._running:
             return
-        tc = self._traci
         skip = set(skip_actor_ids)
+        self._published_ids = {int(i) for i in skip}
         if self._tm_drives_scenario:
             # Before any ambient vehicle exists, so the TrafficManager takes
             # only the scenario's own.
@@ -839,21 +939,16 @@ class SumoTrafficBackend(TrafficBackend):
         }
         for actor in world.get_actors().filter("vehicle.*"):
             entity = by_actor.get(actor.id)
+            if actor.id not in skip and _parked(actor):
+                # Out of the world until a spawn brings it up (_bring_in).
+                self._parked[actor.id] = (actor, entity)
+                continue
             sumo_id = self._sumo_id(actor, entity)
             if not self._add_vehicle(sumo_id, actor):
                 continue
             if actor.attributes.get("role_name") == str(EGO_ROLE_NAME):
                 self._ego_actor = actor
-            if (
-                actor.id in skip
-                or entity is None
-                or self._tm_drives_scenario
-                or id(entity) in self._released
-            ):
-                self._publish(sumo_id, actor)
-            else:
-                tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
-                self._driven[sumo_id] = entity
+            self._join(sumo_id, actor, entity, published=actor.id in skip)
         logger.info(
             "SUMO drives %d of the scenario's vehicle(s); %d driven in CARLA are "
             "published into it",
@@ -879,6 +974,171 @@ class SumoTrafficBackend(TrafficBackend):
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
         self._warm_up(world)
+        self._started = True
+        self._place_driven(set(self._traci.vehicle.getIDList()))
+
+    def _join(self, sumo_id: str, actor: Any, entity: Any, *, published: bool) -> None:
+        """Have SUMO drive *sumo_id*, just added for *actor*, or publish it:
+        one *published* (driven elsewhere), not the scenario's, or one the
+        TrafficManager drives.  A released entity's is published for now,
+        and driven by SUMO when resume() says so."""
+        tc = self._traci
+        if published or entity is None or self._tm_drives_scenario:
+            self._publish(sumo_id, actor)
+        elif id(entity) in self._released:
+            modes = self._hand_over(sumo_id, actor)
+            if modes is None:
+                modes = (_SPEED_MODE_DEFAULT, _LANE_CHANGE_MODE_DEFAULT)
+            self._handed[id(entity)] = (sumo_id, modes[0], modes[1])
+            # Put where its car is even if resume() hands it to SUMO before
+            # it is ever published: it went in on a lane out of any junction.
+            self._unplaced[sumo_id] = actor
+        else:
+            tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
+            self._driven[sumo_id] = entity
+            self._unplaced[sumo_id] = actor
+
+    def _place_driven(self, on_the_road: Collection[str]) -> None:
+        """Put each scenario vehicle that has just come on SUMO's road
+        (*on_the_road*) where its car stands, at its speed -- it was added on
+        the nearest lane outside any junction, which for a car in one is
+        metres away, and the car would be put back there (_drive) -- then,
+        one SUMO drives, give it the speed and route it was given before it
+        was in SUMO.  Not followed while it settles (:attr:`_settling`): SUMO
+        moves it with its next step."""
+        # Placed on the last tick: SUMO has moved them with this step (and
+        # given them a route of the lane they were put on), so the route they
+        # were given before goes on now -- set with the move, it was lost.
+        for sumo_id in list(self._settling):
+            self._settling.discard(sumo_id)
+            entity = self._driven.get(sumo_id)
+            if entity is not None:
+                self._drive_waiting(sumo_id, entity)
+        for sumo_id, actor in list(self._unplaced.items()):
+            if sumo_id not in on_the_road:
+                continue
+            del self._unplaced[sumo_id]
+            if not self._put_at_car(sumo_id, actor):
+                logger.warning("SUMO could not place %s", sumo_id)
+            self._settling.add(sumo_id)
+
+    def _put_at_car(self, sumo_id: str, actor: Any, speed: bool = True) -> bool:
+        """Move SUMO's *sumo_id* where CARLA's *actor* stands (keepRoute 0:
+        onto the nearest lane wherever it is), at its speed with *speed*;
+        whether SUMO took it."""
+        tc = self._traci
+        try:
+            pose = self._carla_pose_to_sumo(actor)
+            tc.vehicle.moveToXY(sumo_id, "", -1, pose.x, pose.y, pose.heading_deg, 0)
+            if speed:
+                velocity = actor.get_velocity()
+                tc.vehicle.setPreviousSpeed(sumo_id, math.hypot(velocity.x, velocity.y))
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.debug("SUMO could not put %s where its car is: %s", sumo_id, exc)
+            return False
+        return True
+
+    def _bring_in(self) -> None:
+        """Add to SUMO each parked vehicle a spawn has brought up, where it
+        stands and at its speed; driven by SUMO from there, with the route and
+        speed it was given while parked, or published (:meth:`_join`)."""
+        for actor_id, (actor, entity) in list(self._parked.items()):
+            try:
+                up = not _parked(actor)
+            except RuntimeError:  # destroyed while parked
+                del self._parked[actor_id]
+                continue
+            if not up:
+                continue
+            del self._parked[actor_id]
+            sumo_id = self._sumo_id(actor, entity)
+            velocity = actor.get_velocity()
+            if not self._add_vehicle(
+                sumo_id, actor, speed=math.hypot(velocity.x, velocity.y)
+            ):
+                continue
+            # Where its car is, at once: inserted on its own a vehicle waits
+            # while the lane's start is taken (a queue from a light), and its
+            # car runs on uncontrolled meanwhile (vehicle_141).
+            self._put_at_car(sumo_id, actor, speed=False)
+            self._arriving[sumo_id] = (actor, entity)
+            logger.info("SUMO: %s came up and joins SUMO", sumo_id)
+
+    def _arrive(self, on_the_road: Collection[str]) -> None:
+        """Drive or publish (:meth:`_join`) each vehicle added mid-run that
+        SUMO has put on its road (*on_the_road*)."""
+        for sumo_id, (actor, entity) in list(self._arriving.items()):
+            if sumo_id in on_the_road:
+                del self._arriving[sumo_id]
+                self._join(
+                    sumo_id,
+                    actor,
+                    entity,
+                    published=int(actor.id) in self._published_ids,
+                )
+
+    def _drive_approaches(self, elapsed: float) -> None:
+        """One tick of each vehicle driven to its goal in CARLA (finish_at)."""
+        if not self._approaches:
+            return
+        dt = self._context.fixed_delta_seconds if self._context is not None else 0.05
+        for sumo_id, approach in list(self._approaches.items()):
+            try:
+                approach.step(dt, elapsed)
+            except RuntimeError as exc:  # destroyed (a despawn), or refused
+                logger.debug("SUMO: %s's approach ends: %s", sumo_id, exc)
+                del self._approaches[sumo_id]
+
+    def _published_id(self, actor: Any) -> Optional[str]:
+        """The SUMO id *actor* is published under, or ``None``."""
+        if actor is None:
+            return None
+        for sumo_id, published in self._external.items():
+            if published is actor:
+                return sumo_id
+        return None
+
+    def _approaching(self, entity: Any) -> bool:
+        return self._published_id(getattr(entity, "actor", None)) in self._approaches
+
+    def _forget_handed(self, sumo_id: str) -> None:
+        """Drop what release() handed over of *sumo_id*: a resume() is not to
+        take it back."""
+        for entity_id, handed in list(self._handed.items()):
+            if handed[0] == sumo_id:
+                del self._handed[entity_id]
+
+    def _waits(self, entity: Any, *, settling: bool = True) -> bool:
+        """Whether *entity*'s vehicle is not on SUMO's road yet -- the run
+        has not started, it is parked under the map, or it has just been
+        added -- so what it is told waits for :meth:`_place_driven`."""
+        if not self._started:
+            return True
+        if any(parked is entity for _actor, parked in self._parked.values()):
+            return True
+        if any(arriving is entity for _actor, arriving in self._arriving.values()):
+            return True
+        sumo_id = self._id_of(entity)
+        if sumo_id is None:
+            # Published until resume() -- placed or settling all the same.
+            sumo_id = self._published_id(getattr(entity, "actor", None))
+        return sumo_id is not None and (
+            sumo_id in self._unplaced or (settling and sumo_id in self._settling)
+        )
+
+    def _drive_waiting(self, sumo_id: str, entity: Any) -> None:
+        """Give *sumo_id*, which SUMO drives now, the speed and the route
+        *entity* was given before it was in SUMO."""
+        speed = self._waiting_speeds.pop(id(entity), None)
+        if speed is not None:
+            try:
+                self._traci.vehicle.setSpeed(sumo_id, speed)
+                self._commanded[sumo_id] = speed
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SUMO could not set the speed of %s: %s", sumo_id, exc)
+        stops = self._waiting_routes.pop(id(entity), None)
+        if stops is not None:
+            self._set_route(sumo_id, stops)
 
     def tick(self, world: Any, elapsed: float) -> None:
         """Step SUMO once and bring CARLA's actors in line with it."""
@@ -887,11 +1147,18 @@ class SumoTrafficBackend(TrafficBackend):
         if not self._running:
             return
         try:
+            if self._parked:
+                self._bring_in()
+            self._drive_approaches(elapsed)
             self._push_external()
             self._push_walkers(world)
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._step_sumo(world)
+            # On the road from this step: placed before SUMO's next.
+            on_the_road = set(self._traci.vehicle.getIDList())
+            self._arrive(on_the_road)
+            self._place_driven(on_the_road)
             if self._clock_log is not None:
                 stamp = world.get_snapshot().timestamp
                 self._clock_log.write(
@@ -900,7 +1167,10 @@ class SumoTrafficBackend(TrafficBackend):
                 )
             if self._meso is not None:
                 self._step_mesoscopic(world, entities=True)
-            self._pull_driven()
+                # Vehicles left and joined SUMO with the change of level.
+                on_the_road = set(self._traci.vehicle.getIDList())
+            self._pull_driven(on_the_road)
+            self._unstick_junctions(elapsed)
             self._sync_ambient(world)
             self._sync_persons(world)
             self._follow_walked()
@@ -984,6 +1254,21 @@ class SumoTrafficBackend(TrafficBackend):
         self._handed = {}
         self._commanded = {}
         self._driven = {}
+        self._parked = {}
+        self._waiting_routes = {}
+        self._waiting_speeds = {}
+        self._unplaced = {}
+        self._arriving = {}
+        self._started = False
+        self._crossings = None
+        self._held_back = set()
+        self._settling = set()
+        self._approaches = {}
+        self._rerouted = set()
+        self._published_ids = set()
+        self._standing_since = {}
+        self._foes_asked = {}
+        self._unstuck = {}
         self._external = {}
         self._walkers = {}
         self._walkers_off_network = set()
@@ -1155,9 +1440,18 @@ class SumoTrafficBackend(TrafficBackend):
             self._meso.set_speed_cap(meso_id, speed, self._now())
             self._commanded[meso_id] = speed
             return
+        if self._approaching(entity):
+            return  # driven to its goal in CARLA, and stopped there
+        if self._waits(entity, settling=False):
+            # Not on SUMO's road yet: held for when SUMO drives it.  (Moving
+            # it there keeps its speed: no need to wait for the move.)
+            self._waiting_speeds[id(entity)] = speed
+            return
         sumo_id = self._driven_id(entity, "set_desired_speed")
         if sumo_id is None:
             return
+        # Newer than one held for it before it was on SUMO's road.
+        self._waiting_speeds.pop(id(entity), None)
         try:
             self._traci.vehicle.setSpeed(sumo_id, speed)
         except Exception as exc:  # noqa: BLE001
@@ -1200,12 +1494,297 @@ class SumoTrafficBackend(TrafficBackend):
             logger.warning("SUMO could not turn %s: %s", sumo_id, exc)
 
     def follow_route(self, entity: Any, world: Any, stops: Any) -> None:
-        """Hand the route through *stops* to the TrafficManager for a vehicle it drives; one SUMO
-        drives keeps the route it has (its lanelets are not mapped to edges)."""
+        """Route a vehicle SUMO drives through *stops* (Lanelet2 poses): the
+        lanes along the route matched to SUMO's edges (:meth:`_set_route`).
+        One not in SUMO yet -- before the run starts, or parked under the map
+        -- is routed once SUMO drives it; one the TrafficManager drives is
+        handed to it."""
         if self._id_of(entity) is None and self._tm_drives_scenario:
             self._tm.follow_route(entity, world, stops)
             return
-        self._unavailable("follow_route", entity)
+        if self._approaching(entity):
+            return  # driven to its goal in CARLA
+        if self._waits(entity):
+            self._waiting_routes[id(entity)] = list(stops)
+            return
+        sumo_id = self._id_of(entity)
+        if sumo_id is None:
+            self._unavailable("follow_route", entity)
+            return
+        self._set_route(sumo_id, list(stops))
+
+    def finish_at(self, entity: Any, world: Any, points: Any) -> bool:
+        """Drive a vehicle SUMO drives the rest of the way along *points*
+        itself, off SUMO and published into it, and stop it on the last
+        (:class:`~..final_approach.FinalApproach`): SUMO stops a vehicle in
+        its lane's middle, and one that stopped beside a lorry in the
+        recording would stop on it (vehicle_134).  Where that cannot be, SUMO
+        stops it on the lane of its route there (:meth:`_stop_on_lane`).
+        ``False`` where neither can -- too near to stop, off its route."""
+        del world
+        actor = getattr(entity, "actor", None)
+        sumo_id = self._id_of(entity)
+        if sumo_id is None:
+            # Not SUMO's to drive yet -- just come up, published till it is
+            # placed -- and driven to its goal all the same, from where it
+            # is (vehicle_96: otherwise SUMO drove its first metres down its
+            # lane's middle, onto a bus's corner it was to pass).
+            sumo_id = self._published_id(actor)
+        if sumo_id is None or not self._running or len(points) == 0:
+            return False
+        if actor is not None:
+            from ..final_approach import (  # noqa: PLC0415
+                APPROACH_SPEED_MPS,
+                FinalApproach,
+            )
+
+            try:
+                velocity = actor.get_velocity()
+                # At the speed it comes at: begun well before its goal (to
+                # move over as the recording did), it is not held to a crawl.
+                approach = FinalApproach(
+                    actor,
+                    actor.get_location(),
+                    list(points),
+                    stop=True,
+                    speed=max(APPROACH_SPEED_MPS, math.hypot(velocity.x, velocity.y)),
+                )
+            except (AttributeError, RuntimeError) as exc:
+                logger.debug("SUMO: %s drives on in SUMO: %s", sumo_id, exc)
+            else:
+                if sumo_id in self._driven:
+                    del self._driven[sumo_id]
+                    self._let_go(sumo_id)
+                    self._hand_over(sumo_id, actor)
+                # Not taken back by a resume() to come, nor routed.
+                self._forget_handed(sumo_id)
+                self._unplaced.pop(sumo_id, None)
+                self._settling.discard(sumo_id)
+                self._approaches[sumo_id] = approach
+                logger.info(
+                    "SUMO: %s is driven the last %.0f m to its goal in CARLA, "
+                    "published into SUMO",
+                    sumo_id,
+                    approach.length,
+                )
+                return True
+        return self._stop_on_lane(sumo_id, points)
+
+    def _stop_on_lane(self, sumo_id: str, points: Any) -> bool:
+        """Stop *sumo_id* where *points* end, on the lane of its route there,
+        and keep it standing; ``False`` where SUMO refuses."""
+        tc = self._traci
+        end = points[-1]
+        before = points[-2] if len(points) > 1 else None
+        heading = None
+        if before is not None:
+            # SUMO's y is CARLA's mirrored.
+            heading = math.degrees(math.atan2(-(end.y - before.y), end.x - before.x))
+        x, y = carla_xy_to_sumo(end.x, end.y, self._offset)
+        try:
+            route = list(tc.vehicle.getRoute(sumo_id))
+            ahead = set(route[max(tc.vehicle.getRouteIndex(sumo_id), 0) :])
+            place = self._lane_at(x, y, heading, self._vclass(sumo_id), ahead)
+            if place is None:
+                logger.warning("SUMO: %s has no lane of its route to stop on", sumo_id)
+                return False
+            lane, offset = place
+            # SUMO stops the front bumper there; the point is the middle.
+            length = float(tc.vehicle.getLength(sumo_id))
+            pos = min(offset + length / 2.0, float(lane.getLength()) - 0.1)
+            tc.vehicle.setStop(
+                sumo_id,
+                lane.getEdge().getID(),
+                pos=pos,
+                laneIndex=lane.getIndex(),
+                duration=_STAND_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - the caller stops it instead
+            logger.warning("SUMO could not stop %s at its goal: %s", sumo_id, exc)
+            return False
+        logger.info(
+            "SUMO: %s stops at its goal on %s_%d at %.1f m",
+            sumo_id,
+            lane.getEdge().getID(),
+            lane.getIndex(),
+            pos,
+        )
+        return True
+
+    def _set_route(self, sumo_id: str, stops: list[Any]) -> None:
+        """Route *sumo_id* along the Lanelet2 route through *stops*: the
+        route's points every :data:`_ROUTE_STEP_M` metres, each on the SUMO
+        lane nearest it that runs its way, the edges of those lanes joined by
+        SUMO's shortest paths, from the edge the vehicle is on."""
+        from ...coordinate.map_manager import MapManager  # noqa: PLC0415
+        from ...coordinate.transform import to_carla_location  # noqa: PLC0415
+        from ...odd.route_plan import (  # noqa: PLC0415
+            PlannedRoute,
+            RouteError,
+            route_poses,
+        )
+
+        mm = MapManager.get_instance()
+        route = PlannedRoute(start=stops[0], goal=stops[-1], via=tuple(stops[1:-1]))
+        try:
+            poses = route_poses(route, mm.lanelet_map, mm.routing_graph, _ROUTE_STEP_M)
+        except RouteError as error:
+            logger.warning("SUMO: no route for %s to follow: %s", sumo_id, error)
+            return
+        points = [to_carla_location(pose) for pose in poses]
+        xy = [carla_xy_to_sumo(p.x, p.y, self._offset) for p in points]
+        vclass = self._vclass(sumo_id)
+        edges: list[str] = []
+        for i, (x, y) in enumerate(xy):
+            a, b = xy[max(i - 1, 0)], xy[min(i + 1, len(xy) - 1)]
+            heading = (
+                math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+                if (a, b) != ((x, y), (x, y))
+                else None
+            )
+            place = self._lane_at(x, y, heading, vclass)
+            if place is None:
+                continue
+            edge = place[0].getEdge().getID()
+            if not edges or edges[-1] != edge:
+                edges.append(edge)
+        tc = self._traci
+        try:
+            route_now = list(tc.vehicle.getRoute(sumo_id))
+            index = max(tc.vehicle.getRouteIndex(sumo_id), 0)
+            here = route_now[index] if route_now else tc.vehicle.getRoadID(sumo_id)
+            start = [here]
+            lane = str(tc.vehicle.getLaneID(sumo_id))
+            if lane.startswith(":"):
+                # Inside a junction, on the lane to the edge it leaves by:
+                # the route goes on from that edge.
+                links = tc.lane.getLinks(lane)
+                if links:
+                    after = links[0][0].rsplit("_", 1)[0]
+                    if after != here:
+                        start.append(after)
+            if (
+                len(start) > 1
+                and start[-1] not in edges
+                and here in edges
+                and self._onto_route_lane(sumo_id, here, edges, stops)
+            ):
+                return  # routed once on the junction lane of its route
+            if start[-1] in edges:
+                edges = edges[edges.index(start[-1]) + 1 :]
+            elif here in edges:
+                edges = edges[edges.index(here) + 1 :]
+            joined = self._join_edges([*start, *edges], vclass)
+            tc.vehicle.setRoute(sumo_id, self._continue_route(joined, vclass=vclass))
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning("SUMO could not route %s: %s", sumo_id, exc)
+            return
+        logger.info(
+            "SUMO: %s routed along %d edge(s): %s", sumo_id, len(joined), joined
+        )
+
+    def _onto_route_lane(
+        self, sumo_id: str, here: str, edges: list[str], stops: list[Any]
+    ) -> bool:
+        """Put *sumo_id*, on a junction lane that leads off its route, on the
+        junction lane from *here* to the route's next edge nearest its car,
+        and route it once SUMO has moved it (:meth:`_place_driven`).  Placed
+        by position, a car in a junction is put on whichever of the lanes
+        across it is nearest -- straight on, for vehicle_40 turning left.
+        ``False`` (it is routed from where it is) with no such lane, no car,
+        or once tried already."""
+        from sumolib.geomhelper import distancePointToPolygon  # noqa: PLC0415
+
+        index = edges.index(here)
+        entity = self._driven.get(sumo_id)
+        actor = getattr(entity, "actor", None)
+        if index + 1 >= len(edges) or actor is None or sumo_id in self._rerouted:
+            return False
+        try:
+            conns = self._net.getEdge(here).getConnections(
+                self._net.getEdge(edges[index + 1])
+            )
+        except Exception:  # noqa: BLE001 - an edge sumolib does not know
+            return False
+        pose = self._carla_pose_to_sumo(actor)
+        vias = [c.getViaLaneID() for c in conns if c.getViaLaneID()]
+        if not vias:
+            return False
+        via = min(
+            vias,
+            key=lambda lane: distancePointToPolygon(
+                (pose.x, pose.y), self._net.getLane(lane).getShape()
+            ),
+        )
+        edge_id, lane_index = via.rsplit("_", 1)
+        try:
+            self._traci.vehicle.moveToXY(
+                sumo_id, edge_id, int(lane_index), pose.x, pose.y, pose.heading_deg, 0
+            )
+        except Exception as exc:  # noqa: BLE001 - routed from where it is
+            logger.debug("SUMO could not move %s onto %s: %s", sumo_id, via, exc)
+            return False
+        self._rerouted.add(sumo_id)
+        self._waiting_routes[id(entity)] = list(stops)
+        self._settling.add(sumo_id)
+        logger.info(
+            "SUMO: %s is put on %s, the junction lane of its route", sumo_id, via
+        )
+        return True
+
+    def _join_edges(self, edges: list[str], vclass: str) -> list[str]:
+        """*edges* in order, each joined to the one before it by SUMO's
+        shortest path where they do not meet; one no path reaches is left
+        out."""
+        joined = [edges[0]]
+        for edge in edges[1:]:
+            if edge == joined[-1]:
+                continue
+            last = self._net.getEdge(joined[-1])
+            nxt = self._net.getEdge(edge)
+            if nxt in last.getOutgoing():
+                joined.append(edge)
+                continue
+            path, _cost = self._net.getShortestPath(last, nxt, vClass=vclass)
+            if path is None:
+                logger.debug("SUMO: no way from %s to %s", joined[-1], edge)
+                continue
+            joined.extend(e.getID() for e in path[1:])
+        return joined
+
+    def _lane_at(
+        self,
+        x: float,
+        y: float,
+        heading: Optional[float],
+        vclass: str,
+        edges: Optional[Collection[str]] = None,
+    ) -> Optional[tuple[Any, float]]:
+        """The SUMO lane (sumolib's) nearest the SUMO point (*x*, *y*) that a
+        *vclass* may use, runs within :data:`_ROUTE_HEADING_DEG` of *heading*
+        (degrees from SUMO's x axis) there and, given *edges*, is on one of
+        them; with the distance along it of the point.  Not a junction's."""
+        from sumolib.geomhelper import (  # noqa: PLC0415
+            polygonOffsetWithMinimumDistanceToPoint,
+        )
+
+        best: Optional[tuple[Any, float]] = None
+        best_distance = math.inf
+        for lane, distance in self._net.getNeighboringLanes(
+            x, y, _ROUTE_LANE_RADIUS_M, includeJunctions=False
+        ):
+            if not lane.allows(vclass) or distance >= best_distance:
+                continue
+            if lane.getEdge().getID().startswith(":"):
+                continue
+            if edges is not None and lane.getEdge().getID() not in edges:
+                continue
+            shape = lane.getShape()
+            offset = polygonOffsetWithMinimumDistanceToPoint((x, y), shape)
+            if heading is not None and not _runs_along(shape, offset, heading):
+                continue
+            best, best_distance = (lane, offset), distance
+        return best
 
     def release(self, entity: Any, world: Any) -> None:
         """Stop driving *entity* in SUMO and publish it there instead.
@@ -1563,8 +2142,9 @@ class SumoTrafficBackend(TrafficBackend):
             pos, lane = 0.0, int(index)
         return edge, pos, lane
 
-    def _add_vehicle(self, sumo_id: str, actor: Any) -> bool:
-        """Add *actor* to SUMO where it stands; ``False`` if it is off the network.
+    def _add_vehicle(self, sumo_id: str, actor: Any, speed: float = 0.0) -> bool:
+        """Add *actor* to SUMO where it stands, at *speed* (m/s, no faster
+        than its lane allows); ``False`` if it is off the network.
 
         A bicycle (:func:`is_bicycle`) as one of SUMO's default bicycle type,
         on the nearest lane a bicycle may use -- a sidewalk's, when bicycles
@@ -1578,15 +2158,33 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         edge, pos, lane = place
         route_id = f"route:{sumo_id}"
+        if pos <= 0.0:
+            # Out of a junction, onto the start of the lane it leads to:
+            # standing there (libsumo crashed inserting a vehicle there at
+            # speed); it is put where it really is, at its speed, once on
+            # the road (_place_driven, _push_external).
+            speed = 0.0
         try:
-            tc.route.add(route_id, self._continue_route([edge], vclass=vclass))
+            if speed > 0.0:
+                speed = min(speed, float(tc.lane.getMaxSpeed(f"{edge}_{lane}")))
+            route_edges = self._continue_route([edge], vclass=vclass)
+            logger.debug(
+                "SUMO: adds %s on %s_%d at %.2f m, %.2f m/s, route %s",
+                sumo_id,
+                edge,
+                lane,
+                pos,
+                speed,
+                route_edges,
+            )
+            tc.route.add(route_id, route_edges)
             tc.vehicle.add(
                 sumo_id,
                 route_id,
                 typeID=_BICYCLE_TYPE if bicycle else "DEFAULT_VEHTYPE",
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
-                departSpeed="0",
+                departSpeed=f"{speed:.2f}",
             )
         except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
             logger.warning(
@@ -1828,16 +2426,45 @@ class SumoTrafficBackend(TrafficBackend):
             )
 
     def _push_external(self) -> None:
-        tc = self._traci
-        for sumo_id, actor in self._external.items():
-            pose = self._carla_pose_to_sumo(actor)
-            # keepRoute=0: onto the nearest lane wherever it is, so SUMO traffic
-            # keeps yielding to it (TeraSim's finding: with 2 it can end up off
-            # every lane and stop being seen).
-            tc.vehicle.moveToXY(sumo_id, "", -1, pose.x, pose.y, pose.heading_deg, 0)
-            velocity = actor.get_velocity()
-            speed = math.hypot(velocity.x, velocity.y)
-            tc.vehicle.setPreviousSpeed(sumo_id, speed)
+        for sumo_id, actor in list(self._external.items()):
+            try:
+                gone = _parked(actor)
+            except RuntimeError:  # destroyed: a despawn
+                gone = True
+            if gone:
+                # Out of the world (despawned, or parked again): out of SUMO,
+                # where it would stand in the way.
+                self._leave(sumo_id, actor)
+                continue
+            # keepRoute=0: onto the nearest lane wherever it is, so SUMO
+            # traffic keeps yielding to it (TeraSim's finding: with 2 it can
+            # end up off every lane and stop being seen).
+            self._put_at_car(sumo_id, actor)
+
+    def _leave(self, sumo_id: str, actor: Any) -> None:
+        """Take published *sumo_id* out of SUMO: its *actor* left the world.
+        Parked again, it is brought back in when it comes up."""
+        self._external.pop(sumo_id, None)
+        if self._approaches.pop(sumo_id, None) is not None:
+            # Driven in CARLA: published again when it comes back up.
+            self._published_ids.add(int(actor.id))
+        try:
+            self._traci.vehicle.remove(sumo_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("SUMO could not remove %s: %s", sumo_id, exc)
+        self._vclasses.pop(sumo_id, None)
+        self._forget_handed(sumo_id)
+        try:
+            alive = bool(actor.is_alive)
+        except RuntimeError:
+            alive = False
+        if alive:
+            entity = next(
+                (e for e in self._entities if getattr(e, "actor", None) is actor),
+                None,
+            )
+            self._parked[actor.id] = (actor, entity)
+        logger.info("SUMO: %s left the world and SUMO", sumo_id)
 
     def _push_walkers(self, world: Any) -> None:
         """Put every CARLA pedestrian into SUMO where it stands, as a person,
@@ -1861,7 +2488,12 @@ class SumoTrafficBackend(TrafficBackend):
                 continue
             pose = self._walked_pose(walked, actor)
             tc.person.moveToXY(
-                walked, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
+                walked,
+                "",
+                pose.x,
+                pose.y,
+                self._person_angle(pose),
+                _KEEP_ROUTE_ANYWHERE,
             )
         if not self._config.publish_walkers:
             return
@@ -1869,10 +2501,13 @@ class SumoTrafficBackend(TrafficBackend):
         # following a person SUMO walks: those are in SUMO.
         mirrors = {actor.id for actor in self._persons.values()}
         mirrors.update(entity.actor.id for entity in self._walked.values())
+        # Nor one parked under the map (spawned hidden): out of SUMO until it
+        # comes up, rather than dragged across to where it appears (libsumo
+        # crashed moving a person so).
         walkers = {
             actor_id: actor
             for actor_id, actor in present.items()
-            if actor_id not in mirrors
+            if actor_id not in mirrors and not _parked(actor)
         }
         for actor_id in [i for i in self._walkers if i not in walkers]:
             try:
@@ -1884,8 +2519,59 @@ class SumoTrafficBackend(TrafficBackend):
             person = self._walkers.get(actor_id) or self._add_person(actor, pose)
             if person is not None:
                 tc.person.moveToXY(
-                    person, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
+                    person,
+                    "",
+                    pose.x,
+                    pose.y,
+                    self._person_angle(pose),
+                    _KEEP_ROUTE_ANYWHERE,
                 )
+
+    def _person_angle(self, pose: Pose2D) -> float:
+        """The angle a person moved to *pose* is given: its own, or on a
+        pedestrian crossing the crossing's backward one.
+
+        SUMO (1.28) crashes when a person put on a crossing by moveToXY --
+        never having approached it -- walks off its forward end: it looks for
+        the lane the person came from, which there is none of.  Facing back
+        along the crossing, it is never walking forward on it.
+        """
+        from sumolib.geomhelper import (  # noqa: PLC0415
+            polygonOffsetWithMinimumDistanceToPoint,
+            positionAtShapeOffset,
+        )
+
+        if self._crossings is None:
+            self._crossings = []
+            for edge in self._net.getEdges(withInternal=True):
+                if edge.getFunction() != "crossing":
+                    continue
+                for lane in edge.getLanes():
+                    shape = lane.getShape()
+                    xs = [x for x, _ in shape]
+                    ys = [y for _, y in shape]
+                    box = (
+                        min(xs) - _CROSSING_NEAR_M,
+                        min(ys) - _CROSSING_NEAR_M,
+                        max(xs) + _CROSSING_NEAR_M,
+                        max(ys) + _CROSSING_NEAR_M,
+                    )
+                    self._crossings.append((shape, box))
+        for shape, (x0, y0, x1, y1) in self._crossings:
+            if not (x0 <= pose.x <= x1 and y0 <= pose.y <= y1):
+                continue
+            offset = polygonOffsetWithMinimumDistanceToPoint((pose.x, pose.y), shape)
+            near = positionAtShapeOffset(shape, offset)
+            if math.hypot(near[0] - pose.x, near[1] - pose.y) > _CROSSING_NEAR_M:
+                continue
+            ahead = positionAtShapeOffset(shape, offset + 0.1)
+            behind = positionAtShapeOffset(shape, max(offset - 0.1, 0.0))
+            dx, dy = ahead[0] - behind[0], ahead[1] - behind[1]
+            if dx == 0.0 and dy == 0.0:
+                continue
+            # SUMO's angle: clockwise from north; backwards along the crossing.
+            return (90.0 - math.degrees(math.atan2(-dy, -dx))) % 360.0
+        return pose.heading_deg
 
     def _walker_pose(self, actor: Any, yaw_deg: Optional[float] = None) -> Pose2D:
         """Where CARLA's walker *actor* is, in SUMO's frame; facing *yaw_deg*
@@ -1968,20 +2654,35 @@ class SumoTrafficBackend(TrafficBackend):
         onto the next edge of the vehicle's route.  ``None`` when SUMO's lanes
         cannot be followed (the caller extrapolates along the heading).
         """
-        import sumolib  # noqa: PLC0415
+        return self._lookahead_points(sumo_id, [distance])[0]
 
+    def _lookahead_points(
+        self, sumo_id: str, distances: list[float]
+    ) -> list[Optional[tuple[float, float]]]:
+        """:meth:`_lookahead` for each of *distances*, SUMO asked once."""
         tc = self._traci
         try:
-            lane = self._net.getLane(tc.vehicle.getLaneID(sumo_id))
+            start = self._net.getLane(tc.vehicle.getLaneID(sumo_id))
         except Exception:  # noqa: BLE001 - off every lane, or a lane sumolib lacks
-            return None
+            return [None] * len(distances)
         # Mid lane change, SUMO's vehicle is off its lane's centre by this much
         # (to the left when positive); the point aimed at is too, or the car
         # would cut the lane change short of where SUMO has it.
         lateral = float(tc.vehicle.getLateralLanePosition(sumo_id))
-        offset = tc.vehicle.getLanePosition(sumo_id) + distance
+        position = float(tc.vehicle.getLanePosition(sumo_id))
         route = list(tc.vehicle.getRoute(sumo_id))
         index = tc.vehicle.getRouteIndex(sumo_id)
+        return [
+            self._along_lanes(start, position + d, lateral, route, index)
+            for d in distances
+        ]
+
+    def _along_lanes(
+        self, lane: Any, offset: float, lateral: float, route: list[str], index: int
+    ) -> Optional[tuple[float, float]]:
+        """The point *offset* metres along from *lane*'s start, *lateral*
+        to its left, on through the lanes of *route* (from *index*)."""
+        import sumolib  # noqa: PLC0415
 
         def at(shape: Any, along: float) -> tuple[float, float]:
             x0, y0 = sumolib.geomhelper.positionAtShapeOffset(shape, along)
@@ -2096,7 +2797,7 @@ class SumoTrafficBackend(TrafficBackend):
         if look is None:
             heading = math.radians(90.0 - angle)
             look = (x + math.cos(heading) * ahead, y + math.sin(heading) * ahead)
-        look_x, look_y = look[0] - self._offset[0], -(look[1] - self._offset[1])
+        look_x, look_y = sumo_xy_to_carla(look[0], look[1], self._offset)
 
         tf = actor.get_transform()
         velocity = actor.get_velocity()
@@ -2104,7 +2805,26 @@ class SumoTrafficBackend(TrafficBackend):
         long_error, side_error = to_vehicle_frame(
             tf.location.x, tf.location.y, tf.rotation.yaw, target.x, target.y
         )
-        if math.hypot(long_error, side_error) > self._config.resync_distance_m:
+        sumo_acceleration = float(tc.vehicle.getAcceleration(sumo_id))
+        # Nothing to hold back when SUMO already has it stand.
+        guard = (
+            self._guard_speed(actor, sumo_id, tf, speed) if target_speed > 0.0 else None
+        )
+        guarded = guard is not None and guard[0] < target_speed
+        if guard is not None and guarded:
+            # Something stands in its way in CARLA that SUMO does not see
+            # there (a car on another of a junction's lanes, say): it stops
+            # for it, and SUMO's vehicle is held back with it.
+            target_speed, blocker = guard
+            long_error = min(long_error, 0.0)
+            sumo_acceleration = -_GUARD_DECEL
+            self._hold_back(sumo_id, target_speed, blocker)
+        else:
+            self._let_go(sumo_id)
+        if (
+            not guarded
+            and math.hypot(long_error, side_error) > self._config.resync_distance_m
+        ):
             logger.info(
                 "SUMO: %s is %.1f m off its SUMO vehicle on %s (%.1f m along, %.1f m "
                 "across, %.1f vs %.1f m/s); putting it back",
@@ -2169,7 +2889,7 @@ class SumoTrafficBackend(TrafficBackend):
         drive = longitudinal(
             speed=speed,
             sumo_speed=target_speed,
-            sumo_acceleration=float(tc.vehicle.getAcceleration(sumo_id)),
+            sumo_acceleration=sumo_acceleration,
             longitudinal_error=long_error,
             integral=state["integral"],
             dt=dt,
@@ -2185,6 +2905,186 @@ class SumoTrafficBackend(TrafficBackend):
                 ),
             )
         )
+
+    def _unstick_junctions(self, elapsed: float) -> None:
+        """Let a vehicle SUMO drives that has stood in a junction for
+        :data:`_JUNCTION_WAIT_S`, giving way only to scenario vehicles
+        standing in it (published: SUMO does not move them), go on through
+        it disregarding those: SUMO would hold it there for good (vehicle_40,
+        turning left, gave way to vehicle_31 and vehicle_38 standing across
+        its turn as in the recording).  Back to its own speed mode once out of
+        the junction; what stands in its way in CARLA still stops it
+        (:meth:`_guard_speed`)."""
+        tc = self._traci
+        for sumo_id in list(self._unstuck):
+            try:
+                on_road = not str(tc.vehicle.getLaneID(sumo_id)).startswith(":")
+            except Exception:  # noqa: BLE001 - gone from SUMO
+                self._unstuck.pop(sumo_id, None)
+                continue
+            if on_road:
+                try:
+                    tc.vehicle.setSpeedMode(sumo_id, self._unstuck[sumo_id])
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("SUMO could not restore %s: %s", sumo_id, exc)
+                del self._unstuck[sumo_id]
+        for sumo_id in self._driven:
+            if sumo_id in self._unstuck:
+                continue
+            try:
+                standing = float(tc.vehicle.getSpeed(sumo_id)) < 0.1
+            except Exception:  # noqa: BLE001 - not on the road
+                self._standing_since.pop(sumo_id, None)
+                continue
+            if not standing:
+                self._standing_since.pop(sumo_id, None)
+                continue
+            since = self._standing_since.setdefault(sumo_id, elapsed)
+            if elapsed - since < _JUNCTION_WAIT_S:
+                continue
+            if (
+                elapsed - self._foes_asked.get(sumo_id, -math.inf)
+                < _JUNCTION_FOES_EVERY_S
+            ):
+                continue
+            self._foes_asked[sumo_id] = elapsed
+            try:
+                foes = tc.vehicle.getJunctionFoes(sumo_id, 30.0)
+            except Exception:  # noqa: BLE001 - an older SUMO
+                continue
+            # (foe, ..., egoHasPrio, foeHasPrio) -- the foes it gives way to.
+            giving_way = [str(f[0]) for f in foes if not f[-2] and f[-1]]
+            if not giving_way:
+                continue
+            if not all(
+                foe in self._external and float(tc.vehicle.getSpeed(foe)) < 0.1
+                for foe in giving_way
+            ):
+                continue
+            try:
+                mode = int(tc.vehicle.getSpeedMode(sumo_id))
+                tc.vehicle.setSpeedMode(
+                    sumo_id,
+                    (mode | _SPEED_MODE_THROUGH_JUNCTION) & ~_SPEED_MODE_RIGHT_OF_WAY,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SUMO could not unstick %s: %s", sumo_id, exc)
+                continue
+            self._unstuck[sumo_id] = mode
+            logger.info(
+                "SUMO: %s has stood %.0f s giving way to %s, standing in its "
+                "junction; it goes on through",
+                sumo_id,
+                elapsed - since,
+                ", ".join(giving_way),
+            )
+
+    def _guard_speed(
+        self, actor: Any, sumo_id: str, tf: Any, speed: float
+    ) -> Optional[tuple[float, int]]:
+        """The speed (m/s) *actor* can still stop at before the nearest
+        vehicle or walker whose outline stands in its way -- along SUMO's
+        path for it, in :data:`_GUARD_PIECE_M` pieces its own width, for the
+        distance it takes to stop and :data:`_GUARD_GAP_M` -- with that
+        actor's id, or ``None`` with nothing there.  Along the path, not
+        straight ahead: turning, a car standing beside the curve is not in
+        the way."""
+        from ...utils.clearance import first_box_in_way  # noqa: PLC0415
+
+        extent = actor.bounding_box.extent
+        half_length = float(extent.x)
+        half_width = float(extent.y) + _GUARD_SIDE_M
+        reach = (
+            half_length
+            + _GUARD_GAP_M
+            + max(_GUARD_LOOK_M, speed * speed / (2.0 * _GUARD_DECEL) + speed)
+        )
+        # From its middle; SUMO's points from its front bumper on.
+        points = [(tf.location.x, tf.location.y)]
+        pieces = max(math.ceil((reach - half_length) / _GUARD_PIECE_M), 1)
+        for point in self._lookahead_points(
+            sumo_id, [_GUARD_PIECE_M * (k + 1) for k in range(pieces)]
+        ):
+            if point is None:
+                break
+            points.append(sumo_xy_to_carla(point[0], point[1], self._offset))
+        if len(points) == 1:
+            yaw = math.radians(tf.rotation.yaw)
+            points.append(
+                (
+                    points[0][0] + math.cos(yaw) * reach,
+                    points[0][1] + math.sin(yaw) * reach,
+                )
+            )
+        try:
+            world = actor.get_world()
+        except (AttributeError, RuntimeError):  # no world to look in
+            return None
+        travelled = 0.0
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            span = math.hypot(x1 - x0, y1 - y0)
+            if span < 0.05:
+                continue
+            heading = math.degrees(math.atan2(y1 - y0, x1 - x0))
+            nearest: Optional[Any] = None
+            for kind in ("vehicle", "walker"):
+                try:
+                    found = first_box_in_way(
+                        world, int(actor.id), x0, y0, heading, kind, span, half_width
+                    )
+                except (AttributeError, RuntimeError):
+                    continue
+                if found is None or (travelled == 0.0 and found.ahead <= 0.0):
+                    continue
+                if nearest is None or found.ahead < nearest.ahead:
+                    nearest = found
+            if nearest is not None:
+                gap = (
+                    travelled
+                    + nearest.ahead
+                    - half_length
+                    - nearest.radius
+                    - _GUARD_GAP_M
+                )
+                return math.sqrt(2.0 * _GUARD_DECEL * max(gap, 0.0)), int(nearest.id)
+            travelled += span
+            if travelled >= reach:
+                break
+        return None
+
+    def _hold_back(self, sumo_id: str, speed: float, blocker: int) -> None:
+        """Hold SUMO's *sumo_id* to *speed* while its car is held back (by
+        CARLA's actor *blocker*)."""
+        try:
+            self._traci.vehicle.setSpeed(sumo_id, speed)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("SUMO could not hold %s back: %s", sumo_id, exc)
+            return
+        if sumo_id not in self._held_back:
+            self._held_back.add(sumo_id)
+            name: Any = blocker
+            try:
+                found = self._ego_actor.get_world().get_actor(blocker)
+                name = found.attributes.get("role_name") or blocker
+            except Exception:  # noqa: BLE001 - the name is for the log only
+                pass
+            logger.info(
+                "SUMO: %s waits for %s, in its way in CARLA (%.1f m/s)",
+                sumo_id,
+                name,
+                speed,
+            )
+
+    def _let_go(self, sumo_id: str) -> None:
+        """Give SUMO's *sumo_id* back the speed it was set, once its car is
+        no longer held back."""
+        if sumo_id not in self._held_back:
+            return
+        self._held_back.discard(sumo_id)
+        try:
+            self._traci.vehicle.setSpeed(sumo_id, self._commanded.get(sumo_id, -1.0))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("SUMO could not let %s go: %s", sumo_id, exc)
 
     def _move_sumo_to_car(
         self, sumo_id: str, tf: Any, speed: float, length: float
@@ -2260,11 +3160,10 @@ class SumoTrafficBackend(TrafficBackend):
             actor.enable_constant_velocity(carla.Vector3D(speed, 0.0, 0.0))
             self._constant_speed[actor.id] = speed
 
-    def _pull_driven(self) -> None:
-        present = set(self._traci.vehicle.getIDList())
+    def _pull_driven(self, present: Collection[str]) -> None:
         for sumo_id, entity in self._driven.items():
             actor = getattr(entity, "actor", None)
-            if actor is None or sumo_id not in present:
+            if actor is None or sumo_id not in present or sumo_id in self._settling:
                 continue
             self._follow(actor, sumo_id, self._length(actor), self._control(sumo_id))
             self._keep_route_ahead(sumo_id)
@@ -3238,7 +4137,7 @@ class SumoTrafficBackend(TrafficBackend):
             for waypoint in light.get_affected_lane_waypoints():
                 back = waypoint.previous(2.0)
                 where = (back[0] if back else waypoint).transform.location
-                sx, sy = where.x + self._offset[0], -where.y + self._offset[1]
+                sx, sy = carla_xy_to_sumo(where.x, where.y, self._offset)
                 try:
                     edge, _pos, lane = tc.simulation.convertRoad(
                         sx, sy, False, "passenger"

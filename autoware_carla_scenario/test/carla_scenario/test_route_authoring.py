@@ -27,6 +27,7 @@ from autoware_carla_scenario import (
     RoutingMode,
     Lanelet2Pose,
     RouteCrossingPose,
+    RouteCrosswalkPose,
     RouteLanePose,
     RouteProgressCondition,
     SpawnTransform,
@@ -159,7 +160,9 @@ actions:
     trigger:
       type: route_progress
       params: {value: 0, anchor: "junction:0:entry"}
-    params: {speed_ms: 1.3}
+    params:
+      speed_ms: 1.3
+      route_pose: "crosswalk junction=0 leg=exit side=right along=-1.5"
 assertions:
   pass:
     - type: route_progress
@@ -214,15 +217,35 @@ class TestTheDocument:
 
     def test_a_junctions_paths_reach_the_search(self) -> None:
         raw = _raw()
-        raw["route"]["segments"][1]["paths"] = [{"approach": "same", "turn": "right"}]
+        raw["route"]["segments"][1]["paths"] = [
+            {"approach": "same", "turn": "right"},
+            {"approach": "left", "turn": "straight", "before": {"min": 30.0}},
+        ]
         document = ScenarioDocument.model_validate(raw)
         assert document.route is not None
         dumped = document.route.to_sweep_dict()
-        assert dumped["segments"][1]["paths"] == [{"approach": "same", "turn": "right"}]
+        assert dumped["segments"][1]["paths"] == [
+            {"approach": "same", "turn": "right"},
+            {"approach": "left", "turn": "straight", "before": {"min": 30.0}},
+        ]
         junction = parse_route_search(dumped).segments[1]
         assert isinstance(junction, JunctionSegmentSpec)
-        assert [(p.approach, p.turn) for p in junction.paths] == [("same", "right")]
-        assert "path from same turning right" in document.route.segments[1].summary()
+        assert [(p.approach, p.turn) for p in junction.paths] == [
+            ("same", "right"),
+            ("left", "straight"),
+        ]
+        assert junction.paths[1].before.min == 30.0
+        summary = document.route.segments[1].summary()
+        assert "path from same turning right" in summary
+        assert "path from left turning straight (before >= 30 m)" in summary
+        # A junction's length reaches the search, and says nothing unset.
+        raw["route"]["segments"][1]["length"] = {"min": 15.0, "max": 25.0}
+        bounded = ScenarioDocument.model_validate(raw)
+        assert bounded.route is not None
+        spec = parse_route_search(bounded.route.to_sweep_dict()).segments[1]
+        assert isinstance(spec, JunctionSegmentSpec)
+        assert (spec.length.min, spec.length.max) == (15.0, 25.0)
+        assert "length" not in _document().route.to_sweep_dict()["segments"][1]  # type: ignore[union-attr]
         # A junction asking for none says nothing of them.
         assert "paths" not in _document().route.to_sweep_dict()["segments"][1]  # type: ignore[union-attr]
 
@@ -264,6 +287,83 @@ class TestValidation:
         messages = _messages(ScenarioDocument.model_validate(raw))
         assert any("has 1 junction(s)" in m for m in messages)
         assert any("Route vertex 1: junction 2" in m for m in messages)
+
+    def test_a_distance_condition_measures_to_a_route_pose(self) -> None:
+        from autoware_carla_scenario.authoring.builders import instantiate_condition
+        from autoware_carla_scenario.conditions import EntityPositionDistanceCondition
+        from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+        raw = _raw()
+        raw["actions"][0]["trigger"] = {
+            "type": "distance",
+            "params": {
+                "entity": "ego",
+                "route_pose": [
+                    {"kind": "lane", "anchor": "junction:0:entry", "ds": -5.0}
+                ],
+                "rule": "less_than",
+                "distance": 30.0,
+            },
+        }
+        document = ScenarioDocument.model_validate(raw)
+        assert not _messages(document)
+        trigger = compile_document(document).actions[0].trigger
+        assert trigger is not None
+        built = instantiate_condition(trigger, BuildContext(scenario=None))
+        assert isinstance(built, EntityPositionDistanceCondition)
+        assert isinstance(built._at.position, RouteLanePose)
+        raw["actions"][0]["trigger"]["params"]["route_pose"][0]["anchor"] = (
+            "junction:4:entry"
+        )
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("junction" in m for m in messages)
+
+    def test_a_traffic_signal_on_a_route_junction(self) -> None:
+        from autoware_carla_scenario.actions import (
+            TrafficLightTarget,
+            TrafficSignalAction,
+        )
+
+        raw = _raw()
+        raw["actions"].append(
+            {
+                "id": "light",
+                "type": "traffic_signal",
+                "params": {
+                    "state": "Red",
+                    "target": "route",
+                    "route_junction": 0,
+                    "route_approach": "same",
+                    "route_turn": "left",
+                },
+            }
+        )
+        document = ScenarioDocument.model_validate(raw)
+        assert not _messages(document)
+        built = instantiate_action(
+            compile_document(document).actions[-1], BuildContext(scenario=None)
+        )
+        assert isinstance(built, TrafficSignalAction)
+        assert built._route and not built._all_lights
+        assert (built._route_junction, built._route_approach, built._route_turn) == (
+            0,
+            "same",
+            "left",
+        )
+        raw["actions"][-1]["params"]["route_junction"] = 2
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("Route junction 2" in m for m in messages)
+        assert TrafficLightTarget.ROUTE.value == "route"
+
+    def test_a_spawn_cards_route_pose_is_checked_as_route_vertices_are(self) -> None:
+        raw = _raw()
+        raw["actions"][4]["params"]["route_pose"] = "crosswalk junction=3 leg=exit"
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("Route vertex 1: junction 3" in m for m in messages)
+        raw["actions"][4]["params"]["route_pose"] = "lane ds=1\nlane ds=2"
+        built = compile_document(ScenarioDocument.model_validate(raw))
+        with pytest.raises(ValueError, match="one route vertex"):
+            instantiate_action(built.actions[4], BuildContext(scenario=None))
 
     def test_a_malformed_vertex_is_reported_against_its_field(self) -> None:
         raw = _raw()
@@ -350,6 +450,13 @@ class TestBuild:
         enters = instantiate_action(compiled.actions[3], ctx)
         assert isinstance(enters, SpawnAction)
         assert enters.entity_name == oncoming._entity_name
+        # A Spawn card with a route pose is placed on the route.
+        walks_in = instantiate_action(compiled.actions[4], ctx)
+        assert isinstance(walks_in, SpawnAction)
+        assert walks_in._at is not None
+        assert walks_in._at.position == RouteCrosswalkPose(
+            junction=0, leg="exit", side="right", along=-1.5
+        )
 
     def test_the_assertion_builds(self) -> None:
         compiled = compile_document(_document())
@@ -495,6 +602,7 @@ class TestTheRunPicksItsRoute:
         for action in raw["actions"]:
             action["params"]["path_source"] = "vertices"
             action["params"]["vertices"] = [[0, 0], [1, 0]]
+            action["params"].pop("route_pose", None)
             action.pop("trigger")
             action.pop("advance_conditions", None)
         raw["assertions"]["pass"] = [

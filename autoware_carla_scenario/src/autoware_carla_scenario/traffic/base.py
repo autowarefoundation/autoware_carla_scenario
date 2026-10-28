@@ -722,6 +722,18 @@ class TrafficBackend:
         planned; see ``docs/traffic_backends.md``."""
         self._unavailable("follow_route", entity)
 
+    def finish_at(
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        points: List["carla.Location"],
+    ) -> bool:
+        """Drive *entity*'s vehicle along *points* -- the rest of its route, its
+        last the exact place it is to stop -- itself, and stop it there.
+        ``False`` (the default) when the backend cannot: the caller asks for
+        no speed instead, and it stops where its driver puts it."""
+        return False
+
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Stop driving *entity*: something else has taken it over.
 

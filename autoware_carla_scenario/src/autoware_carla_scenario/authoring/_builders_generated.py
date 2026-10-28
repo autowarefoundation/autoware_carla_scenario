@@ -547,13 +547,14 @@ def build_distance_condition(
 ) -> "BaseCondition":
     """Build an :class:`EntityPositionDistanceCondition`."""
     from ..conditions import EntityPositionDistanceCondition  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
+        route_vertex=params["route_pose"],
     )
     return EntityPositionDistanceCondition(
         entity_name=str(params["entity"]),
@@ -759,14 +760,15 @@ def build_place_clear_condition(
 ) -> "BaseCondition":
     """Build a :class:`PlaceClearCondition`."""
     from ..conditions import PlaceClearCondition  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
         t=params["t"],
         heading=params["heading"],
+        route_vertex=params["route_pose"],
     )
     return PlaceClearCondition(
         position=position,
@@ -1248,6 +1250,8 @@ def build_traffic_signal_action(
         lanelet2_traffic_light_ids = TrafficLightTarget.ALL
     elif params["target"] == "ids":
         lanelet2_traffic_light_ids = params["lanelet2_traffic_light_ids"]
+    elif params["target"] == "route":
+        lanelet2_traffic_light_ids = TrafficLightTarget.ROUTE
     else:  # pragma: no cover -- the generator checks the cases are exhaustive
         raise ValueError(f"traffic_signal: unknown target {params['target']!r}")
     return TrafficSignalAction(
@@ -1258,6 +1262,9 @@ def build_traffic_signal_action(
         label=compiled.label,
         once=compiled.node.once,
         freeze=params["freeze"],
+        route_junction=params["route_junction"],
+        route_approach=str(params["route_approach"]),
+        route_turn=str(params["route_turn"]),
     )
 
 
@@ -1592,6 +1599,7 @@ def build_routing_action(
         time_reference=time_reference,
         initial_distance_offset=params["initial_distance_offset"],
         speed=params["speed_ms"],
+        stop_at_goal=params["stop_at_goal"],
     )
 
 
@@ -1625,14 +1633,15 @@ def build_spawn_action(
 ) -> "BaseAction":
     """Build a :class:`SpawnAction`."""
     from ..actions import SpawnAction  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
         t=params["t"],
         heading=params["heading"],
+        route_vertex=params["route_pose"],
     )
     return SpawnAction(
         entity_name=compiled.actor_role,
