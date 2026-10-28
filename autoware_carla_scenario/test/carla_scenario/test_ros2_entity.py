@@ -262,6 +262,24 @@ def test_a_stale_source_brakes_when_asked_to() -> None:
     assert _last_control(actor).brake == pytest.approx(1.0)
 
 
+def test_a_retry_does_not_drive_on_the_previous_attempt_s_command() -> None:
+    # A retried scenario reuses the entity (#672): until a source speaks in
+    # the new attempt, the ego brakes, as it did on the first one.
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))
+    _tick(entity, clock)
+    assert entity.active_source == "si"
+    entity.on_scenario_end(clock.world)
+
+    actor.reset_mock()
+    entity.on_scenario_start(clock.world)
+    _tick(entity, clock)
+
+    assert entity.active_source is None
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    actor.apply_ackermann_control.assert_not_called()
+
+
 def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
     entity, transport, actor, clock = _started(actor=_actor(speed_mps=0.0))
     # Straight ahead along the ego's heading, in the local frame, at 5 m/s.

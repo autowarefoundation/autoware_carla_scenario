@@ -274,6 +274,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # A retried scenario runs this entity again: the policy's request to end
         # the attempt before does not end this one.
         self._reset_termination()
+        # Nor does its clock or bookkeeping carry over: the new session starts
+        # at simulation time 0 and asks the policy on its first tick, as the
+        # first attempt did.
+        self._sim_time_us = 0
+        self._last_policy_time_us = None
+        self._drive_count = 0
+        self._pending_egomotion = []
+        self._recorded_lidar = {}
+        self._camera_mounts = {}
+        self._plan_markers = DebugMarkers()
         if self._handshake is not None:
             # Before anything moves the ego: the mission is checked against
             # where it stands.
