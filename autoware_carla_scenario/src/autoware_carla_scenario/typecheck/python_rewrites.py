@@ -26,15 +26,19 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   f-string with a literal brace (``f"{x} {{y}}"``) becomes the same ``+``,
   the brace a string of its own, whatever its fields (#696).  The spec
   is parsed at run time, so a spec Python rejects (``{x:q}``) is accepted by
-  the check.  An f-string with a brace or a nested f-string inside an
-  expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
-  Codon's f-string parser loses the position there.
+  the check.  A field with ``!a`` makes the f-string rewritten too, the
+  field ``!r`` (``repr(x)`` where it is a call): Codon has no ``ascii()``,
+  and ``repr`` has the same type (#701).  An f-string with a brace or a
+  nested f-string inside an expression (``f"{'{}'.format(x)}"``,
+  ``f"{len({1, 2})}"``) is refused: Codon's f-string parser loses the
+  position there.
 * An f-string in the body of a lambda that reads a name the lambda does not
   bind (a captured variable, or the parameter of a lambda around it) becomes
   ``str(v) + str(p)`` (#470): Codon resolves the names of an f-string in the
   lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
-  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
+  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``,
+  as it is ``!r`` in ``"{!a}".format(x)``.
   So does any f-string of a decorator (``@tag(f"lane-{n}")``, #616), which
   Codon reads as an attribute of the string ("'str' object has no attribute
   '__prefix_f__'"), with or without fields.
@@ -586,11 +590,15 @@ def _keyword_dict(node: ast.AST) -> bool:
 
 
 def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
-    """Whether Codon's parser refuses *node* as written: a field it does not
-    take, or a literal brace (``{{`` / ``}}``), which it has no escape for
-    and refuses with no position of the file (#696)."""
+    """Whether Codon refuses *node* as written: a field its parser does not
+    take, a literal brace (``{{`` / ``}}``), which it has no escape for and
+    refuses with no position of the file (#696), or an ``!a`` field, which
+    calls the ``ascii()`` Codon lacks ("name 'ascii' is not defined", #701)."""
     return any(
-        (isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v))
+        (
+            isinstance(v, ast.FormattedValue)
+            and (v.conversion == _ASCII or _field_needs_rewrite(v))
+        )
         or (isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}"))
         for v in node.values
     )
@@ -607,18 +615,19 @@ def _expression_text(expression: ast.expr) -> str:
     return text
 
 
+#: The ``!a`` conversion of an f-string field, as :mod:`ast` stores it.
+_ASCII = ord("a")
+
+
 def _converted(field: ast.FormattedValue) -> str:
-    """The field's value as the expression ``!r`` / ``!s`` makes of it."""
+    """The field's value as the expression ``!r`` / ``!s`` makes of it;
+    ``repr`` for ``!a`` too, as for ``ascii(x)``: Codon has no ``ascii()``
+    (#701), and ``repr`` gives the same ``str``."""
     text = _expression_text(field.value)
-    if field.conversion == ord("r"):
+    if field.conversion in (ord("r"), _ASCII):
         return f"repr({text})"
     if field.conversion == ord("s"):
         return f"str({text})"
-    if field.conversion == ord("a"):
-        raise _Refused(
-            "!a together with a format spec the check rewrites is not "
-            "supported (Codon has no ascii()): use !r"
-        )
     return f"({text})"
 
 
@@ -626,7 +635,8 @@ def _formatted(field: ast.FormattedValue) -> str:
     """A ``str`` expression formatting *field* with its spec, at run time."""
     value = _converted(field)
     if field.format_spec is None:
-        return value if field.conversion in (ord("r"), ord("s")) else f"str{value}"
+        converted = field.conversion in (ord("r"), ord("s"), _ASCII)
+        return value if converted else f"str{value}"
     return f"{value}.__format__({_spec_expression(field.format_spec)})"
 
 
@@ -666,18 +676,25 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
                 else:
                     chunk += _escaped(piece)
         elif isinstance(value, ast.FormattedValue):
-            if _field_needs_rewrite(value):
+            body = _expression_text(value.value)
+            unsafe = any(c in body for c in '"\\{}')
+            if _field_needs_rewrite(value) or (value.conversion == _ASCII and unsafe):
+                # An `!a` field whose expression cannot go in the f-string
+                # written here (`d["it's"]`, which ast.unparse spells with a
+                # double quote) is `repr(...)` rather than refused: a call
+                # needs no quote of its own.
                 flush()
                 parts.append(_formatted(value))
                 continue
-            body = _expression_text(value.value)
-            if any(c in body for c in '"\\{}'):
+            if unsafe:
                 raise _Refused(
                     "an f-string expression holding a double quote, a "
                     "backslash or a brace cannot be rewritten: bind it to a "
                     "local first"
                 )
-            if value.conversion in (ord("r"), ord("s"), ord("a")):
+            if value.conversion == _ASCII:
+                body += "!r"  # Codon has no ascii() (#701)
+            elif value.conversion in (ord("r"), ord("s")):
                 body += "!" + chr(value.conversion)
             spec = _spec_text(value.format_spec)
             if spec:
@@ -711,14 +728,7 @@ def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
         if chunk:
             parts.append(_string_literal(chunk))
             chunk = ""
-        if value.conversion == ord("a"):
-            # Codon has no ascii(); repr() has the same type (as for ascii()).
-            value = ast.FormattedValue(
-                value=value.value,
-                conversion=ord("r"),
-                format_spec=value.format_spec,
-            )
-        parts.append(_formatted(value))
+        parts.append(_formatted(value))  # `!a` is `repr`, as `!r` (#701)
     if chunk:
         parts.append(_string_literal(chunk))
     return " + ".join(parts) if parts else '""'
@@ -2173,7 +2183,8 @@ class _Pass(ShadowScopes):
                 expression = "(" + expression + ")"
             body = expression + access
             if conversion:
-                body += "!" + conversion
+                # Codon has no ascii(): `!r` is the same type (#701).
+                body += "!" + ("r" if conversion == "a" else conversion)
             if spec:
                 body += ":" + spec
             chunk += "{" + body + "}"

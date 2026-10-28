@@ -7363,6 +7363,31 @@ def test_fstring_escaped_braces_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_fstring_ascii_conversion_compiles(tmp_path: Path) -> None:
+    """Codon 0.19 has no ascii(): `!a` is checked as `!r` (#701)."""
+    setup = """
+        name = "ab"
+        n = 7
+        w = 6
+        table = {"k": name, "it's": name}
+        a = f"{name!a}"
+        b = f"{name!a:>6}"
+        c = f"{{{name!a}}}"
+        d = f"{n!a:+>6} {name=!a} {name!r} {n!s}"
+        e = f"{name!a:>{w}} {n:>{w!a}}"
+        f = f'{table["k"]!a}' + f'''{{{table["it's"]!a:>6}'''
+        g = "{!a} {k!a:>6}".format(name, k=n)
+        h = ascii(name) + ascii(n)
+        for text in (a, b, c, d, e, f, g, h):
+            assert len(text) > 0
+        k: str = f"{n!a}"
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
     """The driver's copy of a class-level default is rewritten too (#434, #433)."""
     definitions = """
@@ -7388,8 +7413,10 @@ def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
         ('r: int = f"{3.5:>{4}.2f}"', "int"),
         ('r: float = "{:+.2f}".format(3.5)', "float"),
         ('r = f"{3.5:+.2f}" + 1', "str"),
+        ('r: int = f"{3.5!a}"', "int"),
+        ('r: int = f"{{{3.5!a:>6}}}"', "int"),
     ],
-    ids=["sign", "nested", "format", "operand"],
+    ids=["sign", "nested", "format", "operand", "ascii", "ascii-brace"],
 )
 def test_a_rewritten_fstring_is_still_a_str(
     tmp_path: Path, line: str, message: str
@@ -7407,9 +7434,8 @@ def test_a_rewritten_fstring_is_still_a_str(
         ('r = f"{len({1, 2})}"', "a brace in an expression"),
         ('r = f"{ {1: 2}[1] :>3}"', "a brace in an expression"),
         ("r = f\"{f'{3}'}\"", "f-string inside an f-string"),
-        ('r = f"{3.5!a:+.2f}"', "!a together with a format spec"),
     ],
-    ids=["format", "set", "dict", "nested", "ascii"],
+    ids=["format", "set", "dict", "nested"],
 )
 def test_an_fstring_codon_cannot_parse_is_refused_at_its_line(
     tmp_path: Path, line: str, hint: str

@@ -3350,7 +3350,6 @@ def test_str_format_with_a_sign_composes_with_the_fstring_rewrite() -> None:
         ('f"{ {k: 1 for k in a}[1] }"', "a brace in an expression"),
         ('f"{ {**a}[1] }"', "a brace in an expression"),
         ("f\"{f'{x}'}\"", "f-string inside an f-string"),
-        ('f"{x!a:+d}"', "!a together with a format spec"),
     ],
 )
 def test_an_fstring_with_a_brace_in_an_expression_is_refused(
@@ -3359,6 +3358,66 @@ def test_an_fstring_with_a_brace_in_an_expression_is_refused(
     refused = python_rewrite_refusals(f"x = 1\nr = {field}\n")
     assert [line for line, _ in refused] == [2]
     assert hint in refused[0][1]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('f"{x!a}"', '(f"{x!r}")'),
+        ('f"{x!a:>6}"', '(f"{x!r:>6}")'),
+        ('f"{{{x!a}}}"', '("{" + f"{x!r}" + "}")'),
+        ('f"{x!r}{y!a}{x!s}"', '(f"{x!r}{y!r}{x!s}")'),
+        ('f"{x=!a}"', '(f"x={x!r}")'),
+        ('f"{x!a:+d}"', '(repr(x).__format__("+d"))'),
+        ('f"{x!a:>{w}}"', '(repr(x).__format__(">" + str(w)))'),
+        ('f"{x:>{w!a}}"', '((x).__format__(">" + repr(w)))'),
+        ("f'{d[\"k\"]!a:>6}'", "(f\"{d['k']!r:>6}\")"),
+        # An expression ast.unparse writes with a double quote: a call.
+        ("f'''{d[\"it's\"]!a}'''", '(repr(d["it\'s"]))'),
+        ("f'''{{{d[\"it's\"]!a:>6}'''", '("{" + repr(d["it\'s"]).__format__(">6"))'),
+        ('"{!a}".format(x)', 'f"{x!r}"'),
+        ('"{0!a:>6} {k!a}".format(x, k=y)', 'f"{x!r:>6} {y!r}"'),
+    ],
+)
+def test_an_ascii_conversion_becomes_repr(source: str, expected: str) -> None:
+    # Codon 0.19 has no ascii() (#701): `!r` is the same type, a str.
+    assert _rewritten(f"r = {source}\n") == f"r = {expected}\n"
+    assert python_rewrite_refusals(f"r = {source}\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f"{x!a}"',
+        'f"{x!a:>6}"',
+        'f"{{{x!a}}}"',
+        'f"<{x!a}|{x!r}>"',
+        'f"{x=!a}"',
+        'f"{x!a:>{w}}"',
+        'f"{x:>{w!a}}"',
+        "f'{d[\"k\"]!a}'",
+        "f'''{{{d[\"it's\"]!a:>6}'''",
+        '"{!a}".format(x)',
+        '"{0!a:>6}".format(x)',
+    ],
+)
+@pytest.mark.parametrize("value", ["ab", "\u00e9\u4e00\U0001f600"])
+def test_an_ascii_conversion_keeps_its_type(source: str, value: str) -> None:
+    """`!r` for `!a` differs only in how non-ASCII characters are escaped."""
+    text, _ = python_rewrites(f"r = {source}\n")
+    assert "!a" not in text and "ascii" not in text
+    written: dict[str, Any] = {"x": value, "w": 8, "d": {"k": value, "it's": value}}
+    checked: dict[str, Any] = dict(written)
+    exec(f"r = {source}\n", written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert type(checked["r"]) is str and type(written["r"]) is str
+    if value.isascii():
+        assert checked["r"] == written["r"]
+    elif not any(s in source for s in ("w", ":", "!r")):
+        # ascii() is repr() with the non-ASCII characters escaped.
+        escaped = checked["r"].encode("ascii", "backslashreplace").decode()
+        assert escaped == written["r"]
+        assert checked["r"] != written["r"]
 
 
 def test_open_text_keywords_are_dropped() -> None:
