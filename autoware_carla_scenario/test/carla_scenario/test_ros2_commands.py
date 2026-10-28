@@ -112,20 +112,56 @@ def test_an_unknown_source_is_refused() -> None:
 # ---------------------------------------------------------------------------
 
 
+_MS = 1_000_000
+
+
 def test_a_command_needs_a_fresh_value_on_both_topics() -> None:
     pairer = SteerAccelPairer()
-    assert pairer.steering(0.1) is None
-    assert pairer.acceleration(0.5) == SteerAccelCommand(0.1, 0.5)
+    assert pairer.steering(0.1, 0) is None
+    assert pairer.acceleration(0.5, 1 * _MS) == SteerAccelCommand(0.1, 0.5)
     # Each value is used once.
-    assert pairer.acceleration(0.6) is None
-    assert pairer.steering(0.2) == SteerAccelCommand(0.2, 0.6)
+    assert pairer.acceleration(0.6, 100 * _MS) is None
+    assert pairer.steering(0.2, 101 * _MS) == SteerAccelCommand(0.2, 0.6)
 
 
 def test_the_newest_value_of_a_topic_is_paired() -> None:
     pairer = SteerAccelPairer()
-    pairer.steering(0.1)
-    pairer.steering(0.2)
-    assert pairer.acceleration(0.5) == SteerAccelCommand(0.2, 0.5)
+    pairer.steering(0.1, 0)
+    pairer.steering(0.2, 100 * _MS)
+    assert pairer.acceleration(0.5, 101 * _MS) == SteerAccelCommand(0.2, 0.5)
+
+
+def test_halves_written_further_apart_than_the_window_do_not_pair() -> None:
+    pairer = SteerAccelPairer(window_ns=20 * _MS)
+    pairer.acceleration(0.5, 0)
+    # The stale acceleration is dropped, not paired with this steering ...
+    assert pairer.steering(0.1, 21 * _MS) is None
+    # ... which waits for its own acceleration.
+    assert pairer.acceleration(0.6, 22 * _MS) == SteerAccelCommand(0.1, 0.6)
+    # Exactly the window apart still pairs.
+    pairer.steering(0.2, 100 * _MS)
+    assert pairer.acceleration(0.7, 120 * _MS) == SteerAccelCommand(0.2, 0.7)
+
+
+def test_a_half_delivered_late_is_dropped_and_keeps_the_pending_one() -> None:
+    pairer = SteerAccelPairer(window_ns=20 * _MS)
+    pairer.steering(0.2, 100 * _MS)
+    # An acceleration written long before the pending steering: a lost cycle's.
+    assert pairer.acceleration(0.5, 0) is None
+    assert pairer.acceleration(0.6, 101 * _MS) == SteerAccelCommand(0.2, 0.6)
+
+
+def test_a_negative_window_is_refused() -> None:
+    with pytest.raises(ValueError):
+        SteerAccelPairer(window_ns=-1)
+    with pytest.raises(ValueError):
+        CommandSourceConfig(
+            name="vp",
+            kind="steer_accel",
+            steering_topic="/s",
+            acceleration_topic="/a",
+            pair_window_s=-0.1,
+        )
 
 
 # ---------------------------------------------------------------------------

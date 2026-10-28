@@ -122,36 +122,72 @@ Command = Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]
 class SteerAccelPairer:
     """Pairs a steering topic with an acceleration topic into one command.
 
-    A command is produced once a fresh value has arrived on both topics, and
-    each value is used once -- VisionPilot emits one of each per planning cycle,
-    so this yields one command per cycle, exactly as its
-    ``carla_control_publisher`` does.
+    VisionPilot emits one of each per planning cycle, back to back, so this
+    yields one command per cycle, exactly as its ``carla_control_publisher``
+    does.  The two halves of a cycle are matched by their source timestamps:
+    the caller feeds every sample of both topics in the order they were written
+    (by ``source_timestamp``), and a half pairs with the pending half of the
+    other topic only if the two were written at most *window_ns* apart.
+
+    At most one half per topic is pending, so a silent topic cannot grow
+    memory, and an unmatched half is dropped rather than paired with a later
+    cycle's, so a lost message costs that one cycle and never shifts the
+    pairing:
+
+    * a second half on the same topic supersedes the pending one, whose partner
+      was lost (a cycle has one of each);
+    * a half written more than *window_ns* after the pending half of the other
+      topic drops that one, which is then stale, and waits for its own partner;
+    * a half written more than *window_ns* before the pending half of the other
+      topic (delivered late, across polls) is dropped itself.
+
+    Each value is used once.
+
+    Args:
+        window_ns: How far apart, in source-clock nanoseconds, the two halves of
+            one cycle may be written.  Keep it well under the publisher's cycle.
     """
 
-    _steering: Optional[float]
-    _acceleration: Optional[float]
+    _window_ns: int
+    _steering: Optional[Tuple[float, int]]
+    _acceleration: Optional[Tuple[float, int]]
 
-    def __init__(self) -> None:
+    def __init__(self, window_ns: int = 20_000_000) -> None:
+        if window_ns < 0:
+            raise ValueError(f"window_ns must not be negative, got {window_ns}")
+        self._window_ns = window_ns
         self._steering = None
         self._acceleration = None
 
-    def steering(self, value: float) -> Optional[SteerAccelCommand]:
-        """Take a steering sample; return the command it completes, if any."""
-        self._steering = value
-        return self._complete()
+    def steering(self, value: float, stamp_ns: int) -> Optional[SteerAccelCommand]:
+        """Take a steering sample written at *stamp_ns*; return the command it
+        completes, if any."""
+        partner = self._acceleration
+        if partner is not None:
+            if abs(stamp_ns - partner[1]) <= self._window_ns:
+                self._acceleration = None
+                self._steering = None
+                return SteerAccelCommand(value, partner[0])
+            if stamp_ns < partner[1]:
+                return None
+            self._acceleration = None
+        self._steering = (value, stamp_ns)
+        return None
 
-    def acceleration(self, value: float) -> Optional[SteerAccelCommand]:
-        """Take an acceleration sample; return the command it completes, if any."""
-        self._acceleration = value
-        return self._complete()
-
-    def _complete(self) -> Optional[SteerAccelCommand]:
-        if self._steering is None or self._acceleration is None:
-            return None
-        command = SteerAccelCommand(self._steering, self._acceleration)
-        self._steering = None
-        self._acceleration = None
-        return command
+    def acceleration(self, value: float, stamp_ns: int) -> Optional[SteerAccelCommand]:
+        """Take an acceleration sample written at *stamp_ns*; return the command
+        it completes, if any."""
+        partner = self._steering
+        if partner is not None:
+            if abs(stamp_ns - partner[1]) <= self._window_ns:
+                self._steering = None
+                self._acceleration = None
+                return SteerAccelCommand(partner[0], value)
+            if stamp_ns < partner[1]:
+                return None
+            self._steering = None
+        self._acceleration = (value, stamp_ns)
+        return None
 
 
 @dataclass(frozen=True)

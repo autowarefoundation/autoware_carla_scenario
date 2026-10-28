@@ -129,9 +129,17 @@ The turn indicators are not a source: whichever source drives, the newest
 indicators, leaving its other lights as they are, until another changes them.
 `NO_COMMAND` changes nothing.
 
-A `steer_accel` command is complete once a fresh value has arrived on both topics, and
-each value is used once, so a node that publishes one of each per cycle drives once per
-cycle.
+A `steer_accel` command pairs the steering and the acceleration of one publisher cycle,
+and each value is used once, so a node that publishes one of each per cycle drives once
+per cycle. The halves are matched by the DDS source timestamp of each sample (when the
+publisher wrote it), not by when a tick happens to read it, so a tick that reads two
+cycles at once, or one half of a cycle before the tick and the other after it, still
+pairs every cycle with itself. Two halves pair only if they were written at most
+`pair_window_s` apart (default 0.02 s; keep it well under the publisher's cycle). A
+half with no partner is dropped, never paired with another cycle's: a lost steering or
+acceleration message costs that one cycle, and an unmatched half is held only until
+the next sample of either topic shows it has no partner (a newer half of its own topic,
+or a half of the other topic written more than `pair_window_s` later).
 
 A trajectory's points are timed by `header.stamp + time_from_start`; one whose
 `time_from_start` does not increase (many planners leave it zero) is timed from its

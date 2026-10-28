@@ -47,7 +47,8 @@ __all__ = [
 ]
 
 #: Samples a ``steer_accel`` reader keeps between polls: a little depth keeps
-#: a burst from being lost before the pairing sees it.  The other kinds keep
+#: a burst (two cycles between two ticks) from being lost before the pairing
+#: sees it; the pairing itself holds at most one unmatched sample.  The other kinds keep
 #: one, the newest, which is all the arbiter uses.
 _PAIRED_DEPTH: int = 4
 
@@ -62,6 +63,11 @@ def _take(reader: DataReader, depth: int) -> List[Any]:
     return [
         sample for sample in reader.take(depth) if not isinstance(sample, InvalidSample)
     ]
+
+
+def _source_ns(sample: Any) -> int:
+    """When the sample was written, in the writer's clock (ns)."""
+    return int(sample.sample_info.source_timestamp)
 
 
 def _qos(depth: int) -> Qos:
@@ -176,25 +182,33 @@ def _source_drain(
 
         return drain_newest
 
-    pairer = SteerAccelPairer()
-    feeds = (
-        (
-            _reader(participant, source.steering_topic, msg.Float64, _PAIRED_DEPTH),
-            pairer.steering,
-        ),
-        (
-            _reader(participant, source.acceleration_topic, msg.Float64, _PAIRED_DEPTH),
-            pairer.acceleration,
-        ),
+    pairer = SteerAccelPairer(int(round(source.pair_window_s * 1_000_000_000)))
+    steering = _reader(participant, source.steering_topic, msg.Float64, _PAIRED_DEPTH)
+    acceleration = _reader(
+        participant, source.acceleration_topic, msg.Float64, _PAIRED_DEPTH
     )
 
     def drain_pairs() -> List[Command]:
+        # Both topics' samples in the order they were written, so a poll that
+        # holds two cycles, or half of one, still pairs each cycle with itself
+        # (#688).  Steering first on a tie.
+        written: List[Tuple[int, int, float]] = [
+            (_source_ns(sample), 0, float(sample.data))
+            for sample in _take(steering, _PAIRED_DEPTH)
+        ] + [
+            (_source_ns(sample), 1, float(sample.data))
+            for sample in _take(acceleration, _PAIRED_DEPTH)
+        ]
+        written.sort()
         commands: List[Command] = []
-        for reader, feed in feeds:
-            for sample in _take(reader, _PAIRED_DEPTH):
-                paired = feed(float(sample.data))
-                if paired is not None:
-                    commands.append(paired)
+        for stamp_ns, topic, value in written:
+            paired = (
+                pairer.steering(value, stamp_ns)
+                if topic == 0
+                else pairer.acceleration(value, stamp_ns)
+            )
+            if paired is not None:
+                commands.append(paired)
         return commands
 
     return drain_pairs
