@@ -48,7 +48,10 @@ def port_range(timeout: float = 600.0) -> Iterator[int]:
         for offset in range(_RANGES):
             base = _FIRST + ((start + offset) % _RANGES) * RANGE_WIDTH
             path = lock_dir / f"autoware_carla_scenario-test-ports-{base}.lock"
-            fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
+            except OSError:
+                continue  # another user's lock file (the /tmp fallback)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
