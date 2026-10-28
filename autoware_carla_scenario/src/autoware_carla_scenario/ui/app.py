@@ -211,12 +211,17 @@ async def run_preview(request: Request) -> dict[str, str]:
     return {"command": preview}
 
 
-@app.post("/api/run")
-async def run_scenarios(request: Request) -> dict[str, str]:
+#: The answer to a run refused because another is still in progress.
+_BUSY = {"status": "busy", "message": "A scenario run is already in progress"}
+
+
+@app.post("/api/run", response_model=None)
+async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     """Start scenario execution in background.
 
     The request body specifies the scenario pattern and options
-    explicitly from the Run Options panel.
+    explicitly from the Run Options panel.  A local run is refused with
+    409 (``{"status": "busy"}``) while another is in progress.
     """
     body: dict[str, Any] = {}
     try:
@@ -258,7 +263,7 @@ async def run_scenarios(request: Request) -> dict[str, str]:
         # Jobs already contain scenario= and sweep overrides;
         # run without sweeper flag (each is a plain single-scenario run).
         # Group results under a shared multirun/ directory.
-        runner.start_run(
+        started = runner.start_run(
             overrides_list,
             base_path=_base_path(),
             extra_overrides=[],
@@ -271,13 +276,15 @@ async def run_scenarios(request: Request) -> dict[str, str]:
         if not scenario_names:
             return {"status": "error", "message": f"No scenarios match '{scenario}'"}
         overrides_list = [[f"scenario={name}"] for name in scenario_names]
-        runner.start_run(
+        started = runner.start_run(
             overrides_list,
             base_path=_base_path(),
             extra_overrides=extra_overrides,
             group_as_multirun=len(scenario_names) > 1,
         )
 
+    if not started:
+        return JSONResponse(status_code=409, content=_BUSY)
     return {"status": "started"}
 
 

@@ -911,7 +911,12 @@ sequenceDiagram
     end
 
     A->>R: start_run(overrides_list)
-    A-->>B: {"status": "started"}
+    Note over R: Marks the run as running and resets<br/>its progress under one lock
+    alt Another run in progress
+        A-->>B: 409 {"status": "busy"}
+    else Started
+        A-->>B: {"status": "started"}
+    end
 
     B->>A: GET /api/run/progress (SSE)
 
@@ -941,7 +946,7 @@ sequenceDiagram
 **Key design decisions:**
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
-- **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state.
+- **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
 - **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories.
 
