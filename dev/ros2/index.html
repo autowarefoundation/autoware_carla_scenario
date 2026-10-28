@@ -2293,9 +2293,34 @@ subscribes to:</p>
 (<code>/control/command/turn_indicators_cmd</code>; <code>null</code> turns it off) lights the ego's
 indicators, leaving its other lights as they are, until another changes them.
 <code>NO_COMMAND</code> changes nothing.</p>
-<p>A <code>steer_accel</code> command is complete once a fresh value has arrived on both topics, and
-each value is used once, so a node that publishes one of each per cycle drives once per
-cycle.</p>
+<p>A <code>steer_accel</code> command pairs the steering and the acceleration of one publisher cycle,
+and each value is used once, so a node that publishes one of each per cycle drives once
+per cycle. The halves are matched by the DDS source timestamp of each sample (when the
+publisher wrote it), not by when a tick happens to read it, so a tick that reads two
+cycles at once, or one half of a cycle before the tick and the other after it, still
+pairs every cycle with itself.</p>
+<p>Two halves pair only if they were written at most a window apart. By default the window
+is half the publisher's cycle, measured from the timestamps themselves (the median of
+the last few write intervals), so no rate or timing is assumed: any publisher that writes
+a cycle's two halves closer to each other than to the next cycle's pairs every cycle,
+whether it writes them back to back (VisionPilot does) or from two timers 40 ms apart at
+10 Hz. A half with no partner in the window is dropped, never paired with another
+cycle's: a lost steering or acceleration message costs that one cycle instead of
+shifting every later command by a cycle. An unmatched half is held only until the next
+sample of either topic shows it has no partner (a newer half of its own topic, or a half
+of the other topic written further than the window away).</p>
+<p>Dropped halves are logged as a warning (at most every 10 s, with the count and the
+window). An occasional drop is a lost message; a steady stream of them means the window
+does not fit the publisher. Set <code>pair_window_s</code> on the source to fix the window, in
+seconds: larger than the gap between a cycle's two halves, and smaller than the cycle
+minus that gap. The timestamps are the writers' clocks, so the two topics are expected
+to come from one host (or hosts whose clocks agree well within the window).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">visionpilot</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">      </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">steer_accel</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">      </span><span class="nt">steering_topic</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/vehicle/steering_cmd</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">acceleration_topic</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/vehicle/throttle_cmd</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">pair_window_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.03</span><span class="w">   </span><span class="c1"># optional; null (the default) measures it</span>
+</code></pre></div>
 <p>A trajectory's points are timed by <code>header.stamp + time_from_start</code>; one whose
 <code>time_from_start</code> does not increase (many planners leave it zero) is timed from its
 speeds instead.</p>
@@ -2305,23 +2330,23 @@ with the highest <code>priority</code> drives; between equal priorities, the mos
 Once every source is stale, <code>on_stale</code> decides: <code>hold</code> keeps applying the last command
 (what a relay node does when its upstream stops), <code>brake</code> brakes to a stop. Before any
 command has arrived, the ego is held on its brakes.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">ros2</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">domain_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">on_stale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hold</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">sources</span><span class="p">:</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">planner</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trajectory</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">topic</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/planning/scenario_planning/trajectory</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">priority</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">stale_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="nt">control</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">     </span><span class="c1"># trajectory-follower gains, as driver.control</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">ros2</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">domain_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">on_stale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hold</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">sources</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">planner</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">trajectory</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="nt">topic</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/planning/scenario_planning/trajectory</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">priority</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">stale_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">control</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">     </span><span class="c1"># trajectory-follower gains, as driver.control</span>
 </code></pre></div>
 <h2 id="the-open-ad-kit-safety-island-demo">The Open AD Kit safety-island demo<a class="headerlink" href="#the-open-ad-kit-safety-island-demo" title="Permanent link">&para;</a></h2>
 <p><code>ros2=visionpilot_safety_island</code> is the bench side of the Open AD Kit CES 2027 demo
 (<a href="https://github.com/autowarefoundation/openadkit/issues/157">openadkit#157</a>):
 VisionPilot steers and accelerates, and a fresh command from the safety island (the
 CR52, restamped onto domain 1) overrides it.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">ros2</span><span class="o">=</span>visionpilot_safety_island
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">ros2</span><span class="o">=</span>visionpilot_safety_island
 </code></pre></div>
 <table>
 <thead>
@@ -2350,18 +2375,18 @@ CR52, restamped onto domain 1) overrides it.</p>
 <p>It selects <code>ego.entity: ros2</code> on VisionPilot's vehicle (a Lincoln MKZ), DDS domain 1,
 and <code>server.max_tick_rate_hz: 20</code>.</p>
 <h2 id="from-python">From Python<a class="headerlink" href="#from-python" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.entity.ros2_entity</span><span class="w"> </span><span class="kn">import</span> <span class="n">Ros2EgoEntity</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.ros2</span><span class="w"> </span><span class="kn">import</span> <span class="n">CommandSourceConfig</span><span class="p">,</span> <span class="n">Ros2EgoConfig</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">Ros2EgoEntity</span><span class="p">(</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">Ros2EgoConfig</span><span class="p">(</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="n">domain_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">(</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>            <span class="n">CommandSourceConfig</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"planner"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"trajectory"</span><span class="p">,</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>                                <span class="n">topic</span><span class="o">=</span><span class="s2">"/planning/scenario_planning/trajectory"</span><span class="p">),</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>        <span class="p">),</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="p">)</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.entity.ros2_entity</span><span class="w"> </span><span class="kn">import</span> <span class="n">Ros2EgoEntity</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.ros2</span><span class="w"> </span><span class="kn">import</span> <span class="n">CommandSourceConfig</span><span class="p">,</span> <span class="n">Ros2EgoConfig</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">Ros2EgoEntity</span><span class="p">(</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">Ros2EgoConfig</span><span class="p">(</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>        <span class="n">domain_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>            <span class="n">CommandSourceConfig</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"planner"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"trajectory"</span><span class="p">,</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>                                <span class="n">topic</span><span class="o">=</span><span class="s2">"/planning/scenario_planning/trajectory"</span><span class="p">),</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>        <span class="p">),</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="p">)</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="p">)</span>
 </code></pre></div>
 <p>To test without DDS, pass <code>transport=FakeRos2Transport(config)</code> and queue commands
 with its <code>deliver()</code>.</p>
@@ -2408,7 +2433,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 04:26:35 UTC"><span class="timeago" datetime="2026-10-17T04:26:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 04:26:35 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 11:53:06 UTC"><span class="timeago" datetime="2026-10-28T11:53:06+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 11:53:06 UTC">2026-10-28</span>
   </span>
 
     
