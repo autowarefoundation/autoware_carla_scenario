@@ -29,7 +29,7 @@ from tqdm import tqdm
 
 from ..maps import resolve_map_paths
 from ..rerun import require_converter
-from .expand import expand_sweep, scenario_controls
+from .expand import check_constraint_keys, expand_sweep, scenario_controls
 from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
@@ -220,20 +220,7 @@ class LaneletConstraintSweeper(Sweeper):
         if OmegaConf.select(cfg, "rerun.enabled", default=False):
             require_converter()
 
-        # -- 1. Resolve map paths ------------------------------------------
-        # A map named by `map.source` is cloned (or found already downloaded)
-        # here, so a sweep runs against a published HD map without anyone
-        # having to name a local file for it first; `map.directory` names a
-        # map on this machine and is read in place.
-        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
-
-        # -- 2. Load the Lanelet2 map (lightweight) ------------------------
-        try:
-            lanelet_map = load_map(paths)
-        except FileNotFoundError as exc:
-            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
-
-        # -- 3. Parse constraints ------------------------------------------
+        # -- 1. Read the sweep section, before any map is fetched --------
         sweep_cfg = OmegaConf.select(cfg, "sweep")
         if sweep_cfg is None:
             raise ValueError(
@@ -243,6 +230,20 @@ class LaneletConstraintSweeper(Sweeper):
             )
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
+        check_constraint_keys(sweep_dict)
+
+        # -- 2. Resolve map paths ------------------------------------------
+        # A map named by `map.source` is cloned (or found already downloaded)
+        # here, so a sweep runs against a published HD map without anyone
+        # having to name a local file for it first; `map.directory` names a
+        # map on this machine and is read in place.
+        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
+
+        # -- 3. Load the Lanelet2 map (lightweight) ------------------------
+        try:
+            lanelet_map = load_map(paths)
+        except FileNotFoundError as exc:
+            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         batches: list[tuple[str, ...]] = [

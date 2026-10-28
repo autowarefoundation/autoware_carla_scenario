@@ -42,8 +42,23 @@ How the string is split:
 | `git@example.com:maps.git@v1` | `git@example.com:maps.git` | `v1` | |
 | `file:///srv/maps@main#T` | `file:///srv/maps` | `main` | `T` |
 
-Because the last `@` decides, neither the ref nor the repository path may
-contain an `@` (in an `https://` URL, write one in the path as `%40`).
+Because the last `@` decides, a ref may not contain an `@`, and neither may
+the path of a remote repository (write one as `%40`:
+`https://example.com/o/a%40b@v1`).
+
+A local repository — a plain absolute path or a `file://` URL — may have an
+`@` in a directory name (a Nix store path, a `user@domain` home directory), so
+there the filesystem decides:
+
+1. a path that is an existing directory as a whole has no ref:
+   `/srv/maps@2/repo` is the repository `/srv/maps@2/repo`;
+2. otherwise the ref follows the last `@` whose left-hand side is an existing
+   directory: `/srv/maps@2/repo@feature/x` is the repository
+   `/srv/maps@2/repo` at `feature/x`;
+3. if no such `@` exists on this machine, the last `@` decides, as above.
+
+To take the filesystem out of it, write the `@` of a directory name as `%40`
+in a `file://` URL (`file:///srv/maps%402/repo@main`); git decodes it.
 
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's

@@ -145,6 +145,46 @@ class TestExpandConfig:
         assert expand_config(cfg) == [[]]
         assert expand_config(cfg, ["ego.spawn_s=3.0"]) == [["ego.spawn_s=3.0"]]
 
+    def test_a_second_constraint_key_is_refused_before_the_map_is_loaded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _no_map(*_args, **_kwargs):
+            raise AssertionError("a refused sweep must not fetch its map")
+
+        monkeypatch.setattr("autoware_carla_scenario.maps.resolve_map_paths", _no_map)
+        cfg = OmegaConf.create(
+            {
+                "map": {"name": "Town10HD_Opt"},
+                "sweep": {
+                    "constraints": {
+                        "ego.spawn_lanelet_id": [{"type": "is_junction"}],
+                        "scenario.npc_lanelet_id": [{"type": "is_junction"}],
+                    }
+                },
+            }
+        )
+        with pytest.raises(ValueError, match="one parameter"):
+            expand_config(cfg)
+
+    def test_the_sweeper_refuses_a_second_key_before_the_map_is_fetched(
+        self,
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+        sweeper = mod.LaneletConstraintSweeper()
+        sweeper.config = OmegaConf.create(
+            {"sweep": {"constraints": {"a.id": [{}], "b.id": [{}]}}}
+        )
+        sweeper.launcher = MagicMock()
+        with (
+            patch.object(mod, "resolve_map_paths") as resolve,
+            pytest.raises(ValueError, match="one parameter"),
+        ):
+            sweeper.sweep([])
+        resolve.assert_not_called()
+
 
 def test_the_cli_expands_a_packaged_logical_scenario(
     capsys: pytest.CaptureFixture,

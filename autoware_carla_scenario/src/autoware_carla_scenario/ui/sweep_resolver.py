@@ -46,6 +46,9 @@ def resolve_sweep(
         find_matching_lanelets,
         parse_constraint,
     )
+    from autoware_carla_scenario.sweeper.expand import (  # noqa: PLC0415
+        check_constraint_keys,
+    )
     from autoware_carla_scenario.sweeper.map_loader import (  # noqa: PLC0415
         load_map,
     )
@@ -71,6 +74,7 @@ def resolve_sweep(
     if not constraints_cfg:
         logger.warning("sweep.constraints is empty for %s.", scenario_name)
         return []
+    check_constraint_keys(sweep_dict)
 
     # -- 3. Resolve map paths -------------------------------------------
     from autoware_carla_scenario.maps import resolve_map_paths  # noqa: PLC0415

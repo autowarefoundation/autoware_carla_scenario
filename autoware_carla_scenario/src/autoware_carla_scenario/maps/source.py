@@ -11,8 +11,10 @@ Only the repository is required; ``@ref`` defaults to the default branch and
 ``#path`` to the repository root.  ``#path`` is everything after the first
 ``#``, and ``@ref`` everything after the last ``@`` of the repository path --
 the part after ``scheme://host/`` or an scp-like ``user@host:`` -- so a ref may
-contain ``/`` (``@feature/x``) but neither it nor the repository path an ``@``.  A ref that is a full commit hash *pins* the
-map -- the same URI names the same bytes forever, which is what makes a
+contain ``/`` (``@feature/x``) but not ``@``.  A local repository (a plain
+path or a ``file://`` URL) may have ``@`` in a directory name: there the split
+is chosen by what exists on disk (see :func:`_split_trailing_ref`).  A ref that
+is a full commit hash *pins* the map -- the same URI names the same bytes forever, which is what makes a
 scenario's result reproducible -- so :meth:`MapSource.pinned` is what the rest
 of this package asks before taking any shortcut that could hand back a different
 revision.
@@ -24,6 +26,7 @@ you are looking at is the intended way in.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
@@ -79,6 +82,22 @@ def _repository_path_start(url: str) -> int:
     return 0
 
 
+def _local_directory(url: str) -> str:
+    """The filesystem path *url* names, or ``""`` if it is not a local one.
+
+    A plain absolute path is its own answer; a ``file://`` URL with an empty or
+    ``localhost`` authority gives its path.  Percent escapes are left as they
+    are: the answer only feeds :func:`os.path.isdir`, and an escaped ``%40`` is
+    not an ``@`` to split on in the first place.
+    """
+    if url.startswith("/"):
+        return url
+    for prefix in ("file://localhost/", "file:///"):
+        if url.startswith(prefix):
+            return url[len(prefix) - 1 :]
+    return ""
+
+
 def _split_trailing_ref(url: str) -> tuple[str, str]:
     """Split ``...repo@ref`` into ``(repo, ref)``.
 
@@ -87,12 +106,32 @@ def _split_trailing_ref(url: str) -> tuple[str, str]:
     while the userinfo in ``https://user@host/owner/repo`` and the user in an
     scp-like ``git@host:repo.git`` are left alone.  The last ``@`` is
     unambiguous for every ref git creates in practice; the price is that a ref
-    cannot contain ``@`` and the repository path cannot either (write it as
-    ``%40`` in a URL).
+    cannot contain ``@`` and a remote repository path cannot either (write it
+    as ``%40`` in a URL).
+
+    A local repository -- a plain path or a ``file://`` URL -- may well have an
+    ``@`` in a directory name (``/nix/store/...``, ``/home/user@corp``), and
+    there the filesystem decides:
+
+    1. if the whole of *url* is an existing directory, it has no ref;
+    2. otherwise the ref follows the last ``@`` whose left-hand side is an
+       existing directory;
+    3. if no such ``@`` exists, the last ``@`` decides, as for a remote URL.
     """
-    at = url.rfind("@", _repository_path_start(url))
+    start = _repository_path_start(url)
+    at = url.rfind("@", start)
     if at == -1:
         return url, ""
+    local = _local_directory(url)
+    if local:
+        offset = len(url) - len(local)
+        if os.path.isdir(local):
+            return url, ""
+        candidate = at
+        while candidate >= start:
+            if os.path.isdir(local[: candidate - offset]):
+                return url[:candidate], url[candidate + 1 :]
+            candidate = url.rfind("@", start, candidate)
     return url[:at], url[at + 1 :]
 
 
