@@ -4527,7 +4527,7 @@ method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 214 of
-the package's 315 modules (68%; about 49,800 of 90,300 lines) are <code>CHECKED</code>:
+the package's 316 modules (68%; about 49,800 of 90,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4627,9 +4627,9 @@ a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</c
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of). The 101 <code>EXCLUDED</code> modules fall in
+which the check has no value of). The 102 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 77 import what Codon cannot
-compile, 31 build on an excluded module and 20 hold values Codon has no type
+compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
 <li><strong>77 import what Codon cannot compile</strong>:
@@ -4666,9 +4666,10 @@ for), so each is counted once, in the first group that fits it:</p>
   <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
   holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.</li>
-<li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
+<li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
-  field defaults), or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>,
+  field defaults, <code>entity.fit</code>'s world and blueprints), or a class as a value
+  (<code>utils.config</code>, which <code>traffic.config</code>,
   <code>traffic.fidelity</code> and <code>traffic.sumo.config</code> import only in their uncalled
   <code>from_mapping()</code>).</li>
 </ul>
@@ -6443,7 +6444,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 22:38:42 UTC"><span class="timeago" datetime="2026-10-27T22:38:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 22:38:42 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 00:38:23 UTC"><span class="timeago" datetime="2026-10-28T00:38:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 00:38:23 UTC">2026-10-28</span>
   </span>
 
     

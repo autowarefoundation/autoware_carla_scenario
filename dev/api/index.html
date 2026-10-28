@@ -2689,8 +2689,12 @@ children.</p>
 <td>Fails once at least <code>fraction</code> (in <code>(0, 1]</code>) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the <code>offroad</code> metric, with a tolerance. See <a href="../metrics/#off-the-road-as-a-fail-condition">Metrics</a>.</td>
 </tr>
 <tr>
+<td><code>TrafficSignalAction(..., route_junction=0, route_approach="same", route_turn="any")</code></td>
+<td>With <code>lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE</code>: sets the lights of the paths through junction <code>route_junction</code> of the scenario's route that enter it from <code>route_approach</code> and turn <code>route_turn</code>, found on the map the run is on (<code>route.positions.junction_traffic_lights</code>).</td>
+</tr>
+<tr>
 <td><code>PlaceClearCondition(position, length, width, margin=0.3, *, label)</code></td>
-<td>Passes while no vehicle's or walker's bounding box comes within <code>margin</code> of a <code>length</code> x <code>width</code> rectangle at <code>position</code> (a <code>Lanelet2Pose</code>, facing along the lane turned by its <code>heading</code>). Actors parked under the map do not count; one put there on this tick does. The <code>place_clear</code> card; typically guards where an entity appears.</td>
+<td>Passes while no vehicle's or walker's bounding box comes within <code>margin</code> of a <code>length</code> x <code>width</code> rectangle at <code>position</code> (a <code>Lanelet2Pose</code>, facing along the lane turned by its <code>heading</code>; or any position a trajectory vertex takes -- a route pose is placed on the scenario's route when the place is first looked at). Actors parked under the map do not count; one put there on this tick does. The <code>place_clear</code> card; typically guards where an entity appears.</td>
 </tr>
 <tr>
 <td><code>TrafficSignalCondition</code></td>
@@ -3514,7 +3518,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 11:51:38 UTC"><span class="timeago" datetime="2026-10-27T11:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 11:51:38 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 00:38:23 UTC"><span class="timeago" datetime="2026-10-28T00:38:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 00:38:23 UTC">2026-10-28</span>
   </span>
 
     
