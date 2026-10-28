@@ -22,7 +22,9 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``f"{x:+.2f}"``; a field inside the spec, ``f"{x:>{w}.2f}"``; anything its
   grammar does not know) becomes the value's own ``__format__`` call, and the
   f-string a ``+`` of its parts: ``((x).__format__("+.2f"))``, a ``str``
-  as before.  A nested field is ``str(w)`` (``repr`` for ``!r``).  The spec
+  as before.  A nested field is ``str(w)`` (``repr`` for ``!r``).  An
+  f-string with a literal brace (``f"{x} {{y}}"``) becomes the same ``+``,
+  the brace a string of its own, whatever its fields (#696).  The spec
   is parsed at run time, so a spec Python rejects (``{x:q}``) is accepted by
   the check.  An f-string with a brace or a nested f-string inside an
   expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
@@ -584,8 +586,12 @@ def _keyword_dict(node: ast.AST) -> bool:
 
 
 def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
+    """Whether Codon's parser refuses *node* as written: a field it does not
+    take, or a literal brace (``{{`` / ``}}``), which it has no escape for
+    and refuses with no position of the file (#696)."""
     return any(
-        isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v)
+        (isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v))
+        or (isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}"))
         for v in node.values
     )
 
