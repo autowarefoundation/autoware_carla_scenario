@@ -7258,6 +7258,11 @@ def test_a_same_quote_fstring_field_is_requoted(source: str, requoted: str) -> N
         ('x = 1\ny = f"{f"{a} {d["k"]}"}"\n', "cannot quote it with the other quote"),
         ('x = 1\ny = f"{d["a\\nb"]}"\n', "holds a backslash"),
         ("x = 1\ny = f\"{d['a\\nb']}\"\n", "holds a backslash"),
+        # The f-string's own quote inside a literal of the other quote: Codon,
+        # as Python before 3.12, ends the f-string at it.
+        ("x = 1\ny = f'{d[\"it's\"]}'\n", "holds the f-string's own quote"),
+        ("x = 1\ny = f'{m[\"it's\"] * 2:>6}'\n", "holds the f-string's own quote"),
+        ('x = 1\ny = f\'{"""it\'s"""}\'\n', "holds the f-string's own quote"),
     ],
 )
 def test_an_fstring_field_that_cannot_be_requoted_is_refused(

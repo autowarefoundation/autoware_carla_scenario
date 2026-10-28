@@ -36,6 +36,8 @@ Python 3.12+ syntax (#624):
   quote (:func:`requote_fstring_fields`), on the same columns: Codon 0.19's
   parser, as Python's before 3.12, ends the f-string at its own quote.  One
   that cannot be (it holds the other quote too, or a backslash) is refused,
+  as is a literal that holds the quote of a single-quoted f-string around it
+  (``f'{d["it's"]}'``), which Codon's parser ends the f-string at too,
   unless its f-string is one :mod:`.python_rewrites` writes as ``+`` parts
   (a literal brace, a spec Codon does not parse, ``!a``), where such a field
   becomes a call and the quotes no longer matter (#704).
@@ -848,6 +850,13 @@ _FSTRING_QUOTE_REFUSAL = (
     "holds too: put the value in a variable before the f-string "
     """(`key = "it's"`, then `f"{d[key]}"`)"""
 )
+_FSTRING_HELD_QUOTE_REFUSAL = (
+    "an f-string's replacement field holds a string that holds the "
+    "f-string's own quote (Python 3.12+, PEP 701), which Codon 0.19 cannot "
+    "parse: Codon's parser ends the f-string there. Put the value in a "
+    "variable before the f-string "
+    """(`key = "it's"`, then `f'{d[key]}'`)"""
+)
 _FSTRING_BACKSLASH_REFUSAL = (
     "an f-string's replacement field holds a backslash (Python 3.12+, PEP "
     "701), which Codon 0.19 cannot parse: put the value in a variable before "
@@ -866,9 +875,10 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
     quote, so Codon reports "unexpected dedent" on a later line.  A nested
     f-string is requoted in the same way (its opening and closing quote).
     Only the quote characters change, so every line and column stays.  A
-    literal that holds the other quote, a triple-quoted one inside an
-    f-string of its quote, and a backslash anywhere in a field (which
-    Codon's parser refuses too) are refused, and then nothing is requoted,
+    literal that holds the other quote, one of any quote that holds the
+    quote of a single-quoted f-string around it (``f'{d["it's"]}'``), a
+    triple-quoted one inside an f-string of its quote, and a backslash
+    anywhere in a field (which Codon's parser refuses too) are refused, and then nothing is requoted,
     except in an f-string that :mod:`.python_rewrites` writes as ``+``
     parts (:func:`_rewritten_fstring_spans`): its fields are written back
     from the tree there, the field that cannot be requoted as a call
@@ -921,8 +931,14 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
         if triple:
             if quote in every:
                 refuse(line, _FSTRING_QUOTE_REFUSAL)
+            elif single & set(body):
+                refuse(line, _FSTRING_HELD_QUOTE_REFUSAL)
             return quote
         if quote not in single:
+            # `f'{d["it's"]}'`: the f-string's own quote, inside a literal of
+            # the other one, ends the f-string before Python 3.12 as well.
+            if single & set(body):
+                refuse(line, _FSTRING_HELD_QUOTE_REFUSAL)
             return quote
         other = "'" if quote == '"' else '"'
         if other in single or other in body:
