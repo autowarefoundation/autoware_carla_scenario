@@ -22,8 +22,9 @@ class StickyCondition(BaseCondition):
 
     This is useful for verifying that an entity *visited* a state at some point,
     even if it has since moved on.  Combine multiple sticky conditions with
-    :class:`AndCondition` to assert that an entity traversed a specific
-    sequence of states::
+    :class:`AndCondition` to assert that an entity visited every one of a set
+    of states, in any order (the AND checks every child on every tick, so each
+    sticky child latches as soon as its own state is reached)::
 
         pass_cond = AndCondition([
             StickyCondition(EntityLanePositionCondition.anywhere_on_road(
@@ -31,6 +32,15 @@ class StickyCondition(BaseCondition):
             StickyCondition(EntityLanePositionCondition.anywhere_on_road(
                 "npc", "20", label="npc_on_20")),
         ])
+
+    To require the order -- road 20 only after road 10 -- latch the later state
+    on the earlier one::
+
+        on_10 = StickyCondition(EntityLanePositionCondition.anywhere_on_road(
+            "npc", "10", label="npc_on_10"))
+        on_20 = EntityLanePositionCondition.anywhere_on_road(
+            "npc", "20", label="npc_on_20")
+        pass_cond = StickyCondition(AndCondition([on_10, on_20]))
 
     Args:
         condition: The child condition to wrap.

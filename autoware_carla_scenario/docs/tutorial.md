@@ -170,10 +170,15 @@ Every scenario follows the same structure:
 1. **Spawn** — call `self._setup_ego_spawn()` (snaps the Lanelet2 pose to the
    CARLA road surface).
 2. **Pass conditions** — register one or more conditions via
-   `self.register_pass_condition()`. When all pass conditions are met the
-   scenario succeeds.
+   `self.register_pass_condition()`. The scenario passes as soon as **any**
+   pass condition fires (returns a result), not when all of them have. To
+   require several things, combine them in one `AndCondition`, wrapping each
+   state that only has to be visited once in a `StickyCondition`, as the
+   example above does.
 3. **Fail conditions** — register via `self.register_fail_condition()`.
-   If any fail condition triggers first, the scenario fails.
+   If any fail condition fires, the scenario fails. On each tick the pass
+   conditions are checked before the fail conditions, so a pass and a fail on
+   the same tick ends the run as a pass.
 4. **Actions** (optional) — e.g. `TurnAction`, `TrafficSignalAction`.
 
 !!! tip "Discovering available Conditions and Actions"

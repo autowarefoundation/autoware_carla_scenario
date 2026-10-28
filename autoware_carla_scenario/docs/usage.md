@@ -699,11 +699,17 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 
 **Result JSON format:**
 
+On a pass, `message` is the message of the pass condition that fired -- here
+an `AndCondition` of two `StickyCondition`s, which joins its children's
+messages with ` AND ` -- or `Scenario completed successfully` when
+`is_done()` ended the run. When a fail condition ends the run, it is that
+condition's message.
+
 ```json
 {
   "scenario": "intersection_passing/straight",
   "passed": true,
-  "message": "All pass conditions satisfied",
+  "message": "Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s",
   "elapsed_seconds": 3.42,
   "condition_statuses": [
     {"label": "Road 5 visited", "satisfied": true, "message": "..."},
