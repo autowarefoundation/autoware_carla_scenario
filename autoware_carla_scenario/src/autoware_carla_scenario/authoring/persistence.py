@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -213,5 +214,19 @@ class DraftStore:
         return True
 
     def _write(self, draft: Draft) -> None:
+        """Write *draft* whole or not at all.
+
+        Written aside and renamed into place, so a request reading the draft
+        while another saves it -- the editor serves both at once -- never
+        parses half a file.  The temporary name does not end in ``.yaml``, so
+        :meth:`list` never mistakes it for a draft.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
-        self.path_for(draft.id).write_text(dump_yaml(draft.to_dict()), encoding="utf-8")
+        path = self.path_for(draft.id)
+        partial = self.root / f".{draft.id}.{uuid.uuid4().hex}.partial"
+        try:
+            with partial.open("x", encoding="utf-8") as stream:
+                stream.write(dump_yaml(draft.to_dict()))
+            os.replace(partial, path)
+        finally:
+            partial.unlink(missing_ok=True)

@@ -140,30 +140,33 @@ def _apply(
     draft_id: str,
     selected: str,
     mutate: Any,
-    *,
-    notify: bool = False,
 ) -> HTMLResponse:
     """Run *mutate* against the draft, persist it, and re-render the body.
 
     A rejected edit re-renders the *unmodified* draft with the reason attached,
     so a typo shows an explanation instead of silently doing nothing or storing
-    a broken value.
+    a broken value.  A returned string is the id to select next.
 
-    *notify* changes what a returned string means.  An ordinary edit returns the
-    id to select next; a map operation returns a sentence about what it did,
-    because it took seconds, reached the network, and can succeed quietly.
+    The read, the mutation and the save happen under
+    :meth:`~EditorService.editing`, so two edits of one draft served at once
+    cannot each save a copy that misses the other.  *mutate* must therefore be
+    quick; a slow operation goes through :func:`_map_action` instead.
     """
     service = _service(request)
-    draft = service.require_draft(draft_id)
-    try:
-        result = mutate(draft.document)
-    except EditorError as exc:
-        fresh = service.require_draft(draft_id)
-        return _body(request, _context(request, fresh, selected, error=str(exc)))
-    service.save(draft)
-    message = result if notify and isinstance(result, str) else ""
-    focus = result if not notify and isinstance(result, str) else selected
-    return _body(request, _context(request, draft, focus, notice=message))
+    error = ""
+    with service.editing(draft_id):
+        draft = service.require_draft(draft_id)
+        try:
+            result = mutate(draft.document)
+        except EditorError as exc:
+            error = str(exc)
+            draft = service.require_draft(draft_id)
+        else:
+            service.save(draft)
+    if error:
+        return _body(request, _context(request, draft, selected, error=error))
+    focus = result if isinstance(result, str) else selected
+    return _body(request, _context(request, draft, focus))
 
 
 # ---------------------------------------------------------------------------
@@ -279,11 +282,26 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
     Every operation here can clone a repository or load a CARLA town -- tens of
     seconds of blocking work.  Run inline it would stall the whole ASGI loop, so
     no other tab, and no other request from this one, would be served while a
-    map downloaded.
+    map downloaded.  Since the draft stays editable meanwhile, it goes through
+    :meth:`~EditorService.run_map_operation`, which applies only the map fields
+    *act* changed to the draft as it is when *act* finishes.
+
+    *act* returns a sentence about what it did, shown as a notice, because it
+    took seconds, reached the network, and can succeed quietly.
     """
-    return await run_in_threadpool(
-        _apply, request, draft_id, "scenario", act, notify=True
-    )
+    service = _service(request)
+    service.require_draft(draft_id)  # An unknown draft is a 404, not a notice.
+
+    def _run() -> HTMLResponse:
+        try:
+            draft, result = service.run_map_operation(draft_id, act)
+        except EditorError as exc:
+            fresh = service.require_draft(draft_id)
+            return _body(request, _context(request, fresh, "scenario", error=str(exc)))
+        message = result if isinstance(result, str) else ""
+        return _body(request, _context(request, draft, "scenario", notice=message))
+
+    return await run_in_threadpool(_run)
 
 
 @router.post("/draft/{draft_id}/map/fetch", response_class=HTMLResponse)
@@ -948,11 +966,12 @@ async def save_draft(request: Request, draft_id: str) -> HTMLResponse:
     """Save the draft's working state."""
     form = dict(await request.form())
     service = _service(request)
-    draft = service.require_draft(draft_id)
-    title = str(form.get("title", "")).strip()
-    if title:
-        draft.document.title = title
-    service.save(draft)
+    with service.editing(draft_id):
+        draft = service.require_draft(draft_id)
+        title = str(form.get("title", "")).strip()
+        if title:
+            draft.document.title = title
+        service.save(draft)
     return _templates(request).TemplateResponse(
         request=request,
         name="partials/status.html",
@@ -1038,8 +1057,8 @@ def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
     """
     service = _service(request)
     draft = service.require_draft(draft_id)
-    archive = service.archive_path(draft)
-    if not archive.is_file():
+    archive = service.staged_archive(draft)
+    if archive is None:
         raise EditorError("No exported wheelhouse to download. Run the export again.")
     return FileResponse(
         archive,
