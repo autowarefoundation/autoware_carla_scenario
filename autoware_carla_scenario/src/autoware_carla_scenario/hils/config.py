@@ -33,6 +33,16 @@ starts a constant beginning with ``$``.  ``runner.listen`` is where runs with
 drives the ego, and ``lifecycle`` the steps run at :data:`PHASES`.  Relative files (the configuration's ``canvas``, a codec's file,
 a ``profiles`` option) are relative to the configuration file.  Unknown keys
 are refused, so a typo fails loudly instead of being ignored.
+
+Names, addresses and raw bytes are text, and a value YAML reads as something
+else is refused rather than turned back into text: unquoted, ``0102`` is the
+octal number 66, ``0x10`` is 16 and ``On`` is ``True``, and what was written is
+lost.  Quote them (``data: "02 10 01"``, ``fields: {"On": 1}``).  Message,
+input and step names also take a whole number (RTCM's ``1005``).
+:func:`load_config` further refuses, anywhere in the file, the unquoted YAML
+1.1 forms that do not mean what they look like (octal ``0102``, sexagesimal
+``1:30``, ``yes``/``no``/``on``/``off``), so ``Gear: Off`` in a field value is
+refused too instead of becoming ``False``.
 """
 
 from __future__ import annotations
@@ -305,6 +315,34 @@ def _only(section: Mapping[str, Any], allowed: Tuple[str, ...], where: str) -> N
         )
 
 
+def _text(value: Any, where: str, *, number: bool = False) -> str:
+    """*value*, which must be a string: YAML reads an unquoted ``0102``,
+    ``0x10``, ``1.10`` or ``On`` as a number or a bool, whose text is lost.
+
+    With *number*, an integer is also taken, as its decimal text: a message
+    name can be a number (RTCM's ``1005``), and :func:`load_config` has
+    already refused the YAML 1.1 forms (octal ``0102``) whose number is not
+    the one written.
+    """
+    if isinstance(value, str):
+        return value
+    if number and isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    raise HilsConfigError(
+        f"{where}: expected text, got the {type(value).__name__} {value!r}; "
+        "YAML reads an unquoted number or yes/no/on/off as that type, so quote it "
+        '(e.g. "0102")'
+    )
+
+
+def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
+    """*section* with its keys checked to be strings (:func:`_text`)."""
+    for key in section:
+        if not isinstance(key, str):
+            _text(key, f"{where}: key {key!r}")
+    return dict(section)
+
+
 def _number(value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise HilsConfigError(f"{where}: expected a number, got {value!r}")
@@ -325,7 +363,7 @@ def _field(value: Any, where: str) -> FieldSource:
         if "signal" not in value:
             raise HilsConfigError(f"{where}: a mapping names a signal")
         return FieldSource(
-            signal=_signal(str(value["signal"]), where),
+            signal=_signal(_text(value["signal"], f"{where}.signal"), where),
             scale=_number(value.get("scale", 1.0), f"{where}.scale"),
             offset=_number(value.get("offset", 0.0), f"{where}.offset"),
         )
@@ -352,11 +390,13 @@ def _message(value: Any, where: str) -> MessageSpec:
         period = _number(period, f"{where}.period")
         if period <= 0.0:
             raise HilsConfigError(f"{where}.period: must be positive")
-    fields = _mapping(section.get("fields"), f"{where}.fields")
+    fields = _keys(
+        _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
+    )
     return MessageSpec(
-        name=str(section["name"]),
+        name=_text(section["name"], f"{where}.name", number=True),
         period=period,
-        fields={str(k): _field(v, f"{where}.fields.{k}") for k, v in fields.items()},
+        fields={k: _field(v, f"{where}.fields.{k}") for k, v in fields.items()},
     )
 
 
@@ -367,7 +407,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
         ("blueprint", "transform", "attributes", "encoding", "intensity_scale"),
         where,
     )
-    blueprint = str(section.get("blueprint", ""))
+    blueprint = _text(section.get("blueprint", ""), f"{where}.blueprint")
     transform = _mapping(section.get("transform"), f"{where}.transform")
     _only(transform, _TRANSFORM_KEYS, f"{where}.transform")
     spec = SensorSpec(
@@ -382,7 +422,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
                 section.get("attributes"), f"{where}.attributes"
             ).items()
         },
-        encoding=str(section.get("encoding", "bgra")),
+        encoding=_text(section.get("encoding", "bgra"), f"{where}.encoding"),
         intensity_scale=_number(
             section.get("intensity_scale", 255.0), f"{where}.intensity_scale"
         ),
@@ -420,8 +460,8 @@ def _relative_file(value: str, base: Path) -> str:
     return value
 
 
-def _codec(value: Any, base: Path) -> str:
-    codec = str(value)
+def _codec(value: Any, base: Path, where: str) -> str:
+    codec = _text(value, where)
     name, sep, argument = codec.partition(":")
     if sep and argument:
         return f"{name}:{_relative_file(argument, base)}"
@@ -434,7 +474,7 @@ def _input_source(value: Any, where: str) -> InputSource:
         if "field" not in value:
             raise HilsConfigError(f"{where}: a mapping names a field")
         return InputSource(
-            field=str(value["field"]),
+            field=_text(value["field"], f"{where}.field"),
             scale=_number(value.get("scale", 1.0), f"{where}.scale"),
             offset=_number(value.get("offset", 0.0), f"{where}.offset"),
         )
@@ -463,7 +503,7 @@ def _input(value: Any, mode: str, where: str) -> InputSpec:
                 f"expected {', '.join(allowed)}"
             )
     return InputSpec(
-        name=str(section["name"]),
+        name=_text(section["name"], f"{where}.name", number=True),
         command={
             str(k): _input_source(v, f"{where}.command.{k}") for k, v in command.items()
         },
@@ -489,7 +529,7 @@ def _step(
         if seconds < 0.0:
             raise HilsConfigError(f"{where}.sleep: must not be negative")
         return StepSpec(kind="sleep", seconds=seconds)
-    device = str(section[kind])
+    device = _text(section[kind], f"{where}.{kind}")
     if device not in devices:
         raise HilsConfigError(
             f"{where}: no device {device!r}; devices: {', '.join(devices)}"
@@ -501,7 +541,10 @@ def _step(
         _only(section, ("wait", "name", "fields", "timeout"), where)
         if not name:
             raise HilsConfigError(f"{where}: a wait names the message")
-        match = _mapping(section.get("fields"), f"{where}.fields")
+        name = _text(name, f"{where}.name", number=True)
+        match = _keys(
+            _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
+        )
         for key, expected in match.items():
             if not isinstance(expected, (str, int, float, bool)):
                 raise HilsConfigError(
@@ -513,8 +556,8 @@ def _step(
         return StepSpec(
             kind="wait",
             device=device,
-            name=str(name),
-            match=dict(match),
+            name=name,
+            match=match,
             seconds=timeout,
         )
     _only(section, ("send", "name", "fields", "data", "id"), where)
@@ -523,19 +566,19 @@ def _step(
             f"{where}: a send has either a name (and fields) or raw data"
         )
     if "data" in section:
-        try:
-            data = bytes.fromhex(str(section["data"]))
-        except ValueError as exc:
-            raise HilsConfigError(f"{where}.data: not hexadecimal bytes") from exc
+        data = _data(section["data"], f"{where}.data")
         frame_id = section.get("id")
         if frame_id is not None and (
             isinstance(frame_id, bool) or not isinstance(frame_id, int)
         ):
             raise HilsConfigError(f"{where}.id: expected an integer")
         return StepSpec(kind="send", device=device, data=data, frame_id=frame_id)
+    name = _text(name, f"{where}.name", number=True)
     fields = {
-        str(k): _field(v, f"{where}.fields.{k}")
-        for k, v in _mapping(section.get("fields"), f"{where}.fields").items()
+        k: _field(v, f"{where}.fields.{k}")
+        for k, v in _keys(
+            _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
+        ).items()
     }
     if phase in _EGOLESS_PHASES:
         signals = [k for k, source in fields.items() if source.signal is not None]
@@ -544,7 +587,31 @@ def _step(
                 f"{where}.fields: {', '.join(signals)} use(s) a signal, but there "
                 f"is no ego at {phase}"
             )
-    return StepSpec(kind="send", device=device, name=str(name), fields=fields)
+    return StepSpec(kind="send", device=device, name=name, fields=fields)
+
+
+def _data(raw: Any, where: str) -> bytes:
+    """A raw frame's bytes: a quoted hex string or a list of byte values."""
+    if isinstance(raw, list):
+        if not all(
+            isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 0xFF
+            for b in raw
+        ):
+            raise HilsConfigError(
+                f"{where}: a list holds byte values (0-255), got {raw!r}"
+            )
+        return bytes(raw)
+    if not isinstance(raw, str):
+        raise HilsConfigError(
+            f"{where}: expected the bytes as a quoted hex string "
+            f'(data: "02 10 01") or a list (data: [0x02, 0x10, 0x01]), got the '
+            f"{type(raw).__name__} {raw!r}; YAML reads unquoted digits as a "
+            "number (0102 is octal 66, 0x10 is 16), so quote it"
+        )
+    try:
+        return bytes.fromhex(raw)
+    except ValueError as exc:
+        raise HilsConfigError(f"{where}: not hexadecimal bytes") from exc
 
 
 def _lifecycle(
@@ -570,7 +637,7 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
     _only(section, ("url", "codec", "options", "messages", "sensor", "inputs"), where)
     if not section.get("url"):
         raise HilsConfigError(f"{where}: a device has a url")
-    codec = _codec(section.get("codec", "raw"), base)
+    codec = _codec(section.get("codec", "raw"), base, f"{where}.codec")
     options = {
         str(k): _relative_file(v, base) if k == "profiles" and isinstance(v, str) else v
         for k, v in _mapping(section.get("options"), f"{where}.options").items()
@@ -598,7 +665,7 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
         )
     return DeviceSpec(
         name=name,
-        url=str(section["url"]),
+        url=_text(section["url"], f"{where}.url"),
         codec=codec,
         options=options,
         messages=messages,
@@ -637,19 +704,24 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     _only(carla, ("host", "port", "timeout"), "carla")
     ego = _mapping(root.get("ego"), "ego")
     _only(ego, ("role_name", "wait"), "ego")
-    clock = str(root.get("clock", "simulation"))
+    clock = _text(root.get("clock", "simulation"), "clock")
     if clock not in CLOCKS:
         raise HilsConfigError(f"clock: {clock!r} is not one of {', '.join(CLOCKS)}")
     canvas: Optional[Path] = None
     if root.get("canvas"):
-        canvas = (base / Path(str(root["canvas"])).expanduser()).resolve()
+        canvas = (base / Path(_text(root["canvas"], "canvas")).expanduser()).resolve()
     runner = _mapping(root.get("runner"), "runner")
     _only(runner, ("listen",), "runner")
     listen = runner.get("listen", f"0.0.0.0:{DEFAULT_PORT}")
-    listen = "" if listen is None else str(listen)
+    if listen is not None and not isinstance(listen, str):
+        raise HilsConfigError(
+            f"runner.listen: expected host:port text, got {listen!r}; quote it "
+            f'(listen: "0.0.0.0:{DEFAULT_PORT}"), or null for no run link'
+        )
+    listen = "" if listen is None else listen
     commands = _mapping(root.get("commands"), "commands")
     _only(commands, ("mode",), "commands")
-    mode = str(commands.get("mode", "control"))
+    mode = _text(commands.get("mode", "control"), "commands.mode")
     if mode not in COMMAND_MODES:
         raise HilsConfigError(
             f"commands.mode: {mode!r} is not one of {', '.join(COMMAND_MODES)}"
@@ -658,17 +730,18 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     if not devices_section:
         raise HilsConfigError("devices: the configuration names no device")
     devices = {
-        str(k): _device(str(k), v, base, mode) for k, v in devices_section.items()
+        k: _device(k, v, base, mode)
+        for k, v in _keys(devices_section, "devices").items()
     }
     return HilsConfig(
         devices=tuple(devices.values()),
         runner_listen=listen,
         command_mode=mode,
         lifecycle=_lifecycle(root.get("lifecycle"), devices),
-        host=str(carla.get("host", "localhost")),
+        host=_text(carla.get("host", "localhost"), "carla.host"),
         port=int(_number(carla.get("port", 2000), "carla.port")),
         timeout=_number(carla.get("timeout", 10.0), "carla.timeout"),
-        role_name=str(ego.get("role_name", EGO_ROLE_NAME)),
+        role_name=_text(ego.get("role_name", str(EGO_ROLE_NAME)), "ego.role_name"),
         ego_wait=_number(ego.get("wait", 120.0), "ego.wait"),
         canvas=canvas,
         clock=clock,
@@ -686,8 +759,90 @@ def load_config(path: Union[str, Path]) -> HilsConfig:
     path = Path(path).expanduser()
     if not path.is_file():
         raise HilsConfigError(f"{path} is not a file")
+    loader = yaml.SafeLoader(path.read_text(encoding="utf-8"))
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        node = loader.get_single_node()
+        if node is not None:
+            _refuse_yaml11_scalars(node, path)
+        document = None if node is None else loader.construct_document(node)
     except yaml.YAMLError as exc:
         raise HilsConfigError(f"{path}: {exc}") from exc
+    finally:
+        loader.dispose()
     return parse_config(document, path.resolve().parent)
+
+
+_YAML_INT = "tag:yaml.org,2002:int"
+_YAML_FLOAT = "tag:yaml.org,2002:float"
+_YAML_BOOL = "tag:yaml.org,2002:bool"
+
+
+def _yaml11_reading(tag: str, text: str) -> Optional[str]:
+    """What YAML 1.1 makes of the plain scalar *text* (resolved to *tag*) when
+    that is not what it looks like, and how to write it instead; else None.
+
+    These are the forms YAML 1.2 reads differently: ``0102`` (octal 66),
+    ``1:30`` (sexagesimal 90) and ``yes``/``no``/``on``/``off`` (booleans).
+    ``0x7DF``, ``1_000``, ``1.5`` and ``true`` mean what they say.
+    """
+    digits = text.lstrip("+-").replace("_", "")
+    if tag == _YAML_BOOL and text.lower() in ("yes", "no", "on", "off"):
+        truth = text.lower() in ("yes", "on")
+        return f"the boolean {truth}; write {str(truth).lower()}"
+    if tag in (_YAML_INT, _YAML_FLOAT) and ":" in digits:
+        return "a sexagesimal (base 60) number; write it in decimal"
+    if (
+        tag == _YAML_INT
+        and len(digits) > 1
+        and digits[0] == "0"
+        and digits[1] in "01234567"
+    ):
+        value = int(digits, 8) * (-1 if text.startswith("-") else 1)
+        return f"the octal number {value}; write {value} or {value:#x}"
+    return None
+
+
+def _refuse_yaml11_scalars(node: Any, file: Path) -> None:
+    """Refuse the plain scalars under *node* that YAML 1.1 reads as something
+    other than what they look like (:func:`_yaml11_reading`), naming each one's
+    place in the configuration and the file.
+
+    ``yaml.safe_load`` is YAML 1.1: unquoted, ``Gear: Off`` is ``False`` and
+    ``data: 0102`` is 66, in a field value or a codec option as much as in a
+    name, and nothing after loading can tell ``66`` from ``0102``.
+    """
+    import yaml  # noqa: PLC0415
+
+    seen: set[int] = set()
+
+    def check(scalar: Any, where: str) -> None:
+        if scalar.style is not None:  # quoted, a block scalar, or flow text
+            return
+        reading = _yaml11_reading(scalar.tag, scalar.value)
+        if reading is not None:
+            mark = scalar.start_mark
+            raise HilsConfigError(
+                f"{file}:{mark.line + 1}:{mark.column + 1}: {where or 'configuration'}: "
+                f"unquoted, YAML reads {scalar.value} as {reading}, or quote it "
+                f'("{scalar.value}") if it is text'
+            )
+
+    def walk(item: Any, where: str) -> None:
+        if id(item) in seen:  # an alias
+            return
+        seen.add(id(item))
+        if isinstance(item, yaml.ScalarNode):
+            check(item, where)
+        elif isinstance(item, yaml.SequenceNode):
+            for index, child in enumerate(item.value):
+                walk(child, f"{where}[{index}]")
+        elif isinstance(item, yaml.MappingNode):
+            for key, child in item.value:
+                if isinstance(key, yaml.ScalarNode):
+                    check(key, f"{where}: key" if where else "key")
+                    walk(child, f"{where}.{key.value}" if where else key.value)
+                else:
+                    walk(key, where)
+                    walk(child, where)
+
+    walk(node, "")
