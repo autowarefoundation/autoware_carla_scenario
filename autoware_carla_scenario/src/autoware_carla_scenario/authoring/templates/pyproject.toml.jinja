@@ -5,11 +5,11 @@ description = {{ description | toml_string }}
 # Matches the framework's own requirement -- the interpreters its CI tests --
 # so a scenario package cannot be looser than the framework it runs on. The
 # wheelhouse is resolved for each of them.
-requires-python = "{{ requires_python }}"
+requires-python = {{ requires_python | toml_string }}
 dependencies = [
     # {{ pin_note }}
 {% for requirement in requirements %}
-    "{{ requirement }}",
+    {{ requirement | toml_string }},
 {% endfor %}
 ]
 

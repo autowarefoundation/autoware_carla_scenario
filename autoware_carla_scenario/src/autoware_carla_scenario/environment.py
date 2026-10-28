@@ -72,12 +72,34 @@ def _git(path: Path, *args: str) -> Optional[str]:
     return done.stdout.strip()
 
 
+#: Archive hashes in the order a lock prefers them, strongest first; pip and uv
+#: both read any of them from a URL fragment.
+_HASH_PREFERENCE = ("sha512", "sha384", "sha256", "sha224", "sha1", "md5")
+
+
+def _archive_hashes(info: dict[str, Any]) -> dict[str, str]:
+    """``archive_info``'s hashes: ``hashes``, or the deprecated ``hash``."""
+    hashes = {
+        str(k).lower(): str(v)
+        for k, v in (info.get("hashes") or {}).items()
+        if isinstance(v, str) and v
+    }
+    legacy = info.get("hash")
+    if isinstance(legacy, str) and "=" in legacy:
+        algorithm, _, value = legacy.partition("=")
+        hashes.setdefault(algorithm.lower(), value)
+    return hashes
+
+
 def _source(dist: metadata.Distribution) -> dict[str, Any]:
     """Where *dist* was installed from (PEP 610's ``direct_url.json``).
 
-    ``{"kind": "index"}`` for a registry release; ``vcs`` with the URL and the
-    commit; ``archive`` with the URL; ``editable`` / ``local`` with the
-    directory, and its git commit and uncommitted changes when it is a checkout.
+    ``{"kind": "index"}`` for a registry release; ``vcs`` with the URL, the
+    commit and the revision that was asked for; ``archive`` with the URL and
+    its hashes; ``editable`` / ``local`` with the directory, and its git commit
+    and uncommitted changes when it is a checkout.  A ``subdirectory`` -- the
+    project inside a monorepo, as this framework is inside its repository --
+    is kept for every kind: without it, the URL names the repository root.
     """
     try:
         raw = dist.read_text("direct_url.json")
@@ -89,25 +111,41 @@ def _source(dist: metadata.Distribution) -> dict[str, Any]:
         direct = json.loads(raw)
     except ValueError:
         return {"kind": "index"}
+    if not isinstance(direct, dict):
+        return {"kind": "index"}
     url = str(direct.get("url", ""))
+    subdirectory = direct.get("subdirectory") or None
     if "vcs_info" in direct:
-        vcs = direct["vcs_info"]
-        return {
+        vcs = direct["vcs_info"] or {}
+        source: dict[str, Any] = {
             "kind": "vcs",
             "url": url,
             "vcs": vcs.get("vcs", "git"),
             "commit": vcs.get("commit_id", ""),
             "requested": vcs.get("requested_revision"),
         }
+        if subdirectory:
+            source["subdirectory"] = subdirectory
+        return source
     if "archive_info" in direct:
-        return {"kind": "archive", "url": url}
+        source = {"kind": "archive", "url": url}
+        hashes = _archive_hashes(direct["archive_info"] or {})
+        if hashes:
+            source["hashes"] = hashes
+        if subdirectory:
+            source["subdirectory"] = subdirectory
+        return source
     path = Path(unquote(urlparse(url).path)) if url.startswith("file:") else None
+    if path is not None and subdirectory:
+        path = path / subdirectory
     out: dict[str, Any] = {
         "kind": "editable"
         if (direct.get("dir_info") or {}).get("editable")
         else "local",
         "path": str(path) if path else url,
     }
+    if path is None and subdirectory:
+        out["subdirectory"] = subdirectory
     if path is not None and path.is_dir():
         commit = _git(path, "rev-parse", "HEAD")
         if commit:
@@ -117,13 +155,33 @@ def _source(dist: metadata.Distribution) -> dict[str, Any]:
     return out
 
 
+def _fragment(source: dict[str, Any]) -> str:
+    """The URL fragment pip and uv read a hash and a subdirectory from."""
+    parts: list[str] = []
+    hashes = source.get("hashes") or {}
+    for algorithm in _HASH_PREFERENCE:
+        if hashes.get(algorithm):
+            parts.append(f"{algorithm}={hashes[algorithm]}")
+            break
+    if source.get("subdirectory"):
+        parts.append(f"subdirectory={source['subdirectory']}")
+    return "#" + "&".join(parts) if parts else ""
+
+
 def _pin(name: str, version: str, source: dict[str, Any]) -> str:
     """The requirement that installs this distribution again, as far as one can."""
     kind = source.get("kind")
-    if kind == "vcs" and source.get("commit"):
-        return f"{name} @ {source['vcs']}+{source['url']}@{source['commit']}"
+    if kind == "vcs":
+        # The commit is what was installed; the requested revision (a branch
+        # or tag, which can move) is only the fallback when none was recorded.
+        revision = source.get("commit") or source.get("requested")
+        if revision:
+            return (
+                f"{name} @ {source['vcs']}+{source['url']}@{revision}"
+                f"{_fragment(source)}"
+            )
     if kind == "archive":
-        return f"{name} @ {source['url']}"
+        return f"{name} @ {source['url']}{_fragment(source)}"
     if kind in ("editable", "local"):
         state = ""
         if source.get("commit"):
