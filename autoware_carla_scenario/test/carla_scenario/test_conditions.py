@@ -666,21 +666,25 @@ class TestAndCondition:
         assert result is not None
         assert result.passed is False
 
-    def test_fail_short_circuits(self) -> None:
-        """Fail result stops evaluation — second condition is never checked."""
+    def test_fail_does_not_skip_later_children(self) -> None:
+        """A failing child does not stop the later ones being checked (#663)."""
         spy = MagicMock(spec=BaseCondition)
         spy.label = "spy"
+        spy.check.return_value = None
         cond = AndCondition([AlwaysFailCondition(), spy])
-        cond.check(MagicMock(), elapsed=1.0)
-        spy.check.assert_not_called()
+        result = cond.check(MagicMock(), elapsed=1.0)
+        assert result is not None
+        assert result.passed is False
+        spy.check.assert_called_once()
 
-    def test_none_short_circuits(self) -> None:
-        """None result stops evaluation — second condition is never checked."""
+    def test_none_does_not_skip_later_children(self) -> None:
+        """A pending child does not stop the later ones being checked (#663)."""
         spy = MagicMock(spec=BaseCondition)
         spy.label = "spy"
+        spy.check.return_value = None
         cond = AndCondition([AlwaysNoneCondition(), spy])
-        cond.check(MagicMock(), elapsed=1.0)
-        spy.check.assert_not_called()
+        assert cond.check(MagicMock(), elapsed=1.0) is None
+        spy.check.assert_called_once()
 
     def test_three_conditions_all_pass(self) -> None:
         cond = AndCondition(
@@ -732,13 +736,16 @@ class TestOrCondition:
         assert result is not None
         assert result.passed is False
 
-    def test_first_match_short_circuits(self) -> None:
-        """First non-None result stops evaluation — second is never checked."""
+    def test_first_match_does_not_skip_later_children(self) -> None:
+        """The first result is returned, but later children are still checked (#663)."""
         spy = MagicMock(spec=BaseCondition)
         spy.label = "spy"
+        spy.check.return_value = None
         cond = OrCondition([AlwaysPassCondition(), spy])
-        cond.check(MagicMock(), elapsed=1.0)
-        spy.check.assert_not_called()
+        result = cond.check(MagicMock(), elapsed=1.0)
+        assert result is not None
+        assert result.passed is True
+        spy.check.assert_called_once()
 
     def test_three_conditions(self) -> None:
         cond = OrCondition(

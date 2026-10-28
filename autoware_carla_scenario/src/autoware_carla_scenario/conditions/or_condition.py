@@ -13,9 +13,13 @@ if TYPE_CHECKING:
 class OrCondition(BaseCondition):
     """Composite condition that requires ANY child condition to be satisfied.
 
-    Evaluation rules:
+    Every child is checked on every tick, whatever the others return, so a
+    stateful child (:class:`PersistentCondition`, :class:`StickyCondition`, a
+    condition that tracks progress) sees every tick.  The results are then
+    combined:
 
-    - If any child returns a non-``None`` result, return it immediately.
+    - If any child returns a non-``None`` result, return the first such
+      result, in the order the children were given.
     - If all children return ``None``, return ``None``.
 
     Args:
@@ -56,8 +60,11 @@ class OrCondition(BaseCondition):
             The first non-``None`` :class:`ScenarioResult` from any child,
             or ``None`` if all children are still pending.
         """
+        # Check every child before choosing: stopping at the first result would
+        # leave the later children unchecked this tick (#663).
+        first: Optional[ScenarioResult] = None
         for condition in self._conditions:
             result = condition.check(world, elapsed)
-            if result is not None:
-                return result
-        return None
+            if first is None and result is not None:
+                first = result
+        return first

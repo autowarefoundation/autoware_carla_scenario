@@ -94,7 +94,7 @@ children.
 | `ScenarioResult` | Pass / fail outcome with message, elapsed time, and per-condition statuses. |
 | `ConditionStatus` | Per-condition leaf record used for reporting. |
 | `AlwaysTrueCondition` | Default trigger for actions. |
-| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. `NotCondition(child, holds_when_pending=True)` is the logical NOT -- it holds while the child has not fired -- where the default flips a fired child's verdict; with `OrCondition` over `EntityLanePositionCondition`s it says "on none of these lanelets" ([cut-in](scenarios/cut_in.md#staying-on-the-lanes-ahead)). |
+| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. `AndCondition` and `OrCondition` check every child on every tick, so a stateful child (`PersistentCondition`, `StickyCondition`) stays current wherever it sits. `NotCondition(child, holds_when_pending=True)` is the logical NOT -- it holds while the child has not fired -- where the default flips a fired child's verdict; with `OrCondition` over `EntityLanePositionCondition`s it says "on none of these lanelets" ([cut-in](scenarios/cut_in.md#staying-on-the-lanes-ahead)). |
 | `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
 | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
 | `MetricCondition(metric, rule, value, tolerance, *, label)` | A built-in metric -- how the ego drives -- against a threshold; usually a fail condition. See [Metrics](metrics.md). |
@@ -102,7 +102,7 @@ children.
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
 | `OffRoadFractionCondition(fraction, entity_name=None, *, label)` | Fails once at least `fraction` (in `(0, 1]`) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the `offroad` metric, with a tolerance. See [Metrics](metrics.md#off-the-road-as-a-fail-condition). |
 | `PlaceClearCondition(position, length, width, margin=0.3, *, label)` | Passes while no vehicle's or walker's bounding box comes within `margin` of a `length` x `width` rectangle at `position` (a `Lanelet2Pose`, facing along the lane turned by its `heading`). Actors parked under the map do not count; one put there on this tick does. The `place_clear` card; typically guards where an entity appears. |
-| `TrafficSignalCondition` | Traffic-light state check. |
+| `TrafficSignalCondition` | Traffic-light state check: fires while every matching light shows the expected state, and is pending otherwise. |
 | `RouteProgressCondition` | An entity's (default: the ego's) distance along the scenario's route, from an anchor (`junction:0:entry`, ...), compared with a rule; robust to lane changes. See [Logical Scenarios from Routes](logical_scenarios.md). |
 | `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
 | `find_actor_by_role_name`, `find_actor_in_list` | Helpers for locating CARLA actors by role. `find_actor_in_list` is reachable via `autoware_carla_scenario.conditions`. |

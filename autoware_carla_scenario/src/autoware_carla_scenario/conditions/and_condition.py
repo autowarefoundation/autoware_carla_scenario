@@ -13,10 +13,14 @@ if TYPE_CHECKING:
 class AndCondition(BaseCondition):
     """Composite condition that requires ALL child conditions to be satisfied.
 
-    Evaluation rules:
+    Every child is checked on every tick, whatever the others return, so a
+    stateful child (:class:`PersistentCondition`, :class:`StickyCondition`, a
+    condition that tracks progress) sees every tick and the verdict does not
+    depend on the order of the children.  The results are then combined:
 
-    - If any child returns ``passed=False``, return that failure immediately.
-    - If any child returns ``None`` (not yet determined), return ``None``.
+    - If any child returns ``passed=False``, return the first such failure.
+    - Otherwise, if any child returns ``None`` (not yet determined), return
+      ``None``.
     - If all children return ``passed=True``, return a combined pass result.
 
     Args:
@@ -58,14 +62,24 @@ class AndCondition(BaseCondition):
             ``passed=True`` if all children pass, or ``None`` if any child
             is still pending.
         """
+        # Check every child before combining: stopping at the first pending
+        # child would leave the later ones unchecked this tick (#663).
         messages: List[str] = []
+        failure: Optional[ScenarioResult] = None
+        pending = False
         for condition in self._conditions:
             result = condition.check(world, elapsed)
             if result is None:
-                return None
-            if not result.passed:
-                return result
-            messages.append(result.message)
+                pending = True
+            elif not result.passed:
+                if failure is None:
+                    failure = result
+            else:
+                messages.append(result.message)
+        if failure is not None:
+            return failure
+        if pending:
+            return None
         return ScenarioResult(
             passed=True,
             message=" AND ".join(messages),

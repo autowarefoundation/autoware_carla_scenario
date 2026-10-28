@@ -26,6 +26,15 @@ class TrafficSignalCondition(BaseCondition):
     cached signal IDs to find matching CARLA traffic light actors and compare
     their current state against the expected state.
 
+    The condition fires (returns ``passed=True``) only while every matching
+    light shows the expected state, and returns ``None`` otherwise -- as
+    :class:`TrafficSignalControllerCondition` does.  It never returns a
+    failing result: the runner and an action both treat any non-``None``
+    result as the condition having fired, so a ``passed=False`` would pass the
+    run, or start the action, while the light shows something else.  To fail
+    a run on a light's state, register the condition for the state that
+    should fail it.
+
     Args:
         lanelet2_regulatory_element_id: Lanelet2 regulatory element ID of
             the traffic light to monitor.
@@ -39,6 +48,8 @@ class TrafficSignalCondition(BaseCondition):
     _expected_state: "carla.TrafficLightState"
     _expected_name: str
     _cached_signal_ids: Optional[set[str]]
+    _last_mismatch: Optional[str]
+    _warned_no_actors: bool
 
     def __init__(
         self,
@@ -52,6 +63,8 @@ class TrafficSignalCondition(BaseCondition):
         self._expected_state = expected_state
         self._expected_name = traffic_light_state_name(expected_state)
         self._cached_signal_ids: Optional[set[str]] = None
+        self._last_mismatch: Optional[str] = None
+        self._warned_no_actors = False
 
     # ------------------------------------------------------------------
     # Signal ID resolution (lazy + cached)
@@ -99,11 +112,23 @@ class TrafficSignalCondition(BaseCondition):
     ) -> Optional[ScenarioResult]:
         """Check whether matching traffic lights are in the expected state.
 
+        ``None`` covers three situations:
+
+        * **Signal ID resolution fails.**  Warned, and retried next tick.
+        * **No matching actor is found.**  Warned once, because a condition
+          that never fires for a whole run should say why.
+        * **A matching light shows another state.**  The ordinary answer,
+          logged at debug with the state each mismatching light *is*
+          showing, which :meth:`get_details` also reports.
+
+        None of them returns a failing result: an action treats any
+        non-``None`` result as its trigger having fired, so a
+        ``passed=False`` here would start the action it is meant to hold
+        back, and the runner would end the run on it.
+
         Returns:
             ``ScenarioResult(passed=True)`` if all matching actors have the
-            expected state, ``ScenarioResult(passed=False)`` if any differ or
-            no matching actors are found, or ``None`` if signal ID resolution
-            fails (will retry next tick).
+            expected state, ``None`` otherwise.
         """
         # Lazy resolution with caching
         if self._cached_signal_ids is None:
@@ -125,30 +150,32 @@ class TrafficSignalCondition(BaseCondition):
                     mismatches.append((actor.get_opendrive_id(), state))
 
         if match_count == 0:
-            return ScenarioResult(
-                passed=False,
-                message=(
-                    f"TrafficSignalCondition [{self.label}]: "
-                    f"no matching actors found for signal IDs "
-                    f"{sorted(signal_ids)}"
-                ),
-                elapsed_seconds=elapsed,
-            )
+            if not self._warned_no_actors:
+                self._warned_no_actors = True
+                logger.warning(
+                    "TrafficSignalCondition [%s]: no traffic light actor "
+                    "matches signal IDs %s, so this condition cannot fire "
+                    "until one does.",
+                    self.label,
+                    sorted(signal_ids),
+                )
+            return None
 
         if mismatches:
             mismatch_details = ", ".join(
                 f"{sig_id}={traffic_light_state_name(state)}"
                 for sig_id, state in mismatches
             )
-            return ScenarioResult(
-                passed=False,
-                message=(
-                    f"TrafficSignalCondition [{self.label}]: "
-                    f"state mismatch — expected {self._expected_name}, "
-                    f"got {mismatch_details}"
-                ),
-                elapsed_seconds=elapsed,
+            self._last_mismatch = mismatch_details
+            logger.debug(
+                "TrafficSignalCondition [%s]: expected %s, got %s",
+                self.label,
+                self._expected_name,
+                mismatch_details,
             )
+            return None
+
+        self._last_mismatch = None
 
         return ScenarioResult(
             passed=True,
@@ -170,4 +197,5 @@ class TrafficSignalCondition(BaseCondition):
                 if self._cached_signal_ids is not None
                 else None
             ),
+            "last_mismatch": self._last_mismatch,
         }
