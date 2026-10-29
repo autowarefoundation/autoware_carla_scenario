@@ -332,7 +332,38 @@ def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
         },
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    assert list(np.diff(_numeric(scene.annotations.offsets))) == [0, 1, 1, 0]
+    # Parked out of sight up to its spawn frame (102), gone from its despawn's.
+    assert list(np.diff(_numeric(scene.annotations.offsets))) == [0, 0, 1, 0]
+
+
+def test_a_row_without_the_ego_has_no_objects_near_it(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        _tick(100, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+        _tick(102, _state(2, 5.0, 0.0)),
+    )
+    near = trajectory_log_to_t4_scene(log, with_map=False).scene
+    assert list(_numeric(near.annotations.available)) == [True, False]
+    assert list(_numeric(near.annotations.offsets)) == [0, 1, 1]
+    everyone = trajectory_log_to_t4_scene(
+        log, with_map=False, max_distance_m=None
+    ).scene
+    assert list(_numeric(everyone.annotations.available)) == [True, True]
+    assert list(_numeric(everyone.annotations.offsets)) == [0, 1, 2]
+
+
+def test_a_second_ego_role_actor_is_a_road_user(tmp_path: Path) -> None:
+    hero = {**CAR, "role": "hero"}
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        hero,
+        _tick(100, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+    )
+    values = trajectory_log_to_t4_scene(log, with_map=False).scene.annotations.values
+    assert [track.value for track in values.track_ids.values] == ["2"]
 
 
 # -- the map and its lights ---------------------------------------------------
@@ -518,6 +549,31 @@ def test_cli_converts_every_log_under_a_directory(
     assert (tmp_path / "runs" / "B" / f"B{SCENE_SUFFIX}").is_file()
     assert not (tmp_path / "runs" / "A" / f"A{MAP_SUFFIX}").exists()
     assert "B.t4scene.pb" in capsys.readouterr().out
+
+
+def test_cli_refuses_two_logs_of_one_stem_into_one_directory(tmp_path: Path) -> None:
+    for case in ("0", "1"):
+        (tmp_path / case).mkdir()
+        _write_log(
+            tmp_path / case / "Run.trajectory.jsonl",
+            EGO,
+            _tick(100, _state(1, 0.0, 0.0)),
+        )
+    with pytest.raises(SystemExit):
+        main([str(tmp_path), "--no-map", "-o", str(tmp_path / "out")])
+    assert not (tmp_path / "out").exists()
+    assert main([str(tmp_path), "--no-map"]) == 0
+
+
+def test_cli_goes_on_past_a_malformed_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = tmp_path / "A.trajectory.jsonl"
+    _write_log(broken, EGO, {"type": "tick", "frame": 100, "t": 0.0})  # no actors
+    _write_log(tmp_path / "B.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0)))
+    assert main([str(tmp_path), "--no-map"]) == 1
+    assert (tmp_path / f"B{SCENE_SUFFIX}").is_file()
+    assert "A.trajectory.jsonl" in capsys.readouterr().err
 
 
 def test_cli_fails_on_a_log_it_cannot_convert(

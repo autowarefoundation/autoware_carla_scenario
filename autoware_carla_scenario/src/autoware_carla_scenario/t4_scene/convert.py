@@ -120,10 +120,11 @@ class _Log:
 
     def on_scene(self, actor_id: int, frame: int) -> bool:
         """Whether a road user is on the scene at *frame*, not parked out of
-        sight before its ``SpawnAction`` or after its ``DespawnAction``."""
+        sight up to its ``SpawnAction``'s frame (whose tick may have been
+        logged before the action moved it) or from its ``DespawnAction``'s."""
         spawned = self.spawned.get(actor_id)
         despawned = self.despawned.get(actor_id)
-        return (spawned is None or frame >= spawned) and (
+        return (spawned is None or frame > spawned) and (
             despawned is None or frame < despawned
         )
 
@@ -147,14 +148,16 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                 if log.first_frame < 0:
                     log.first_frame = frame
                 log.last_frame = frame
-                # Light states are deltas: fold every tick's in, grid or not.
-                for light_id, state in (record.get("lights") or {}).items():
-                    lights[int(light_id)] = str(state)
+                # Light states are deltas: fold every tick's in, grid or not,
+                # into a new dict, so the rows share one until a light changes.
+                changes = record.get("lights")
+                if changes:
+                    lights = {**lights, **{int(i): str(v) for i, v in changes.items()}}
                 if (frame - log.first_frame) % step_frames == 0:
                     states = np.asarray(record["actors"], dtype=np.float64).reshape(
                         -1, 10
                     )
-                    log.rows[frame] = (states, dict(lights))
+                    log.rows[frame] = (states, lights)
             elif kind == "actor":
                 log.actors[int(record["id"])] = _Actor(
                     type_id=str(record["type_id"]),
@@ -297,10 +300,10 @@ def _read_map(
     lanelet2_path: Path,
     xodr_path: Optional[Path],
     projector_type: Optional[str],
-    _mtime: int,
+    _mtimes: tuple[int, Optional[int]],
 ) -> _Map:
     """A map as the run read it, encoded once however many logs ran on it
-    (``_mtime`` ties the cache to the file's contents)."""
+    (``_mtimes`` ties the cache to the two files' contents)."""
     from ..sweeper.map_loader import load_lanelet2_map  # noqa: PLC0415
 
     lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path, projector_type)
@@ -330,14 +333,19 @@ def _load_map(
                 lanelet2_path,
             )
             return None
-    if xodr_path is None and (record.get("opendrive") or {}).get("path"):
-        candidate = Path(record["opendrive"]["path"])
-        xodr_path = candidate if candidate.is_file() else None
+        # The run's OpenDRIVE goes with the run's map only: a map given in its
+        # place is anchored by its own descriptor, or by xodr_path.
+        if xodr_path is None and (record.get("opendrive") or {}).get("path"):
+            candidate = Path(record["opendrive"]["path"])
+            xodr_path = candidate if candidate.is_file() else None
     loaded = _read_map(
         lanelet2_path.resolve(),
         None if xodr_path is None else xodr_path.resolve(),
         projector_type if projector_type is not None else record.get("projector_type"),
-        lanelet2_path.stat().st_mtime_ns,
+        (
+            lanelet2_path.stat().st_mtime_ns,
+            None if xodr_path is None else xodr_path.stat().st_mtime_ns,
+        ),
     )
     if lanelet2_record.get("sha256") and lanelet2_record["sha256"] != loaded.digest:
         logger.warning(
@@ -359,7 +367,8 @@ def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
         elements = [
             element
             for element in lanelet.regulatoryElements
-            if element.attributes["subtype"] == "traffic_light"
+            if "subtype" in element.attributes
+            and element.attributes["subtype"] == "traffic_light"
         ]
         centerline = np.array([(p.x, p.y) for p in lanelet.centerline])
         if not elements or len(centerline) < 2:
@@ -502,15 +511,23 @@ def _fill_annotations(
     scene: pb.T4Scene,
     log: _Log,
     frames: Sequence[int],
+    ego_id: int,
     ego_origins: Sequence[Optional[npt.NDArray[np.float64]]],
     frame: _MapFrame,
     max_distance_m: Optional[float],
 ) -> None:
-    """Write every other road user's box on each row, a tick at a time."""
-    others = {i: actor for i, actor in log.actors.items() if not _is_ego(actor.role)}
+    """Write every other road user's box on each row, a tick at a time.
+
+    With *max_distance_m*, a row the ego is not on has its objects
+    unavailable: there is nothing for them to be near.
+    """
+    others = {i: actor for i, actor in log.actors.items() if i != ego_id}
+    available = np.array([f in log.rows for f in frames])
+    if max_distance_m is not None:
+        available &= np.array([origin is not None for origin in ego_origins])
     rows: list[tuple[npt.NDArray[Any], ...]] = []
     for row, carla_frame in enumerate(frames):
-        states = log.states(carla_frame)
+        states = log.states(carla_frame) if available[row] else _NO_STATES
         ids = states[:, 0].astype(np.int64)
         keep = np.array(
             [int(i) in others and log.on_scene(int(i), carla_frame) for i in ids],
@@ -559,7 +576,7 @@ def _fill_annotations(
     scene.annotations.offsets.CopyFrom(
         _array(np.concatenate([[0], np.cumsum(counts)]), "i8")
     )
-    scene.annotations.available.CopyFrom(_array([f in log.rows for f in frames], "?"))
+    scene.annotations.available.CopyFrom(_array(available, "?"))
 
 
 def _fill_lights(
@@ -671,7 +688,7 @@ def trajectory_log_to_t4_scene(
         -0.5 * ego.extent[0] if rear_axle_offset_m is None else rear_axle_offset_m
     )
     ego_origins = _fill_ego(scene, log, frames, ego_id, ego, frame, rear_axle)
-    _fill_annotations(scene, log, frames, ego_origins, frame, max_distance_m)
+    _fill_annotations(scene, log, frames, ego_id, ego_origins, frame, max_distance_m)
 
     loaded = None
     if with_map:

@@ -83,6 +83,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     logs = _logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
+    if args.output_dir is not None:
+        stems: dict[str, Path] = {}
+        for log in logs:
+            stem = (
+                log.name[: -len(LOG_SUFFIX)]
+                if log.name.endswith(LOG_SUFFIX)
+                else log.stem
+            )
+            if stem in stems:
+                parser.error(
+                    f"{stems[stem]} and {log} would both be written to "
+                    f"{args.output_dir / stem}.*; convert them without -o"
+                )
+            stems[stem] = log
     failed = False
     for log in logs:
         try:
@@ -97,7 +111,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 lanelet2_path=args.lanelet2,
                 xodr_path=args.xodr,
             )
-        except (OSError, ValueError) as error:
+        except Exception as error:  # noqa: BLE001 - one bad log does not stop the rest
             print(f"{log}: {error}", file=sys.stderr)  # noqa: T201
             failed = True
             continue
