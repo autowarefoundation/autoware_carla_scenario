@@ -100,6 +100,9 @@ class RobustnessOptimizer:
         self._compiled_batch: Any = None
         self._compiled_refine: Any = None
         self._compiled_scores: Any = None
+        # Whether `prepare()` has tried to compile, failed or not: a compile
+        # that failed once is not retried inside every session's start.
+        self._compile_attempted = False
 
     def prepare(self, example: RolloutInputs) -> None:
         """Do the expensive one-off work before the runtime starts waiting.
@@ -115,17 +118,18 @@ class RobustnessOptimizer:
         cannot handle some corner of that, the eager path is still correct and
         merely slower.
 
-        Compiles once: called again -- every session calls it -- it only
+        Tries to compile once: called again -- every session calls it -- it only
         solves, which keeps the first step of the session at the steady rate.
         """
         settings = self.config.optimizer
-        if not settings.compile_search or self._compiled_batch is not None:
+        if not settings.compile_search or self._compile_attempted:
             # Still worth one solve: the first in a process runs at a third of
             # the steady-state rate, and would otherwise spend its whole
             # budget on torch's lazy initialisation.
             self.solve(example)
             return
 
+        self._compile_attempted = True
         try:
             self._compiled_batch = torch.compile(self._score_batch_eager, dynamic=True)
             self._compiled_refine = torch.compile(self._refine_losses, dynamic=True)

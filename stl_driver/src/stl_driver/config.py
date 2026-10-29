@@ -459,8 +459,8 @@ class OptimizerConfig:
     #: kernel launch latency dominates the arithmetic. It stops being the
     #: right answer if the search grows -- a few thousand candidates puts the
     #: batched STL masks into the tens of millions of elements -- so the
-    #: choice is exposed rather than assumed. Install the matching torch with
-    #: `uv sync --extra cuda`.
+    #: choice is exposed rather than assumed. It needs a CUDA build of torch,
+    #: which PyPI's Linux wheel is.
     #:
     #: Worth knowing before reaching for it: measured on this specification,
     #: 64x the samples and 25x the refinement steps with no time limit at all
@@ -518,8 +518,8 @@ class STLDriverConfig:
             return "cuda" if torch.cuda.is_available() else "cpu"
         if requested == "cuda" and not torch.cuda.is_available():
             raise RuntimeError(
-                "device='cuda' but torch reports no CUDA device; install the "
-                "CUDA build with `uv sync --extra cuda`, or use device='auto'"
+                "device='cuda' but torch reports no CUDA device; install a "
+                "CUDA build of torch, or use device='auto'"
             )
         return requested
 

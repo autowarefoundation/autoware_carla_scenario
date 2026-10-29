@@ -7,8 +7,8 @@ name = "stl-driver"
 version = "0.1.0"
 description = "An ego policy whose driving behaviour is written in Signal Temporal Logic and optimised for STL robustness"
 readme = "README.md"
-# The workspace's range (autoware_carla_scenario's `requires-python`): the
-# workspace shares one lock, whose range is every member's intersection.
+# autoware_carla_scenario's range, so the policy loads in the scenario's own
+# process (`driver.transport=direct`).
 requires-python = ">=3.10,<3.15"
 license = { text = "Apache-2.0" }
 
@@ -53,10 +53,3 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
-[[tool.mypy.overrides]]
-# stlcgpp is a namespace package with no py.typed and `from ... import *` at
-# module scope; mypy cannot follow it usefully.
-module = ["stlcgpp.*"]
-follow_imports = "skip"
-ignore_missing_imports = true

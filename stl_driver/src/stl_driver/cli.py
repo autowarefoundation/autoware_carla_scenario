@@ -3,7 +3,7 @@
 
 ``serve`` runs the policy as an egodriver gRPC server for a runtime in another
 process to connect to.  (autoware_carla_scenario can also load it into its own
-process: ``driver.policy=stl_driver.policy:EgoPolicy``.)  ``demo`` closes the
+process: ``driver.policy=stl_driver.policy:warmed_up_policy``.)  ``demo`` closes the
 loop against carla_driver_interface's fake straight road so the whole thing can
 be exercised without CARLA, and ``explain`` prints the specification, because a
 specification nobody can read is not much better than no specification.
@@ -89,6 +89,7 @@ def _demo(args: argparse.Namespace) -> int:
     import json
 
     import numpy as np
+    from carla_driver_interface import polyline
     from carla_driver_interface.server import serving
     from carla_driver_interface.testing import FakeLoop
 
@@ -104,9 +105,7 @@ def _demo(args: argparse.Namespace) -> int:
     positions = result.ego.positions
     speeds = result.speeds_mps
     metrics = {
-        "distance_travelled_m": float(
-            np.linalg.norm(np.diff(positions[:, :2], axis=0), axis=1).sum()
-        ),
+        "distance_travelled_m": float(polyline.arc_lengths(positions)[-1]),
         "speed_mps": float(np.mean(speeds)) if speeds else 0.0,
         "max_lateral_offset_m": float(np.abs(result.lateral_offsets_m).max()),
     }

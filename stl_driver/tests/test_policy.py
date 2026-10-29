@@ -290,19 +290,10 @@ def test_an_explicit_config_is_respected():
     assert EgoPolicy(cruise_speed_mps=4.0, config=config).config.cruise_speed_mps == 4.0
 
 
-def test_it_loads_by_the_spec_a_scenario_names():
-    """`driver.policy=stl_driver.policy:EgoPolicy` in autoware_carla_scenario, and
-    `carla-driver-interface serve --policy` upstream, both load it this way."""
-    from carla_driver_interface.policies import load_policy
-
-    policy = load_policy("stl_driver.policy:EgoPolicy", cruise_speed_mps=5.0)
-    assert isinstance(policy, EgoPolicy)
-    assert policy.config.cruise_speed_mps == 5.0
-
-
-def test_it_loads_compiled_by_the_warmed_up_spec():
-    """`driver.policy=stl_driver.policy:warmed_up_policy` compiles while it loads,
-    not inside the first `start_session` and its deadline."""
+def test_it_loads_compiled_by_the_spec_a_scenario_names():
+    """`driver.policy=stl_driver.policy:warmed_up_policy` in autoware_carla_scenario
+    (and `carla-driver-interface serve --policy` upstream) loads it this way, and it
+    compiles while it loads, not inside the first `start_session` and its deadline."""
     from carla_driver_interface.policies import load_policy
 
     policy = load_policy("stl_driver.policy:warmed_up_policy", cruise_speed_mps=5.0)

@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
+from carla_driver_interface import polyline
 from carla_driver_interface.contract import contract_metadata, negotiate
 from carla_driver_interface.driver import BaseDriver
 from carla_driver_interface.geometry import Pose, Trajectory, waypoints_to_proto
@@ -88,7 +89,7 @@ class Rollout:
 
     @property
     def distance_travelled_m(self) -> float:
-        return float(np.linalg.norm(np.diff(self.positions, axis=0), axis=1).sum())
+        return float(polyline.arc_lengths(self.positions)[-1])
 
     @property
     def route_completion(self) -> float:
@@ -125,8 +126,7 @@ class FakeWorld:
         self.speed_limit_mps = speed_limit_mps
         self.step_s = step_s
         self.horizon_m = horizon_m
-        segments = np.linalg.norm(np.diff(self.route[:, :2], axis=0), axis=1)
-        self._arc = np.concatenate([[0.0], np.cumsum(segments)])
+        self._arc = polyline.arc_lengths(self.route)
 
     def environment(self, pose: Pose, now_us: int) -> CarlaRendererData:
         """The CARLA ground truth for the ego at ``pose``; override to add lights or actors."""
@@ -140,15 +140,12 @@ class FakeWorld:
 
     def station_of(self, xy: np.ndarray) -> tuple[float, float]:
         """Arc length of ``xy``'s projection onto the route, and its distance from it."""
-        best = (0.0, math.inf)
-        for i in range(len(self.route) - 1):
-            a, b = self.route[i, :2], self.route[i + 1, :2]
-            ab = b - a
-            t = float(np.clip(np.dot(xy - a, ab) / max(float(np.dot(ab, ab)), 1e-12), 0.0, 1.0))
-            distance = float(np.linalg.norm(xy - (a + t * ab)))
-            if distance < best[1]:
-                best = (float(self._arc[i] + t * (self._arc[i + 1] - self._arc[i])), distance)
-        return best
+        a = self.route[:-1, :2]
+        ab = self.route[1:, :2] - a
+        t = np.clip(np.einsum("ij,ij->i", xy - a, ab) / np.einsum("ij,ij->i", ab, ab), 0.0, 1.0)
+        distances = np.linalg.norm(xy - (a + t[:, None] * ab), axis=1)
+        i = int(np.argmin(distances))
+        return float(self._arc[i] + t[i] * (self._arc[i + 1] - self._arc[i])), float(distances[i])
 
     def run(self, policy: BaseDriver, steps: int) -> Rollout:
         """Serve ``policy`` and drive one session of ``steps`` drive calls against it."""
@@ -165,12 +162,11 @@ class FakeWorld:
         request.debug_info.scene_id = "fake:closed_loop"
         stub.start_session(request, timeout=60.0, metadata=contract_metadata(revision))
 
-        heading = self.route[1, :2] - self.route[0, :2]
         pose = Pose.from_xyz_yaw(
             float(self.route[0, 0]),
             float(self.route[0, 1]),
             0.0,
-            math.atan2(float(heading[1]), float(heading[0])),
+            polyline.segment_heading(self.route[0], self.route[1]),
         )
         speed = accel = 0.0
         step_us = int(round(self.step_s * 1e6))
@@ -230,10 +226,7 @@ class FakeWorld:
         stub.submit_egomotion_observation(egomotion, timeout=60.0)
         # The route ahead of the ego's projection, resampled every metre.
         stations = np.arange(station, min(station + self.horizon_m, self._arc[-1]) + 1e-9, 1.0)
-        ahead = np.stack(
-            [np.interp(stations, self._arc, self.route[:, axis]) for axis in range(3)], axis=1
-        )
-        in_rig = pose.inverse().transform_points(ahead)
+        in_rig = pose.inverse().transform_points(polyline.sample(self.route, self._arc, stations))
         stub.submit_route(
             RouteRequest(
                 session_uuid=session,

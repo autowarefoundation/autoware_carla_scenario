@@ -714,3 +714,21 @@ def test_the_batch_of_one_shortcut_computes_the_same_thing():
     assert losses.shape == (1,)
     assert signals.shape[0] == 1
     assert torch.allclose(signals.detach(), batched_signals, atol=1e-5)
+
+
+def test_a_failed_compile_is_not_retried_every_session(monkeypatch):
+    """Each session calls `prepare`; a compile that failed once must not cost a
+    minute inside every later `start_session` and its deadline."""
+    calls = []
+
+    def failing_compile(*args, **kwargs):
+        calls.append(args)
+        raise RuntimeError("no compiler")
+
+    monkeypatch.setattr(torch, "compile", failing_compile)
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    optimizer.prepare(make_inputs(CONFIG))
+    optimizer.prepare(make_inputs(CONFIG))
+
+    assert len(calls) == 1
+    assert optimizer._compiled_batch is None

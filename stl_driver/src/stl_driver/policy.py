@@ -57,7 +57,7 @@ class EgoPolicy(BaseDriver):
         rules: RuleSet | None = None,
     ) -> None:
         # Every argument has a default, so `load_policy` can build the policy
-        # from its spec alone (`driver.policy=stl_driver.policy:EgoPolicy`).
+        # from its spec alone (`driver.policy=stl_driver.policy:warmed_up_policy`).
         # `cruise_speed_mps` defaults to None rather than a speed because a
         # loader passes it only when asked to, and its absence has to mean
         # "whatever the config says" rather than "8 m/s".

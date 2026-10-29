@@ -14,6 +14,8 @@ either way.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pytest
 from carla_driver_interface.geometry import Pose
@@ -28,23 +30,26 @@ from carla_driver_interface.protocol import (
 from carla_driver_interface.protocol import Pose as PoseProto
 from carla_driver_interface.protocol import Quat as QuatProto
 
-from stl_driver.policy import EgoPolicy
+from stl_driver.policy import EgoPolicy, warmed_up_policy
 from tests.fake_world import FakeWorld, Rollout
 
 pytestmark = pytest.mark.slow
 
 
-def run_rollout(
-    world: FakeWorld | None = None, *, steps: int = 200, policy: EgoPolicy | None = None
-) -> Rollout:
-    """Serve the policy and drive one rollout against it.
+@functools.cache
+def shared_policy() -> EgoPolicy:
+    """One policy for the module, warmed up as a runtime should load it.
 
-    Warmed up first, as a runtime should load it: on a cold torch cache the
-    compile takes longer than the loop's deadline for ``start_session``.
+    On a cold torch cache the compile takes longer than the loop's deadline
+    for ``start_session``, and it is paid per instance; every session resets
+    the per-rollout state, as it would for a runtime's scenarios.
     """
-    policy = policy or EgoPolicy()
-    policy.warm_up()
-    return (world or FakeWorld()).run(policy, steps)
+    return warmed_up_policy()
+
+
+def run_rollout(world: FakeWorld | None = None, *, steps: int = 200) -> Rollout:
+    """Serve the policy and drive one rollout against it."""
+    return (world or FakeWorld()).run(shared_policy(), steps)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +73,6 @@ def test_it_tracks_the_route_closely():
 def test_it_keeps_below_the_reported_speed_limit():
     """`FakeWorld.speed_limit_mps` is what it publishes as the limit."""
     rollout = run_rollout(FakeWorld(speed_limit_mps=6.0))
-    assert rollout.speeds.mean() < 6.5
     assert rollout.speeds.max() < 6.5
 
 
@@ -191,9 +195,9 @@ def test_a_green_light_does_not_stop_it():
 # ---------------------------------------------------------------------------
 
 
-def test_the_policy_reports_a_rule_breakdown_every_step():
+def test_the_policy_reports_a_rule_breakdown_every_step(monkeypatch):
     """The debug channel is the thing that makes behaviour explainable."""
-    policy = EgoPolicy()
+    policy = shared_policy()
     seen: list[dict[str, float]] = []
     original = policy.drive
 
@@ -202,8 +206,8 @@ def test_the_policy_reports_a_rule_breakdown_every_step():
         seen.append(dict(result.debug_scalars))
         return result
 
-    policy.drive = recording  # type: ignore[method-assign]
-    run_rollout(steps=40, policy=policy)
+    monkeypatch.setattr(policy, "drive", recording)
+    run_rollout(steps=40)
 
     assert seen
     # Once the route arrives, every rule is reported.
@@ -213,9 +217,9 @@ def test_the_policy_reports_a_rule_breakdown_every_step():
         assert all(f"stl_rule_{name}" in scalars for scalars in with_rules)
 
 
-def test_the_fallback_is_not_needed_on_an_ordinary_rollout():
+def test_the_fallback_is_not_needed_on_an_ordinary_rollout(monkeypatch):
     """If this starts failing, the specification has become unsatisfiable."""
-    policy = EgoPolicy()
+    policy = shared_policy()
     fallbacks: list[float] = []
     original = policy.drive
 
@@ -224,6 +228,6 @@ def test_the_fallback_is_not_needed_on_an_ordinary_rollout():
         fallbacks.append(result.debug_scalars.get("stl_fallback", 0.0))
         return result
 
-    policy.drive = recording  # type: ignore[method-assign]
-    run_rollout(steps=150, policy=policy)
+    monkeypatch.setattr(policy, "drive", recording)
+    run_rollout(steps=150)
     assert sum(fallbacks) == 0.0
