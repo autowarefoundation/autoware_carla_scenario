@@ -88,6 +88,7 @@ __all__ = [
     "dataset_path",
     "opencv_of_ftheta",
     "offer_driver_sensors",
+    "offered_rear_axle",
     "require_writer",
     "withdraw_driver_sensors",
 ]
@@ -149,6 +150,14 @@ def offer_driver_sensors(rear_axle_offset_m: float) -> None:
     global _driver_rear_axle
     with _lock:
         _driver_rear_axle = float(rear_axle_offset_m)
+
+
+def offered_rear_axle() -> Optional[float]:
+    """The rig origin's offset from the actor a driver entity offered
+    (:func:`offer_driver_sensors`), or ``None`` without one: where the run
+    takes the ego's rear axle to be."""
+    with _lock:
+        return _driver_rear_axle
 
 
 def withdraw_driver_sensors() -> None:

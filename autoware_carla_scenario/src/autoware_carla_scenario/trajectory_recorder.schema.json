@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of eighteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of nineteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -19,6 +19,9 @@
     },
     {
       "$ref": "#/definitions/ActorRecord"
+    },
+    {
+      "$ref": "#/definitions/RearAxleRecord"
     },
     {
       "$ref": "#/definitions/ActorGoneRecord"
@@ -68,6 +71,7 @@
       "traffic_light": "#/$defs/TrafficLightRecord",
       "warmup": "#/$defs/WarmupRecord",
       "actor": "#/$defs/ActorRecord",
+      "rear_axle": "#/$defs/RearAxleRecord",
       "actor_gone": "#/$defs/ActorGoneRecord",
       "tick": "#/$defs/TickRecord",
       "markers": "#/$defs/MarkersRecord",
@@ -328,6 +332,29 @@
         "role",
         "extent",
         "center"
+      ],
+      "additionalProperties": false
+    },
+    "RearAxleRecord": {
+      "title": "RearAxleRecord",
+      "description": "Where an ego's rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is on it, written right after its `actor` record (version 2, added after the records listed in `schema_version`). A reader that converts the ego's pose to its `base_link` takes it from here rather than guessing it from the box.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "rear_axle"
+        },
+        "id": {
+          "$ref": "#/definitions/ActorId"
+        },
+        "offset": {
+          "description": "The rear axle's offset from the actor origin along the actor's x axis, metres; negative when it is behind the origin. As the run took it: the driver policy's rig origin for an ego a driver policy drives, else from the vehicle's wheels, else half its bounding box behind the origin.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "offset"
       ],
       "additionalProperties": false
     },
