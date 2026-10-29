@@ -12,6 +12,12 @@ The scenario supports an optional ``turn_direction`` (``"left"`` / ``"right"`` /
 through the junction, and an optional ``min_speed_kmh`` that adds a
 :class:`~autoware_carla_scenario.SpeedCondition` fail condition.
 
+Two more fail conditions judge how the ego turns, from the start until it is
+through the junction: ``turn_indicator_before_m`` fails a run whose ego, that
+close to the junction, does not show the indicator of its turn, and
+``max_steering_reversals`` one whose steering turned back that many times (the
+``steering_reversals`` metric).
+
 Typical usage
 -------------
 Straight-through::
@@ -39,9 +45,13 @@ from autoware_carla_scenario import (
     EgoConfig,
     ElapsedTimeCondition,
     EntityLanePositionCondition,
+    EntityPositionDistanceCondition,
     EntityRole,
     GroundProjectionConfig,
     Lanelet2Pose,
+    MetricCondition,
+    NotCondition,
+    PersistentCondition,
     SpawnTransform,
     SpeedCondition,
     StickyCondition,
@@ -51,12 +61,15 @@ from autoware_carla_scenario import (
     TrafficSignalAction,
     TurnAction,
     TurnDirection,
+    TurnIndicatorCondition,
+    TurnIndicatorState,
     VehicleEntity,
     VehicleEntityConfig,
     snap_to_carla_road,
     to_opendrive,
 )
 
+from autoware_carla_scenario.metrics import STEERING_REVERSALS
 from .configs import IntersectionPassingConfig
 
 logger = logging.getLogger(__name__)
@@ -89,6 +102,12 @@ _TURN_DIRECTION_MAP: dict[str, TurnDirection] = {
     "straight": TurnDirection.STRAIGHT,
 }
 
+#: The indicator a turn is signalled with.
+_TURN_INDICATOR: dict[str, TurnIndicatorState] = {
+    "left": TurnIndicatorState.LEFT,
+    "right": TurnIndicatorState.RIGHT,
+}
+
 
 class IntersectionPassingScenario(BaseScenario):
     """Spawn the ego and verify it crosses expected roads through an intersection.
@@ -106,7 +125,12 @@ class IntersectionPassingScenario(BaseScenario):
        :class:`EntityLanePositionCondition` instances, one per expected road.
     5. If ``min_speed_kmh`` is set, registers a :class:`SpeedCondition` that
        fails the scenario when the ego drops below the threshold.
-    6. Registers a :class:`TimeoutCondition` as a fail-safe.
+    6. If ``turn_indicator_before_m`` is set, fails the scenario once the ego,
+       having come that close to the junction, has not shown the indicator of
+       its turn for ``turn_indicator_grace_seconds``.
+    7. If ``max_steering_reversals`` is set, fails it once the steering has
+       turned back that many times.
+    8. Registers a :class:`TimeoutCondition` as a fail-safe.
 
     Once all expected roads have been visited the scenario passes.
     """
@@ -236,6 +260,49 @@ class IntersectionPassingScenario(BaseScenario):
                             label="ego_min_speed",
                         ),
                     ]
+                )
+            )
+
+        # --- Fail: no indicator for the turn, close to the junction ---
+        # Latched once the ego is that close to the junction's mouth (the
+        # route's first lanelet starts at its stop line), so it holds through
+        # the junction, where the distance grows again, until the run passes.
+        if cfg.turn_indicator_before_m is not None and cfg.turn_direction:
+            near_junction = StickyCondition(
+                EntityPositionDistanceCondition(
+                    EGO_ROLE_NAME,
+                    Lanelet2Pose(lanelet_id=cfg.expected_route_lanelet_ids[0], s=0.0),
+                    cfg.turn_indicator_before_m,
+                    ComparisonRule.LESS_THAN_OR_EQUAL,
+                    label="ego_near_junction",
+                )
+            )
+            signalling = TurnIndicatorCondition(
+                EGO_ROLE_NAME,
+                _TURN_INDICATOR[cfg.turn_direction],
+                label=f"ego_signals_{cfg.turn_direction}",
+            )
+            self.register_fail_condition(
+                PersistentCondition(
+                    AndCondition(
+                        [
+                            near_junction,
+                            NotCondition(signalling, holds_when_pending=True),
+                        ]
+                    ),
+                    cfg.turn_indicator_grace_seconds,
+                    label=f"no_{cfg.turn_direction}_indicator",
+                )
+            )
+
+        # --- Fail: the steering turned back too often ---
+        if cfg.max_steering_reversals is not None:
+            self.register_fail_condition(
+                MetricCondition(
+                    STEERING_REVERSALS,
+                    ComparisonRule.GREATER_THAN_OR_EQUAL,
+                    float(cfg.max_steering_reversals),
+                    label="steering_reversals",
                 )
             )
 

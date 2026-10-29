@@ -64,6 +64,22 @@ class IntersectionPassingConfig:
     #: ``None`` for straight-through).
     turn_direction: str | None = None
 
+    #: From this many metres before the junction (the start of the route's
+    #: first lanelet, where its stop line is) until the run passes, the ego
+    #: must show the turn indicator of ``turn_direction``; the run fails once
+    #: it has not for ``turn_indicator_grace_seconds``.  ``None`` checks
+    #: nothing.  Needs a ``"left"`` or ``"right"`` turn.
+    turn_indicator_before_m: float | None = None
+
+    #: How long the indicator may be wrong before the run fails, in seconds:
+    #: a blink of the command, not a turn without one.
+    turn_indicator_grace_seconds: float = 0.5
+
+    #: The run fails once the steering applied to the ego has turned back
+    #: this many times (the ``steering_reversals`` metric, docs/metrics.md),
+    #: counted from the start until the run passes.  ``None`` checks nothing.
+    max_steering_reversals: int | None = None
+
     #: Optional list of NPC vehicles to spawn in the scenario.
     #: Empty by default for backwards compatibility with existing YAML configs.
     npc_vehicles: list[NpcVehicleConfig] = field(default_factory=list)
@@ -74,6 +90,18 @@ class IntersectionPassingConfig:
             NpcVehicleConfig(**v) if isinstance(v, dict) else v
             for v in self.npc_vehicles
         ]
+        if self.turn_indicator_before_m is not None and self.turn_direction not in (
+            "left",
+            "right",
+        ):
+            raise ValueError(
+                "turn_indicator_before_m needs turn_direction left or right, "
+                f"not {self.turn_direction!r}"
+            )
+        if self.turn_indicator_grace_seconds <= 0:
+            raise ValueError("turn_indicator_grace_seconds must be positive")
+        if self.max_steering_reversals is not None and self.max_steering_reversals < 1:
+            raise ValueError("max_steering_reversals must be at least 1")
 
 
 @dataclass
