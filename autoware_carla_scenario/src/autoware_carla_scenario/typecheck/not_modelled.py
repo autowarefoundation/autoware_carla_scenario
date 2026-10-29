@@ -548,6 +548,20 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "start take_turn_indicators",
         _BY_NAME,
     ),
+    "HilsEgoEntity": _members(
+        "actor attaches_to_existing_actor carried_actor_ids change_lane command "
+        "config debug_markers destroy finish_at follow_route forget_lane_change "
+        "is_initialized lane_change_finished on_scenario_end on_scenario_start "
+        "on_tick release_from_traffic require_microscopic requires_goal "
+        "resume_traffic route_to set_client set_desired_speed set_initial_speeds "
+        "simulation_fidelity spawn stack_name termination_reason "
+        "termination_requested turn_at_junction use_autopilot",
+        "the model declares only what the checked CommunicationLossAction "
+        "calls on the HILS ego (disconnect, reconnect), and a scenario cannot "
+        "build one (its constructor is a compile error): the runner builds it "
+        "from the run's config (ego.entity=hils); entity.hils_entity imports "
+        "socket, so the library check does not compile it",
+    ),
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
     ),

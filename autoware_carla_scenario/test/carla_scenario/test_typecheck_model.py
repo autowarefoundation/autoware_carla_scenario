@@ -68,7 +68,7 @@ from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
 from autoware_carla_scenario.coverage import report as coverage_report
 from autoware_carla_scenario.driver import egodriver_client
-from autoware_carla_scenario.entity import carla_driver_entity
+from autoware_carla_scenario.entity import carla_driver_entity, hils_entity
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
@@ -343,6 +343,9 @@ def test_every_exported_enum_is_named_by_the_model_as_iterable() -> None:
 #: Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CarlaDriverEntity": ("entity", carla_driver_entity.CarlaDriverEntity),
+    # What the checked actions.communication_loss uses of entity.hils_entity.
+    "HilsEgoEntity": ("entity", hils_entity.HilsEgoEntity),
+    "find_hils_entity": ("entity", hils_entity.find_hils_entity),
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
@@ -825,6 +828,7 @@ _UNBUILDABLE: dict[str, str] = {
     "CoverageReport": "coverage",
     "EgoDriverGrpcClient": "driver/egodriver_client",
     "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
+    "HilsEgoEntity": "entity",
     # Stand-ins of checked classes the library check replaces (_ros2.codon):
     # a scenario has no ROS 2 transport to build.
     "Ros2EgoConfig": "_ros2",
@@ -1637,6 +1641,9 @@ def test_the_launcher_model_is_the_protocol_s_methods() -> None:
 #: (merge_coverage() a CoverageReport, #298): the members Codon has types for.
 _READ_ON_WHAT_A_FUNCTION_RETURNS: dict[str, tuple[str, ...]] = {
     "CoverageReport": ("group_grade", "groups", "runs", "scenarios", "to_markdown"),
+    # What CommunicationLossAction calls on the HILS ego find_hils_entity()
+    # returns.
+    "HilsEgoEntity": ("disconnect", "reconnect"),
 }
 
 

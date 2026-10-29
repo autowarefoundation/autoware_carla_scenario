@@ -28,7 +28,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 from ..hils.protocol import (
     COMMAND_FIELDS,
@@ -37,14 +37,16 @@ from ..hils.protocol import (
     LineReader,
     encode,
 )
+from ..entity_role import EntityRole
 from .externally_driven import ExternallyDrivenEgo
+from .registry import find_vehicle_entity
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["HilsEgoConfig", "HilsEgoEntity"]
+__all__ = ["HilsEgoConfig", "HilsEgoEntity", "find_hils_entity"]
 
 #: What the ego does once the ECUs' command is stale.
 ON_STALE_ACTIONS: Tuple[str, ...] = ("brake", "hold")
@@ -424,3 +426,22 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 gear=int(fields.get("gear", 0.0)),
             )
         )
+
+
+def find_hils_entity(role_name: Union[EntityRole, str]) -> Optional[HilsEgoEntity]:
+    """Return the HILS ego answering to *role_name*, or ``None``.
+
+    :func:`~autoware_carla_scenario.entity.registry.find_vehicle_entity`,
+    narrowed to a :class:`HilsEgoEntity`: typed, so the static check follows
+    a caller that acts on the HILS ego (docs/typecheck.md), where Codon would
+    resolve an ``isinstance()`` of the vehicle it returns by the static type.
+
+    Args:
+        role_name: The role to look up.
+
+    Returns:
+        The HILS ego, or ``None`` when no entity has that role in this run or
+        the one that has is not driven through the HILS bridge.
+    """
+    entity = find_vehicle_entity(role_name)
+    return entity if isinstance(entity, HilsEgoEntity) else None
