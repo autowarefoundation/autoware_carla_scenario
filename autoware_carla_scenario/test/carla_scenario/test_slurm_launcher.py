@@ -612,7 +612,41 @@ def test_settings_chunk_the_cases() -> None:
         SlurmSettings.from_mapping({"array_parallelism": 0})
 
 
-def test_start_stagger_spaces_every_task_start(tmp_path: Path) -> None:
+def _recorded_starts(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """``wait_for_start_turn``, returning the start it recorded in the lock.
+
+    Its last ``time.time()`` is the start it writes, so each thread keeps its
+    own last one. A stamp taken after the call returns is late when the thread
+    is scheduled late, making the next gap look short; reading the lock back
+    races the next task, which may already have overwritten (or truncated) it
+    (#726).
+    """
+    import threading
+
+    from autoware_carla_scenario.slurm import worker
+
+    local = threading.local()
+
+    class _Clock:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(time, name)
+
+        def time(self) -> float:
+            local.last = now = time.time()
+            return now
+
+    monkeypatch.setattr(worker, "time", _Clock())
+
+    def start(lock: Path, spacing: float) -> float:
+        worker.wait_for_start_turn(lock, spacing)
+        return float(local.last)
+
+    return start
+
+
+def test_start_stagger_spaces_every_task_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import threading
 
     from autoware_carla_scenario.slurm.worker import wait_for_start_turn
@@ -621,13 +655,10 @@ def test_start_stagger_spaces_every_task_start(tmp_path: Path) -> None:
     spacing = 0.4
     started: list[float] = []
 
+    recorded_start = _recorded_starts(monkeypatch)
+
     def start() -> None:
-        wait_for_start_turn(lock, spacing)
-        # The start the call recorded in the lock, not a stamp taken here: a
-        # thread scheduled late after the call returns would make the next
-        # gap look short (#726). The next task waits about a spacing before
-        # it overwrites the lock.
-        started.append(float(lock.read_text()))
+        started.append(recorded_start(lock, spacing))
 
     # Three tasks that start together (a first wave)...
     threads = [threading.Thread(target=start) for _ in range(3)]
@@ -637,6 +668,8 @@ def test_start_stagger_spaces_every_task_start(tmp_path: Path) -> None:
         thread.join()
     # ...and one that starts later, once a slot frees up, right after them.
     start()
+    # The recorded start is the one in the lock (nothing else runs now).
+    assert started[-1] == float(lock.read_text())
     started.sort()
     gaps = [b - a for a, b in zip(started, started[1:])]
     assert len(gaps) == 3
@@ -1145,10 +1178,10 @@ def test_start_stagger_without_flock_uses_a_lock_file(
     spacing = 0.3
     started: list[float] = []
 
+    recorded_start = _recorded_starts(monkeypatch)
+
     def start() -> None:
-        wait_for_start_turn(lock, spacing)
-        # The start the call recorded, as above (#726).
-        started.append(float(lock.read_text()))
+        started.append(recorded_start(lock, spacing))
 
     threads = [threading.Thread(target=start) for _ in range(3)]
     for thread in threads:
