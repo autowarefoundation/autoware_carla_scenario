@@ -25,8 +25,8 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from carla_driver_interface.geometry import Pose, quat_to_yaw
-from carla_driver_interface.grpc_api import CarlaRendererData, TrafficLightState
+from carla_driver_interface.geometry import Pose
+from carla_driver_interface.protocol import CarlaRendererData, TrafficLightState
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.frenet import RouteTable, project_to_frenet
@@ -446,9 +446,7 @@ def _along_route_speeds(
 
 def _yaw_in_rig(to_rig: Pose, quat_local_xyzw: np.ndarray) -> float:
     """Heading of an actor once brought into the rig frame."""
-    from carla_driver_interface.geometry import quat_mul
-
-    return float(quat_to_yaw(quat_mul(to_rig.quat_xyzw, quat_local_xyzw)))
+    return (to_rig @ Pose(np.zeros(3), quat_local_xyzw)).yaw
 
 
 def _disc_forecast(

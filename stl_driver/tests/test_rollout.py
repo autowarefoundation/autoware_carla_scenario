@@ -124,9 +124,9 @@ def test_no_measurable_state_can_force_a_jerk_violation(config):
         inputs = make_inputs(config, speed0_mps=4.0, accel0_mps2=accel0)
         for params in (hardest, -hardest):
             signal = rollout(params, inputs, config)
-            assert signal[:, Col.JERK].abs().max().item() <= limits.max_jerk_mps3, (
-                f"measured {measured:.2f} -> accel0 {accel0:.3f}"
-            )
+            assert (
+                signal[:, Col.JERK].abs().max().item() <= limits.max_jerk_mps3
+            ), f"measured {measured:.2f} -> accel0 {accel0:.3f}"
 
     # And the bound is the knot step itself, not something looser that happens
     # to fit: one knot interval of change is the most a plan can ask for.
@@ -769,9 +769,7 @@ def test_a_constant_bend_gives_a_constant_lateral_acceleration(config):
     `Always`, so the peak was the only part of that anyone read.
     """
     for radius_m, speed_mps in ((25.0, 7.0), (40.0, 12.0), (60.0, 4.0)):
-        inputs = make_inputs(
-            config, route=curved_route(radius_m=radius_m), speed0_mps=speed_mps
-        )
+        inputs = make_inputs(config, route=curved_route(radius_m=radius_m), speed0_mps=speed_mps)
         signal = rollout(torch.zeros(N_PARAMS), inputs, config)
         # Skip the first and last few metres of road. `np.gradient` is
         # one-sided at the table's ends, and past the published route the table

@@ -7,47 +7,27 @@ name = "stl-driver"
 version = "0.1.0"
 description = "An ego policy whose driving behaviour is written in Signal Temporal Logic and optimised for STL robustness"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+# The workspace's range (autoware_carla_scenario's `requires-python`): the
+# workspace shares one lock, whose range is every member's intersection.
+requires-python = ">=3.10,<3.15"
 license = { text = "Apache-2.0" }
 
 dependencies = [
-  # The driver half we plug into. Its own `alpasim-grpc @ git+...` direct
-  # reference is why `allow-direct-references` below is mandatory, and its
-  # `requires-python` is where ours comes from.
-  #
-  # Pinned to a commit rather than tracking `main`, since upstream has no
-  # releases. This one is the merge of
-  # https://github.com/hakuturu583/carla_driver_interface/pull/5, and the
-  # policy's behaviour at traffic lights depends on it:
-  #
-  # * lights are reported from 60 m down the lane rather than from inside the
-  #   trigger volume, which on Town10HD_Opt reaches a median of 0.55 m back
-  #   from the line -- too late to stop from any ordinary speed,
-  # * no light is reported at all from inside a junction, so a policy that has
-  #   crossed the line clears the box instead of finding a reason to wait in
-  #   the middle of it,
-  # * the line is reported at the junction mouth rather than at CARLA's stop
-  #   waypoint, which sits a median of 5.5 m upstream of it.
-  #
-  # Before it, PR #3 was the earliest that worked at all: the runtime reported
-  # an unsigned distance to the stop line, and a policy that correctly stopped
-  # just past the line was told forever that the line was still ahead.
-  "carla-driver-interface @ git+https://github.com/hakuturu583/carla_driver_interface@af1dcd3",
+  # The policy half of the egodriver contract: `BaseDriver`, the server, the
+  # geometry. The same range as autoware_carla_scenario's, so the policy loads
+  # in the scenario's own process (`driver.transport=direct`).
+  "carla-driver-interface>=2.3,<3",
   # STLCG++. Pinned to a commit because upstream has no releases and no tags.
   # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
-  # as a PEP 420 namespace package -- see `stl_driver.stl_backend`.
+  # as a PEP 420 namespace package -- see `stl_driver.stl_backend`. This direct
+  # reference is why stl-driver is not published to PyPI.
   "stlcgpp @ git+https://github.com/UW-CTRL/stlcg-plus-plus@44467eec5c21763597e5f6753cec6759a5bc0ac0",
   "torch>=2.6,<3",
   "numpy>=1.24",
 ]
 
-[project.optional-dependencies]
-# The driver process never imports `carla`; only the runtime half does. Kept
-# here so one environment can run both. 0.9.16 is the floor rather than
-# upstream's 0.9.15 because 0.9.15 publishes no wheel for Python 3.11 or 3.12,
-# which `requires-python` above restricts us to.
-carla = ["carla>=0.9.16,<0.10"]
-dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11"]
+[dependency-groups]
+dev = ["pytest>=8", "pytest-timeout>=2.3"]
 
 [project.scripts]
 stl-driver = "stl_driver.cli:main"
@@ -58,25 +38,6 @@ packages = ["src/stl_driver"]
 [tool.hatch.metadata]
 allow-direct-references = true
 
-# Which torch build to install.
-#
-# `torch-backend = "auto"` asks uv to look at the machine -- driver version,
-# whether there is a CUDA device at all -- and pick the matching wheel. On a
-# host with a GPU that is the CUDA build; on one without, the CPU build, with
-# no flag either way and no per-machine edit to this file.
-#
-# Override per-machine with the environment rather than by editing:
-#
-#   UV_TORCH_BACKEND=cpu uv sync --extra dev      # force the small build
-#
-# Note this decides only which *wheel* is installed. Whether the search runs
-# on the GPU is a separate question with its own answer -- see
-# `OptimizerConfig.device`, which defaults to CPU because at 64 candidates the
-# kernel launch latency exceeds the arithmetic. Having the CUDA build present
-# costs disk, not speed.
-[tool.uv]
-torch-backend = "auto"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # So test modules can import the scenario builders from `tests.conftest`.
@@ -84,18 +45,13 @@ pythonpath = ["."]
 timeout = 300
 markers = [
   "slow: closed-loop rollouts and latency benchmarks",
-  "carla: needs a running CARLA server",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
-[tool.mypy]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # stlcgpp is a namespace package with no py.typed and `from ... import *` at

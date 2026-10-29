@@ -215,8 +215,9 @@ def _maxish(values: torch.Tensor, approx_method: str = "true", temperature: floa
         return values.max(dim=-1)[0]
     if approx_method == "softmax":
         return (torch.softmax(temperature * values, dim=-1) * values).sum(dim=-1)
-    return _upstream_maxish(values, dim=-1, keepdim=False, approx_method=approx_method,
-                            temperature=temperature)
+    return _upstream_maxish(
+        values, dim=-1, keepdim=False, approx_method=approx_method, temperature=temperature
+    )
 
 
 def _minish(values: torch.Tensor, **kwargs: Any):
@@ -334,12 +335,8 @@ class Always(_UpstreamAlways):
         self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
     ) -> Any:
         if padding is None:
-            values = self.subformula(
-                signal, padding=padding, large_number=large_number, **kwargs
-            )
-            fast = _suffix_trace(
-                values, self._interval, large_number, minimum=True, **kwargs
-            )
+            values = self.subformula(signal, padding=padding, large_number=large_number, **kwargs)
+            fast = _suffix_trace(values, self._interval, large_number, minimum=True, **kwargs)
             if fast is not None:
                 return fast
         return super().robustness_trace(
@@ -363,12 +360,8 @@ class Eventually(_UpstreamEventually):
         self, signal: Any, padding: Any = None, large_number: float = 1e9, **kwargs: Any
     ) -> Any:
         if padding is None:
-            values = self.subformula(
-                signal, padding=padding, large_number=large_number, **kwargs
-            )
-            fast = _suffix_trace(
-                values, self._interval, large_number, minimum=False, **kwargs
-            )
+            values = self.subformula(signal, padding=padding, large_number=large_number, **kwargs)
+            fast = _suffix_trace(values, self._interval, large_number, minimum=False, **kwargs)
             if fast is not None:
                 return fast
         return super().robustness_trace(

@@ -146,8 +146,7 @@ class RuleSet:
         """Each rule's robustness separately, for reporting and diagnosis."""
         evaluation = kwargs or EXACT
         return {
-            rule.name: scalar_robustness(rule.formula, signal, **evaluation)
-            for rule in self.rules
+            rule.name: scalar_robustness(rule.formula, signal, **evaluation) for rule in self.rules
         }
 
     def objective(self, signal: torch.Tensor, **kwargs: Any) -> torch.Tensor:

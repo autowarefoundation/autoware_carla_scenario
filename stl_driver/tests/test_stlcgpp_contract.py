@@ -319,8 +319,7 @@ def test_the_fast_path_is_actually_being_taken():
     # A window that ends before the horizon is upstream's problem, not ours.
     assert _suffix_trace(values, [0, 2], 1e9, minimum=True) is None
     assert (
-        _suffix_trace(values, [0, torch.inf], 1e9, minimum=True, approx_method="logsumexp")
-        is None
+        _suffix_trace(values, [0, torch.inf], 1e9, minimum=True, approx_method="logsumexp") is None
     )
 
 

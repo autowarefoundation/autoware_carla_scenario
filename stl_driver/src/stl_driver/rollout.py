@@ -65,6 +65,7 @@ def knot_times_s(horizon) -> tuple[float, ...]:
     spacing = horizon.duration_s / (_N_KNOTS - 1)
     return tuple(index * spacing for index in range(_N_KNOTS))
 
+
 #: Sharpness of the softplus speed floor. Higher tracks `max(v, 0)` more
 #: closely but softens the gradient over a narrower band; 4.0 puts the
 #: transition within a few centimetres per second of zero.
