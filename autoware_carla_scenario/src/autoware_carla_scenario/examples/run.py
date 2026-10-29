@@ -1670,7 +1670,7 @@ def _queue_retries(cfg: DictConfig) -> int:
     forked: the sweeper retries that case itself, so the queue does not.
     """
     # Loads Lanelet2, as the run does anyway.
-    from ..sweeper.lanelet_constraint_sweeper import (  # noqa: PLC0415
+    from ..sweeper.isolation import (  # noqa: PLC0415
         SWEEPER_OWNS_RETRIES_ENV,
     )
 
