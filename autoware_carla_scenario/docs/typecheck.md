@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 220 of
-the package's 327 modules (67%; about 65,700 of 116,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 221 of
+the package's 328 modules (67%; about 65,900 of 116,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2428,14 +2428,16 @@ the world and, for those the Lanelet2 map decides, off a lanelet
 (`odd.probes`), the placement of a road user so a scenario
 measure reads a given value (`placement`), the planning of a scenario's route on the
 Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
-lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
+lookups included, what a run's T4 dataset holds (its settings, channels
+and categories and the OpenCV model fitted to an F-theta camera,
+`t4_settings`, #731), and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 108
+below). 109
 functions and methods of those modules are `UNCALLED` (26 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
@@ -2443,7 +2445,9 @@ backend's options node (`Mapping[str, Any]`), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
 (`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
 `parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
-framework pin, a dict of str and bool values (`Pin.uv_source()`), the two members of
+framework pin, a dict of str and bool values (`Pin.uv_source()`), the T4
+dataset's settings from the driver config and the `t4` config section
+(`T4Settings.from_driver()`, a `Mapping[str, Any]`), the two members of
 `BaseScenario` built on the ego's class (`create_ego()`, which instantiates
 `ego_type`, a `type[EgoVehicle]`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
@@ -3527,6 +3531,14 @@ What Codon 0.19 needs that Python does not, beyond
   `np.append(yaws, yaws[-1:])`, not `np.append(yaws, yaws[-1])`, which numpy
   answers the same. Nor does Codon unpack an array into arguments
   (`f(*row)`): pass `row[0], row[1], row[2]`.
+- **Codon's numpy has no `numpy.polynomial`**: evaluate a polynomial by
+  Horner's scheme from its highest coefficient, starting at `0.0` (so at
+  `c[-1] + 0.0 * x`, as `polyval()` starts at `c[-1] + x * 0`), and read
+  `polyder(c)[0]` as `c[1]`: every operation is numpy's, so the result is
+  too, bit for bit (`t4_settings._polyval_at()` and `_polyval_on()`, #731,
+  which `test_t4_settings.py` compares with numpy). Nor does Codon unpack a
+  generator (`c, d, e = (float(v) for v in cde)`): read `cde[0]`, `cde[1]`,
+  `cde[2]`.
 - **numpy is Codon's own**, so `import numpy as np` compiles
   (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
   `float`: convert the float (`x <= np.float32(max_rpm)`), which is what
