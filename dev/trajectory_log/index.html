@@ -551,6 +551,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../t4_scene/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  T4 Scene
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../adversity/" class="md-tabs__link">
         
   
@@ -1598,6 +1617,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../t4_scene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    T4 Scene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../adversity/" class="md-nav__link">
         
   
@@ -2037,7 +2083,9 @@ it, and the carla-hub run report replays it. The file holds everything needed
 to show the run again without CARLA, the ego's plan and the path it drove
 included: the <code>autoware_carla_scenario_rerun</code> package (the <code>rerun</code> extra;
 <code>rerun.enabled=true</code> runs it on each log as its run ends) makes a Rerun
-recording of it, which is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).</p>
+recording of it, which is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).
+<code>scenario-t4scene</code> writes it as a T4Scene, the scene exchange format of
+tier4/e2e-devkit (<a href="../t4_scene/">T4 Scene</a>).</p>
 <p>Its format is published as a JSON Schema of one line, the contract for readers
 in any language: <code>schemas/trajectory.schema.json</code> in the package and in the
 wheel (JSON Schema 2020-12, tuples as <code>prefixItems</code>). From Python, find it with

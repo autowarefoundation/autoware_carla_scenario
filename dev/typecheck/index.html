@@ -549,6 +549,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../t4_scene/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  T4 Scene
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../adversity/" class="md-tabs__link">
         
   
@@ -1466,6 +1485,33 @@
     
   
     T4 Dataset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../t4_scene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    T4 Scene
   
 
     
@@ -4552,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 217 of
-the package's 320 modules (68%; about 65,000 of 114,900 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 218 of
+the package's 326 modules (67%; about 65,000 of 115,600 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4657,13 +4703,13 @@ details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
 which the check has no value of), and the line a HILS message goes out as,
 which takes a message of any shape (<code>hils.wire.encode()</code>, a
-<code>Mapping[str, Any]</code>). The 103 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (about 79 import what Codon cannot
-compile, 30 build on an excluded module and 21 hold values Codon has no type
+<code>Mapping[str, Any]</code>). The 108 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 83 import what Codon cannot
+compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>79 import what Codon cannot compile</strong>:
-  pydantic, pickle, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
+<li><strong>83 import what Codon cannot compile</strong>:
+  pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
   transport and its message types), or
   a standard module Codon lacks (<code>socket</code>, <code>inspect</code>, <code>concurrent.futures</code>,
@@ -4678,15 +4724,16 @@ for), so each is counted once, in the first group that fits it:</p>
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the T4Scene
+  export of its log (<code>t4_scene</code>), and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; <code>test_typecheck_library.py</code> holds every
   reason to that.</li>
-<li><strong>20 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>21 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
-  packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
+  packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>, <code>t4_scene</code>,
   <code>examples</code>, <code>scaffold</code>, <code>slurm</code>, <code>hils</code>), <code>slurm.collect</code>, the
   authoring compiler, builders and validator, <code>odd.route</code>, the coverage
   half of the route check (names of <code>odd.model</code> and <code>coverage.items</code> that
@@ -4695,7 +4742,7 @@ for), so each is counted once, in the first group that fits it:</p>
   <code>dict[str, Any]</code>, which it hands to openodd, and finds a probe's
   <code>on_lanelet</code> reader on any callable) and
   <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
-  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 20
+  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.</li>
 <li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
