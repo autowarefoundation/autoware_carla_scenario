@@ -27,9 +27,10 @@ ends the sweep with 130 or 143.
 A case that timed out or died of a signal had no chance to stop the CARLA
 server it launched; the server's watchdog stops it instead, within about a
 second and then a grace period.  Before the next attempt the sweeper waits,
-at most :data:`_CARLA_GONE_TIMEOUT_S`, until ``server.host:server.port`` stops
-answering, so the next case neither reuses the dying server nor launches one
-next to it (#717).
+at most :data:`_CARLA_GONE_TIMEOUT_S`, until every CARLA the case launched
+has exited (:func:`_wait_until_carla_gone`), so the next case neither reuses
+the dying server nor launches one next to it (#717).  A server the case did
+not launch (one the user started, which it reused) is not waited for.
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ import json
 import logging
 import os
 import signal
-import socket
 import sys
 import time
 from pathlib import Path
@@ -55,7 +55,7 @@ from tqdm import tqdm
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
-from ..server import _WATCHDOG_GRACE_S
+from ..server import _WATCHDOG, _WATCHDOG_GRACE_S
 from .expand import check_constraint_keys, expand_sweep, scenario_controls
 from .map_loader import load_map
 
@@ -81,12 +81,12 @@ _FAILED_VERDICT_EXIT_CODE = 3
 #: stopped, sends it ``SIGTERM``.  It is sent ``SIGKILL`` after that.
 _STOP_GRACE_SECONDS = 30.0
 
-#: How long the sweep waits, after a case that timed out or died of a signal,
-#: for the CARLA server that case launched to stop answering
+#: How long the sweep waits, after a case that left a CARLA server it launched
+#: running (it timed out or died of a signal), for that server to exit
 #: (:func:`_wait_until_carla_gone`).  The server's watchdog notices the case
 #: is gone within about a second, sends CARLA ``SIGTERM`` and ``SIGKILL``
 #: :data:`~autoware_carla_scenario.server._WATCHDOG_GRACE_S` later; the
-#: margin covers the noticing and the kernel releasing the port.
+#: margin covers the noticing and a loaded machine.
 _CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0
 
 #: Set in the environment of each case the sweeper forks: the sweeper retries
@@ -163,54 +163,106 @@ def _read_verdict(output_dir: Path) -> bool | None:
     return bool(data.get("passed", True))
 
 
-def _carla_answers(host: str, port: int, timeout: float = 1.0) -> bool:
-    """Whether something accepts connections on *host*:*port*.
-
-    A plain TCP connect, not a CARLA client: the sweep's own process holds no
-    CARLA state (its cases are forked from it), and a server that still holds
-    the port is in the way of the next one whether or not it still answers RPC.
-    """
+def _proc_stat(pid: str) -> list[str] | None:
+    """The fields of ``/proc/<pid>/stat`` after the command name, or *None*."""
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+
+
+def _proc_pids() -> list[str]:
+    try:
+        return [name for name in os.listdir("/proc") if name.isdigit()]
     except OSError:
-        return False
+        return []
+
+
+def _carla_groups_of(case_pid: int) -> set[int]:
+    """The process groups of the CARLA servers *case_pid* launched, still running.
+
+    :class:`~autoware_carla_scenario.server.CarlaServerManager` runs every
+    server it launches under :data:`~autoware_carla_scenario.server._WATCHDOG`,
+    which leads the server's process group and is given the launching
+    process's pid: ``python -I -c <watchdog> <pid> ...``.  A server the case
+    only reused (one the user started) has no such watchdog and is not
+    counted, whatever host or port it is on.  Linux (``/proc``); elsewhere
+    nothing is found.
+    """
+    head = [b"-I", b"-c", _WATCHDOG.encode(), str(case_pid).encode()]
+    groups: set[int] = set()
+    for pid in _proc_pids():
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as cmdline:
+                argv = cmdline.read().split(b"\0")
+        except OSError:
+            continue
+        if argv[1:5] != head:
+            continue
+        fields = _proc_stat(pid)
+        if fields is not None and fields[0] != "Z":
+            groups.add(int(fields[2]))
+    return groups
+
+
+def _live_groups(groups: set[int]) -> set[int]:
+    """Those of the process groups *groups* with a process that is not a zombie.
+
+    A zombie is not counted: one nobody reaps (a container with no init)
+    would otherwise keep its group alive for ever.
+    """
+    live: set[int] = set()
+    for pid in _proc_pids():
+        fields = _proc_stat(pid)
+        if fields is not None and fields[0] != "Z" and int(fields[2]) in groups:
+            live.add(int(fields[2]))
+    return live
 
 
 def _wait_until_carla_gone(
-    host: str, port: int, timeout: float = _CARLA_GONE_TIMEOUT_S
+    case_pid: int, timeout: float = _CARLA_GONE_TIMEOUT_S
 ) -> bool:
-    """Wait, at most *timeout* s, until nothing answers on *host*:*port*.
+    """Wait, at most *timeout* s, until the CARLA servers *case_pid* launched exit.
 
-    Called after a case that timed out or died of a signal: the CARLA server
-    it launched is stopped by its watchdog, not by the case, and the next case
-    must not reuse it or race it for the port (#717).
+    Called once a case has been reaped.  A case that stopped its server
+    (it ended, or raised, and its ``with`` blocks ran) left nothing, and this
+    returns at once.  One that timed out or died of a signal left the server
+    to its watchdog, and the next case must neither reuse it nor race it for
+    the port (#717).  A server that still runs at *timeout* is sent
+    ``SIGKILL`` with its group.
 
     Returns:
-        Whether the port stopped answering in time.  If it did not, the sweep
-        goes on and logs a warning.
+        Whether the servers exited in time.
     """
-    if not _carla_answers(host, port):
+    groups = _carla_groups_of(case_pid)
+    if not groups:
         return True
     logger.info(
-        "Waiting up to %gs for the CARLA server at %s:%d, which the stopped "
-        "case launched, to go.",
+        "Waiting up to %gs for the CARLA server the stopped case (pid %d) "
+        "launched to exit.",
         timeout,
-        host,
-        port,
+        case_pid,
     )
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(0.2)
-        if not _carla_answers(host, port, timeout=0.5):
+    while True:
+        groups = _live_groups(groups)
+        if not groups:
             return True
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
     logger.warning(
-        "The CARLA server at %s:%d still answers %gs after its case stopped; "
-        "the next case may reuse it.",
-        host,
-        port,
+        "The CARLA server the stopped case (pid %d) launched still runs %gs "
+        "after the case ended: SIGKILL.",
+        case_pid,
         timeout,
     )
+    for group in groups:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     return False
 
 
@@ -403,6 +455,11 @@ def _launch_job_isolated(
         idx: 0-based job index.
         timeout: Hard timeout in seconds (0 = no timeout).
 
+    Once the job is reaped, waits for any CARLA server it launched and left
+    running -- a job that timed out or died of a signal could not stop it --
+    to exit (:func:`_wait_until_carla_gone`), so whatever runs next neither
+    reuses that server nor races it for its port (#717).
+
     Returns:
         ``(succeeded, exit_code)`` where *exit_code* is 0 on success,
         :data:`_FAILED_VERDICT_EXIT_CODE` when the scenario ran and failed,
@@ -463,6 +520,8 @@ def _launch_job_isolated(
         signal.alarm(0)
         signal.signal(signal.SIGALRM, prev_handler)
         signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
+
+    _wait_until_carla_gone(child_pid)
 
     if timed_out:
         return False, None
@@ -633,10 +692,6 @@ class LaneletConstraintSweeper(Sweeper):
                 f">= 0, got {max_retries}."
             )
         max_attempts = 1 + max_retries
-        # Where each case's queue looks for CARLA, and launches one when
-        # nothing answers there (examples/run.py, ScenarioQueue).
-        server_host = str(OmegaConf.select(cfg, "server.host", default="localhost"))
-        server_port = int(OmegaConf.select(cfg, "server.port", default=2000))
         resume_from: int = int(
             sweep_dict.get("resume_from", 0) or os.environ.get("SWEEP_RESUME_FROM", "0")
         )
@@ -694,18 +749,9 @@ class LaneletConstraintSweeper(Sweeper):
                     batch,
                 )
 
-                # The case's queue reuses a server that already answers (one
-                # the user started, never stopped by the case) and launches
-                # its own otherwise -- the one its watchdog stops if the case
-                # is killed.
-                launches_carla = not _carla_answers(server_host, server_port)
                 ok, exit_code = _launch_job_isolated(
                     self.launcher, batch, idx, job_timeout
                 )
-                if launches_carla and (exit_code is None or exit_code < 0):
-                    # Timed out or died of a signal: the case did not stop
-                    # the CARLA it launched; its watchdog is stopping it.
-                    _wait_until_carla_gone(server_host, server_port)
                 if ok:
                     succeeded = True
                     break

@@ -291,11 +291,13 @@ at most `1 + server.cooldown_max_retries` times, as in a batch.
 A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it
 10 s before `SIGKILL`. So before the next attempt -- a retry or the next case
--- the sweeper waits until nothing answers on `server.host:server.port` any
-more (at most 15 s), rather than only `server.cooldown_seconds`: the next case
-must neither reuse the dying server nor start one while it still holds the
-port. A server that was already answering when the case started (one you
-started yourself) is not stopped by any case, and is not waited for.
+-- the sweeper waits until the CARLA processes the case launched have exited
+(at most 15 s, then it kills them), on top of `server.cooldown_seconds`: the
+next case must neither reuse the dying server nor start one while it still
+holds the port, even if the case was killed while its server was still
+loading. A case that ended normally stopped its server itself, so nothing is
+waited for; nor is a server the case did not launch (one you started
+yourself, which it reused), which no case stops.
 
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
