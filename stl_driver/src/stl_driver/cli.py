@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Command line entry points.
 
-``serve`` is the one that matters -- it runs the policy as an egodriver gRPC
-server for the runtime to connect to.  ``demo`` closes the loop against the
-fake world so the whole thing can be exercised without CARLA, and ``explain``
-prints the specification, because a specification nobody can read is not much
-better than no specification.
+``serve`` runs the policy as an egodriver gRPC server for a runtime in another
+process to connect to.  (autoware_carla_scenario can also load it into its own
+process: ``driver.policy=stl_driver.policy:EgoPolicy``.)  ``demo`` closes the
+loop against carla_driver_interface's fake straight road so the whole thing can
+be exercised without CARLA, and ``explain`` prints the specification, because a
+specification nobody can read is not much better than no specification.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(handler=_serve)
 
     demo = subparsers.add_parser(
-        "demo", help="close the loop against the fake world, without CARLA"
+        "demo", help="close the loop against a fake straight road, without CARLA"
     )
     demo.add_argument("--steps", type=int, default=120)
     demo.add_argument("--cruise-speed", type=float, default=None)
@@ -60,11 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _serve(args: argparse.Namespace) -> int:
-    from carla_driver_interface.driver import run_server
+    from carla_driver_interface.server import run_server
 
     from stl_driver.policy import EgoPolicy
 
     policy = EgoPolicy(cruise_speed_mps=args.cruise_speed)
+    logging.info("compiling the search before serving")
+    policy.warm_up()
     logging.info(
         "serving %s on %s:%d with %d rules",
         policy.name,
@@ -77,38 +80,46 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def _demo(args: argparse.Namespace) -> int:
-    """Run a closed-loop rollout against the fake world.
+    """Run a closed-loop rollout against carla_driver_interface's fake road.
 
-    Both halves in one process: the driver server and the runtime that drives
+    Both halves in one process: the driver server and the loop that drives
     it. That is not how a real deployment looks, but it makes the whole loop
     reproducible in one command with no simulator.
     """
     import json
 
-    from carla_driver_interface.driver import serving
-    from carla_driver_interface.fakes import FakeWorld, straight_then_curve_route
-    from carla_driver_interface.runtime import CarlaRuntime, RuntimeConfig, ScenarioSpec
+    import numpy as np
+    from carla_driver_interface.server import serving
+    from carla_driver_interface.testing import FakeLoop
 
     from stl_driver.policy import EgoPolicy
 
     policy = EgoPolicy(cruise_speed_mps=args.cruise_speed)
-    scenario = ScenarioSpec()
+    policy.warm_up()
 
     with serving(policy, port=0, host="127.0.0.1") as port:
-        config = RuntimeConfig(driver_address=f"127.0.0.1:{port}", max_steps=args.steps)
-        world = FakeWorld(config, scenario, route_in_local=straight_then_curve_route())
-        outcome = CarlaRuntime(world, config, scenario).run_rollout()
+        with FakeLoop(f"127.0.0.1:{port}") as loop:
+            result = loop.run(args.steps)
 
-    metrics = outcome.metrics
-    logging.info("rollout finished after %d steps: success=%s", outcome.steps, outcome.success)
+    positions = result.ego.positions
+    speeds = result.speeds_mps
+    metrics = {
+        "distance_travelled_m": float(
+            np.linalg.norm(np.diff(positions[:, :2], axis=0), axis=1).sum()
+        ),
+        "speed_mps": float(np.mean(speeds)) if speeds else 0.0,
+        "max_lateral_offset_m": float(np.abs(result.lateral_offsets_m).max()),
+    }
+    success = not result.terminated_by_policy
+    logging.info("rollout finished after %d steps: success=%s", result.steps, success)
     for key in sorted(metrics):
         logging.info("  %s = %.3f", key, metrics[key])
 
     if args.metrics_json:
         with open(args.metrics_json, "w") as handle:
-            json.dump({"steps": outcome.steps, "metrics": metrics}, handle, indent=2)
+            json.dump({"steps": result.steps, "metrics": metrics}, handle, indent=2)
 
-    return 0 if outcome.success else 1
+    return 0 if success else 1
 
 
 def _explain(args: argparse.Namespace) -> int:

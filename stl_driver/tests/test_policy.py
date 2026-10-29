@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from carla_driver_interface.driver.base import DriveContext, SessionState
+from carla_driver_interface.driver import DriveContext, SessionState
 from carla_driver_interface.geometry import Pose, Trajectory
-from carla_driver_interface.grpc_api import (
+from carla_driver_interface.protocol import (
     AABB,
     CarlaActorState,
     CarlaRendererData,
@@ -22,8 +22,8 @@ from carla_driver_interface.grpc_api import (
     TrafficLightState,
     Vec3,
 )
-from carla_driver_interface.grpc_api import Pose as PoseProto
-from carla_driver_interface.grpc_api import Quat as QuatProto
+from carla_driver_interface.protocol import Pose as PoseProto
+from carla_driver_interface.protocol import Quat as QuatProto
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.policy import EgoPolicy
@@ -277,8 +277,8 @@ def test_a_distant_red_light_still_governs(policy):
 # ---------------------------------------------------------------------------
 
 
-def test_it_is_constructible_the_way_the_upstream_cli_does_it():
-    """`_cmd_serve` calls `policy_cls(cruise_speed_mps=...)`, or with nothing."""
+def test_it_is_constructible_with_a_cruise_speed_or_without():
+    """`--policy-arg cruise_speed_mps=...` upstream, or nothing."""
     assert EgoPolicy().config.cruise_speed_mps == STLDriverConfig().cruise_speed_mps
     assert EgoPolicy(cruise_speed_mps=5.0).config.cruise_speed_mps == 5.0
 
@@ -290,13 +290,32 @@ def test_an_explicit_config_is_respected():
     assert EgoPolicy(cruise_speed_mps=4.0, config=config).config.cruise_speed_mps == 4.0
 
 
-def test_it_can_be_registered_with_the_upstream_cli():
-    from carla_driver_interface.driver.policies import POLICY_REGISTRY
+def test_it_loads_by_the_spec_a_scenario_names():
+    """`driver.policy=stl_driver.policy:EgoPolicy` in autoware_carla_scenario, and
+    `carla-driver-interface serve --policy` upstream, both load it this way."""
+    from carla_driver_interface.policies import load_policy
 
-    from stl_driver.policy import register_with_upstream_cli
+    policy = load_policy("stl_driver.policy:EgoPolicy", cruise_speed_mps=5.0)
+    assert isinstance(policy, EgoPolicy)
+    assert policy.config.cruise_speed_mps == 5.0
 
-    register_with_upstream_cli()
-    assert POLICY_REGISTRY[EgoPolicy.name] is EgoPolicy
+
+def test_it_loads_compiled_by_the_warmed_up_spec():
+    """`driver.policy=stl_driver.policy:warmed_up_policy` compiles while it loads,
+    not inside the first `start_session` and its deadline."""
+    from carla_driver_interface.policies import load_policy
+
+    policy = load_policy("stl_driver.policy:warmed_up_policy", cruise_speed_mps=5.0)
+    assert isinstance(policy, EgoPolicy)
+    assert policy.config.cruise_speed_mps == 5.0
+    assert policy.optimizer._compiled_batch is not None
+
+
+def test_a_new_session_does_not_compile_again(policy):
+    compiled = policy.optimizer._compiled_batch
+    assert compiled is not None
+    policy.on_session_start(SessionState(uuid="again", seed=0, scene_id="t", cameras={}))
+    assert policy.optimizer._compiled_batch is compiled
 
 
 def test_a_new_session_clears_the_warm_start(policy):

@@ -114,9 +114,12 @@ class RobustnessOptimizer:
         built out of a third-party library's ``nn.Module`` tree, and if it
         cannot handle some corner of that, the eager path is still correct and
         merely slower.
+
+        Compiles once: called again -- every session calls it -- it only
+        solves, which keeps the first step of the session at the steady rate.
         """
         settings = self.config.optimizer
-        if not settings.compile_search:
+        if not settings.compile_search or self._compiled_batch is not None:
             # Still worth one solve: the first in a process runs at a third of
             # the steady-state rate, and would otherwise spend its whole
             # budget on torch's lazy initialisation.

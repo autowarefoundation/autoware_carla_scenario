@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 import torch
@@ -32,7 +33,7 @@ from stl_driver.rollout import RolloutInputs, plan_xy
 from stl_driver.rules import build_rules
 from stl_driver.ruleset import RuleSet
 
-__all__ = ["EgoPolicy"]
+__all__ = ["EgoPolicy", "warmed_up_policy"]
 
 
 class EgoPolicy(BaseDriver):
@@ -55,12 +56,11 @@ class EgoPolicy(BaseDriver):
         config: STLDriverConfig | None = None,
         rules: RuleSet | None = None,
     ) -> None:
-        # `cruise_speed_mps` is the first keyword and named to match, so the
-        # upstream CLI -- which calls `policy_cls(cruise_speed_mps=...)` -- can
-        # serve this policy through POLICY_REGISTRY without knowing anything
-        # about it. It defaults to None rather than a speed because upstream
-        # omits the argument entirely when the flag is unset, and that has to
-        # mean "whatever the config says" rather than "8 m/s".
+        # Every argument has a default, so `load_policy` can build the policy
+        # from its spec alone (`driver.policy=stl_driver.policy:EgoPolicy`).
+        # `cruise_speed_mps` defaults to None rather than a speed because a
+        # loader passes it only when asked to, and its absence has to mean
+        # "whatever the config says" rather than "8 m/s".
         base = config or STLDriverConfig()
         if cruise_speed_mps is None:
             self.config = base
@@ -95,20 +95,26 @@ class EgoPolicy(BaseDriver):
         with self._warm_start_lock:
             self._warm_start = None
             self._anchor_accel_mps2 = None
-        self._warm_up()
+        self.warm_up()
 
     def on_session_close(self, session: SessionState) -> None:
         with self._warm_start_lock:
             self._warm_start = None
             self._anchor_accel_mps2 = None
 
-    def _warm_up(self) -> None:
+    def warm_up(self) -> None:
         """Pay the one-off costs before the runtime starts waiting on us.
 
         Torch's lazy initialisation, and compilation when it is enabled. The
         service calls `on_session_start` before any observation arrives, so
         this is time nobody is waiting on -- whereas the same work inside the
         first `drive` shows up as a step that missed its deadline.
+
+        The first call compiles, which on a cold torch cache takes about a
+        minute: longer than a runtime's deadline for ``start_session`` (60 s
+        in autoware_carla_scenario and in carla_driver_interface's fake loop).
+        Call it before serving, as :func:`warmed_up_policy` and the CLI do;
+        later calls cost one solve.
         """
         straight = np.stack(
             [
@@ -397,14 +403,15 @@ class EgoPolicy(BaseDriver):
         return scalars
 
 
-def register_with_upstream_cli() -> None:
-    """Make this policy selectable as ``--policy stl_ego`` upstream.
+def warmed_up_policy(**kwargs: Any) -> EgoPolicy:
+    """An :class:`EgoPolicy` built from ``kwargs``, compiled before it is returned.
 
-    Only effective if called before the upstream CLI builds its parser, since
-    the ``--policy`` choices are read out of the registry dict at that point.
-    ``stl-driver serve`` is the supported entry point; this is a convenience
-    for anyone already driving the upstream CLI.
+    The spec to load it by in a runtime's own process
+    (``driver.policy=stl_driver.policy:warmed_up_policy`` in
+    autoware_carla_scenario): the compile happens while the policy loads,
+    rather than inside the first session's ``start_session`` call and its
+    deadline.
     """
-    from carla_driver_interface.driver.policies import POLICY_REGISTRY
-
-    POLICY_REGISTRY[EgoPolicy.name] = EgoPolicy
+    policy = EgoPolicy(**kwargs)
+    policy.warm_up()
+    return policy

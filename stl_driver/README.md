@@ -6,6 +6,11 @@ An autonomous-driving policy whose behaviour is **written down as Signal
 Temporal Logic** and driven by maximising the robustness of that
 specification.
 
+In this repository it is the simulated ego for tuning scenarios: a stand-in
+for Autoware that drives a scenario by rules you can read, so a scenario can be
+shaped -- spawn points, NPC timing, lights -- before the real stack is run
+against it. [Running it in a scenario](#running-it-in-a-scenario) shows how.
+
 The point is that the driving rules are not spread through a planner as
 heuristics and thresholds.  They are nine formulas in
 [`src/stl_driver/rules.py`](src/stl_driver/rules.py), which you can read,
@@ -47,7 +52,8 @@ held on 65.8% of steps, and `spec_robustness` said so on the rest.
 Built on:
 
 - [`carla_driver_interface`](https://github.com/hakuturu583/carla_driver_interface)
-  — the alpasim-compatible egodriver gRPC server and CARLA closed-loop runtime
+  — the policy half of the alpasim-compatible egodriver contract; the CARLA
+  half is `autoware_carla_scenario`, next door
 - [`stlcg++`](https://github.com/UW-CTRL/stlcg-plus-plus) — differentiable STL
   robustness in PyTorch
 
@@ -108,14 +114,9 @@ That is a real trace from CARLA: approaching a red light, braking hard enough
 to trip the fallback, holding exactly at the stop line for ten seconds, then
 pulling away when it turns green.
 
-`scripts/record_drive.py` films a rollout from a chase camera with those
-numbers drawn on every frame; `recordings/stl_drive.mp4` is 70 s of Town10HD
-with 30 background vehicles.
-
-```bash
-docker compose up -d carla
-uv run --extra carla python scripts/record_drive.py --steps 700 --traffic 30
-```
+The video at the top is 70 s of Town10HD with 30 background vehicles, filmed
+from a chase camera with those numbers drawn on every frame, under the
+carla_driver_interface 0.x runtime this policy was developed against.
 
 Watching it is what surfaced three bugs that no unit test would have caught,
 because each one produced plausible-looking driving:
@@ -166,43 +167,56 @@ almost nothing.
 
 ## Setup
 
+stl_driver is a project of its own in this repository, with its own lock, not
+a member of the uv workspace: it pulls torch, and a workspace member would be
+installed by every `uv sync` and `uv run` of the framework. Python 3.10 to
+3.14, as the framework.
+
 ```bash
-uv sync --extra dev          # driver only
-uv sync --extra dev --extra carla   # plus the CARLA client, to run the simulator half
+cd stl_driver
+uv sync                      # the policy and its tests
 ```
 
-Python 3.11 or 3.12, inherited from `carla_driver_interface`. The `carla`
-extra is pinned to 0.9.16 rather than upstream's 0.9.15 floor because 0.9.15
-publishes no wheel for either version.
+It is not published to PyPI: STLCG++ has no release, and a package depending
+on a git commit cannot be uploaded there.
 
-## Running
+## Running it in a scenario
 
-Without a simulator, against the built-in fake world:
+autoware_carla_scenario loads the policy into its own process
+(`driver.transport=direct`, [docs/driver_interface.md](../autoware_carla_scenario/docs/driver_interface.md)),
+so add it to the framework's environment and name it as the driver policy.
+From the repository root:
+
+```bash
+uv run --with-editable ./stl_driver scenario scenario=cut_in/left map=town10hd_opt \
+  ego.spawn_lanelet_id=324 scenario.npc_lanelet_id=446 \
+  ego.entity=carla_driver driver.policy=stl_driver.policy:warmed_up_policy \
+  driver.transport=direct
+```
+
+`warmed_up_policy` compiles the search while the policy loads. Named as
+`stl_driver.policy:EgoPolicy` instead, the compile happens inside the first
+session's `start_session`, which on a cold torch cache takes about a minute --
+longer than the run's 60 s deadline for it.
+
+To run the policy in a process of its own, serve it and point the scenario at
+it (`driver.address`, no `driver.policy`):
+
+```bash
+cd stl_driver && uv run stl-driver serve --port 50051
+```
+
+Without a simulator, against carla_driver_interface's fake straight road:
 
 ```bash
 uv run stl-driver demo --steps 200
 ```
 
-Against real CARLA:
-
-```bash
-docker compose up -d carla                       # carlasim/carla:0.9.16
-uv run stl-driver serve --port 50051 &
-uv run --extra carla carla-driver-interface run \
-    --carla-host localhost --map Town10HD_Opt --traffic 30 \
-    --driver localhost:50051 --steps 400 --metrics-json /tmp/rollout.json
-docker compose down
-```
-
-Server and client must be the same CARLA version. This policy reads no camera
-images, so if Vulkan fails inside the container, `-nullrhi` is a viable
-fallback where it would not be for a vision-based policy.
-
 ## Tests
 
 ```bash
-uv run pytest -m "not slow"   # rules, rollout, perception, policy  (~4 s)
-uv run pytest                 # plus closed-loop rollouts and latency  (~3 min)
+uv run pytest -m "not slow"   # rules, rollout, perception, policy  (~30 s)
+uv run pytest                 # plus closed-loop rollouts and latency  (~6 min)
 ```
 
 The tests worth knowing about:
@@ -218,17 +232,18 @@ The tests worth knowing about:
 - `test_optimizer.py::test_on_an_empty_road_it_drives` is the anti-parking
   regression: standing still satisfies every safety rule, so if the liveness
   argument breaks, this is what catches it.
-- `test_closed_loop.py` drives the whole loop over real gRPC, with subclasses
-  of `FakeWorld` that inject a red light and a parked vehicle — the stock fake
-  world reports neither, so those rules would otherwise never fire.
+- `test_closed_loop.py` drives the whole loop over real gRPC against
+  `tests/fake_world.py`, with subclasses that inject a red light and a parked
+  vehicle — the stock fake world reports neither, so those rules would
+  otherwise never fire.
 
 ## A note on the dependency
 
-Verifying against real CARLA surfaced two bugs in `carla_driver_interface`.
-Both are fixed and merged in
-[PR #3](https://github.com/hakuturu583/carla_driver_interface/pull/3); this
-project pins the merge commit, which is the earliest that works — before it,
-the policy deadlocks at the first red light it stops for:
+Verifying against real CARLA surfaced two bugs in the CARLA runtime that
+`carla_driver_interface` 0.x carried (that runtime now lives in
+autoware_carla_scenario). Both were fixed in
+[PR #3](https://github.com/hakuturu583/carla_driver_interface/pull/3) — before
+it, the policy deadlocks at the first red light it stops for:
 
 1. **The traffic-light distance was an unsigned Euclidean distance**, so it
    started growing again once the ego crossed the line. A policy could not

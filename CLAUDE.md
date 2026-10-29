@@ -227,6 +227,7 @@ If pre-commit hooks fail:
   - `docs/`, `mkdocs.yml` - Documentation
 - `data/` - The nishishinjuku fixture map (Lanelet2 `.osm` and its committed OpenDRIVE `.xodr`) shared by the tests and the example configs
 - `examples/scenario_package_template/` - A standalone scenario package to copy
+- `stl_driver/` - The STL policy, a simulated ego for tuning scenarios. A project of its own with its own `uv.lock`, excluded from the workspace because it pulls torch; test it from that directory (`uv sync && uv run pytest`), and add it to the framework's environment with `uv run --with-editable ./stl_driver ...` (`stl_driver/README.md`)
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image
 - `pyproject.toml` - Workspace root: dev dependencies and tool configuration
 - `uv.lock` - Locked dependency versions for reproducible builds

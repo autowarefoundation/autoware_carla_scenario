@@ -15,7 +15,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from carla_driver_interface.geometry import Pose
-from carla_driver_interface.grpc_api import (
+from carla_driver_interface.protocol import (
     AABB,
     CarlaActorState,
     CarlaRendererData,
@@ -23,8 +23,8 @@ from carla_driver_interface.grpc_api import (
     TrafficLightState,
     Vec3,
 )
-from carla_driver_interface.grpc_api import Pose as PoseProto
-from carla_driver_interface.grpc_api import Quat as QuatProto
+from carla_driver_interface.protocol import Pose as PoseProto
+from carla_driver_interface.protocol import Quat as QuatProto
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.frenet import build_route_table, project_to_frenet

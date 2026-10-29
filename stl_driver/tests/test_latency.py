@@ -19,9 +19,9 @@ import time
 import numpy as np
 import pytest
 import torch
-from carla_driver_interface.driver.base import DriveContext, SessionState
+from carla_driver_interface.driver import DriveContext, SessionState
 from carla_driver_interface.geometry import Pose, Trajectory
-from carla_driver_interface.grpc_api import DynamicState, Vec3
+from carla_driver_interface.protocol import DynamicState, Vec3
 
 from stl_driver.policy import EgoPolicy
 from tests.conftest import curved_route
