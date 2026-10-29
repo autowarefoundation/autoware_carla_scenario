@@ -34,7 +34,7 @@ from autoware_carla_scenario.server import (
     CarlaServerManager,
     _dying_with_this_process,
 )
-from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as lcs
+from autoware_carla_scenario.sweeper import isolation
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="the sweeper forks its cases (Linux)"
@@ -177,7 +177,7 @@ def _alive(pid: int) -> bool:
 
 def _group_runs(pgid: int) -> bool:
     """Whether a process of group *pgid* runs (zombies aside)."""
-    return pgid in lcs._live_groups({pgid})
+    return pgid in isolation._live_groups({pgid})
 
 
 class _FakeCarla:
@@ -380,7 +380,7 @@ def _watchdog(started: list[subprocess.Popen[bytes]], mode: str) -> int:
     )
     started.append(process)
     deadline = time.monotonic() + 30
-    while not lcs._carla_groups_of(os.getpid()):
+    while not isolation._carla_groups_of(os.getpid()):
         assert time.monotonic() < deadline, "the watchdog never showed up"
         time.sleep(0.05)
     return process.pid
@@ -390,9 +390,9 @@ def test_the_carla_of_a_case_is_found_by_its_watchdog(
     watched: list[subprocess.Popen[bytes]],
 ) -> None:
     group = _watchdog(watched, "plain")
-    assert lcs._carla_groups_of(os.getpid()) == {group}
+    assert isolation._carla_groups_of(os.getpid()) == {group}
     # Another process's CARLA is not this one's.
-    assert lcs._carla_groups_of(os.getppid()) == set()
+    assert isolation._carla_groups_of(os.getppid()) == set()
 
 
 def test_wait_until_carla_gone_returns_once_the_server_exits(
@@ -404,7 +404,7 @@ def test_wait_until_carla_gone_returns_once_the_server_exits(
     stopper.start()
     try:
         started = time.monotonic()
-        assert lcs._wait_until_carla_gone(os.getpid(), timeout=30.0)
+        assert isolation._wait_until_carla_gone(os.getpid(), timeout=30.0)
         assert time.monotonic() - started >= 0.4
         assert not _group_runs(group)
     finally:
@@ -416,7 +416,7 @@ def test_wait_until_carla_gone_kills_a_server_still_there_at_its_timeout(
 ) -> None:
     group = _watchdog(watched, "stubborn")
     started = time.monotonic()
-    assert not lcs._wait_until_carla_gone(os.getpid(), timeout=0.5)
+    assert not isolation._wait_until_carla_gone(os.getpid(), timeout=0.5)
     assert time.monotonic() - started < 10.0
     deadline = time.monotonic() + 10
     while _group_runs(group):
@@ -426,9 +426,9 @@ def test_wait_until_carla_gone_kills_a_server_still_there_at_its_timeout(
 
 def test_wait_until_carla_gone_returns_at_once_when_the_case_left_none() -> None:
     started = time.monotonic()
-    assert lcs._wait_until_carla_gone(os.getpid(), timeout=30.0)
+    assert isolation._wait_until_carla_gone(os.getpid(), timeout=30.0)
     assert time.monotonic() - started < 2.0
 
 
 def test_the_wait_outlasts_the_watchdog_grace_period() -> None:
-    assert lcs._CARLA_GONE_TIMEOUT_S > _WATCHDOG_GRACE_S
+    assert isolation._CARLA_GONE_TIMEOUT_S > _WATCHDOG_GRACE_S

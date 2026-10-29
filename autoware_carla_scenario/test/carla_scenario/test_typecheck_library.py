@@ -4075,6 +4075,178 @@ def test_the_os_pathlib_and_popen_shims_refuse_what_cpython_refuses(
     assert located[0].line == line, result.format()
 
 
+# ---------------------------------------------------------------------------
+# The process calls of a forking parent and its child: os.fork(), waitpid()
+# and the wait-status macros, signal.alarm(), getsignal() and
+# pthread_sigmask(), KeyboardInterrupt, ChildProcessError and SystemExit.code
+# (#719)
+# ---------------------------------------------------------------------------
+
+
+_FORKING = """
+from __future__ import annotations
+
+import os
+import signal
+from typing import Any, Callable
+
+
+def on_alarm(signum: int, frame: Any) -> None:
+    pass
+
+
+def launch(run: Callable[[], int], timeout: int) -> tuple[bool, int]:
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            os.setpgrp()
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            code = run()
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+        except KeyboardInterrupt:
+            code = 128 + int(signal.SIGINT)
+        finally:
+            os._exit(code)
+    previous = signal.getsignal(signal.SIGALRM)
+    os.setpgid(pid, pid)
+    signal.signal(signal.SIGALRM, on_alarm)
+    left: int = signal.alarm(timeout)
+    try:
+        done, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        done, status = os.waitpid(pid, 0)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+    if os.WIFSIGNALED(status):
+        return False, -os.WTERMSIG(status)
+    code = os.WEXITSTATUS(status=status) if os.WIFEXITED(status) else 1
+    return code == 0, code + left + done + len(mask)
+"""
+
+
+def _check_forking_case(
+    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TypeCheckResult:
+    # The handler's frame is `Any`: it is compiled through signal.signal().
+    monkeypatch.setitem(
+        check.UNCALLED,
+        f"{_FAKE}.on_alarm",
+        "a signal handler, whose frame Codon has no type for",
+    )
+    return _check_case(source, tmp_path, monkeypatch)
+
+
+@needs_codon
+def test_the_os_and_signal_shims_take_what_a_forking_parent_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_forking_case(_FORKING, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError in CPython 3.10 (the oldest Python the package
+        # supports) and 3.13 when it is called.
+        ("os.fork()", "os.fork(1)"),
+        ("os.setpgid(pid, pid)", "os.setpgid(pid=pid, pgrp=pid)"),
+        ("os.waitpid(pid, 0)", "os.waitpid(pid)"),
+        ("os._exit(code)", "os._exit(str(code))"),
+        ("os.WIFSIGNALED(status)", "os.WIFSIGNALED(str(status))"),
+        ("os.WEXITSTATUS(status=status)", "os.WEXITSTATUS(code=status)"),
+        ("signal.alarm(timeout)", "signal.alarm(seconds=timeout)"),
+        ("signal.alarm(0)", "signal.alarm(0.5)"),
+        ("signal.getsignal(signal.SIGALRM)", 'signal.getsignal("SIGALRM")'),
+        ("{signal.SIGINT, signal.SIGTERM}", '{"SIGINT"}'),
+        ("signal.SIG_SETMASK, mask)", "signal.SIG_SETMASK, 2)"),
+        ("signal.SIGALRM, previous)", "signal.SIGALRM, mask)"),
+    ],
+    ids=[
+        "fork-arguments",
+        "setpgid-positional-only",
+        "waitpid-arguments",
+        "exit-status-int",
+        "wifsignaled-status-int",
+        "wexitstatus-keyword",
+        "alarm-positional-only",
+        "alarm-seconds-int",
+        "getsignal-number",
+        "sigmask-signal-numbers",
+        "sigmask-iterable",
+        "signal-handler",
+    ],
+)
+def test_the_os_and_signal_shims_refuse_what_cpython_refuses_of_a_fork(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FORKING.replace(right, wrong, 1)
+    assert source != _FORKING
+    result = _check_forking_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_the_process_shims_are_declared_with_the_parameters_cpython_has() -> None:
+    # As for the file helpers: the parameter names CPython takes by keyword
+    # (`os._exit(status)`, `signal.pthread_sigmask(how, mask)`) are the
+    # shims'; a positional-only one (`waitpid(pid, options, /)`) is a
+    # `*args` there.
+    import inspect
+    import os
+    import signal
+
+    cases = [
+        (
+            model_dir() / "os" / "__init__.codon",
+            os,
+            "fork setpgrp setpgid waitpid _exit WIFEXITED WEXITSTATUS "
+            "WIFSIGNALED WTERMSIG",
+        ),
+        (model_dir() / "signal.codon", signal, "getsignal alarm pthread_sigmask"),
+    ]
+    for path, python, names in cases:
+        shim = {
+            node.name: node.args
+            for node in ast.parse(path.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in names.split():
+            parameters = inspect.signature(getattr(python, name)).parameters.values()
+            by_keyword = [
+                p.name
+                for p in parameters
+                if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            ]
+            positional_only = [
+                p.name
+                for p in parameters
+                if p.kind is inspect.Parameter.POSITIONAL_ONLY
+            ]
+            args = shim[name]
+            assert [a.arg for a in args.args] == by_keyword, f"{name}"
+            assert (args.vararg is not None) == bool(positional_only), f"{name}"
+    assert os.WNOHANG == 1
+    assert (signal.SIG_BLOCK, signal.SIG_UNBLOCK, signal.SIG_SETMASK) == (0, 1, 2)
+    shim_os = (model_dir() / "os" / "__init__.codon").read_text()
+    shim_signal = (model_dir() / "signal.codon").read_text()
+    assert re.search(r"^WNOHANG = 1$", shim_os, re.MULTILINE)
+    for number, mask in enumerate(("SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK")):
+        assert re.search(rf"^{mask} = {number}$", shim_signal, re.MULTILINE)
+
+
 # Directories of codon/ that model a third-party package, not the standard
 # library; the rest of codon/ (bar _stdlib) is a shim the docs must list.
 _THIRD_PARTY_MODELS = {

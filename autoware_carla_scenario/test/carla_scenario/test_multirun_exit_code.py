@@ -313,9 +313,7 @@ def test_a_case_forked_by_the_sweeper_runs_its_queue_without_retries(
     from omegaconf import OmegaConf
 
     from autoware_carla_scenario.examples import run
-    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
-        SWEEPER_OWNS_RETRIES_ENV,
-    )
+    from autoware_carla_scenario.sweeper.isolation import SWEEPER_OWNS_RETRIES_ENV
 
     if owned:
         monkeypatch.setenv(SWEEPER_OWNS_RETRIES_ENV, "1")

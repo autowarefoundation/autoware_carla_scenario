@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 214 of
-the package's 318 modules (67%; about 49,800 of 90,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 215 of
+the package's 319 modules (67%; about 65,100 of 115,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2377,7 +2377,9 @@ whose YAML values are of any type, nor how it moves a `Local` map's points to
 their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
 world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
-(`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
+(`sweeper.constraints`, `sweeper.bindings`), how the Hydra sweeper runs each
+case in a forked child of its own process group, stops it and waits for the
+CARLA server it left (`sweeper.isolation`, #719), and the route's map questions,
 frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
@@ -2430,8 +2432,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 104
-functions and methods of those modules are `UNCALLED` (23 of them
+below). 107
+functions and methods of those modules are `UNCALLED` (26 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2464,7 +2466,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 104 `EXCLUDED` modules fall in
+which the check has no value of), and three of `sweeper.isolation`: its
+`SIGTERM` handler (`_raise_interrupted()`, whose frame is `Any`), the
+`prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
+what runs a case in the forked child (`_run_in_child()`, which takes the
+signal mask, a `set[int | signal.Signals]`); the first and the last are
+compiled through their callers. The 104 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 79 import what Codon cannot
 compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
@@ -3120,7 +3127,12 @@ What Codon 0.19 needs that Python does not, beyond
   `getuid()`, `getgid()`, `readlink(path, *, dir_fd=None)` (of a `str` or an
   `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
-  `signal.Signals`), `system(command)`,
+  `signal.Signals`), `system(command)`, what a forking parent and its child
+  call (#719): `fork()` (`0`: nothing is forked), `setpgrp()`,
+  `setpgid(pid, pgrp, /)`, `waitpid(pid, options, /)` (a `(pid, status)`
+  tuple of `int`s, `(0, 0)`) with `WNOHANG`, `_exit(status)` and the
+  wait-status macros `WIFEXITED()`, `WEXITSTATUS()`, `WIFSIGNALED()` and
+  `WTERMSIG()` (of an `int`, by position or as `status`),
   `mkdir()` (Codon's had one), `getcwd()`, `listdir(path=".")` (empty),
   `makedirs(name, mode=0o777, exist_ok=False)`, `remove()`, `unlink()`,
   `rmdir()`, `rename()` and `replace()` (each with its keyword-only
@@ -3195,10 +3207,16 @@ What Codon 0.19 needs that Python does not, beyond
   number (an `int`) and the current frame (`None` in the check, which has no frame
   type: annotate that parameter `Any`), so a function that cannot take them
   is refused where CPython fails only when the signal arrives. What it
-  returns, the previous handler, is a value nothing is declared of (a
-  `Handlers` member, a function or `None` in CPython, which takes no `None`
-  as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
-  `alarm()` and the rest of the module are not declared. `contextlib`
+  returns, the previous handler, and what `getsignal(signalnum)` returns,
+  the handler in place, is a value nothing is declared of (a `Handlers`
+  member, a function or `None` in CPython) but that `signal()` takes it back,
+  so a handler is restored as CPython restores one (CPython refuses `None`,
+  a handler not installed from Python, which the check cannot tell).
+  `alarm(seconds, /)` takes an `int`, and `pthread_sigmask(how, mask)` one of
+  `SIG_BLOCK`, `SIG_UNBLOCK` and `SIG_SETMASK` (`int`s here; CPython's
+  `Sigmasks` is an `IntEnum` of them) and an iterable of signal numbers, and
+  returns the previous mask, a `set` of `Signals` (#719). The rest of the
+  module is not declared. `contextlib`
   declares `suppress(*exceptions)` only, a class with `__enter__` and
   `__exit__` that does nothing (the exceptions are not checked); a
   `contextmanager` is not declared, as the scenario check already tells a
@@ -3261,10 +3279,15 @@ What Codon 0.19 needs that Python does not, beyond
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
   built-in exceptions that Codon lacks (`ImportError`,
   `ModuleNotFoundError`, `FileNotFoundError`, `PermissionError`,
-  `ProcessLookupError`, `TimeoutError`, `ConnectionError`,
-  `BrokenPipeError`) are declared in the model's `_exceptions.codon`, each
+  `ProcessLookupError`, `ChildProcessError`, `TimeoutError`,
+  `ConnectionError`, `BrokenPipeError`, and `KeyboardInterrupt`, derived from
+  `BaseException`, so `except Exception:` does not catch it) are declared in
+  the model's `_exceptions.codon`, each
   derived from its CPython base, and the prelude of every rewritten module
-  imports them, so `except ImportError:` compiles as Python reads it. Each
+  imports them, so `except ImportError:` compiles as Python reads it.
+  `SystemExit.code` is an `int` here, the status Codon's `SystemExit` holds;
+  CPython's is whatever it was raised with (an `int`, a `str` or `None`), so
+  test it with `isinstance()` before reading it as an `int`. Each
   takes no message or one value by position, as CPython does; a keyword
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
   their attributes (`errno`, `filename`) are refused. Nothing in these
@@ -3741,6 +3764,13 @@ What Codon 0.19 needs that Python does not, beyond
   Set class attributes in the class body (`FRAME: ClassVar[CoordinateFrame]
   = CoordinateFrame.LANELET2`) rather than from a function run after the
   class.
+- **A global of a module whose top level runs a statement** (`server`, which
+  calls `load_dotenv()` on import) cannot be read at another module's top
+  level: Codon 0.19 reports "name '_WATCHDOG_GRACE_S' is not defined" for
+  `_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0`, though a function of
+  the module, or a parameter default, reads it. `sweeper.isolation` computes
+  that constant in the `else` branch of `if TYPE_CHECKING:` and gives the
+  check its value in the first (#719).
 - **Codon does not narrow an `Optional`** after `if x is None: return`. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
@@ -3749,7 +3779,11 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional[Path]` local (`shipped: Optional[Path] = candidate`, as
   `maps.resolver._find_xodr()` does): Codon types a tuple by its members,
   and a bare annotation without a value (`found: Optional[Path]`) does not
-  change the type of what is assigned to it later. An attribute is not
+  change the type of what is assigned to it later. Nor does a value: an
+  `int` assigned to an `Optional[int]` local is an `int` in the tuple
+  returned right after it, so `sweeper.isolation._launch_isolated()` sets
+  its `(succeeded, exit_code)` in each branch and returns them once, after
+  the branches join. An attribute is not
   narrowed either: after `if self._spawn_pose is None: raise ...`,
   `self._spawn_pose` is still an `Optional[Lanelet2Pose]`, and
   `snap_to_carla_road()`'s `isinstance` dispatch takes its CARLA branch for

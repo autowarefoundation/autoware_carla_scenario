@@ -229,9 +229,11 @@ __all__ = [
 #: every transformed module, where Python finds them among its builtins.
 MISSING_BUILTIN_EXCEPTIONS = (
     "BrokenPipeError",
+    "ChildProcessError",
     "ConnectionError",
     "FileNotFoundError",
     "ImportError",
+    "KeyboardInterrupt",
     "ModuleNotFoundError",
     "PermissionError",
     "ProcessLookupError",

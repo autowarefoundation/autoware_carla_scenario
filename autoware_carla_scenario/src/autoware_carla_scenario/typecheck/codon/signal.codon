@@ -19,11 +19,21 @@
 # (`signal(SIGTERM, 5)` is a TypeError), so the check takes a handler that is
 # one of them or a function it can call as CPython calls a handler, with the
 # signal's number (an int, as CPython passes it) and the current frame (None
-# here: no frame type is declared). What signal() returns, the previous
-# handler, is a Handlers, a function or None in CPython: nothing of it is
-# declared, and it is no handler (CPython refuses None as one). getsignal(),
-# the other functions and the other constants are not declared either.
-# Nothing here runs: no handler is installed.
+# here: no frame type is declared). What signal() and getsignal(signalnum)
+# return, the handler in place, is a Handlers, a function or None in
+# CPython: nothing of it is declared but that signal() takes it back, as
+# CPython's does to restore a handler (but for None, a handler not installed
+# from Python, which CPython's signal() refuses and the check cannot tell).
+# alarm(seconds, /) takes an int and returns the seconds left of the previous
+# alarm (0 here). pthread_sigmask(how, mask) takes SIG_BLOCK, SIG_UNBLOCK or
+# SIG_SETMASK (ints here; CPython's Sigmasks is an IntEnum of them) and an
+# iterable of signal numbers (ints or Signals), and returns the previous
+# mask, a set of Signals (CPython's holds an int for a signal that is no
+# Signals member, a real-time one, which is not declared); empty here.
+# The other functions and the other constants are not declared.
+# Nothing here runs: no handler is installed, no alarm set, no signal blocked.
+
+import internal.static as static
 
 _NAMES = {
     1: "SIGHUP",
@@ -116,7 +126,7 @@ SIG_IGN = Handlers(1)
 
 
 class _PreviousHandler:
-    """What signal() returns: CPython's previous handler, of no one type."""
+    """What signal() and getsignal() return: a handler, of no one type."""
 
     pass
 
@@ -125,8 +135,33 @@ def signal(signalnum, handler) -> _PreviousHandler:
     number = _signum(signalnum, "signal()")
     if isinstance(handler, Handlers):
         pass
+    elif isinstance(handler, _PreviousHandler):
+        pass
     elif hasattr(handler, "__call__"):
         handler(number, None)
     else:
         compile_error("signal(): the handler is SIG_DFL, SIG_IGN or a function")
     return _PreviousHandler()
+
+
+def getsignal(signalnum) -> _PreviousHandler:
+    _signum(signalnum, "getsignal()")
+    return _PreviousHandler()
+
+
+def alarm(*args) -> int:
+    if static.len(args) != 1:
+        compile_error("alarm() takes its one argument by position only")
+    seconds: int = args[0]
+    return 0
+
+
+SIG_BLOCK = 0
+SIG_UNBLOCK = 1
+SIG_SETMASK = 2
+
+
+def pthread_sigmask(how: int, mask) -> Set[Signals]:
+    for signalnum in mask:
+        _signum(signalnum, "pthread_sigmask()")
+    return Set[Signals]()

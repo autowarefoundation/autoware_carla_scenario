@@ -37,9 +37,10 @@ from pathlib import Path
 from typing import Any
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
+from autoware_carla_scenario.sweeper import isolation
 from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as s
 
-s._STOP_GRACE_SECONDS = float(sys.argv[2])
+isolation._STOP_GRACE_SECONDS = float(sys.argv[2])
 work = Path(sys.argv[1])
 
 
