@@ -1,0 +1,184 @@
+# Python's fnmatch.fnmatch(name, pat) and fnmatchcase(name, pat), for the
+# checker (docs/typecheck.md): CPython 3.10's matching, written without a
+# regular expression (CPython translates the pattern into one with a
+# lookahead, which Codon's re, RE2, has no syntax for).
+#
+# The pattern is CPython's shell glob: `*` (any run of characters), `?` (any
+# one), `[seq]` and `[!seq]` (a set, with its ranges; a reversed range is
+# dropped, as CPython drops it), and a `[` with no `]` after it read as
+# itself. The match is case-sensitive and of the whole name, as on POSIX,
+# where CPython's normcase() is os.fspath(). fnmatch() takes a str or an
+# os.PathLike (a pathlib.Path) for either, as normcase() does; fnmatchcase(),
+# the same match without the normcase(), takes str only, as CPython's re
+# does (the check reads bytes as str). filter() and translate() are not
+# declared.
+
+from os import fspath
+
+# The kinds of a pattern's items.
+_STAR = 0
+_ANY = 1
+_CHAR = 2
+_SET = 3
+_NEVER = 4
+
+
+class _Item:
+    """One item of a pattern: `*`, `?`, a character, a set, or a set that
+    matches nothing (all its ranges reversed)."""
+
+    kind: int
+    char: str
+    negate: bool
+    ranges: list[tuple[str, str]]
+
+    def __init__(
+        self, kind: int, char: str, negate: bool, ranges: list[tuple[str, str]]
+    ):
+        self.kind = kind
+        self.char = char
+        self.negate = negate
+        self.ranges = ranges
+
+
+def _chunks(pat: str, i: int, j: int) -> list[str]:
+    # CPython's split of the set pat[i:j] at its range hyphens, with the
+    # reversed ranges removed: a range joins the last character of a chunk
+    # and the first of the next.
+    if "-" not in pat[i:j]:
+        return [pat[i:j]]
+    chunks: list[str] = []
+    k = i + 2 if pat[i] == "!" else i + 1
+    while True:
+        k = pat.find("-", k, j)
+        if k < 0:
+            break
+        chunks.append(pat[i:k])
+        i = k + 1
+        k = k + 3
+    chunk = pat[i:j]
+    if chunk:
+        chunks.append(chunk)
+    else:
+        chunks[-1] += "-"
+    for k in range(len(chunks) - 1, 0, -1):
+        if chunks[k - 1][-1] > chunks[k][0]:
+            chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
+            chunks.pop(k)
+    return chunks
+
+
+def _set(pat: str, i: int, j: int) -> _Item:
+    # The set pat[i:j] read as CPython's re reads the class translate() makes
+    # of it. A token is a character, or "" for a range hyphen (a "-" read as
+    # itself where no range can start or end).
+    tokens: list[str] = []
+    for m, chunk in enumerate(_chunks(pat, i, j)):
+        if m > 0:
+            tokens.append("")
+        for c in chunk:
+            tokens.append(c)
+    if len(tokens) == 0:
+        return _Item(_NEVER, "", False, [])
+    if len(tokens) == 1 and tokens[0] == "!":
+        return _Item(_ANY, "", False, [])
+    negate = tokens[0] == "!"
+    p = 1 if negate else 0
+    ranges: list[tuple[str, str]] = []
+    while p < len(tokens):
+        lo = tokens[p] if tokens[p] else "-"
+        p += 1
+        if p < len(tokens) and tokens[p] == "":
+            if p + 1 >= len(tokens):
+                ranges.append((lo, lo))
+                ranges.append(("-", "-"))
+                break
+            hi = tokens[p + 1] if tokens[p + 1] else "-"
+            p += 2
+            ranges.append((lo, hi))
+        else:
+            ranges.append((lo, lo))
+    return _Item(_SET, "", negate, ranges)
+
+
+def _compile(pat: str) -> list[_Item]:
+    # CPython's translate(), into items: consecutive `*` are one.
+    items: list[_Item] = []
+    i = 0
+    n = len(pat)
+    while i < n:
+        c = pat[i]
+        i += 1
+        if c == "*":
+            if len(items) == 0 or items[-1].kind != _STAR:
+                items.append(_Item(_STAR, "", False, []))
+        elif c == "?":
+            items.append(_Item(_ANY, "", False, []))
+        elif c == "[":
+            j = i
+            if j < n and pat[j] == "!":
+                j += 1
+            if j < n and pat[j] == "]":
+                j += 1
+            while j < n and pat[j] != "]":
+                j += 1
+            if j >= n:
+                items.append(_Item(_CHAR, "[", False, []))
+            else:
+                items.append(_set(pat, i, j))
+                i = j + 1
+        else:
+            items.append(_Item(_CHAR, c, False, []))
+    return items
+
+
+def _one(item: _Item, c: str) -> bool:
+    # Whether the item that is not `*` matches the character c.
+    if item.kind == _ANY:
+        return True
+    if item.kind == _CHAR:
+        return c == item.char
+    if item.kind == _NEVER:
+        return False
+    inside = False
+    for lo, hi in item.ranges:
+        if lo <= c <= hi:
+            inside = True
+            break
+    return inside != item.negate
+
+
+def fnmatchcase(name: str, pat: str) -> bool:
+    """Whether *name* matches the shell pattern *pat* (the whole name),
+    case-sensitively."""
+    # A `*` matches as few characters as it can, then one more each time the
+    # rest fails: the full match of CPython's `(?s:...)\Z`.
+    items = _compile(pat)
+    n = 0
+    p = 0
+    star = -1
+    resume = 0
+    while n < len(name):
+        if p < len(items) and items[p].kind == _STAR:
+            star = p
+            p += 1
+            resume = n
+        elif p < len(items) and _one(items[p], name[n]):
+            p += 1
+            n += 1
+        elif star >= 0:
+            p = star + 1
+            resume += 1
+            n = resume
+        else:
+            return False
+    while p < len(items) and items[p].kind == _STAR:
+        p += 1
+    return p == len(items)
+
+
+def fnmatch(name, pat) -> bool:
+    """Whether *name* matches the shell pattern *pat* (the whole name); on
+    POSIX, case-sensitively, as fnmatchcase(). Either is a str or an
+    os.PathLike, read through os.fspath() as CPython's normcase() reads it."""
+    return fnmatchcase(fspath(name), fspath(pat))

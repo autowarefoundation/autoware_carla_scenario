@@ -13,6 +13,7 @@ import re
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -4245,6 +4246,120 @@ def test_the_process_shims_are_declared_with_the_parameters_cpython_has() -> Non
     assert re.search(r"^WNOHANG = 1$", shim_os, re.MULTILINE)
     for number, mask in enumerate(("SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK")):
         assert re.search(rf"^{mask} = {number}$", shim_signal, re.MULTILINE)
+
+
+# ---------------------------------------------------------------------------
+# The fnmatch shim: fnmatch() and fnmatchcase() (#728)
+# ---------------------------------------------------------------------------
+
+
+_FNMATCH = """
+from __future__ import annotations
+
+import fnmatch
+from fnmatch import fnmatchcase
+from pathlib import Path
+
+EXCLUDED = ("*firetruck*", "*ambulance*", "*cop*", "*police*")
+
+
+def candidate(name: str) -> bool:
+    if any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED):
+        return False
+    if fnmatch.fnmatch(Path(name), "*.osm"):
+        return False
+    return fnmatchcase(name=name, pat="vehicle.*") or fnmatch.fnmatchcase(name, "?")
+"""
+
+
+@needs_codon
+def test_the_fnmatch_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "fnmatch.codon").is_file()
+    result = _check_case(_FNMATCH, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.13 when it is called: a TypeError or an AttributeError.
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, len(pattern))"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(len(name), pattern)"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, pattern=pattern)"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, pattern, True)"),
+        ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatchcase(name, "?", 1)'),
+        ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatches(name, "?")'),
+        (
+            'fnmatch.fnmatch(Path(name), "*.osm")',
+            'fnmatch.fnmatchcase(Path(name), "*.osm")',
+        ),
+    ],
+    ids=[
+        "pattern-str",
+        "name-str",
+        "pattern-keyword",
+        "fnmatch-arguments",
+        "fnmatchcase-arguments",
+        "unknown-name",
+        "fnmatchcase-path",
+    ],
+)
+def test_the_fnmatch_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FNMATCH.replace(right, wrong, 1)
+    assert source != _FNMATCH
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
+    # The shim is plain Python too: run under CPython, its match (written
+    # without a regular expression) gives what fnmatch's does, for its
+    # parameter names, the patterns entity.fit excludes, and every set, range
+    # and wildcard of a sample of patterns.
+    import fnmatch
+    import inspect
+    import random
+
+    from autoware_carla_scenario.entity.fit import FIT_EXCLUDED
+
+    source = (model_dir() / "fnmatch.codon").read_text()
+    shim: dict[str, Any] = {}
+    exec(source, shim)  # noqa: S102 - the shim, which is valid Python
+    for name in ("fnmatch", "fnmatchcase"):
+        python = list(inspect.signature(getattr(fnmatch, name)).parameters)
+        assert list(inspect.signature(shim[name]).parameters) == python, name
+    blueprints = [
+        "vehicle.carlamotors.firetruck",
+        "vehicle.ford.ambulance",
+        "vehicle.dodge.charger_police_2020",
+        "vehicle.mini.cooper",
+        "vehicle.tesla.model3",
+    ]
+    for blueprint in blueprints:
+        for pattern in (*FIT_EXCLUDED, "vehicle.*", "vehicle.?ini.*"):
+            want = fnmatch.fnmatch(blueprint, pattern)
+            assert shim["fnmatch"](blueprint, pattern) == want, (blueprint, pattern)
+    rng = random.Random(728)
+    for _ in range(20000):
+        pattern = "".join(rng.choice("ab]![-*?^\\z&") for _ in range(rng.randint(0, 8)))
+        name = "".join(rng.choice("ab]![-^\\z&\nc") for _ in range(rng.randint(0, 6)))
+        want = fnmatch.fnmatchcase(name, pattern)
+        assert shim["fnmatchcase"](name, pattern) == want, (name, pattern)
+        assert shim["fnmatch"](name, pattern) == want, (name, pattern)
 
 
 # Directories of codon/ that model a third-party package, not the standard
