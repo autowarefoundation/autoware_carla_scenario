@@ -3272,11 +3272,12 @@ What Codon 0.19 needs that Python does not, beyond
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
   as `''`) is refused. `fnmatch` declares `fnmatch(name, pat)` and
-  `fnmatchcase(name, pat)`, of two `str`s, CPython 3.10's shell-pattern
-  match written without a regular expression (CPython's translation uses a
-  lookahead, which Codon's `re` has no syntax for); an `os.PathLike` name or
-  pattern, which CPython's `fnmatch()` takes, is refused, and `filter()` and
-  `translate()` are not declared (#728). `sys` replaces Codon's, keeping all of it (`argv`,
+  `fnmatchcase(name, pat)`, CPython 3.10's shell-pattern match written
+  without a regular expression (CPython's translation uses a lookahead,
+  which Codon's `re` has no syntax for); `fnmatch()` takes a `str` or an
+  `os.PathLike` for either, read through `os.fspath()` as CPython's
+  `normcase()` reads it on POSIX, and `fnmatchcase()` two `str`s, as
+  CPython's does. `filter()` and `translate()` are not declared (#728). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`
   (`"linux"`) and `executable` (a `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
@@ -3337,7 +3338,7 @@ What Codon 0.19 needs that Python does not, beyond
   distribution's version with `importlib.metadata.version()`, and catch the
   exceptions above. Any other name of them (`Path.is_socket()`, `hashlib.md5()`,
   `shutil.disk_usage()`, `subprocess.check_output()`, `os.scandir()`,
-  `importlib.import_module()`, `urllib.request`, `signal.getsignal()`) fails
+  `importlib.import_module()`, `urllib.request`, `signal.setitimer()`) fails
   its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
   `str`, as CPython sets it on a regular package), which
   `authoring.framework_pin` imports (`from .. import __file__`).

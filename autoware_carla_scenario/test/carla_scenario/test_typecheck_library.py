@@ -4258,12 +4258,15 @@ from __future__ import annotations
 
 import fnmatch
 from fnmatch import fnmatchcase
+from pathlib import Path
 
 EXCLUDED = ("*firetruck*", "*ambulance*", "*cop*", "*police*")
 
 
 def candidate(name: str) -> bool:
     if any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED):
+        return False
+    if fnmatch.fnmatch(Path(name), "*.osm"):
         return False
     return fnmatchcase(name=name, pat="vehicle.*") or fnmatch.fnmatchcase(name, "?")
 """
@@ -4290,6 +4293,10 @@ def test_the_fnmatch_shim_takes_what_cpython_takes(
         ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, pattern, True)"),
         ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatchcase(name, "?", 1)'),
         ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatches(name, "?")'),
+        (
+            'fnmatch.fnmatch(Path(name), "*.osm")',
+            'fnmatch.fnmatchcase(Path(name), "*.osm")',
+        ),
     ],
     ids=[
         "pattern-str",
@@ -4298,6 +4305,7 @@ def test_the_fnmatch_shim_takes_what_cpython_takes(
         "fnmatch-arguments",
         "fnmatchcase-arguments",
         "unknown-name",
+        "fnmatchcase-path",
     ],
 )
 def test_the_fnmatch_shim_refuses_what_cpython_refuses(

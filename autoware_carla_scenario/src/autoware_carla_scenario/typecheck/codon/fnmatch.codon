@@ -7,10 +7,13 @@
 # one), `[seq]` and `[!seq]` (a set, with its ranges; a reversed range is
 # dropped, as CPython drops it), and a `[` with no `]` after it read as
 # itself. The match is case-sensitive and of the whole name, as on POSIX,
-# where CPython's normcase() changes nothing. name and pat are str (the
-# check reads bytes as str); CPython's fnmatch() also takes an os.PathLike,
-# which the check refuses. fnmatchcase() is the same match, CPython's
-# without the normcase(). filter() and translate() are not declared.
+# where CPython's normcase() is os.fspath(). fnmatch() takes a str or an
+# os.PathLike (a pathlib.Path) for either, as normcase() does; fnmatchcase(),
+# the same match without the normcase(), takes str only, as CPython's re
+# does (the check reads bytes as str). filter() and translate() are not
+# declared.
+
+from os import fspath
 
 # The kinds of a pattern's items.
 _STAR = 0
@@ -174,7 +177,8 @@ def fnmatchcase(name: str, pat: str) -> bool:
     return p == len(items)
 
 
-def fnmatch(name: str, pat: str) -> bool:
+def fnmatch(name, pat) -> bool:
     """Whether *name* matches the shell pattern *pat* (the whole name); on
-    POSIX, case-sensitively, as fnmatchcase()."""
-    return fnmatchcase(name, pat)
+    POSIX, case-sensitively, as fnmatchcase(). Either is a str or an
+    os.PathLike, read through os.fspath() as CPython's normcase() reads it."""
+    return fnmatchcase(fspath(name), fspath(pat))
