@@ -25,6 +25,7 @@ buses are the bridge's.
 from __future__ import annotations
 
 import logging
+import math
 import socket
 import time
 from dataclasses import dataclass
@@ -50,6 +51,10 @@ __all__ = ["HilsEgoConfig", "HilsEgoEntity", "find_hils_entity"]
 
 #: What the ego does once the ECUs' command is stale.
 ON_STALE_ACTIONS: Tuple[str, ...] = ("brake", "hold")
+
+#: Non-finite command fields are logged the first time and then once in this
+#: many (a command comes every ECU cycle).
+_NON_FINITE_LOG_EVERY = 100
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
     _command_at: float
     _stale: bool
     _cuts: int
+    _dropped: int
 
     def __init__(
         self, config: Optional[HilsEgoConfig] = None, episode_name: str = ""
@@ -139,6 +145,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._stale = False
         #: Numbers the cuts asked of the bridge (:meth:`disconnect`).
         self._cuts = 0
+        #: Non-finite command fields dropped so far (the log's rate limit).
+        self._dropped = 0
 
     @property
     def config(self) -> HilsEgoConfig:
@@ -178,6 +186,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._stale = False
         # The bridge restores every cut at the scenario's end: number afresh.
         self._cuts = 0
+        self._dropped = 0
         cfg = self._config
         try:
             sock = socket.create_connection(
@@ -342,19 +351,44 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 if fields is None:
                     logger.warning("The HILS bridge sent a %r command; ignored", mode)
                     continue
-                self._command = (
-                    mode,
-                    {
-                        key: float(value)
-                        for key, value in message.items()
-                        if key in fields and isinstance(value, (int, float))
-                    },
-                )
+                self._command = (mode, self._command_fields(message, fields))
                 self._command_at = time.monotonic()
             elif kind == "ended":
                 pass
             else:
                 logger.warning("The HILS bridge sent an unknown message %r", kind)
+
+    def _command_fields(
+        self, message: Mapping[str, Any], fields: Mapping[str, str]
+    ) -> Dict[str, float]:
+        """A command message's numeric *fields*.
+
+        A field that is not a number is left out, and so is a non-finite one
+        (NaN, an infinity: JSON's ``NaN``/``Infinity``, or an integer too large
+        for a float), which CARLA must not get: the field takes its default,
+        as a missing one does.  Those are logged the first time and then once
+        in a hundred."""
+        values: Dict[str, float] = {}
+        for key, value in message.items():
+            if key not in fields or not isinstance(value, (int, float)):
+                continue
+            try:
+                number = float(value)
+            except OverflowError:
+                number = math.inf if value > 0 else -math.inf
+            if math.isfinite(number):
+                values[key] = number
+                continue
+            if self._dropped % _NON_FINITE_LOG_EVERY == 0:
+                logger.warning(
+                    "The HILS bridge sent a non-finite %s (%r); it takes its "
+                    "default (%d dropped so far)",
+                    key,
+                    number,
+                    self._dropped + 1,
+                )
+            self._dropped += 1
+        return values
 
     def _send(self, message: Mapping[str, Any]) -> bool:
         sock = self._sock

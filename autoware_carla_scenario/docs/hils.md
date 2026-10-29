@@ -334,6 +334,11 @@ and forwards it to the run whenever an input arrives. The fields:
 | `control` | `throttle`, `brake` (0-1), `steer` (-1-1, positive right), `hand_brake`, `reverse`, `manual_gear_shift` (0/1), `gear` | `VehicleControl` |
 | `ackermann` | `steer` (rad, positive right), `steer_speed` (rad/s), `speed` (m/s), `acceleration` (m/s²), `jerk` (m/s³) | `VehicleAckermannControl` |
 
+A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
+scale that overflows) is dropped with a warning, as a missing field is: the
+command keeps the field's previous value. The run drops one it receives too, and
+the field takes its default. A constant, `scale` or `offset` must be finite.
+
 The run applies the newest command every tick. One older than `hils.stale_s`
 (the ECUs stopped sending) is stale: the ego brakes, or with
 `hils.on_stale=hold` keeps the last command.

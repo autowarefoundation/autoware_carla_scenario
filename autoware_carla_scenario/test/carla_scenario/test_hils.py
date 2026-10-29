@@ -1591,3 +1591,146 @@ def test_the_communication_loss_action_asks_the_bridge() -> None:
         assert not everything.cutting
     finally:
         unregister_entity("Ego")
+
+
+# -- non-finite command fields (#730) ----------------------------------------------
+
+_NON_FINITE = [math.nan, math.inf, -math.inf]
+
+
+def _command_fields() -> List[tuple[str, str]]:
+    from autoware_carla_scenario.hils.protocol import COMMAND_FIELDS
+
+    return [(mode, key) for mode, fields in COMMAND_FIELDS.items() for key in fields]
+
+
+def _finite_control(control: Any) -> None:
+    for name in (
+        "throttle",
+        "brake",
+        "steer",
+        "steer_speed",
+        "speed",
+        "acceleration",
+        "jerk",
+        "gear",
+    ):
+        value = getattr(control, name, None)
+        if value is not None:
+            assert math.isfinite(value), (name, value)
+
+
+@pytest.mark.parametrize("value", _NON_FINITE, ids=["nan", "inf", "-inf"])
+@pytest.mark.parametrize("mode,key", _command_fields())
+def test_a_non_finite_command_field_is_dropped_by_the_run(
+    mode: str, key: str, value: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A bridge (or any sender) writing NaN/Infinity must not reach CARLA as a
+    # NaN control nor crash the tick (#730): the field counts as absent.
+    other = (
+        "steer" if key != "steer" else ("throttle" if mode == "control" else "speed")
+    )
+    command = {"type": "command", "mode": mode, key: value, other: 0.25}
+    bridge = _ScriptedBridge([{"type": "ready"}, command, command])
+    entity = _entity(bridge.port)
+    with caplog.at_level("WARNING"):
+        assert _ticked(entity, lambda: entity.command is not None)
+        entity.on_tick(None, 0.0)
+        bridge.send(command)
+        time.sleep(0.05)
+        entity.on_tick(None, 0.0)
+    assert not entity.termination_requested, entity.termination_reason
+    assert entity.command == (mode, {other: 0.25})
+    control = entity.actor.controls[-1]
+    _finite_control(control)
+    assert getattr(control, other) == pytest.approx(0.25)
+    dropped = [r for r in caplog.records if "non-finite" in r.getMessage()]
+    assert len(dropped) == 1
+    entity.on_scenario_end(None)
+
+
+def test_a_huge_integer_command_field_is_dropped_by_the_run() -> None:
+    # JSON integers are unbounded: float() of one overflows.
+    command = {"type": "command", "mode": "control", "gear": 10**400, "throttle": 0.5}
+    entity = _entity(_ScriptedBridge([{"type": "ready"}, command]).port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    entity.on_tick(None, 0.0)
+    assert not entity.termination_requested
+    assert entity.command == ("control", {"throttle": 0.5})
+
+
+@pytest.mark.parametrize("value", _NON_FINITE, ids=["nan", "inf", "-inf"])
+@pytest.mark.parametrize("mode,key", _command_fields())
+def test_a_non_finite_ecu_field_is_dropped_by_the_bridge(
+    mode: str, key: str, value: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.hils.config import InputSource, InputSpec
+
+    spec = InputSpec(
+        name="Command",
+        command={key: InputSource(field="Raw"), "_ok": InputSource(field="Ok")},
+    )
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            assert spec.values({"Raw": value, "Ok": 1.0}) == {"_ok": 1.0}
+    assert InputSource(field="Raw").resolve({"Raw": value}) is None
+    dropped = [r for r in caplog.records if "non-finite" in r.getMessage()]
+    assert len(dropped) == 1
+    assert key in dropped[0].getMessage()
+
+
+def test_a_scale_that_overflows_is_dropped_by_the_bridge() -> None:
+    from autoware_carla_scenario.hils.config import InputSource
+
+    assert InputSource(field="Raw", scale=1e308).resolve({"Raw": 10.0}) is None
+    assert InputSource(field="Raw", scale=2.0).resolve({"Raw": 10**400}) is None
+    assert InputSource(field="Raw", scale=2.0).resolve({"Raw": 1.5}) == 3.0
+
+
+def test_the_bridge_forwards_no_non_finite_command(world: _World, dbc: Path) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+    from autoware_carla_scenario.hils.protocol import COMMAND_FIELDS
+
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    sent: List[dict[str, Any]] = []
+    bridge._forwarding = True
+    bridge._link = types.SimpleNamespace(send=sent.append)  # type: ignore[assignment]
+    [spec] = bridge.config.devices
+    [input_spec] = spec.inputs
+    message = types.SimpleNamespace(
+        name=input_spec.name, fields={"Throttle": 40.0, "Steer": math.nan}
+    )
+    bridge._on_input(spec, message)
+    message.fields = {"Throttle": math.inf, "Steer": -0.25}
+    bridge._on_input(spec, message)
+    assert bridge.command == {"throttle": 0.4, "steer": -0.25}
+    assert [set(m) - {"type", "mode"} for m in sent] == [
+        {"throttle"},
+        {"throttle", "steer"},
+    ]
+    assert all(
+        set(m) - {"type", "mode"} <= set(COMMAND_FIELDS["control"]) for m in sent
+    )
+    assert all(
+        math.isfinite(v)
+        for m in sent
+        for k, v in m.items()
+        if k not in ("type", "mode")
+    )
+
+
+@pytest.mark.parametrize("value", [".nan", ".inf", "-.inf"])
+def test_a_non_finite_input_constant_or_scale_is_refused(dbc: Path, value: str) -> None:
+    import yaml
+
+    number = yaml.safe_load(value)
+    for command in (
+        {"throttle": number},
+        {"throttle": {"field": "Throttle", "scale": number}},
+        {"throttle": {"field": "Throttle", "offset": number}},
+    ):
+        document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+        document["devices"]["can"]["inputs"][0]["command"] = command
+        with pytest.raises(HilsConfigError, match="finite"):
+            parse_config(document)
