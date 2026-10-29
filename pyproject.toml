@@ -2,6 +2,14 @@
 members = [
     "autoware_carla_scenario",
 ]
+# The STL policy, a simulated ego for tuning scenarios (stl_driver/README.md).
+# A project of its own, with its own lock, rather than a member: a virtual root
+# syncs every member, so a member's torch would reach every `uv sync` and
+# `uv run`. Add it to the framework's environment when wanted:
+# `uv run --with-editable ./stl_driver ...`.
+exclude = [
+    "stl_driver",
+]
 
 [tool.uv.sources]
 # The T4 dataset reader the tests load each written dataset with, at its

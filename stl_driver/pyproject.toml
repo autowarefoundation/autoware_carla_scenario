@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stl-driver"
+version = "0.1.0"
+description = "An ego policy whose driving behaviour is written in Signal Temporal Logic and optimised for STL robustness"
+readme = "README.md"
+# autoware_carla_scenario's range, so the policy loads in the scenario's own
+# process (`driver.transport=direct`).
+requires-python = ">=3.10,<3.15"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+  # The policy half of the egodriver contract: `BaseDriver`, the server, the
+  # geometry. The same range as autoware_carla_scenario's, so the policy loads
+  # in the scenario's own process (`driver.transport=direct`).
+  "carla-driver-interface>=2.3,<3",
+  # STLCG++. Pinned to a commit because upstream has no releases and no tags.
+  # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
+  # as a PEP 420 namespace package -- see `stl_driver.stl_backend`. This direct
+  # reference is why stl-driver is not published to PyPI.
+  "stlcgpp @ git+https://github.com/UW-CTRL/stlcg-plus-plus@44467eec5c21763597e5f6753cec6759a5bc0ac0",
+  "torch>=2.6,<3",
+  "numpy>=1.24",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-timeout>=2.3"]
+
+[project.scripts]
+stl-driver = "stl_driver.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stl_driver"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# So test modules can import the scenario builders from `tests.conftest`.
+pythonpath = ["."]
+timeout = 300
+markers = [
+  "slow: closed-loop rollouts and latency benchmarks",
+  "latency: wall-clock budgets, which hold on a quiet machine and not on a shared runner",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
