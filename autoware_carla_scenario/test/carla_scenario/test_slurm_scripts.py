@@ -160,6 +160,51 @@ _CASES: dict[str, tuple[dict[str, Any], dict[str, Any], str]] = {
         {"python": "/submit/python", "cwd": "/mnt/work", "env": {}},
         "/mnt/work/o/d/t",
     ),
+    # A manifest without what the scripts read: the KeyError they raised.
+    "local-manifest-without-python": (
+        {},
+        {"cwd": "/work", "env": {"PATH": "/bin"}},
+        "/work/o/d/t",
+    ),
+    "local-manifest-without-cwd": (
+        {"python": "python3"},
+        {"env": {"PATH": "/bin", "VIRTUAL_ENV": "/v"}},
+        "/work/o/d/t",
+    ),
+    # A version 1 manifest has no env (and no batch_dir_relative); extra keys
+    # are ignored.
+    "local-manifest-without-env": (
+        {"headless": False, "setup": "module load x"},
+        {
+            "python": "/usr/bin/python3",
+            "cwd": "/work",
+            "version": 1,
+            "batch_dir": "/work/o/d/t",
+            "cases": [],
+        },
+        "/work/o/d/t",
+    ),
+    # Values no submission writes: the scripts fail on them, or not, as before.
+    "local-manifest-of-null-values": (
+        {},
+        {"python": None, "cwd": None, "env": None},
+        "/work/o/d/t",
+    ),
+    "local-manifest-of-other-types": (
+        {"python": "py"},
+        {"cwd": 7, "env": {"PATH": 1}},
+        "/work/o/d/t",
+    ),
+    "remote-manifest-of-null-env": (
+        {"remote_cwd": "w", "python": "py"},
+        {"batch_dir_relative": 5, "env": None},
+        "/mnt/o/d/t",
+    ),
+    "remote-manifest-without-cwd-and-env": (
+        {"remote_cwd": "/abs", "python": "py", "env": {"A": "1"}},
+        {"python": "/submit/python", "batch_dir_relative": "o/d/t"},
+        "/mnt/o/d/t",
+    ),
 }
 
 _SHELL_PATHS = [
@@ -198,7 +243,7 @@ _SQUEUE = [
 def _outcome(build: Any) -> Any:
     try:
         return build()
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return f"{type(exc).__name__}: {exc}"
 
 
@@ -258,6 +303,8 @@ def _render(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _golden() -> dict[str, Any]:
+    if not _GOLDEN.exists():  # being regenerated
+        return {}
     return json.loads(_GOLDEN.read_text(encoding="utf-8"))
 
 

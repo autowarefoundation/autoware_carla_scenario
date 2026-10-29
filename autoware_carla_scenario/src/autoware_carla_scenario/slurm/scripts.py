@@ -94,7 +94,7 @@ class BatchPaths:
 class ScriptInputs(NamedTuple):
     """What the scripts read of the batch's manifest (``slurm/manifest.json``).
 
-    :func:`.submit.script_inputs` reads it off the manifest.
+    :mod:`.submit` reads it off the manifest.
     """
 
     #: The submitting interpreter (``launcher.python`` overrides it).

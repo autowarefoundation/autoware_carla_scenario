@@ -222,22 +222,21 @@ def _chunks(indices: list[int], size: int) -> list[list[int]]:
     return [indices[i : i + size] for i in range(0, len(indices), size)]
 
 
-def script_inputs(manifest: dict[str, Any], settings: SlurmSettings) -> ScriptInputs:
-    """What the scripts of a batch run with *settings* read of its *manifest*.
+def _script_inputs(
+    manifest: dict[str, Any], *, python: bool, cwd: bool, env: Any
+) -> ScriptInputs:
+    """What the scripts read of *manifest*, as they read it before #732.
 
-    Raises:
-        KeyError: The manifest lacks ``python`` (and ``launcher.python`` is
-            unset) or, without ``remote_cwd``, ``cwd``: where the scripts
-            read it.
+    The manifest's values are handed over as they are, so that a script
+    fails, or not, as it did when it read the manifest itself: *python* and
+    *cwd* say whether the script indexes that key (a ``KeyError`` here when
+    the manifest lacks it), *env* is what it read as the environment.
     """
-    python = manifest["python"] if settings.python is None else manifest.get("python")
-    cwd = manifest["cwd"] if settings.remote_cwd is None else manifest.get("cwd")
-    relative = manifest.get("batch_dir_relative")
     return ScriptInputs(
-        python="" if python is None else str(python),
-        cwd="" if cwd is None else str(cwd),
-        env=dict(manifest.get("env") or {}),
-        batch_dir_relative=None if relative is None else str(relative),
+        python=manifest["python"] if python else manifest.get("python", ""),
+        cwd=manifest["cwd"] if cwd else manifest.get("cwd", ""),
+        env=env,
+        batch_dir_relative=manifest.get("batch_dir_relative"),
     )
 
 
@@ -249,14 +248,22 @@ def job_script(
 ) -> str:
     """The shell script every task of submission *submission* runs
     (:func:`.scripts.job_script`)."""
-    inputs = script_inputs(manifest, settings)
+    inputs = _script_inputs(
+        manifest,
+        python=not settings.python,
+        cwd=settings.remote_cwd is None,
+        env=manifest.get("env", {}),
+    )
     return scripts.job_script(layout, inputs, settings, submission)
 
 
 def collect_script(manifest: dict[str, Any], settings: SlurmSettings) -> str:
     """The script of the job collecting a ``remote_cwd`` batch, on a node
     (:func:`.scripts.collect_script`)."""
-    return scripts.collect_script(script_inputs(manifest, settings), settings)
+    inputs = _script_inputs(
+        manifest, python=not settings.python, cwd=False, env=manifest.get("env") or {}
+    )
+    return scripts.collect_script(inputs, settings)
 
 
 def _collect_command(
@@ -268,7 +275,13 @@ def _collect_command(
 ) -> list[str]:
     """The ``sbatch`` command of the job collecting the batch after *job*
     (:func:`.scripts._collect_command`)."""
-    inputs = script_inputs(manifest, settings)
+    local = settings.remote_cwd is None
+    inputs = _script_inputs(
+        manifest,
+        python=local and not settings.python,
+        cwd=local,
+        env=manifest.get("env", {}) if local else {},
+    )
     return scripts._collect_command(layout, inputs, settings, job, script)
 
 
