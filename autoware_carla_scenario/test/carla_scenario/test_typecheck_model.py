@@ -417,6 +417,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         for name in (
             "BUMPER_PROBE_ROLE_NAME",
             "DEFAULT_TM_PORT",
+            "EGO_ROLES",
             "FIXED_DELTA_SECONDS",
             "LANE_CHANGE_CENTER_TOLERANCE_M",
             "LANE_CHANGE_HEADING_TOLERANCE_DEG",
