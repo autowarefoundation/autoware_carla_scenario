@@ -3724,6 +3724,16 @@ its run raised (CARLA went away, a spawn failed), timed out
 FAILED verdict is final and is not retried, as in a batch. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
 at most <code>1 + server.cooldown_max_retries</code> times, as in a batch.</p>
+<p>A case that timed out or crashed had no chance to stop the CARLA server it
+launched; that server's watchdog stops it within about a second, giving it
+10 s before <code>SIGKILL</code>. So before the next attempt -- a retry or the next case
+-- the sweeper waits until the CARLA processes the case launched have exited
+(at most 15 s, then it kills them), on top of <code>server.cooldown_seconds</code>: the
+next case must neither reuse the dying server nor start one while it still
+holds the port, even if the case was killed while its server was still
+loading. A case that ended normally stopped its server itself, so nothing is
+waited for; nor is a server the case did not launch (one you started
+yourself, which it reused), which no case stops.</p>
 <p>A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
 (<code>the sweep expands to no case</code>), or <code>--resume-from</code> / <code>sweep.resume_from</code> is
@@ -4601,7 +4611,7 @@ condition's message.</p>
 </tr>
 <tr>
 <td>130, 143</td>
-<td>A <code>hydra/sweeper=lanelet_constraint</code> sweep stopped by Ctrl-C (130) or <code>SIGTERM</code> (143), after it stopped the case it was running</td>
+<td>Stopped by Ctrl-C (130) or <code>SIGTERM</code> (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running</td>
 </tr>
 </tbody>
 </table>
@@ -4619,7 +4629,10 @@ exit 0 always means something ran and passed. The exceptions:</p>
   <code>hydra/sweeper=</code>), a case that raises an exception ends the sweep at once
   with 1, as Hydra does; a case that runs and fails does not.</li>
 <li><code>launcher=slurm</code> with <code>--no-wait</code> exits 0 once the batch is submitted; its
-  verdict is what <code>scenario-slurm wait</code> or <code>scenario-slurm collect</code> exit with.</li>
+  verdict is what <code>scenario-slurm wait</code> or <code>scenario-slurm collect</code> exit with.
+  Interrupted while it waits, it cancels the array and exits with the verdict
+  of what it collects (<code>slurm.cancel_on_interrupt</code>, the default), or exits 130
+  and leaves the array running.</li>
 </ul>
 <hr />
 <h2 id="driving-the-ego-with-an-external-policy">Driving the Ego with an External Policy<a class="headerlink" href="#driving-the-ego-with-an-external-policy" title="Permanent link">&para;</a></h2>
@@ -4840,8 +4853,8 @@ one YAML file:</p>
 <a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="c1"># Custom host and port</span>
 <a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 <a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Specify results directory</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--base-path<span class="w"> </span>/path/to/scenario/outputs
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Scan another project: the directory containing outputs/ and multirun/</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--base-path<span class="w"> </span>/path/to/project
 <a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>
 <a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="c1"># All options</span>
 <a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--help
@@ -5290,10 +5303,11 @@ mapping).</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="c1"># 1. Run scenarios</span>
 <a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
 <a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>
-<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="c1"># 2. Launch the viewer pointing to the outputs directory</span>
-<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>
-<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="c1"># 2. Launch the viewer from the project directory: it scans outputs/ and</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="c1">#    multirun/ there (from elsewhere: --base-path &lt;dir containing outputs/&gt;)</span>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>
+<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
 </code></pre></div>
 <h3 id="use-case-6-resume-a-failed-batch">Use Case 6: Resume a Failed Batch<a class="headerlink" href="#use-case-6-resume-a-failed-batch" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
@@ -5361,7 +5375,7 @@ mapping).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 23:19:31 UTC"><span class="timeago" datetime="2026-10-28T23:19:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 23:19:31 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 03:45:27 UTC"><span class="timeago" datetime="2026-10-29T03:45:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 03:45:27 UTC">2026-10-29</span>
   </span>
 
     
