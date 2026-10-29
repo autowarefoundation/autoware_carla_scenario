@@ -2101,17 +2101,18 @@ cannot read 2020-12 tuples.</p>
 <code>action</code> and <code>result</code>, and <code>schema_version</code> itself; a file of version 1 has no
 <code>schema_version</code> and none of those records, and still follows the schema.
 The records marked (2) in the table below that are not in that list
-(<code>plan</code>, <code>adversity</code>, <code>waypoint_arrival</code>, <code>collision</code>, <code>walker_fallen</code>,
+(<code>rear_axle</code>, <code>plan</code>, <code>adversity</code>, <code>waypoint_arrival</code>, <code>collision</code>, <code>walker_fallen</code>,
 <code>spawn</code>, <code>despawn</code>) came later within version 2: a reader of version 2 that does not
 know one skips it.
 Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the <code>type</code>s it does not know reads
 any later file.</p>
 <h2 id="records">Records<a class="headerlink" href="#records" title="Permanent link">&para;</a></h2>
-<p>Each line is one of eighteen records, told apart by <code>type</code>. A file starts with one
+<p>Each line is one of nineteen records, told apart by <code>type</code>. A file starts with one
 <code>world</code> line and one <code>map</code> line, then one <code>traffic_light</code> line per light and one
 <code>warmup</code> line. After that come the ticks: each <code>tick</code> line is preceded by an
-<code>actor</code> line for every vehicle or walker appearing in it for the first time and
+<code>actor</code> line for every vehicle or walker appearing in it for the first time
+(an ego's followed by a <code>rear_axle</code> line) and
 an <code>actor_gone</code> line for every one that has gone since the last, and followed
 by a <code>markers</code> line when the ego's plan changed on it (and a <code>plan</code> line after
 it, the plan timed), a <code>condition</code> line for
@@ -2167,6 +2168,11 @@ each condition that changed and an <code>action</code> line for each action that
 <td><code>warmup</code> (2)</td>
 <td>once, before the first tick</td>
 <td><code>ticks</code> (frames of the CARLA recording before the scenario clock started: the warm-up), <code>start_frame</code> (the frame the recorder started at, null without a recording), <code>end_frame</code> (the frame of the first tick, t = 0)</td>
+</tr>
+<tr>
+<td><code>rear_axle</code> (2)</td>
+<td>right after an ego's <code>actor</code> line</td>
+<td><code>id</code>, <code>offset</code> (where its rear axle -- Autoware's <code>base_link</code>, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: the rig origin a driver policy's entity uses, else from its wheels, else half its box behind)</td>
 </tr>
 <tr>
 <td><code>actor_gone</code> (2)</td>
@@ -2387,7 +2393,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 00:28:12 UTC"><span class="timeago" datetime="2026-10-29T00:28:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 00:28:12 UTC">2026-10-29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 21:34:59 UTC"><span class="timeago" datetime="2026-10-29T21:34:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 21:34:59 UTC">2026-10-29</span>
   </span>
 
     
