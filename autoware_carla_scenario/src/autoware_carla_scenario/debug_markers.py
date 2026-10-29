@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
 if TYPE_CHECKING:
-    from .driver.geometry import Trajectory
+    from .driver.geometry import Pose, Trajectory
 
 __all__ = [
     "DRIVEN_PATH_COLOR",
@@ -23,6 +23,8 @@ __all__ = [
     "DebugMarkers",
     "DebugPolyline",
     "plan_markers",
+    "plan_polyline",
+    "world_point",
 ]
 
 #: An RGB colour, each channel 0-255.
@@ -76,26 +78,33 @@ class DebugMarkers:
         return len(self.polylines) > 0
 
 
-def plan_markers(plan: "Trajectory") -> DebugMarkers:
-    """A driver's *plan*, given in the right-handed local frame, as markers.
+def world_point(pose: "Pose") -> WorldPoint:
+    """Where *pose*, in the right-handed local frame a driver plans in, is in
+    CARLA's world: the local frame is the world with ``y`` flipped
+    (:mod:`autoware_carla_scenario.driver.observation`)."""
+    position = pose.position
+    return (float(position[0]), -float(position[1]), float(position[2]))
 
-    The local frame is CARLA's world with ``y`` flipped
-    (:mod:`autoware_carla_scenario.driver.observation`), so flipping it back
-    puts the plan in the world.  It is lifted a little above the road, with a
-    dot at each point.  An entity builds these once per plan and hands out the
-    same object until the plan changes: the trajectory log then writes it once
-    per plan rather than once per tick.
+
+def plan_polyline(points: List[WorldPoint]) -> DebugPolyline:
+    """A plan through *points* (CARLA world) as it is drawn: lifted a little
+    above the road, with a dot at each point."""
+    return DebugPolyline(
+        [(x, y, z + _TRAJECTORY_LIFT_M) for x, y, z in points],
+        TRAJECTORY_COLOR,
+        0.1,
+        0.1,
+    )
+
+
+def plan_markers(plan: "Trajectory") -> DebugMarkers:
+    """A driver's *plan*, given in the right-handed local frame, as markers
+    (:func:`plan_polyline` through its :func:`world_point` positions).
+
+    An entity builds these once per plan and hands out the same object until
+    the plan changes: the trajectory log then writes it once per plan rather
+    than once per tick.
     """
-    points: List[WorldPoint] = []
-    for pose in plan.poses:
-        position = pose.position
-        points.append(
-            (
-                float(position[0]),
-                -float(position[1]),
-                float(position[2]) + _TRAJECTORY_LIFT_M,
-            )
-        )
     markers = DebugMarkers()
-    markers.add_polyline(DebugPolyline(points, TRAJECTORY_COLOR, 0.1, 0.1))
+    markers.add_polyline(plan_polyline([world_point(pose) for pose in plan.poses]))
     return markers

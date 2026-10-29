@@ -188,14 +188,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main",
         _CARLA_INSTALL,
     ),
-    f"{_PACKAGE}.debug_markers": {
-        "plan_markers": (
-            "takes carla_driver_interface's Trajectory, a driver's plan, which "
-            "only the driver-backed entities hold (checked from their source); "
-            "the model of carla_driver_interface declares it for the driver "
-            "modules, not for a scenario"
-        ),
-    },
+    f"{_PACKAGE}.debug_markers": _each(
+        "plan_markers plan_polyline world_point",
+        "draws a driver's plan (carla_driver_interface's Trajectory and Pose), "
+        "which only the driver-backed entities hold (checked from their "
+        "source); the model of carla_driver_interface declares them for the "
+        "driver modules, not for a scenario",
+    ),
     f"{_PACKAGE}.driver.egodriver_client": _each(
         "EGODRIVER_SERVICE_FULL_NAME MAX_MESSAGE_BYTES channel_options", _GRPC
     ),
@@ -547,6 +546,20 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "client_address client_connected close config configure is_ready port "
         "start take_turn_indicators",
         _BY_NAME,
+    ),
+    "HilsEgoEntity": _members(
+        "actor attaches_to_existing_actor carried_actor_ids change_lane command "
+        "config debug_markers destroy finish_at follow_route forget_lane_change "
+        "is_initialized lane_change_finished on_scenario_end on_scenario_start "
+        "on_tick release_from_traffic require_microscopic requires_goal "
+        "resume_traffic route_to set_client set_desired_speed set_initial_speeds "
+        "simulation_fidelity spawn stack_name termination_reason "
+        "termination_requested turn_at_junction use_autopilot",
+        "the model declares only what the checked CommunicationLossAction "
+        "calls on the HILS ego (disconnect, reconnect), and a scenario cannot "
+        "build one (its constructor is a compile error): the runner builds it "
+        "from the run's config (ego.entity=hils); entity.hils_entity imports "
+        "socket, so the library check does not compile it",
     ),
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE

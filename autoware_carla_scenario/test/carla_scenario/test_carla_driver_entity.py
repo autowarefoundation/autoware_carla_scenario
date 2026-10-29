@@ -44,6 +44,7 @@ from carla_driver_interface.protocol import (
 from carla_driver_interface.server import serving
 from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
+from autoware_carla_scenario.ego_plan import PlanMarkers
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 from autoware_carla_scenario.t4 import withdraw_driver_sensors
 
@@ -1256,3 +1257,21 @@ def test_the_plan_is_shown_as_the_ego_s_debug_markers() -> None:
     assert xs == pytest.approx([0.8, 1.6, 2.4, 3.2])
     # Until the policy plans again, the same markers: one per plan, not tick.
     assert entity.debug_markers() is markers
+
+
+def test_the_markers_carry_the_plan_timed_in_the_world() -> None:
+    entity, _ = _entity(turn_indicators=(2,))
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+
+    entity.on_tick(world, _TICK_S)
+
+    markers = entity.debug_markers()
+    assert isinstance(markers, PlanMarkers)
+    plan = markers.plan
+    assert plan.step == 1
+    # Planned on the first tick; the fake policy times its points 0.1 s apart.
+    assert plan.planned_at_us == int(round(_TICK_S * 1_000_000))
+    assert [p[0] for p in plan.points] == pytest.approx([0.1, 0.2, 0.3, 0.4])
+    assert [p[1] for p in plan.points] == pytest.approx([0.8, 1.6, 2.4, 3.2])
+    assert plan.turn_indicator == 2
