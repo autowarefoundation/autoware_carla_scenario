@@ -35,12 +35,13 @@ from typing import (
 )
 
 from ..constants import FIXED_DELTA_SECONDS
-from ..debug_markers import DebugMarkers, plan_markers
+from ..debug_markers import DebugMarkers
 from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
+from ..ego_plan import ego_plan_markers
 from ..utils.powertrain import ChaosPowertrain
 from ..utils.turn_indicator import (
     TurnIndicatorState,
@@ -639,8 +640,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             self._renderer_data(observation),
         )
         self._plan = outcome.trajectory
-        self._plan_markers = plan_markers(self._plan)
         self._drive_count += 1
+        self._plan_markers = ego_plan_markers(
+            outcome.trajectory,
+            self._sim_time_us,
+            self._drive_count,
+            policy_name=outcome.policy_name,
+            inference_seconds=outcome.inference_seconds,
+            turn_indicator=outcome.turn_indicator,
+            debug_scalars=outcome.debug_scalars,
+        )
         self._last_policy_time_us = self._sim_time_us
         if outcome.debug_scalars and self._drive_count % _DEBUG_LOG_INTERVAL == 0:
             logger.info(
@@ -762,7 +771,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         actor.apply_control(command.to_carla_control())
 
     def debug_markers(self) -> DebugMarkers:
-        """The policy's current plan, as a line along the road."""
+        """The policy's current plan, as a line along the road, carrying the
+        plan itself (:class:`~autoware_carla_scenario.ego_plan.PlanMarkers`)."""
         return self._plan_markers
 
     def debug_state(self) -> Dict[str, float]:
