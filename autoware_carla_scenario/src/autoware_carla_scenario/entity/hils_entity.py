@@ -35,6 +35,7 @@ from ..hils.protocol import (
     DEFAULT_PORT,
     PROTOCOL_VERSION,
     LineReader,
+    command_value,
     encode,
 )
 from ..entity_role import EntityRole
@@ -50,6 +51,14 @@ __all__ = ["HilsEgoConfig", "HilsEgoEntity", "find_hils_entity"]
 
 #: What the ego does once the ECUs' command is stale.
 ON_STALE_ACTIONS: Tuple[str, ...] = ("brake", "hold")
+
+#: Non-finite command fields are logged the first time and then once in this
+#: many (a command comes every ECU cycle).
+_NON_FINITE_LOG_EVERY = 100
+
+#: The gears CARLA's ``VehicleControl`` can hold (a 32-bit int).
+_GEAR_MIN = float(-(2**31))
+_GEAR_MAX = float(2**31 - 1)
 
 
 @dataclass(frozen=True)
@@ -123,6 +132,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
     _command_at: float
     _stale: bool
     _cuts: int
+    _dropped: int
 
     def __init__(
         self, config: Optional[HilsEgoConfig] = None, episode_name: str = ""
@@ -139,6 +149,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._stale = False
         #: Numbers the cuts asked of the bridge (:meth:`disconnect`).
         self._cuts = 0
+        #: Non-finite command fields dropped so far (the log's rate limit).
+        self._dropped = 0
 
     @property
     def config(self) -> HilsEgoConfig:
@@ -178,6 +190,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._stale = False
         # The bridge restores every cut at the scenario's end: number afresh.
         self._cuts = 0
+        self._dropped = 0
         cfg = self._config
         try:
             sock = socket.create_connection(
@@ -342,19 +355,42 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 if fields is None:
                     logger.warning("The HILS bridge sent a %r command; ignored", mode)
                     continue
-                self._command = (
-                    mode,
-                    {
-                        key: float(value)
-                        for key, value in message.items()
-                        if key in fields and isinstance(value, (int, float))
-                    },
-                )
+                self._command = (mode, self._command_fields(message, fields))
                 self._command_at = time.monotonic()
             elif kind == "ended":
                 pass
             else:
                 logger.warning("The HILS bridge sent an unknown message %r", kind)
+
+    def _command_fields(
+        self, message: Mapping[str, Any], fields: Mapping[str, str]
+    ) -> Dict[str, float]:
+        """A command message's numeric *fields*.
+
+        A field that is not a number is left out, and so is a non-finite one
+        (NaN, an infinity: JSON's ``NaN``/``Infinity``) or one too large for
+        CARLA's 32-bit floats (:func:`~..hils.protocol.command_value`), which
+        CARLA must not get: the field takes its default,
+        as a missing one does.  Those are logged the first time and then once
+        in a hundred."""
+        values: Dict[str, float] = {}
+        for key, value in message.items():
+            if key not in fields or not isinstance(value, (int, float)):
+                continue
+            number = command_value(value)
+            if number is not None:
+                values[key] = number
+                continue
+            if self._dropped % _NON_FINITE_LOG_EVERY == 0:
+                logger.warning(
+                    "The HILS bridge sent a non-finite or out-of-range %s (%r); "
+                    "it takes its default (%d dropped so far)",
+                    key,
+                    value,
+                    self._dropped + 1,
+                )
+            self._dropped += 1
+        return values
 
     def _send(self, message: Mapping[str, Any]) -> bool:
         sock = self._sock
@@ -423,7 +459,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 hand_brake=fields.get("hand_brake", 0.0) >= 0.5,
                 reverse=fields.get("reverse", 0.0) >= 0.5,
                 manual_gear_shift=fields.get("manual_gear_shift", 0.0) >= 0.5,
-                gear=int(fields.get("gear", 0.0)),
+                # CARLA's gear is a 32-bit int: a larger one would raise.
+                gear=int(min(max(fields.get("gear", 0.0), _GEAR_MIN), _GEAR_MAX)),
             )
         )
 

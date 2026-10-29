@@ -47,14 +47,22 @@ refused too instead of becoming ``False``.
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from .measurements import CAMERA_ENCODINGS
-from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT
+from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT, command_value
 from .signals import SIGNALS
+
+logger = logging.getLogger(__name__)
+
+#: A command field an ECU keeps sending non-finite is logged the first time and
+#: then once in this many.
+_NON_FINITE_LOG_EVERY = 100
 
 __all__ = [
     "CLOCKS",
@@ -157,7 +165,17 @@ class InputSource:
 
     def resolve(self, fields: Mapping[str, Any]) -> Optional[float]:
         """The command field's value from a decoded message's *fields*;
-        ``None`` when the message lacks the field or it is not a number."""
+        ``None`` when the message lacks the field, it is not a number, or it
+        (scaled) is not finite (NaN, an infinity: a decoded IEEE-float signal,
+        an overflowing scale) or too large for CARLA's 32-bit floats
+        (:func:`~.protocol.command_value`), which CARLA must not get."""
+        value = self.scaled(fields)
+        return None if value is None else command_value(value)
+
+    def scaled(self, fields: Mapping[str, Any]) -> Optional[float]:
+        """:meth:`resolve`, but a non-finite or out-of-range value is returned
+        (not ``None``), for the caller to report; a number too large for a
+        float is ``inf``."""
         if self.field is None:
             return self.constant
         value = fields.get(self.field)
@@ -165,7 +183,11 @@ class InputSource:
             value = float(value)
         if not isinstance(value, (int, float)):
             return None
-        return float(value) * self.scale + self.offset
+        try:
+            number = float(value)
+        except OverflowError:
+            number = math.inf if value > 0 else -math.inf
+        return number * self.scale + self.offset
 
 
 @dataclass(frozen=True)
@@ -180,14 +202,40 @@ class InputSpec:
 
     name: str
     command: Mapping[str, InputSource]
+    #: How many non-finite values each command field has dropped (the log's
+    #: rate limit).
+    _dropped: Dict[str, int] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def values(self, fields: Mapping[str, Any]) -> Dict[str, float]:
-        """The command fields a decoded message's *fields* give."""
+        """The command fields a decoded message's *fields* give.
+
+        A field whose value is not finite, or too large for CARLA's 32-bit
+        floats, is left out, as a missing one is:
+        the ego keeps the field's previous value.  It is logged the first time
+        and then once in a hundred."""
         values: Dict[str, float] = {}
         for key, source in self.command.items():
-            value = source.resolve(fields)
-            if value is not None:
-                values[key] = value
+            value = source.scaled(fields)
+            if value is None:
+                continue
+            number = command_value(value)
+            if number is None:
+                count = self._dropped.get(key, 0)
+                if count % _NON_FINITE_LOG_EVERY == 0:
+                    logger.warning(
+                        "%s: dropped a non-finite or out-of-range %s "
+                        "(%r from %s; %d so far)",
+                        self.name,
+                        key,
+                        value,
+                        source.field,
+                        count + 1,
+                    )
+                self._dropped[key] = count + 1
+                continue
+            values[key] = number
         return values
 
 
@@ -346,7 +394,19 @@ def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
 def _number(value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise HilsConfigError(f"{where}: expected a number, got {value!r}")
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        raise HilsConfigError(
+            f"{where}: expected a number a float can hold, got {value!r}"
+        ) from None
+
+
+def _finite(value: Any, where: str) -> float:
+    number = _number(value, where)
+    if not math.isfinite(number):
+        raise HilsConfigError(f"{where}: expected a finite number, got {value!r}")
+    return number
 
 
 def _signal(name: str, where: str) -> str:
@@ -475,13 +535,13 @@ def _input_source(value: Any, where: str) -> InputSource:
             raise HilsConfigError(f"{where}: a mapping names a field")
         return InputSource(
             field=_text(value["field"], f"{where}.field"),
-            scale=_number(value.get("scale", 1.0), f"{where}.scale"),
-            offset=_number(value.get("offset", 0.0), f"{where}.offset"),
+            scale=_finite(value.get("scale", 1.0), f"{where}.scale"),
+            offset=_finite(value.get("offset", 0.0), f"{where}.offset"),
         )
     if isinstance(value, str):
         return InputSource(field=value)
     if isinstance(value, (bool, int, float)):
-        return InputSource(constant=float(value))
+        return InputSource(constant=_finite(float(value), where))
     raise HilsConfigError(
         f"{where}: expected a field name, a number or {{field: ...}}, got {value!r}"
     )
