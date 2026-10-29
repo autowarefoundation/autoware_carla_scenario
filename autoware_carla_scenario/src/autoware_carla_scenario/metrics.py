@@ -31,10 +31,11 @@ An event (a collision, being off the road) reads ``1.0`` when it holds and
 ``None`` when there is no ego, and the map-based ones when the world has no
 map.
 
-Three are not AlpaSim's and read the run so far rather than a frame: how the
+Four are not AlpaSim's and read the run so far rather than a frame: how the
 ego weaves from side to side (:data:`LATERAL_REVERSALS`,
-:data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`), from the ego's motion
-the runner hands this module every tick (:func:`track_ego_motion`).
+:data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`) and how often its turn
+indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
+runner hands this module every tick (:func:`track_ego_motion`).
 
 AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
@@ -72,6 +73,7 @@ __all__ = [
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
     "STEERING_REVERSALS",
+    "TURN_INDICATOR_CHANGES",
     "WRONG_LANE",
     "is_metric",
     "read_metric",
@@ -114,6 +116,9 @@ LATERAL_WOBBLE_M = "lateral_wobble_m"
 #: How many times so far the steering applied to the ego turned back, by more
 #: than :data:`_STEERING_REVERSAL_GAP`, not AlpaSim's.
 STEERING_REVERSALS = "steering_reversals"
+#: How many times so far the ego's turn indicators changed (off, left, right,
+#: hazard), not AlpaSim's.
+TURN_INDICATOR_CHANGES = "turn_indicator_changes"
 
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
@@ -623,6 +628,10 @@ class _Motion:
     window: list[tuple[float, float]]
     lateral_reversals: _Reversals
     steering_reversals: _Reversals
+    #: The indicators the ego showed last (``TurnIndicatorState.value``), -1
+    #: before the first frame, and how many times they changed since.
+    indicator: int
+    indicator_changes: int
 
     def __init__(self) -> None:
         self.ego_id = -1
@@ -631,6 +640,8 @@ class _Motion:
         self.window = []
         self.lateral_reversals = _Reversals(_LATERAL_REVERSAL_GAP_M)
         self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
+        self.indicator = -1
+        self.indicator_changes = 0
 
     def wobble(self) -> Optional[float]:
         """The RMS of :attr:`lateral` over the window about the straight line
@@ -658,8 +669,8 @@ def reset_ego_motion() -> None:
 
 def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     """Add the frame of *world* at *elapsed* simulated seconds to the ego's
-    motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M` and
-    :data:`STEERING_REVERSALS` read.
+    motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M`,
+    :data:`STEERING_REVERSALS` and :data:`TURN_INDICATOR_CHANGES` read.
 
     The runner calls it every tick; a frame at the time of the last one adds
     nothing.  Off the driving lanes the ego has no lane to drift across, and
@@ -685,6 +696,7 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         motion.steering_reversals.add(float(ego.get_control().steer))
     except Exception:
         pass
+    _track_indicator(motion, ego)
     if last is not None:
         frame = _frame(world)
         try:
@@ -700,6 +712,23 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     start = elapsed - _WOBBLE_WINDOW_S
     motion.window = [p for p in motion.window if p[0] >= start]
     motion.window.append((elapsed, motion.lateral))
+
+
+def _track_indicator(motion: _Motion, ego: "carla.Actor") -> None:
+    """Count a change of the indicators *ego* shows since the last frame."""
+    # Imported here: it reads CARLA's light bits, and this module does not
+    # import CARLA at import time.
+    from .utils.turn_indicator import is_vehicle, turn_indicators_of  # noqa: PLC0415
+
+    try:
+        if not is_vehicle(ego):
+            return
+        shown = int(turn_indicators_of(ego).value)
+    except Exception:
+        return
+    if motion.indicator >= 0 and shown != motion.indicator:
+        motion.indicator_changes += 1
+    motion.indicator = shown
 
 
 def _tracked(world: "carla.World") -> Optional[_Motion]:
@@ -723,6 +752,13 @@ def _lateral_wobble_m(world: "carla.World") -> Optional[float]:
 def _steering_reversals(world: "carla.World") -> Optional[float]:
     motion = _tracked(world)
     return None if motion is None else float(motion.steering_reversals.count)
+
+
+def _turn_indicator_changes(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    if motion is None or motion.indicator < 0:
+        return None
+    return float(motion.indicator_changes)
 
 
 def _offroad(world: "carla.World") -> Optional[float]:
@@ -955,6 +991,15 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             unit="count",
             text="How many times so far the steering applied to the ego "
             "turned back by more than 0.01 of full lock",
+            aggregation="last",
+        ),
+        Metric(
+            TURN_INDICATOR_CHANGES,
+            _turn_indicator_changes,
+            title="Turn indicator changes",
+            unit="count",
+            text="How many times so far the ego's turn indicators changed: "
+            "off, left, right or hazard",
             aggregation="last",
         ),
     ]

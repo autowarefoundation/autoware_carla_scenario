@@ -44,6 +44,7 @@ value with the aggregation in the last column (`Metric.aggregation`).
 | `lateral_reversals` | count | Not AlpaSim's: how many times so far the ego's drift across its lane turned back by more than 0.1 m ([Weaving](#weaving)) | last |
 | `lateral_wobble_m` | m | Not AlpaSim's: how far the ego strayed across its lane about its course over the last 4 s, RMS ([Weaving](#weaving)) | max |
 | `steering_reversals` | count | Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.01 of full lock ([Weaving](#weaving)) | last |
+| `turn_indicator_changes` | count | Not AlpaSim's: how many times so far the ego's turn indicators changed, between off, left, right and hazard ([Weaving](#weaving)) | last |
 
 Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
 asks whether the union of the lane polygons around the ego covers its box,
@@ -57,8 +58,9 @@ the front from the rear.
 
 ### Weaving
 
-Three metrics read how the ego weaves from side to side. Unlike the others
-they read the run so far, not one frame: the runner hands the ego's motion to
+Three metrics read how the ego weaves from side to side, and a fourth how
+often its turn indicators changed. Unlike the others they read the run so far,
+not one frame: the runner hands the ego's motion to
 `autoware_carla_scenario.metrics` every tick (`track_ego_motion`), and they read
 what it has gathered.
 
@@ -83,6 +85,13 @@ line. Off the driving lanes the drift holds until the ego is back on one.
   (`get_control().steer`, `1` the vehicle's full lock) turned back by more
   than 0.01, about 0.7 degrees at the wheels of a car that locks at 70. It sees
   the controller's weaving before the vehicle shows it.
+
+`turn_indicator_changes` counts the changes of the indicators the ego shows
+(its CARLA light state: off, left, right, hazard), from the first frame on: a
+turn signalled and cancelled is two. It is counted apart from the steering, so
+an indicator that flickers through a turn and a steering that saws there each
+read on their own count. A vehicle's light state holds while an indicator is
+commanded, so its blinking is not a change.
 
 The counts are of the run so far, so a longer run reads more: compare runs of
 one scenario, or fail on a count, not on a rate:

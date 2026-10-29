@@ -29,6 +29,7 @@ IMPORTANCE_SAMPLING_WEIGHT: str = "importance_sampling_weight"
 LATERAL_REVERSALS: str = "lateral_reversals"
 LATERAL_WOBBLE_M: str = "lateral_wobble_m"
 STEERING_REVERSALS: str = "steering_reversals"
+TURN_INDICATOR_CHANGES: str = "turn_indicator_changes"
 
 
 def _acs_unread(world: carla.World) -> Optional[float]:
@@ -179,6 +180,15 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         unit="count",
         text="How many times so far the steering applied to the ego "
         "turned back by more than 0.01 of full lock",
+        aggregation="last",
+    ),
+    TURN_INDICATOR_CHANGES: Metric(
+        TURN_INDICATOR_CHANGES,
+        _acs_unread,
+        title="Turn indicator changes",
+        unit="count",
+        text="How many times so far the ego's turn indicators changed: "
+        "off, left, right or hazard",
         aggregation="last",
     ),
 }

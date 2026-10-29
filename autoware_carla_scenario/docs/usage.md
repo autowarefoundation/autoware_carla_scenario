@@ -603,6 +603,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 | `scenario.turn_indicator_before_m` | float \| null | null | From this many metres before the junction (the stop line at the start of the route's first lanelet) until the run passes, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
 | `scenario.turn_indicator_grace_seconds` | float | `0.5` | How long the indicator may be wrong before the run fails |
 | `scenario.max_steering_reversals` | int \| null | null | Fail once the steering has turned back this many times since the start (the `steering_reversals` metric, [metrics.md](metrics.md#weaving)). `null` disables the check |
+| `scenario.max_turn_indicator_changes` | int \| null | null | Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the `turn_indicator_changes` metric). `null` disables the check |
 | `scenario.npc_vehicles` | list | `[]` | NPC vehicle configurations (see below) |
 
 **NPC vehicle configuration:**

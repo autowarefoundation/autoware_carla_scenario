@@ -187,6 +187,25 @@ def test_steering_back_too_often_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
+def test_the_indicator_and_the_steering_are_counted_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = _Turn(
+        monkeypatch,
+        turn_direction="left",
+        max_steering_reversals=6,
+        max_turn_indicator_changes=3,
+    )
+
+    assert {
+        label: turn.failure(label).get_details()["value"]
+        for label in ("steering_reversals", "turn_indicator_changes")
+    } == {"steering_reversals": 6.0, "turn_indicator_changes": 3.0}
+    assert turn.failure("turn_indicator_changes").get_details()["metric"] == (
+        "turn_indicator_changes"
+    )
+
+
 @pytest.mark.parametrize(
     "config, message",
     [
@@ -203,6 +222,7 @@ def test_steering_back_too_often_fails(monkeypatch: pytest.MonkeyPatch) -> None:
             "grace",
         ),
         ({"max_steering_reversals": 0}, "at least 1"),
+        ({"max_turn_indicator_changes": 0}, "at least 1"),
     ],
 )
 def test_a_check_that_cannot_hold_is_refused(

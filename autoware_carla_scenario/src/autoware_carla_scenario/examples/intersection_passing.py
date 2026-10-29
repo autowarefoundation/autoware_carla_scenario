@@ -12,11 +12,13 @@ The scenario supports an optional ``turn_direction`` (``"left"`` / ``"right"`` /
 through the junction, and an optional ``min_speed_kmh`` that adds a
 :class:`~autoware_carla_scenario.SpeedCondition` fail condition.
 
-Two more fail conditions judge how the ego turns, from the start until it is
+More fail conditions judge how the ego turns, from the start until it is
 through the junction: ``turn_indicator_before_m`` fails a run whose ego, that
-close to the junction, does not show the indicator of its turn, and
+close to the junction, does not show the indicator of its turn;
 ``max_steering_reversals`` one whose steering turned back that many times (the
-``steering_reversals`` metric).
+``steering_reversals`` metric); and ``max_turn_indicator_changes``, counted
+apart from the steering, one whose indicators changed that many times (the
+``turn_indicator_changes`` metric).
 
 Typical usage
 -------------
@@ -69,7 +71,7 @@ from autoware_carla_scenario import (
     to_opendrive,
 )
 
-from autoware_carla_scenario.metrics import STEERING_REVERSALS
+from autoware_carla_scenario.metrics import STEERING_REVERSALS, TURN_INDICATOR_CHANGES
 from .configs import IntersectionPassingConfig
 
 logger = logging.getLogger(__name__)
@@ -129,7 +131,8 @@ class IntersectionPassingScenario(BaseScenario):
        having come that close to the junction, has not shown the indicator of
        its turn for ``turn_indicator_grace_seconds``.
     7. If ``max_steering_reversals`` is set, fails it once the steering has
-       turned back that many times.
+       turned back that many times; if ``max_turn_indicator_changes`` is, once
+       the indicators have changed that many times.  Each is counted on its own.
     8. Registers a :class:`TimeoutCondition` as a fail-safe.
 
     Once all expected roads have been visited the scenario passes.
@@ -303,6 +306,17 @@ class IntersectionPassingScenario(BaseScenario):
                     ComparisonRule.GREATER_THAN_OR_EQUAL,
                     float(cfg.max_steering_reversals),
                     label="steering_reversals",
+                )
+            )
+
+        # --- Fail: the indicators changed too often (apart from the steering) ---
+        if cfg.max_turn_indicator_changes is not None:
+            self.register_fail_condition(
+                MetricCondition(
+                    TURN_INDICATOR_CHANGES,
+                    ComparisonRule.GREATER_THAN_OR_EQUAL,
+                    float(cfg.max_turn_indicator_changes),
+                    label="turn_indicator_changes",
                 )
             )
 

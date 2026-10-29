@@ -80,6 +80,12 @@ class IntersectionPassingConfig:
     #: counted from the start until the run passes.  ``None`` checks nothing.
     max_steering_reversals: int | None = None
 
+    #: The run fails once the ego's turn indicators have changed this many
+    #: times (the ``turn_indicator_changes`` metric), counted apart from the
+    #: steering, from the start until the run passes.  ``None`` checks
+    #: nothing.
+    max_turn_indicator_changes: int | None = None
+
     #: Optional list of NPC vehicles to spawn in the scenario.
     #: Empty by default for backwards compatibility with existing YAML configs.
     npc_vehicles: list[NpcVehicleConfig] = field(default_factory=list)
@@ -102,6 +108,11 @@ class IntersectionPassingConfig:
             raise ValueError("turn_indicator_grace_seconds must be positive")
         if self.max_steering_reversals is not None and self.max_steering_reversals < 1:
             raise ValueError("max_steering_reversals must be at least 1")
+        if (
+            self.max_turn_indicator_changes is not None
+            and self.max_turn_indicator_changes < 1
+        ):
+            raise ValueError("max_turn_indicator_changes must be at least 1")
 
 
 @dataclass

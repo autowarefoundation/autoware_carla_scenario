@@ -37,6 +37,7 @@ from autoware_carla_scenario.metrics import (
     OFFROAD_OR_COLLISION,
     OFFROAD_OR_COLLISION_AT_FAULT,
     STEERING_REVERSALS,
+    TURN_INDICATOR_CHANGES,
     WRONG_LANE,
     is_metric,
     read_metric,
@@ -83,12 +84,16 @@ class _Actor:
         self._yaw = yaw
         self.velocity = _v()
         self.steer = 0.0
+        self.lights = 0
 
     def get_velocity(self) -> Any:
         return self.velocity
 
     def get_control(self) -> Any:
         return SimpleNamespace(steer=self.steer)
+
+    def get_light_state(self) -> int:
+        return self.lights
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
@@ -228,12 +233,13 @@ def test_the_metrics_are_alpasim_s() -> None:
         "lateral_reversals",
         "lateral_wobble_m",
         "steering_reversals",
+        "turn_indicator_changes",
     }
     weight = BUILT_IN_METRICS["importance_sampling_weight"]
     assert (weight.unit, weight.aggregation) == ("ratio", "last")
     wobble = BUILT_IN_METRICS["lateral_wobble_m"]
     assert (wobble.unit, wobble.aggregation) == ("m", "max")
-    for key in ("lateral_reversals", "steering_reversals"):
+    for key in ("lateral_reversals", "steering_reversals", "turn_indicator_changes"):
         assert (BUILT_IN_METRICS[key].unit, BUILT_IN_METRICS[key].aggregation) == (
             "count",
             "last",
@@ -520,6 +526,7 @@ def _drive(
     road: _Road = _TWO_WAY,
     heading: float = 0.0,
     steer: Any = None,
+    lights: Any = None,
 ) -> _World:
     """Drives the ego at 10 m/s along *heading* (degrees) for *seconds*,
     *across(t)* m/s to its right, steering *steer(t)*, every tick; the world of
@@ -536,6 +543,7 @@ def _drive(
             10.0 * math.sin(yaw) + side * math.cos(yaw),
         )
         ego.steer = 0.0 if steer is None else steer(t)
+        ego.lights = 0 if lights is None else lights(t)
         world.frame = next(_FRAMES)
         track_ego_motion(world, t)  # type: ignore[arg-type]
     return world
@@ -605,10 +613,48 @@ def test_steering_back_and_forth_is_counted() -> None:
     assert _read(STEERING_REVERSALS, jitter) == 0.0
 
 
+_LEFT = int(carla.VehicleLightState.LeftBlinker)
+_RIGHT = int(carla.VehicleLightState.RightBlinker)
+_LOW_BEAM = int(carla.VehicleLightState.LowBeam)
+
+
+def test_a_turn_signalled_and_cancelled_is_two_changes() -> None:
+    def signal(t: float) -> int:
+        return _LOW_BEAM | (_LEFT if 1.0 <= t < 4.0 else 0)
+
+    world = _drive(lambda t: 0.0, 5.0, lights=signal)
+    # The other lights are not the indicators.
+    assert _read(TURN_INDICATOR_CHANGES, world) == 2.0
+
+
+def test_a_flickering_indicator_is_counted_apart_from_the_steering() -> None:
+    def flicker(t: float) -> int:
+        return _LEFT if int(t * 4) % 2 else 0
+
+    # Steady steering, an indicator on and off every quarter second, from 0.25 s
+    # to 1.75 s.
+    world = _drive(lambda t: 0.0, 1.9, lights=flicker, steer=lambda t: 0.1)
+    assert _read(TURN_INDICATOR_CHANGES, world) == 7.0
+    assert _read(STEERING_REVERSALS, world) == 0.0
+
+
+def test_left_to_right_and_hazard_are_changes() -> None:
+    def lights(t: float) -> int:
+        return [_LEFT, _RIGHT, _LEFT | _RIGHT, 0][min(int(t), 3)]
+
+    world = _drive(lambda t: 0.0, 3.5, lights=lights)
+    assert _read(TURN_INDICATOR_CHANGES, world) == 3.0
+
+
 def test_weaving_reads_nothing_until_the_ego_is_tracked() -> None:
     reset_ego_motion()
     world = _world()
-    for key in (LATERAL_REVERSALS, LATERAL_WOBBLE_M, STEERING_REVERSALS):
+    for key in (
+        LATERAL_REVERSALS,
+        LATERAL_WOBBLE_M,
+        STEERING_REVERSALS,
+        TURN_INDICATOR_CHANGES,
+    ):
         assert _read(key, world) is None
     track_ego_motion(world, 0.0)  # type: ignore[arg-type]
     assert _read(LATERAL_REVERSALS, world) == 0.0
