@@ -188,14 +188,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main",
         _CARLA_INSTALL,
     ),
-    f"{_PACKAGE}.debug_markers": {
-        "plan_markers": (
-            "takes carla_driver_interface's Trajectory, a driver's plan, which "
-            "only the driver-backed entities hold (checked from their source); "
-            "the model of carla_driver_interface declares it for the driver "
-            "modules, not for a scenario"
-        ),
-    },
+    f"{_PACKAGE}.debug_markers": _each(
+        "plan_markers plan_polyline world_point",
+        "draws a driver's plan (carla_driver_interface's Trajectory and Pose), "
+        "which only the driver-backed entities hold (checked from their "
+        "source); the model of carla_driver_interface declares them for the "
+        "driver modules, not for a scenario",
+    ),
     f"{_PACKAGE}.driver.egodriver_client": _each(
         "EGODRIVER_SERVICE_FULL_NAME MAX_MESSAGE_BYTES channel_options", _GRPC
     ),
