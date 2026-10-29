@@ -5,9 +5,32 @@ the Protobuf exchange contract of [tier4/e2e-devkit](https://github.com/tier4/e2
 (`t4_scene.proto`, contract 0.1.0), which the devkit decodes into its
 `T4Scene` -- the scene its data lists, scorers and visualisations work on. It
 is not the [T4 dataset](t4_dataset.md), the nuScenes-style directory of
-sensor data `t4.enabled` writes during a run: a T4Scene is written after the
-run, from its log alone, holds no sensor data, and needs neither CARLA nor any
-extra.
+sensor data `t4.enabled` writes during a run: a T4Scene is written from the
+run's log alone, holds no sensor data, and needs neither CARLA nor any extra.
+
+## As each run ends
+
+With `t4scene.enabled=true` the runner writes each run's scene itself, right
+after it closes the run's trajectory log, beside it in the run's output
+directory -- a batch's cases and a SLURM task's alike:
+
+```bash
+uv run scenario scenario=cut_in/cut_in t4scene.enabled=true
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `t4scene.enabled` | bool | `false` | Write each run as `{ScenarioName}.t4scene.pb` and `{ScenarioName}.t4scene.map.pb` |
+| `t4scene.step_s` | float | `0.1` | The scenes' time step, a multiple of the 0.05 s tick (`--step`); another value is refused before anything runs |
+| `t4scene.max_distance_m` | float or null | `100.0` | The road users within this distance of the ego are a scene's objects; `null` takes all of them (`--max-distance`, `--all-objects`) |
+
+A batch takes the first case's settings, as it does `t4`'s. The conversion
+runs on the runner's thread once CARLA is done with the case (the map is read
+once however many cases ran on it). Like the log itself it is best effort: a
+log that cannot be converted is logged as a warning and the run's verdict
+stands.
+
+## After a run
 
 ```bash
 # Every log under a run's output directory, written beside each log
