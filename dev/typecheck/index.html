@@ -4598,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 218 of
-the package's 326 modules (67%; about 65,000 of 115,600 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 219 of
+the package's 327 modules (67%; about 65,600 of 116,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4612,7 +4612,9 @@ whose YAML values are of any type, nor how it moves a <code>Local</code> map's p
 their <code>local_x</code>/<code>local_y</code> tags), what places a trajectory's vertices in CARLA
 world coordinates (<code>trajectory.resolve</code>),
 the sweeper's lanelet constraints and parameter bindings
-(<code>sweeper.constraints</code>, <code>sweeper.bindings</code>) and the route's map questions,
+(<code>sweeper.constraints</code>, <code>sweeper.bindings</code>), how the Hydra sweeper runs each
+case in a forked child of its own process group, stops it and waits for the
+CARLA server it left (<code>sweeper.isolation</code>, #719), and the route's map questions,
 frame, poses and search (<code>route.geometry</code>, <code>route.frame</code>, <code>route.positions</code>,
 <code>route.search</code>), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
@@ -4667,8 +4669,8 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 105
-functions and methods of those modules are <code>UNCALLED</code> (23 of them
+below). 108
+functions and methods of those modules are <code>UNCALLED</code> (26 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -4701,9 +4703,14 @@ a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</c
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of), and the line a HILS message goes out as,
+which the check has no value of), the line a HILS message goes out as,
 which takes a message of any shape (<code>hils.wire.encode()</code>, a
-<code>Mapping[str, Any]</code>). The 108 <code>EXCLUDED</code> modules fall in
+<code>Mapping[str, Any]</code>), and three of <code>sweeper.isolation</code>: its
+<code>SIGTERM</code> handler (<code>_raise_interrupted()</code>, whose frame is <code>Any</code>), the
+<code>prctl(PR_SET_PDEATHSIG)</code> call through ctypes (<code>_request_pdeathsig()</code>) and
+what runs a case in the forked child (<code>_run_in_child()</code>, which takes the
+signal mask, a <code>set[int | signal.Signals]</code>); the first and the last are
+compiled through their callers. The 108 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 83 import what Codon cannot
 compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
@@ -5318,7 +5325,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>getuid()</code>, <code>getgid()</code>, <code>readlink(path, *, dir_fd=None)</code> (of a <code>str</code> or an
   <code>os.PathLike</code>, a <code>str</code>; a bytes path is not declared),
   <code>kill(pid, signal, /)</code>, <code>killpg(pgid, signal, /)</code> (of an <code>int</code> or a
-  <code>signal.Signals</code>), <code>system(command)</code>,
+  <code>signal.Signals</code>), <code>system(command)</code>, what a forking parent and its child
+  call (#719): <code>fork()</code> (<code>0</code>: nothing is forked), <code>setpgrp()</code>,
+  <code>setpgid(pid, pgrp, /)</code>, <code>waitpid(pid, options, /)</code> (a <code>(pid, status)</code>
+  tuple of <code>int</code>s, <code>(0, 0)</code>) with <code>WNOHANG</code>, <code>_exit(status)</code> and the
+  wait-status macros <code>WIFEXITED()</code>, <code>WEXITSTATUS()</code>, <code>WIFSIGNALED()</code> and
+  <code>WTERMSIG()</code> (of an <code>int</code>, by position or as <code>status</code>),
   <code>mkdir()</code> (Codon's had one), <code>getcwd()</code>, <code>listdir(path=".")</code> (empty),
   <code>makedirs(name, mode=0o777, exist_ok=False)</code>, <code>remove()</code>, <code>unlink()</code>,
   <code>rmdir()</code>, <code>rename()</code> and <code>replace()</code> (each with its keyword-only
@@ -5393,10 +5405,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   number (an <code>int</code>) and the current frame (<code>None</code> in the check, which has no frame
   type: annotate that parameter <code>Any</code>), so a function that cannot take them
   is refused where CPython fails only when the signal arrives. What it
-  returns, the previous handler, is a value nothing is declared of (a
-  <code>Handlers</code> member, a function or <code>None</code> in CPython, which takes no <code>None</code>
-  as a handler), so it cannot be handed back to <code>signal()</code>; <code>getsignal()</code>,
-  <code>alarm()</code> and the rest of the module are not declared. <code>contextlib</code>
+  returns, the previous handler, and what <code>getsignal(signalnum)</code> returns,
+  the handler in place, is a value nothing is declared of (a <code>Handlers</code>
+  member, a function or <code>None</code> in CPython) but that <code>signal()</code> takes it back,
+  so a handler is restored as CPython restores one (CPython refuses <code>None</code>,
+  a handler not installed from Python, which the check cannot tell).
+  <code>alarm(seconds, /)</code> takes an <code>int</code>, and <code>pthread_sigmask(how, mask)</code> one of
+  <code>SIG_BLOCK</code>, <code>SIG_UNBLOCK</code> and <code>SIG_SETMASK</code> (<code>int</code>s here; CPython's
+  <code>Sigmasks</code> is an <code>IntEnum</code> of them) and an iterable of signal numbers, and
+  returns the previous mask, a <code>set</code> of <code>Signals</code> (#719). The rest of the
+  module is not declared. <code>contextlib</code>
   declares <code>suppress(*exceptions)</code> only, a class with <code>__enter__</code> and
   <code>__exit__</code> that does nothing (the exceptions are not checked); a
   <code>contextmanager</code> is not declared, as the scenario check already tells a
@@ -5459,10 +5477,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>str()</code>, <code>os.fspath()</code> and <code>Path()</code> take and nothing else does. Python's
   built-in exceptions that Codon lacks (<code>ImportError</code>,
   <code>ModuleNotFoundError</code>, <code>FileNotFoundError</code>, <code>PermissionError</code>,
-  <code>ProcessLookupError</code>, <code>TimeoutError</code>, <code>ConnectionError</code>,
-  <code>BrokenPipeError</code>) are declared in the model's <code>_exceptions.codon</code>, each
+  <code>ProcessLookupError</code>, <code>ChildProcessError</code>, <code>TimeoutError</code>,
+  <code>ConnectionError</code>, <code>BrokenPipeError</code>, and <code>KeyboardInterrupt</code>, derived from
+  <code>BaseException</code>, so <code>except Exception:</code> does not catch it) are declared in
+  the model's <code>_exceptions.codon</code>, each
   derived from its CPython base, and the prelude of every rewritten module
-  imports them, so <code>except ImportError:</code> compiles as Python reads it. Each
+  imports them, so <code>except ImportError:</code> compiles as Python reads it.
+  <code>SystemExit.code</code> is an <code>int</code> here, the status Codon's <code>SystemExit</code> holds;
+  CPython's is whatever it was raised with (an <code>int</code>, a <code>str</code> or <code>None</code>), so
+  test it with <code>isinstance()</code> before reading it as an <code>int</code>. Each
   takes no message or one value by position, as CPython does; a keyword
   (<code>TimeoutError(message=...)</code>) and <code>OSError</code>'s <code>(errno, strerror)</code> and
   their attributes (<code>errno</code>, <code>filename</code>) are refused. Nothing in these
@@ -5934,6 +5957,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   Set class attributes in the class body (<code>FRAME: ClassVar[CoordinateFrame]
   = CoordinateFrame.LANELET2</code>) rather than from a function run after the
   class.
+- <strong>A global of a module whose top level runs a statement</strong> (<code>server</code>, which
+  calls <code>load_dotenv()</code> on import) cannot be read at another module's top
+  level: Codon 0.19 reports "name '_WATCHDOG_GRACE_S' is not defined" for
+  <code>_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0</code>, though a function of
+  the module, or a parameter default, reads it. <code>sweeper.isolation</code> computes
+  that constant in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and gives the
+  check its value in the first (#719).
 - <strong>Codon does not narrow an <code>Optional</code></strong> after <code>if x is None: return</code>. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (<code>od: OpenDrivePose = x</code>),
@@ -5942,7 +5972,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Optional[Path]</code> local (<code>shipped: Optional[Path] = candidate</code>, as
   <code>maps.resolver._find_xodr()</code> does): Codon types a tuple by its members,
   and a bare annotation without a value (<code>found: Optional[Path]</code>) does not
-  change the type of what is assigned to it later. An attribute is not
+  change the type of what is assigned to it later. Nor does a value: an
+  <code>int</code> assigned to an <code>Optional[int]</code> local is an <code>int</code> in the tuple
+  returned right after it, so <code>sweeper.isolation._launch_isolated()</code> sets
+  its <code>(succeeded, exit_code)</code> in each branch and returns them once, after
+  the branches join. An attribute is not
   narrowed either: after <code>if self._spawn_pose is None: raise ...</code>,
   <code>self._spawn_pose</code> is still an <code>Optional[Lanelet2Pose]</code>, and
   <code>snap_to_carla_road()</code>'s <code>isinstance</code> dispatch takes its CARLA branch for
@@ -6524,7 +6558,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 00:28:12 UTC"><span class="timeago" datetime="2026-10-29T00:28:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 00:28:12 UTC">2026-10-29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 13:22:09 UTC"><span class="timeago" datetime="2026-10-29T13:22:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 13:22:09 UTC">2026-10-29</span>
   </span>
 
     
