@@ -384,13 +384,14 @@ def route_waypoints_in_rig(
     ego_pose: Pose,
     horizon_m: float = 80.0,
     resolution_m: float = 2.0,
+    route_roads: Optional[set[str]] = None,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """Return the road ahead of *actor* as waypoints in the rig frame.
 
-    Walks CARLA's road graph forward from the ego's current waypoint, taking the first
-    continuation at each fork.  This gives the policy a lane-following route without
-    requiring a global planner; scenarios that need a specific route can build their own
-    waypoint array and submit it directly.
+    Walks CARLA's road graph forward from the ego's current waypoint.  At a fork it
+    takes the continuation onto one of *route_roads* -- the OpenDRIVE roads of the
+    route the scenario sends the ego along -- and the first one when none is, or
+    without a route: a lane-following route without a global planner.
 
     Args:
         carla_map: The map to walk.  Pass a cached ``world.get_map()`` -- CARLA rebuilds
@@ -399,6 +400,8 @@ def route_waypoints_in_rig(
         ego_pose: The ego's pose in the local frame, used to convert into the rig frame.
         horizon_m: How far ahead to walk.
         resolution_m: Spacing between waypoints.
+        route_roads: The OpenDRIVE road ids (as strings) the route runs on, which
+            choose the way at a fork; ``None`` takes the first way.
 
     Returns:
         An ``(N, 3)`` array in the rig frame.  Empty when the ego is off-road.
@@ -419,6 +422,11 @@ def route_waypoints_in_rig(
         if not following:
             break
         current = following[0]
+        if route_roads is not None and len(following) > 1:
+            for way in following:
+                if str(way.road_id) in route_roads:
+                    current = way
+                    break
         travelled += step
 
     if len(points) < _MIN_ROUTE_POINTS:

@@ -31,6 +31,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -191,6 +192,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The turn indicators last lit at the policy's request; ``NO_COMMAND``
         #: until it asks for any.
         self._turn_indicator: TurnIndicator = TurnIndicator.NO_COMMAND
+        #: The OpenDRIVE roads of the route to the scenario's goal, which pick the
+        #: way the policy's road ahead takes at a fork; ``None`` without a goal.
+        self._route_roads: Optional[Set[str]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -232,10 +236,21 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         ground_projection: Optional["GroundProjectionConfig"] = None,
         waypoints: Sequence["Lanelet2Pose"] = (),
     ) -> None:
-        """Hand *goal* to the bridged stack's mission; a no-op without a bridge.
+        """Hand *goal* to the bridged stack's mission, and route the road ahead.
 
-        The policy itself is given the road ahead rather than a destination.
+        The policy itself is given the road ahead rather than a destination, and
+        the road ahead turns at a fork the way the route to *goal* (through
+        *waypoints*) does: a turn the scenario asserts is the one the policy is
+        shown.  Without a route there -- no lane route reaches the goal -- it
+        takes the first way, as it does without a goal.
         """
+        start = initial_pose
+        if start is None and self.actor is not None:
+            from ..coordinate import CarlaWorldPose  # noqa: PLC0415
+
+            start = CarlaWorldPose.from_carla_transform(self.actor.get_transform())
+        if start is not None:
+            self._route_roads = _route_roads(start, [*waypoints, goal])
         if self._handshake is not None:
             self._handshake.route_to(
                 world, goal, initial_pose, ground_projection, waypoints
@@ -603,6 +618,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             observation.pose,
             horizon_m=self._config.route_horizon_m,
             resolution_m=self._config.route_resolution_m,
+            route_roads=self._route_roads,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
         if self._config.send_ground_truth and len(waypoints):
@@ -784,6 +800,56 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             "rear_axle_offset_m": self._rear_axle_offset_m,
             "turn_indicator": float(self._turn_indicator),
         }
+
+
+def _route_roads(
+    start: "CarlaWorldPose", stops: Sequence["Lanelet2Pose"]
+) -> Optional[Set[str]]:
+    """The OpenDRIVE roads of the lane route from *start* through *stops*.
+
+    Each leg is the routing graph's shortest path to the next stop's lanelet; a
+    lanelet's roads are read at its start, middle and end, as one may be cut
+    across two.  ``None``, said once, when a stop is on no lane route from the
+    one before or the map cannot answer.
+    """
+    from lanelet2.geometry import length2d  # noqa: PLC0415
+
+    from ..coordinate import Lanelet2Pose, to_lanelet2, to_opendrive  # noqa: PLC0415
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+    try:
+        mm = MapManager.get_instance()
+        layer = mm.lanelet_map.laneletLayer
+        lanelets = [layer[int(to_lanelet2(start).lanelet_id)]]
+        for stop in stops:
+            target = layer[int(stop.lanelet_id)]
+            if target.id == lanelets[-1].id:
+                continue
+            path = mm.routing_graph.shortestPath(lanelets[-1], target)
+            if path is None:
+                logger.warning(
+                    "No lane route from lanelet %d to lanelet %d: the policy's road "
+                    "ahead takes the first way at a fork",
+                    lanelets[-1].id,
+                    target.id,
+                )
+                return None
+            lanelets.extend(list(path)[1:])
+        roads: Set[str] = set()
+        for lanelet in lanelets:
+            length = float(length2d(lanelet))
+            for s in (0.0, length / 2.0, length):
+                at = min(max(s, 0.1), max(length - 0.1, 0.0))
+                pose = Lanelet2Pose(lanelet_id=int(lanelet.id), s=at)
+                roads.add(str(to_opendrive(pose).road_id))
+        return roads
+    except Exception:
+        logger.warning(
+            "Could not route the policy's road ahead to the goal: it takes the "
+            "first way at a fork",
+            exc_info=True,
+        )
+        return None
 
 
 class _CarriedActor:
