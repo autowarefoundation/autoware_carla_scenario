@@ -33,11 +33,12 @@ import threading
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
-from ..debug_markers import DebugMarkers, plan_markers
+from ..debug_markers import DebugMarkers
 from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
 from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
+from ..ego_plan import PlanMarkers, ego_plan_markers
 from ..ros2.commands import (
     CommandArbiter,
     ControlCommand,
@@ -142,7 +143,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     #: close the transport under a sensor thread.
     _publishing: threading.Lock
     #: The trajectory command last tracked, its timed plan and its markers.
-    _planned: Optional[Tuple[TrajectoryCommand, Trajectory, DebugMarkers]]
+    _planned: Optional[Tuple[TrajectoryCommand, Trajectory, PlanMarkers]]
+    #: How many trajectory commands this session has tracked: the plans' steps.
+    _plan_steps: int
     #: Whether the last tick tracked that plan, rather than another command.
     _tracking: bool
 
@@ -166,6 +169,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._cameras = []
         self._publishing = threading.Lock()
         self._planned = None
+        self._plan_steps = 0
         self._tracking = False
 
     # ------------------------------------------------------------------
@@ -221,6 +225,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._active = None
         self._active_fresh = False
         self._planned = None
+        self._plan_steps = 0
         self._tracking = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
@@ -478,7 +483,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 truncate=self._follower.config.longitudinal_controller
                 == "time_indexed",
             )
-            self._planned = (command, plan, plan_markers(plan))
+            self._plan_steps += 1
+            self._planned = (
+                command,
+                plan,
+                ego_plan_markers(plan, anchor_us, self._plan_steps),
+            )
         return self._planned[1]
 
 

@@ -36,6 +36,11 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   vehicle/walker are not written.
 * ``{"type": "markers", "frame", "t", "actor", "polylines": [...]}`` -- after
   a tick on which the ego's debug markers (its plan) changed.
+* ``{"type": "plan", "frame", "t", "actor", "step", "planned_at_us",
+  "policy", "inference_seconds", "turn_indicator", "debug_scalars",
+  "points": [[dt, x, y, z, yaw], ...]}`` -- right after the ``markers`` line
+  of a driver's plan (:class:`~autoware_carla_scenario.ego_plan.PlanMarkers`):
+  the plan itself, each point timed ``dt`` seconds after it was made.
 * ``{"type": "condition", "frame", "t", "role", "index", "label",
   "satisfied"}`` -- when a pass/fail condition is first checked, and whenever
   it changes.
@@ -89,6 +94,7 @@ import typesafe_carla.carla as carla
 
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
+from .ego_plan import PlanMarkers
 from .utils.traffic_light import traffic_light_state_name
 from .waypoint_arrival import WaypointArrival
 
@@ -326,7 +332,8 @@ class TrajectoryRecorder:
     def record_markers(self, markers: Any) -> None:
         """Write the ego's debug markers on the tick last recorded, when they
         are not the ones written last (an entity hands out one object per
-        plan; no markers at all are written once, as none)."""
+        plan; no markers at all are written once, as none), and the plan
+        they draw when they carry one (:class:`PlanMarkers`)."""
         if self._out is None:
             return
         if markers is not None and not markers:
@@ -335,18 +342,43 @@ class TrajectoryRecorder:
             return
         self._markers = markers
         egos = list(self._egos)
+        head = {
+            "frame": self._frame,
+            "t": _r(self._t),
+            "actor": egos[0] if egos else None,
+        }
         self._guarded(
             "stopped",
             lambda: self._emit(
                 {
                     "type": "markers",
-                    "frame": self._frame,
-                    "t": _r(self._t),
-                    "actor": egos[0] if egos else None,
+                    **head,
                     "polylines": [] if markers is None else _polylines(markers),
                 }
             ),
         )
+        if isinstance(markers, PlanMarkers):
+            plan = markers.plan
+            # orjson writes a number that is not finite (a diagnostic, the
+            # inference time) as null, which the schema allows there.
+            self._guarded(
+                "stopped",
+                lambda: self._emit(
+                    {
+                        "type": "plan",
+                        **head,
+                        "step": plan.step,
+                        "planned_at_us": plan.planned_at_us,
+                        "policy": plan.policy_name,
+                        "inference_seconds": _r(plan.inference_seconds),
+                        "turn_indicator": plan.turn_indicator,
+                        "debug_scalars": {
+                            key: _r(value) for key, value in plan.debug_scalars.items()
+                        },
+                        "points": [[_r(v) for v in point] for point in plan.points],
+                    }
+                ),
+            )
 
     def record_condition(
         self, role: str, index: int, label: str, satisfied: bool

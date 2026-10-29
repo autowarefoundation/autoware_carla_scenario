@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from autoware_carla_scenario.ego_plan import PlanMarkers
 from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.entity.ros2_entity import (
     Ros2EgoEntity,
@@ -386,6 +387,11 @@ def test_the_tracked_trajectory_is_shown_as_the_ego_s_debug_markers() -> None:
     assert [(x, y) for x, y, _ in markers.polylines[0].points] == pytest.approx(
         [(8.6, -2.0), (9.1, -2.0), (9.6, -2.0), (10.1, -2.0)]
     )
+    # They carry the plan, timed from its anchor: the trajectory log's record.
+    assert isinstance(markers, PlanMarkers)
+    assert markers.plan.step == 1
+    dts = [p[0] for p in markers.plan.points]
+    assert [b - a for a, b in zip(dts, dts[1:])] == pytest.approx([0.1, 0.1, 0.1])
 
     # Once another kind of command drives, there is no trajectory to show.
     transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))

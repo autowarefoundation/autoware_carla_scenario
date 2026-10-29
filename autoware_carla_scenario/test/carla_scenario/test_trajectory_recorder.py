@@ -17,6 +17,8 @@ import typesafe_carla.carla as carla
 from autoware_carla_scenario.conditions.base import ConditionStatus, ScenarioResult
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.debug_markers import DebugMarkers, DebugPolyline
+from autoware_carla_scenario.driver.geometry import Pose, Trajectory
+from autoware_carla_scenario.ego_plan import EgoPlan, PlanMarkers, ego_plan_markers
 from autoware_carla_scenario.trajectory_recorder import (
     DRAFT7_SCHEMA_PATH,
     SCHEMA_PATH,
@@ -545,6 +547,122 @@ def test_markers_are_written_when_they_change(tmp_path) -> None:
             "point_size": 0.1,
         }
     ]
+
+
+def _ego_plan(step: int, *xs: float) -> PlanMarkers:
+    markers = PlanMarkers(
+        EgoPlan(
+            step=step,
+            planned_at_us=step * 100_000,
+            points=[(0.1 * (i + 1), x, 1.0, 0.0, -90.0) for i, x in enumerate(xs)],
+            policy_name="fake",
+            inference_seconds=0.0123456,
+            turn_indicator=2,
+            debug_scalars={"speed": 3.14159, "nan": float("nan")},
+        )
+    )
+    markers.add_polyline(
+        DebugPolyline([(x, 1.0, 0.3) for x in xs], (0, 255, 0), 0.1, 0.1)
+    )
+    return markers
+
+
+def test_a_plan_is_written_after_its_markers_once_per_plan(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    first, second = _ego_plan(1, 0.0, 5.0), _ego_plan(2, 1.0)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    for tick, handed in enumerate([first, first, second, _plan(2.0)]):
+        world.frame = 100 + tick
+        recorder.record(world, 0.05 * tick)
+        recorder.record_markers(handed)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] in ("markers", "plan")]
+    # Each plan right after its markers; markers that carry no plan, alone.
+    assert [(r["type"], r["frame"]) for r in records] == [
+        ("markers", 100),
+        ("plan", 100),
+        ("markers", 102),
+        ("plan", 102),
+        ("markers", 103),
+    ]
+    assert records[1] == {
+        "type": "plan",
+        "frame": 100,
+        "t": 0.0,
+        "actor": 1,
+        "step": 1,
+        "planned_at_us": 100_000,
+        "policy": "fake",
+        "inference_seconds": 0.012,
+        "turn_indicator": 2,
+        "debug_scalars": {"speed": 3.142, "nan": None},
+        "points": [[0.1, 0.0, 1.0, 0.0, -90.0], [0.2, 5.0, 1.0, 0.0, -90.0]],
+    }
+
+
+def test_a_plan_with_nothing_to_draw_is_still_written(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    empty = PlanMarkers(
+        EgoPlan(
+            step=3,
+            planned_at_us=0,
+            points=[],
+            policy_name="",
+            inference_seconds=float("nan"),
+            turn_indicator=1,
+            debug_scalars={},
+        )
+    )
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.record_markers(empty)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] in ("markers", "plan")]
+    # Its markers clear the drawing; the plan, its command and all, is kept.
+    assert [r["type"] for r in records] == ["markers", "plan"]
+    assert records[0]["polylines"] == []
+    assert records[1]["points"] == [] and records[1]["turn_indicator"] == 1
+    assert records[1]["inference_seconds"] is None  # NaN: what JSON cannot hold
+
+
+def test_a_plan_leaves_out_a_point_that_is_not_finite() -> None:
+    trajectory = Trajectory.empty()
+    for i, x in enumerate([1.0, float("nan"), 3.0]):
+        trajectory.append(i * 100_000, Pose.from_xyz_yaw(x, 2.0, 0.0, 0.0))
+    markers = ego_plan_markers(trajectory, 0, 1)
+    assert [p[1] for p in markers.plan.points] == [1.0, 3.0]
+    assert [p[2] for p in markers.plan.points] == [-2.0, -2.0]  # y flipped back
+    assert [x for x, _, _ in markers.polylines[0].points] == [1.0, 3.0]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"points": [[0.1, 0.0, 1.0, 0.0]]},  # a point without its yaw
+        {"step": 0},  # plans count from 1
+        {"turn_indicator": -1},
+        {"debug_scalars": {"speed": "fast"}},
+        {"planned_at_us": -1},
+    ],
+)
+def test_the_schema_rejects_a_plan_the_recorder_does_not_write(change: dict) -> None:
+    plan = {
+        "type": "plan",
+        "frame": 1,
+        "t": 0.0,
+        "actor": 1,
+        "step": 1,
+        "planned_at_us": 0,
+        "policy": "",
+        "inference_seconds": 0.0,
+        "turn_indicator": 0,
+        "debug_scalars": {},
+        "points": [[0.1, 0.0, 1.0, 0.0, 0.0]],
+    }
+    assert _validator().is_valid(plan)
+    assert not _validator().is_valid({**plan, **change})
 
 
 def test_actions_are_written_when_first_seen_and_when_their_state_changes(
