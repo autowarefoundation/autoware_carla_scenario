@@ -1,0 +1,61 @@
+name: stl_driver
+
+# stl_driver/ is a project of its own (its own lock, not a workspace member:
+# it pulls torch), so it is tested on its own, and only when it, or the
+# workflow, changes.
+on:
+  push:
+    branches: [ master, main, develop ]
+    paths:
+      - "stl_driver/**"
+      - ".github/workflows/stl-driver.yml"
+  pull_request:
+    branches: [ master, main, develop ]
+    paths:
+      - "stl_driver/**"
+      - ".github/workflows/stl-driver.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    # The floor and the ceiling of `requires-python`, as the framework's pull
+    # request runs.
+    name: test (${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    defaults:
+      run:
+        working-directory: stl_driver
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+        enable-cache: true
+        cache-dependency-glob: "stl_driver/uv.lock"
+        cache-suffix: stl-driver-${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: uv sync --locked
+
+    - name: Run the fast tests
+      run: uv run pytest -v --tb=short -m "not slow"
+
+    # The closed-loop rollouts and the latency benchmarks: a few minutes.
+    - name: Run the slow tests
+      run: uv run pytest -v --tb=short -m slow
