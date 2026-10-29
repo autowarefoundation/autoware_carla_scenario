@@ -179,7 +179,7 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         title="Steering reversals",
         unit="count",
         text="How many times so far the steering applied to the ego "
-        "turned back by more than 0.01 of full lock",
+        "turned back by more than 0.05 of full lock",
         aggregation="last",
     ),
     TURN_INDICATOR_CHANGES: Metric(

@@ -609,7 +609,8 @@ def test_steering_back_and_forth_is_counted() -> None:
     # Turns at 1, 2, 3, 4 and 5 s, the first from where it began.
     assert _read(STEERING_REVERSALS, world) == 4.0
 
-    jitter = _drive(lambda t: 0.0, 5.0, steer=lambda t: 0.004 * (-1) ** round(t / _DT))
+    # A controller holding its course moves the steer by a few hundredths.
+    jitter = _drive(lambda t: 0.0, 5.0, steer=lambda t: 0.02 * (-1) ** round(t / _DT))
     assert _read(STEERING_REVERSALS, jitter) == 0.0
 
 

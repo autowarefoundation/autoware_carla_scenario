@@ -132,9 +132,11 @@ _MAX_SIDE_LANES = 8
 #: reversal, in metres: less is the noise of holding a lane.
 _LATERAL_REVERSAL_GAP_M = 0.1
 #: How far the steering must turn back to count as a reversal, in CARLA's
-#: normalised steer (``1`` the vehicle's full lock): about 0.7 degrees at the
-#: wheels of a car that locks at 70.
-_STEERING_REVERSAL_GAP = 0.01
+#: normalised steer (``1`` the vehicle's full lock): about 3.5 degrees at the
+#: wheels of a car that locks at 70.  A driver policy's controller holding a
+#: lane or a bend moves its steer by a few hundredths, closed loop; sawing
+#: through a turn, by a tenth or more.
+_STEERING_REVERSAL_GAP = 0.05
 #: The seconds :data:`LATERAL_WOBBLE_M` looks back over: a weave of 0.25 Hz
 #: or faster turns back within it, where a lane change is mostly the course.
 _WOBBLE_WINDOW_S = 4.0
@@ -990,7 +992,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Steering reversals",
             unit="count",
             text="How many times so far the steering applied to the ego "
-            "turned back by more than 0.01 of full lock",
+            "turned back by more than 0.05 of full lock",
             aggregation="last",
         ),
         Metric(

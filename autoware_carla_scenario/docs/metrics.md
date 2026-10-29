@@ -43,7 +43,7 @@ value with the aggregation in the last column (`Metric.aggregation`).
 | `importance_sampling_weight` | ratio | Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's `p/q` and `(1-p)/(1-q)` (`AdversarialTrafficAction`); `1` without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count | last |
 | `lateral_reversals` | count | Not AlpaSim's: how many times so far the ego's drift across its lane turned back by more than 0.1 m ([Weaving](#weaving)) | last |
 | `lateral_wobble_m` | m | Not AlpaSim's: how far the ego strayed across its lane about its course over the last 4 s, RMS ([Weaving](#weaving)) | max |
-| `steering_reversals` | count | Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.01 of full lock ([Weaving](#weaving)) | last |
+| `steering_reversals` | count | Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.05 of full lock ([Weaving](#weaving)) | last |
 | `turn_indicator_changes` | count | Not AlpaSim's: how many times so far the ego's turn indicators changed, between off, left, right and hazard ([Weaving](#weaving)) | last |
 
 Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
@@ -83,8 +83,11 @@ line. Off the driving lanes the drift holds until the ego is back on one.
   width while it lasts. It reads nothing before the third frame.
 - `steering_reversals` counts the times the steering applied to the ego
   (`get_control().steer`, `1` the vehicle's full lock) turned back by more
-  than 0.01, about 0.7 degrees at the wheels of a car that locks at 70. It sees
-  the controller's weaving before the vehicle shows it.
+  than 0.05, about 3.5 degrees at the wheels of a car that locks at 70. It sees
+  the controller's weaving before the vehicle shows it. Closed loop, a driver
+  policy's controller moves its steer by a few hundredths while it holds a
+  lane or a bend, which the gap leaves out; sawing through a turn is a tenth
+  or more.
 
 `turn_indicator_changes` counts the changes of the indicators the ego shows
 (its CARLA light state: off, left, right, hazard), from the first frame on: a
