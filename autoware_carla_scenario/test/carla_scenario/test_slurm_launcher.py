@@ -623,7 +623,11 @@ def test_start_stagger_spaces_every_task_start(tmp_path: Path) -> None:
 
     def start() -> None:
         wait_for_start_turn(lock, spacing)
-        started.append(time.time())
+        # The start the call recorded in the lock, not a stamp taken here: a
+        # thread scheduled late after the call returns would make the next
+        # gap look short (#726). The next task waits about a spacing before
+        # it overwrites the lock.
+        started.append(float(lock.read_text()))
 
     # Three tasks that start together (a first wave)...
     threads = [threading.Thread(target=start) for _ in range(3)]
@@ -1143,7 +1147,8 @@ def test_start_stagger_without_flock_uses_a_lock_file(
 
     def start() -> None:
         wait_for_start_turn(lock, spacing)
-        started.append(time.time())
+        # The start the call recorded, as above (#726).
+        started.append(float(lock.read_text()))
 
     threads = [threading.Thread(target=start) for _ in range(3)]
     for thread in threads:
