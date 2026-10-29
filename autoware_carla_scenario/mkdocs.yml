@@ -97,6 +97,7 @@ nav:
   - Trajectories and Recorded-Scene Replay: trajectory.md
   - Trajectory Log: trajectory_log.md
   - T4 Dataset: t4_dataset.md
+  - T4 Scene: t4_scene.md
   - Adversarial Actions and NADE: adversity.md
   - Logical Scenarios from Routes: logical_scenarios.md
   - Running a Batch on SLURM: slurm.md
