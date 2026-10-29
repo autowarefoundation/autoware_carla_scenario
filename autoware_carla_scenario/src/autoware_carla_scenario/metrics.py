@@ -31,6 +31,11 @@ An event (a collision, being off the road) reads ``1.0`` when it holds and
 ``None`` when there is no ego, and the map-based ones when the world has no
 map.
 
+Three are not AlpaSim's and read the run so far rather than a frame: how the
+ego weaves from side to side (:data:`LATERAL_REVERSALS`,
+:data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`), from the ego's motion
+the runner hands this module every tick (:func:`track_ego_motion`).
+
 AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
 ``min_ade``), the driver's plan (``plan_deviation``, ``open_loop_collision``),
@@ -58,16 +63,21 @@ __all__ = [
     "COLLISION_LATERAL",
     "COLLISION_REAR",
     "IMPORTANCE_SAMPLING_WEIGHT",
+    "LATERAL_REVERSALS",
+    "LATERAL_WOBBLE_M",
     "MIN_DISTANCE_TO_LANE_BOUNDARY_M",
     "MIN_DISTANCE_TO_OBSTACLE_M",
     "Metric",
     "OFFROAD",
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
+    "STEERING_REVERSALS",
     "WRONG_LANE",
     "is_metric",
     "read_metric",
+    "reset_ego_motion",
     "set_importance_sampling_weight",
+    "track_ego_motion",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -95,6 +105,15 @@ MIN_DISTANCE_TO_LANE_BOUNDARY_M = "min_distance_to_lane_boundary_m"
 #: The run's importance-sampling weight so far (NADE's), not AlpaSim's: the
 #: likelihood ratio a batch of runs is weighted by.
 IMPORTANCE_SAMPLING_WEIGHT = "importance_sampling_weight"
+#: How many times so far the ego's drift across its lane turned back, by more
+#: than :data:`_LATERAL_REVERSAL_GAP_M`: its weaving, not AlpaSim's.
+LATERAL_REVERSALS = "lateral_reversals"
+#: Metres: how far the ego strays across its lane about its course over the
+#: last :data:`_WOBBLE_WINDOW_S` seconds (RMS), not AlpaSim's.
+LATERAL_WOBBLE_M = "lateral_wobble_m"
+#: How many times so far the steering applied to the ego turned back, by more
+#: than :data:`_STEERING_REVERSAL_GAP`, not AlpaSim's.
+STEERING_REVERSALS = "steering_reversals"
 
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
@@ -104,6 +123,16 @@ _WRONG_LANE_HEADING_DEG = 120.0
 _LANE_SEARCH_RADIUS_M = 6.0
 #: How many lanes beside its own the drivable area is walked to, at most.
 _MAX_SIDE_LANES = 8
+#: How far the ego's drift across its lane must turn back to count as a
+#: reversal, in metres: less is the noise of holding a lane.
+_LATERAL_REVERSAL_GAP_M = 0.1
+#: How far the steering must turn back to count as a reversal, in CARLA's
+#: normalised steer (``1`` the vehicle's full lock): about 0.7 degrees at the
+#: wheels of a car that locks at 70.
+_STEERING_REVERSAL_GAP = 0.01
+#: The seconds :data:`LATERAL_WOBBLE_M` looks back over: a weave of 0.25 Hz
+#: or faster turns back within it, where a lane change is mostly the course.
+_WOBBLE_WINDOW_S = 4.0
 
 #: What the ego's box meets in a frame, as bits: a road user at its front
 #: edge, at its rear edge, at its side only, and the edge of the road.
@@ -532,6 +561,170 @@ def _importance_sampling_weight(world: "carla.World") -> Optional[float]:
     return _RUN["weight"]
 
 
+class _Reversals:
+    """Counts how often a signal turns back by at least *gap*: the steering
+    reversal count of driver-workload studies (Markkula and Engstrom, 2006),
+    which a drift one way, however long, does not add to."""
+
+    gap: float
+    count: int
+    #: +1 while the signal rises, -1 while it falls, 0 until it has moved
+    #: *gap* either way.
+    heading: int
+    #: The furthest it has gone the way it heads; until it heads anywhere,
+    #: the lowest and the highest it has been.
+    extreme: float
+    low: float
+    high: float
+    started: bool
+
+    def __init__(self, gap: float) -> None:
+        self.gap = gap
+        self.count = 0
+        self.heading = 0
+        self.extreme = 0.0
+        self.low = 0.0
+        self.high = 0.0
+        self.started = False
+
+    def add(self, value: float) -> None:
+        if not self.started:
+            self.low = self.high = value
+            self.started = True
+        if self.heading == 0:
+            self.low = min(self.low, value)
+            self.high = max(self.high, value)
+            if value - self.low >= self.gap:
+                self.heading, self.extreme = 1, value
+            elif self.high - value >= self.gap:
+                self.heading, self.extreme = -1, value
+        elif (value - self.extreme) * self.heading >= 0.0:
+            self.extreme = value
+        elif abs(self.extreme - value) >= self.gap:
+            self.count += 1
+            self.heading, self.extreme = -self.heading, value
+
+
+class _Motion:
+    """The ego's motion through the run so far (:func:`track_ego_motion`).
+
+    ``lateral`` is how far the ego has moved across its lanes since the run
+    began, in metres to the right: its velocity across the lane under it,
+    summed over time.  The lane's heading is taken anew every frame, so a bend
+    is not a drift; moving from lane to lane is, without the jump of a lane
+    centre measured from.
+    """
+
+    ego_id: int
+    at: Optional[float]
+    lateral: float
+    #: ``(elapsed, lateral)`` of the frames of the last
+    #: :data:`_WOBBLE_WINDOW_S` seconds, oldest first.
+    window: list[tuple[float, float]]
+    lateral_reversals: _Reversals
+    steering_reversals: _Reversals
+
+    def __init__(self) -> None:
+        self.ego_id = -1
+        self.at = None
+        self.lateral = 0.0
+        self.window = []
+        self.lateral_reversals = _Reversals(_LATERAL_REVERSAL_GAP_M)
+        self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
+
+    def wobble(self) -> Optional[float]:
+        """The RMS of :attr:`lateral` over the window about the straight line
+        that fits it best; None before it holds three frames."""
+        n = len(self.window)
+        if n < 3:
+            return None
+        mean_t = sum(t for t, _ in self.window) / n
+        mean_y = sum(y for _, y in self.window) / n
+        stt = sum((t - mean_t) ** 2 for t, _ in self.window)
+        sty = sum((t - mean_t) * (y - mean_y) for t, y in self.window)
+        slope = sty / stt if stt > 0.0 else 0.0
+        residual = sum((y - mean_y - slope * (t - mean_t)) ** 2 for t, y in self.window)
+        return math.sqrt(residual / n)
+
+
+_MOTION: list[_Motion] = [_Motion()]
+
+
+def reset_ego_motion() -> None:
+    """Forget the ego's motion: the runner calls it as a run begins and
+    ends."""
+    _MOTION[0] = _Motion()
+
+
+def track_ego_motion(world: "carla.World", elapsed: float) -> None:
+    """Add the frame of *world* at *elapsed* simulated seconds to the ego's
+    motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M` and
+    :data:`STEERING_REVERSALS` read.
+
+    The runner calls it every tick; a frame at the time of the last one adds
+    nothing.  Off the driving lanes the ego has no lane to drift across, and
+    its drift holds until it is back on one.  Another ego starts the motion
+    anew.
+    """
+    try:
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        ego = None
+    if ego is None:
+        return
+    motion = _MOTION[0]
+    if motion.ego_id != ego.id:
+        motion = _Motion()
+        motion.ego_id = ego.id
+        _MOTION[0] = motion
+    last = motion.at
+    if last is not None and elapsed <= last:
+        return
+    motion.at = elapsed
+    try:
+        motion.steering_reversals.add(float(ego.get_control().steer))
+    except Exception:
+        pass
+    if last is not None:
+        frame = _frame(world)
+        try:
+            waypoint = _centre_waypoint(world, frame)
+        except Exception:
+            waypoint = None
+        if waypoint is not None:
+            velocity = ego.get_velocity()
+            yaw = math.radians(waypoint.transform.rotation.yaw)
+            across = -velocity.x * math.sin(yaw) + velocity.y * math.cos(yaw)
+            motion.lateral += across * (elapsed - last)
+    motion.lateral_reversals.add(motion.lateral)
+    start = elapsed - _WOBBLE_WINDOW_S
+    motion.window = [p for p in motion.window if p[0] >= start]
+    motion.window.append((elapsed, motion.lateral))
+
+
+def _tracked(world: "carla.World") -> Optional[_Motion]:
+    """The ego's motion, None without an ego or before its first frame."""
+    motion = _MOTION[0]
+    if not _frame(world).has_ego or motion.at is None:
+        return None
+    return motion
+
+
+def _lateral_reversals(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else float(motion.lateral_reversals.count)
+
+
+def _lateral_wobble_m(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else motion.wobble()
+
+
+def _steering_reversals(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else float(motion.steering_reversals.count)
+
+
 def _offroad(world: "carla.World") -> Optional[float]:
     return _event(world, _OFFROAD)
 
@@ -735,6 +928,33 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             text="The run's likelihood ratio so far, the product of NADE's "
             "p/q and (1-p)/(1-q) (1 without NADE); a batch of runs weighted "
             "by its last value estimates the naturalistic rate",
+            aggregation="last",
+        ),
+        Metric(
+            LATERAL_REVERSALS,
+            _lateral_reversals,
+            title="Weaving (reversals)",
+            unit="count",
+            text="How many times so far the ego's drift across its lane turned "
+            "back by more than 0.1 m; a lane change is a drift, not a reversal",
+            aggregation="last",
+        ),
+        Metric(
+            LATERAL_WOBBLE_M,
+            _lateral_wobble_m,
+            title="Weaving (amplitude)",
+            unit="m",
+            text="How far the ego strayed across its lane about its course "
+            "over the last 4 s, RMS",
+            aggregation="max",
+        ),
+        Metric(
+            STEERING_REVERSALS,
+            _steering_reversals,
+            title="Steering reversals",
+            unit="count",
+            text="How many times so far the steering applied to the ego "
+            "turned back by more than 0.01 of full lock",
             aggregation="last",
         ),
     ]

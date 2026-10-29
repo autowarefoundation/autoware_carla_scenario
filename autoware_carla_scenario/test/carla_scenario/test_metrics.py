@@ -6,6 +6,7 @@ along +x with driving lanes side by side, and boxes on it.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -28,14 +29,19 @@ from autoware_carla_scenario.metrics import (
     COLLISION_LATERAL,
     COLLISION_REAR,
     BUILT_IN_METRICS,
+    LATERAL_REVERSALS,
+    LATERAL_WOBBLE_M,
     MIN_DISTANCE_TO_LANE_BOUNDARY_M,
     MIN_DISTANCE_TO_OBSTACLE_M,
     OFFROAD,
     OFFROAD_OR_COLLISION,
     OFFROAD_OR_COLLISION_AT_FAULT,
+    STEERING_REVERSALS,
     WRONG_LANE,
     is_metric,
     read_metric,
+    reset_ego_motion,
+    track_ego_motion,
 )
 from autoware_carla_scenario.measures import BUILT_IN_MEASURES
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
@@ -75,6 +81,14 @@ class _Actor:
         self.bounding_box = _Box(extent)
         self._at = _v(at[0], at[1])
         self._yaw = yaw
+        self.velocity = _v()
+        self.steer = 0.0
+
+    def get_velocity(self) -> Any:
+        return self.velocity
+
+    def get_control(self) -> Any:
+        return SimpleNamespace(steer=self.steer)
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
@@ -210,12 +224,23 @@ def test_the_metrics_are_alpasim_s() -> None:
         "min_distance_to_lane_boundary_m",
         # Not AlpaSim's: NADE's weight, its last value the run's (#397).
         "importance_sampling_weight",
+        # Not AlpaSim's: the ego's weaving, of the run so far.
+        "lateral_reversals",
+        "lateral_wobble_m",
+        "steering_reversals",
     }
     weight = BUILT_IN_METRICS["importance_sampling_weight"]
     assert (weight.unit, weight.aggregation) == ("ratio", "last")
+    wobble = BUILT_IN_METRICS["lateral_wobble_m"]
+    assert (wobble.unit, wobble.aggregation) == ("m", "max")
+    for key in ("lateral_reversals", "steering_reversals"):
+        assert (BUILT_IN_METRICS[key].unit, BUILT_IN_METRICS[key].aggregation) == (
+            "count",
+            "last",
+        )
     for key, metric in BUILT_IN_METRICS.items():
         assert metric.key == key
-        if metric is not weight:
+        if metric.unit not in ("ratio", "count") and metric is not wobble:
             assert metric.aggregation == ("min" if metric.unit == "m" else "max")
     assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]
 
@@ -478,6 +503,141 @@ def test_a_frame_is_read_once() -> None:
 def test_headings_wrap() -> None:
     assert _read(WRONG_LANE, _world(yaw=350.0)) == 0.0
     assert _read(WRONG_LANE, _world(yaw=-179.0)) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Weaving, of the run so far
+# ---------------------------------------------------------------------------
+
+#: The runner's tick: 20 Hz.
+_DT = 0.05
+
+
+def _drive(
+    across: Any,
+    seconds: float,
+    *,
+    road: _Road = _TWO_WAY,
+    heading: float = 0.0,
+    steer: Any = None,
+) -> _World:
+    """Drives the ego at 10 m/s along *heading* (degrees) for *seconds*,
+    *across(t)* m/s to its right, steering *steer(t)*, every tick; the world of
+    the last tick."""
+    reset_ego_motion()
+    world = _world(road=road)
+    ego = world._actors[0]
+    yaw = math.radians(heading)
+    for i in range(round(seconds / _DT) + 1):
+        t = i * _DT
+        side = across(t)
+        ego.velocity = _v(
+            10.0 * math.cos(yaw) - side * math.sin(yaw),
+            10.0 * math.sin(yaw) + side * math.cos(yaw),
+        )
+        ego.steer = 0.0 if steer is None else steer(t)
+        world.frame = next(_FRAMES)
+        track_ego_motion(world, t)  # type: ignore[arg-type]
+    return world
+
+
+def _weave(amplitude: float, hz: float) -> Any:
+    """The sideways speed of a drift of *amplitude* m at *hz*."""
+    w = 2.0 * math.pi * hz
+    return lambda t: amplitude * w * math.cos(w * t)
+
+
+def test_a_weave_turns_back_twice_a_cycle() -> None:
+    # 0.3 m each way at 0.5 Hz for 10 s: five cycles, turning back at 0.5,
+    # 1.5, ... 9.5 s.
+    world = _drive(_weave(0.3, 0.5), 10.0)
+
+    assert _read(LATERAL_REVERSALS, world) == 10.0
+    # About a sine's RMS, 0.3 / sqrt(2), over the last two cycles: the line
+    # through them takes a little.
+    assert _read(LATERAL_WOBBLE_M, world) == pytest.approx(0.3 / math.sqrt(2), rel=0.1)
+
+
+def test_holding_the_lane_is_not_weaving() -> None:
+    # 5 cm each way: under the reversal gap.
+    world = _drive(_weave(0.05, 0.5), 10.0)
+
+    assert _read(LATERAL_REVERSALS, world) == 0.0
+    assert _read(LATERAL_WOBBLE_M, world) == pytest.approx(0.05 / math.sqrt(2), rel=0.1)
+
+
+def test_a_lane_change_is_a_drift_not_a_reversal() -> None:
+    # A lane's width to the right over 4 s, smoothly, then straight on.
+    def across(t: float) -> float:
+        s = min(t / 4.0, 1.0)
+        return _LANE_WIDTH * 6.0 * s * (1.0 - s) / 4.0
+
+    reset_ego_motion()
+    lane_change = _drive(across, 6.0)
+    assert _read(LATERAL_REVERSALS, lane_change) == 0.0
+    # Mostly the course: a tenth of the lane's width at the most.
+    worst = 0.0
+    for seconds in (2.0, 3.0, 4.0, 5.0, 6.0):
+        wobble = _read(LATERAL_WOBBLE_M, _drive(across, seconds))
+        assert wobble is not None
+        worst = max(worst, wobble)
+    assert worst < 0.1 * _LANE_WIDTH
+
+
+def test_following_a_bend_is_not_a_drift() -> None:
+    # The lane heads 30 degrees, and so does the ego.
+    bend = _Road([_Lane(-1, 0.0, 30.0)])
+    world = _drive(lambda t: 0.0, 4.0, road=bend, heading=30.0)
+
+    assert _read(LATERAL_WOBBLE_M, world) == pytest.approx(0.0, abs=1e-9)
+    assert _read(LATERAL_REVERSALS, world) == 0.0
+
+
+def test_steering_back_and_forth_is_counted() -> None:
+    def sawing(t: float) -> float:
+        return 0.05 if int(t) % 2 else -0.05
+
+    world = _drive(lambda t: 0.0, 5.0, steer=sawing)
+    # Turns at 1, 2, 3, 4 and 5 s, the first from where it began.
+    assert _read(STEERING_REVERSALS, world) == 4.0
+
+    jitter = _drive(lambda t: 0.0, 5.0, steer=lambda t: 0.004 * (-1) ** round(t / _DT))
+    assert _read(STEERING_REVERSALS, jitter) == 0.0
+
+
+def test_weaving_reads_nothing_until_the_ego_is_tracked() -> None:
+    reset_ego_motion()
+    world = _world()
+    for key in (LATERAL_REVERSALS, LATERAL_WOBBLE_M, STEERING_REVERSALS):
+        assert _read(key, world) is None
+    track_ego_motion(world, 0.0)  # type: ignore[arg-type]
+    assert _read(LATERAL_REVERSALS, world) == 0.0
+    # Three frames before there is a course to stray from.
+    assert _read(LATERAL_WOBBLE_M, world) is None
+    assert _read(LATERAL_REVERSALS, _world(road=_TWO_WAY)) is not None
+    assert _read(LATERAL_REVERSALS, _World([], _TWO_WAY)) is None
+    reset_ego_motion()
+
+
+def test_a_tick_seen_twice_adds_nothing() -> None:
+    world = _drive(_weave(0.3, 0.5), 2.0)
+    before = _read(LATERAL_WOBBLE_M, world)
+    world._actors[0].velocity = _v(10.0, 50.0)
+    world.frame = next(_FRAMES)
+    track_ego_motion(world, 2.0)  # type: ignore[arg-type]
+
+    assert _read(LATERAL_WOBBLE_M, world) == before
+    reset_ego_motion()
+
+
+def test_the_runner_tracks_the_ego_every_tick() -> None:
+    import inspect
+
+    from autoware_carla_scenario import scenario_runner
+
+    source = inspect.getsource(scenario_runner)
+    assert "track_ego_motion(world, elapsed)" in source
+    assert source.count("reset_ego_motion()") == 2
 
 
 # ---------------------------------------------------------------------------
