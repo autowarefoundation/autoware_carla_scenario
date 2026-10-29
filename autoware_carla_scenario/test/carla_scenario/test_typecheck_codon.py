@@ -3009,10 +3009,10 @@ def test_a_scenario_may_use_the_signal_and_atexit_shims_and_nothing_beyond_them(
     scenario, config, _ = _write_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
-    wrong = 'logger.info("%s", str(signal.getsignal(signal.SIGUSR1)))'
+    wrong = "signal.siginterrupt(signal.SIGUSR1, True)"
     scenario, config, path = _write_case(tmp_path, setup + wrong + "\n")
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "getsignal" in error.message
+    assert "siginterrupt" in error.message
     assert error.path == str(path)
     assert error.line == _line_of(path, wrong)
 
