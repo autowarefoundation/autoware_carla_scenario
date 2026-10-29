@@ -1734,3 +1734,47 @@ def test_a_non_finite_input_constant_or_scale_is_refused(dbc: Path, value: str) 
         document["devices"]["can"]["inputs"][0]["command"] = command
         with pytest.raises(HilsConfigError, match="finite"):
             parse_config(document)
+
+
+@pytest.mark.parametrize("value", [1e39, -1e39, 1e300])
+def test_a_command_field_beyond_a_32_bit_float_is_dropped(value: float) -> None:
+    # Finite, but CARLA's 32-bit float controls would make it an infinity.
+    from autoware_carla_scenario.hils.config import InputSource, InputSpec
+
+    command = {"type": "command", "mode": "ackermann", "speed": value, "steer": 0.1}
+    bridge = _ScriptedBridge([{"type": "ready"}, command])
+    entity = _entity(bridge.port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    entity.on_tick(None, 0.0)
+    assert entity.command == ("ackermann", {"steer": 0.1})
+    _finite_control(entity.actor.controls[-1])
+    entity.on_scenario_end(None)
+
+    spec = InputSpec(name="Command", command={"speed": InputSource(field="Raw")})
+    assert spec.values({"Raw": value}) == {}
+    assert InputSource(field="Raw").resolve({"Raw": value}) is None
+    assert InputSource(field="Raw").resolve({"Raw": 3.0e38}) == 3.0e38
+
+
+@pytest.mark.parametrize("gear", [1e30, -1e30, 2.0**63, 2**40])
+def test_a_huge_finite_gear_does_not_raise_in_on_tick(gear: float) -> None:
+    # int() of a huge float is a huge int, which CARLA's VehicleControl
+    # refuses (SystemError/OverflowError) in on_tick: it is clamped instead.
+    command = {"type": "command", "mode": "control", "gear": gear, "throttle": 0.5}
+    entity = _entity(_ScriptedBridge([{"type": "ready"}, command]).port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    entity.on_tick(None, 0.0)
+    assert not entity.termination_requested
+    control = entity.actor.controls[-1]
+    assert control.gear == (2**31 - 1 if gear > 0 else -(2**31))
+    assert control.throttle == pytest.approx(0.5)
+    entity.on_scenario_end(None)
+
+
+def test_a_scale_too_large_for_a_float_is_refused(dbc: Path) -> None:
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {
+        "throttle": {"field": "Throttle", "scale": 10**400}
+    }
+    with pytest.raises(HilsConfigError, match="float"):
+        parse_config(document)

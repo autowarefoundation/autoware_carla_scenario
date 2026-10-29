@@ -25,7 +25,6 @@ buses are the bridge's.
 from __future__ import annotations
 
 import logging
-import math
 import socket
 import time
 from dataclasses import dataclass
@@ -36,6 +35,7 @@ from ..hils.protocol import (
     DEFAULT_PORT,
     PROTOCOL_VERSION,
     LineReader,
+    command_value,
     encode,
 )
 from ..entity_role import EntityRole
@@ -55,6 +55,10 @@ ON_STALE_ACTIONS: Tuple[str, ...] = ("brake", "hold")
 #: Non-finite command fields are logged the first time and then once in this
 #: many (a command comes every ECU cycle).
 _NON_FINITE_LOG_EVERY = 100
+
+#: The gears CARLA's ``VehicleControl`` can hold (a 32-bit int).
+_GEAR_MIN = float(-(2**31))
+_GEAR_MAX = float(2**31 - 1)
 
 
 @dataclass(frozen=True)
@@ -364,27 +368,25 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         """A command message's numeric *fields*.
 
         A field that is not a number is left out, and so is a non-finite one
-        (NaN, an infinity: JSON's ``NaN``/``Infinity``, or an integer too large
-        for a float), which CARLA must not get: the field takes its default,
+        (NaN, an infinity: JSON's ``NaN``/``Infinity``) or one too large for
+        CARLA's 32-bit floats (:func:`~..hils.protocol.command_value`), which
+        CARLA must not get: the field takes its default,
         as a missing one does.  Those are logged the first time and then once
         in a hundred."""
         values: Dict[str, float] = {}
         for key, value in message.items():
             if key not in fields or not isinstance(value, (int, float)):
                 continue
-            try:
-                number = float(value)
-            except OverflowError:
-                number = math.inf if value > 0 else -math.inf
-            if math.isfinite(number):
+            number = command_value(value)
+            if number is not None:
                 values[key] = number
                 continue
             if self._dropped % _NON_FINITE_LOG_EVERY == 0:
                 logger.warning(
-                    "The HILS bridge sent a non-finite %s (%r); it takes its "
-                    "default (%d dropped so far)",
+                    "The HILS bridge sent a non-finite or out-of-range %s (%r); "
+                    "it takes its default (%d dropped so far)",
                     key,
-                    number,
+                    value,
                     self._dropped + 1,
                 )
             self._dropped += 1
@@ -457,7 +459,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 hand_brake=fields.get("hand_brake", 0.0) >= 0.5,
                 reverse=fields.get("reverse", 0.0) >= 0.5,
                 manual_gear_shift=fields.get("manual_gear_shift", 0.0) >= 0.5,
-                gear=int(fields.get("gear", 0.0)),
+                # CARLA's gear is a 32-bit int: a larger one would raise.
+                gear=int(min(max(fields.get("gear", 0.0), _GEAR_MIN), _GEAR_MAX)),
             )
         )
 

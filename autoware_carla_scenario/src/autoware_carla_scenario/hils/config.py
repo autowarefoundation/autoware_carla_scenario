@@ -55,7 +55,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from .measurements import CAMERA_ENCODINGS
-from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT
+from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT, command_value
 from .signals import SIGNALS
 
 logger = logging.getLogger(__name__)
@@ -167,13 +167,15 @@ class InputSource:
         """The command field's value from a decoded message's *fields*;
         ``None`` when the message lacks the field, it is not a number, or it
         (scaled) is not finite (NaN, an infinity: a decoded IEEE-float signal,
-        an overflowing scale), which CARLA must not get."""
+        an overflowing scale) or too large for CARLA's 32-bit floats
+        (:func:`~.protocol.command_value`), which CARLA must not get."""
         value = self.scaled(fields)
-        return value if value is not None and math.isfinite(value) else None
+        return None if value is None else command_value(value)
 
     def scaled(self, fields: Mapping[str, Any]) -> Optional[float]:
-        """:meth:`resolve`, but a non-finite value is returned (not ``None``),
-        for the caller to report; a number too large for a float is ``inf``."""
+        """:meth:`resolve`, but a non-finite or out-of-range value is returned
+        (not ``None``), for the caller to report; a number too large for a
+        float is ``inf``."""
         if self.field is None:
             return self.constant
         value = fields.get(self.field)
@@ -209,7 +211,8 @@ class InputSpec:
     def values(self, fields: Mapping[str, Any]) -> Dict[str, float]:
         """The command fields a decoded message's *fields* give.
 
-        A field whose value is not finite is left out, as a missing one is:
+        A field whose value is not finite, or too large for CARLA's 32-bit
+        floats, is left out, as a missing one is:
         the ego keeps the field's previous value.  It is logged the first time
         and then once in a hundred."""
         values: Dict[str, float] = {}
@@ -217,11 +220,13 @@ class InputSpec:
             value = source.scaled(fields)
             if value is None:
                 continue
-            if not math.isfinite(value):
+            number = command_value(value)
+            if number is None:
                 count = self._dropped.get(key, 0)
                 if count % _NON_FINITE_LOG_EVERY == 0:
                     logger.warning(
-                        "%s: dropped a non-finite %s (%r from %s; %d so far)",
+                        "%s: dropped a non-finite or out-of-range %s "
+                        "(%r from %s; %d so far)",
                         self.name,
                         key,
                         value,
@@ -230,7 +235,7 @@ class InputSpec:
                     )
                 self._dropped[key] = count + 1
                 continue
-            values[key] = value
+            values[key] = number
         return values
 
 
@@ -389,7 +394,12 @@ def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
 def _number(value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise HilsConfigError(f"{where}: expected a number, got {value!r}")
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        raise HilsConfigError(
+            f"{where}: expected a number a float can hold, got {value!r}"
+        ) from None
 
 
 def _finite(value: Any, where: str) -> float:
