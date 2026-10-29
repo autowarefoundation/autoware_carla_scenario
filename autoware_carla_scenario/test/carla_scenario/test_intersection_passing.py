@@ -38,8 +38,11 @@ class _Turn:
     """A set-up scenario whose nearness to the junction and indicator are
     switched by hand."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, **config: Any) -> None:
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, junction: bool = False, **config: Any
+    ) -> None:
         self.near: Optional[_Switch] = None
+        self.inside: Optional[_Switch] = None
         self.signalling: Optional[_Switch] = None
 
         def near(*args: Any, **kwargs: Any) -> _Switch:
@@ -50,9 +53,19 @@ class _Turn:
             self.signalling = _Switch(*args, **kwargs)
             return self.signalling
 
+        def inside(*args: Any, **kwargs: Any) -> _Switch:
+            self.inside = _Switch(*args, **kwargs)
+            return self.inside
+
+        # The pass condition's roads are the real class's.
+        inside.anywhere_on_road = module.EntityLanePositionCondition.anywhere_on_road  # type: ignore[attr-defined]
         monkeypatch.setattr(module, "EntityPositionDistanceCondition", near)
+        monkeypatch.setattr(module, "EntityLanePositionCondition", inside)
         monkeypatch.setattr(module, "TurnIndicatorCondition", signalling)
-        monkeypatch.setattr(module, "_lanelet_start_road_id", lambda i: f"road{i}")
+        monkeypatch.setattr(module, "_lanelet_road_id", lambda i: f"road{i}")
+        monkeypatch.setattr(
+            module, "_is_junction_lanelet", lambda i: junction and i == 411
+        )
         self.scenario = IntersectionPassingScenario(
             EgoConfig(
                 spawn_location=SpawnTransform(carla.Transform(carla.Location())),
@@ -69,6 +82,9 @@ class _Turn:
 
     def failure(self, label: str) -> BaseCondition:
         return next(c for c in self.scenario._fail_conditions if c.label == label)
+
+    def passes(self) -> list[str]:
+        return [c.label for c in self.scenario._pass_conditions]
 
     def labels(self) -> list[str]:
         return [c.label for c in self.scenario._fail_conditions]
@@ -158,21 +174,27 @@ def test_a_blink_of_the_command_is_not_a_turn_without_one(
     assert not _fired(no_indicator, 0.8)
 
 
-def test_dropping_the_indicator_in_the_junction_still_fails(
+def test_the_indicator_is_judged_until_the_ego_is_in_the_junction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     turn = _Turn(monkeypatch, turn_direction="left", turn_indicator_before_m=30.0)
     no_indicator = turn.failure("no_left_indicator")
-    assert turn.near is not None and turn.signalling is not None
+    assert turn.near is not None and turn.inside is not None
+    assert turn.signalling is not None
+    # On the route's first lanelet: the junction's mouth.
+    assert turn.inside.args[1] == Lanelet2Pose(lanelet_id=411, s=0.0)
 
     turn.near.on = turn.signalling.on = True
     assert not _fired(no_indicator, 0.0)
-    # Inside the junction the mouth falls behind and the distance grows: the
-    # check is latched from where it began.
+    # Inside, the mouth falls behind and the distance grows: the approach is
+    # latched from where it began, and so is the junction.
     turn.near.on = False
+    turn.inside.on = True
+    assert not _fired(no_indicator, 0.5)
+    # A driver cancels the indicator as the turn straightens out.
+    turn.inside.on = False
     turn.signalling.on = False
-    assert not _fired(no_indicator, 1.0)
-    assert _fired(no_indicator, 1.5)
+    assert not any(_fired(no_indicator, 1.0 + t / 10) for t in range(30))
 
 
 def test_steering_back_too_often_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,6 +226,41 @@ def test_the_indicator_and_the_steering_are_counted_apart(
     assert turn.failure("turn_indicator_changes").get_details()["metric"] == (
         "turn_indicator_changes"
     )
+
+
+def test_a_turn_is_passed_on_the_road_after_the_junction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _Turn(monkeypatch, turn_direction="left").passes() == [
+        "ego_on_road_road411_sticky AND ego_on_road_road207_sticky"
+    ]
+    assert _Turn(monkeypatch, junction=True, turn_direction="left").passes() == [
+        "ego_on_road_road207_sticky"
+    ]
+
+
+#: Each lanelet's road: 208 continues 207's.
+_ROADS = {100: "road100", 411: "road411", 207: "road207", 208: "road207"}
+
+
+@pytest.mark.parametrize(
+    "route, roads",
+    [
+        # A turn: through the junction's lanelet 411, whose road reads as another.
+        ([411, 207], ["road207"]),
+        # Two lanelets on one road are asserted once.
+        ([100, 411, 207, 208], ["road100", "road207"]),
+        # A junction alone is all there is to go by.
+        ([411], ["road411"]),
+    ],
+)
+def test_the_route_is_asserted_by_the_roads_outside_the_junction(
+    monkeypatch: pytest.MonkeyPatch, route: list[int], roads: list[str]
+) -> None:
+    monkeypatch.setattr(module, "_lanelet_road_id", _ROADS.__getitem__)
+    monkeypatch.setattr(module, "_is_junction_lanelet", lambda i: i == 411)
+
+    assert module._route_road_ids(route) == roads
 
 
 @pytest.mark.parametrize(

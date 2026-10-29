@@ -65,10 +65,11 @@ class IntersectionPassingConfig:
     turn_direction: str | None = None
 
     #: From this many metres before the junction (the start of the route's
-    #: first lanelet, where its stop line is) until the run passes, the ego
-    #: must show the turn indicator of ``turn_direction``; the run fails once
-    #: it has not for ``turn_indicator_grace_seconds``.  ``None`` checks
-    #: nothing.  Needs a ``"left"`` or ``"right"`` turn.
+    #: first lanelet, where its stop line is) until it is on that lanelet,
+    #: the ego must show the turn indicator of ``turn_direction``; the run
+    #: fails once it has not for ``turn_indicator_grace_seconds``.  In the
+    #: junction the indicator is ``max_turn_indicator_changes``' to judge.
+    #: ``None`` checks nothing.  Needs a ``"left"`` or ``"right"`` turn.
     turn_indicator_before_m: float | None = None
 
     #: How long the indicator may be wrong before the run fails, in seconds:
