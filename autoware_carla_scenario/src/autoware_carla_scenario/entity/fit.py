@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 __all__ = ["FIT_BASE_TYPES", "FIT_EXCLUDED", "fitted_vehicle", "vehicle_sizes"]
 
@@ -34,7 +37,7 @@ _OUT_OF_SIGHT = (0.0, 0.0, -2000.0)
 _SIZES: dict[int, dict[str, tuple[float, float]]] = {}
 
 
-def _candidate(blueprint: Any) -> bool:
+def _candidate(blueprint: carla.ActorBlueprint) -> bool:
     if any(fnmatch.fnmatch(blueprint.id, pattern) for pattern in FIT_EXCLUDED):
         return False
     if not blueprint.has_attribute("base_type"):
@@ -42,7 +45,7 @@ def _candidate(blueprint: Any) -> bool:
     return blueprint.get_attribute("base_type").as_str() in FIT_BASE_TYPES
 
 
-def vehicle_sizes(world: Any) -> dict[str, tuple[float, float]]:
+def vehicle_sizes(world: carla.World) -> dict[str, tuple[float, float]]:
     """``{blueprint: (length, width)}`` (m) of every candidate vehicle of
     *world*, read once per world by spawning each out of sight."""
     key = int(world.id)
@@ -75,14 +78,14 @@ def vehicle_sizes(world: Any) -> dict[str, tuple[float, float]]:
     return sizes
 
 
-def fitted_vehicle(world: Any, length: float, width: float) -> Optional[str]:
+def fitted_vehicle(world: carla.World, length: float, width: float) -> Optional[str]:
     """The candidate vehicle of *world* whose box is nearest *length* x
     *width* (m): the least sum of the squared relative differences of the
     two.  ``None`` when *world* has none, or the size is not one."""
     if length <= 0.0 or width <= 0.0:
         return None
     sizes = vehicle_sizes(world)
-    if not sizes:
+    if len(sizes) == 0:
         return None
 
     def gap(name: str) -> float:

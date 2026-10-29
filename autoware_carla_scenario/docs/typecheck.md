@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 219 of
-the package's 327 modules (67%; about 65,600 of 116,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 220 of
+the package's 327 modules (67%; about 65,700 of 116,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2395,7 +2395,8 @@ the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
 controller included, `entity._walker_ai`), the base of the externally driven egos
-(`entity.externally_driven`), the ego that takes its mission over the bridge
+(`entity.externally_driven`), the vehicle blueprint nearest a size that
+plays an entity of `vehicle_type: auto` (`entity.fit`, #728), the ego that takes its mission over the bridge
 (`entity.bridged_ego`) and the Autoware ego on it (`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
 (`entity.ros2_entity`) with its configs, commands, arbitration and transport
 interface (`ros2`, `ros2.config`, `ros2.commands`, `ros2.transport`), the entity registry and the policy
@@ -2475,9 +2476,9 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 108 `EXCLUDED` modules fall in
+compiled through their callers. The 107 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 83 import what Codon cannot
-compile, 31 build on an excluded module and 21 hold values Codon has no type
+compile, 31 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **83 import what Codon cannot compile**:
@@ -2516,9 +2517,9 @@ for), so each is counted once, in the first group that fits it:
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
   holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
-- **4 hold values Codon has no type for**, and nothing else keeps them out:
+- **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults, `entity.fit`'s world and blueprints), or a class as a value
+  field defaults), or a class as a value
   (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
@@ -3050,7 +3051,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `json`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
@@ -3270,7 +3271,12 @@ What Codon 0.19 needs that Python does not, beyond
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
-  as `''`) is refused. `sys` replaces Codon's, keeping all of it (`argv`,
+  as `''`) is refused. `fnmatch` declares `fnmatch(name, pat)` and
+  `fnmatchcase(name, pat)`, of two `str`s, CPython 3.10's shell-pattern
+  match written without a regular expression (CPython's translation uses a
+  lookahead, which Codon's `re` has no syntax for); an `os.PathLike` name or
+  pattern, which CPython's `fnmatch()` takes, is refused, and `filter()` and
+  `translate()` are not declared (#728). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`
   (`"linux"`) and `executable` (a `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
@@ -3320,7 +3326,7 @@ What Codon 0.19 needs that Python does not, beyond
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
-  `urllib.parse`, `signal`, `atexit`, `shlex` and `sys` and call what they
+  `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch` and `sys` and call what they
   declare,
   file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
   and set the environment (`os.environ.get()`), copy, move and remove files
