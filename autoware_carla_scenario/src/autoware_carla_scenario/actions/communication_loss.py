@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition, ScenarioResult
 from ..constants import EGO_ROLE_NAME
-from ..entity.hils_entity import HilsEgoEntity
-from ..entity.registry import find_vehicle_entity
+from ..entity.hils_entity import HilsEgoEntity, find_hils_entity
 from ..entity_role import EntityRole
-from ..hils.protocol import LINK_DIRECTIONS
+from ..hils.wire import LINK_DIRECTIONS
 from .base import ActionState, BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -28,7 +27,10 @@ def _names(messages: Union[str, Sequence[str], None]) -> Optional[tuple[str, ...
         return None
     parts = messages.split(",") if isinstance(messages, str) else list(messages)
     names = tuple(dict.fromkeys(str(p).strip() for p in parts if str(p).strip()))
-    return names or None
+    # Not `names or None`, which Codon types as a union of the two.
+    if not names:
+        return None
+    return names
 
 
 class CommunicationLossAction(BaseAction):
@@ -114,8 +116,9 @@ class CommunicationLossAction(BaseAction):
             label=label, condition=condition, timing=timing, once=once, until=end
         )
         self._entity_name = str(entity_name)
-        # An editor's empty field means every device too.
-        self._device = device or None
+        # An editor's empty field means every device too.  Not `device or
+        # None`, which Codon types as a union of the two.
+        self._device = device if device else None
         self._messages = _names(messages)
         self._direction = direction
         self._duration = None if duration is None else float(duration)
@@ -171,17 +174,23 @@ class CommunicationLossAction(BaseAction):
     def execute(self, world: "carla.World") -> None:
         """Have the HILS bridge stop the data."""
         self._started_at = self._now
-        entity = find_vehicle_entity(self._entity_name)
-        if not isinstance(entity, HilsEgoEntity):
+        # A typed lookup, not isinstance() of find_vehicle_entity()'s result:
+        # Codon resolves isinstance() by the static type (docs/typecheck.md).
+        found = find_hils_entity(self._entity_name)
+        if found is None:
             logger.warning(
                 "CommunicationLossAction: '%s' is not driven through the HILS "
                 "bridge (ego.entity=hils); there is no communication to stop",
                 self._entity_name,
             )
             return
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        entity: HilsEgoEntity = found
         cut_id = entity.disconnect(self._device, self._messages, self._direction)
         if cut_id is not None:
-            self._cut = (entity, cut_id)
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            cut: str = cut_id
+            self._cut = (entity, cut)
             logger.info(
                 "CommunicationLossAction: %s of %s stopped (%s)",
                 "every message"

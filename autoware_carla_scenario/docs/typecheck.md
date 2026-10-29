@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 214 of
-the package's 318 modules (67%; about 49,800 of 90,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 216 of
+the package's 319 modules (68%; about 50,100 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2386,7 +2386,9 @@ walk-straight actions, the routing action's matching of a track to the lanes
 (`traffic.route_match`), the test of what stands on a place or in a road
 user's way (`utils.clearance`), which the spawn action, the place-clear
 condition, the trajectory run and the final approach call, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
-(`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
+(`actions.background_traffic`), the communication loss on a HILS ego
+(`actions.communication_loss`, over a model of the HILS ego entity) with the
+socket-free half of the HILS bridge's protocol (`hils.wire`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
@@ -2430,7 +2432,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 104
+below). 105
 functions and methods of those modules are `UNCALLED` (23 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
@@ -2464,9 +2466,11 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 104 `EXCLUDED` modules fall in
+which the check has no value of), and the line a HILS message goes out as,
+which takes a message of any shape (`hils.wire.encode()`, a
+`Mapping[str, Any]`). The 103 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 79 import what Codon cannot
-compile, 31 build on an excluded module and 21 hold values Codon has no type
+compile, 30 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **79 import what Codon cannot compile**:
@@ -2490,12 +2494,11 @@ for), so each is counted once, in the first group that fits it:
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **21 build on an excluded module**, and import nothing Codon lacks
+- **20 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `examples`, `scaffold`, `slurm`, `hils`), `actions.communication_loss` (on the
-  HILS ego entity), `slurm.collect`, the
+  `examples`, `scaffold`, `slurm`, `hils`), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
   the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
@@ -2503,7 +2506,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 20
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -3968,6 +3971,11 @@ What Codon 0.19 needs that Python does not, beyond
   up when the lookup misses and raise the `AttributeError` the call raised
   (`LaneChangeAction`, `TurnAction` and `SetSpeedAction` on a pedestrian),
   so a wrong kind still fails rather than reading as an entity not found.
+  A narrower kind is a typed lookup of its own:
+  `isinstance(find_vehicle_entity(name), HilsEgoEntity)` is decided by the
+  static type (`BackendDriven`), so `CommunicationLossAction` calls
+  `entity.hils_entity.find_hils_entity` (an `Optional[HilsEgoEntity]`), which
+  makes that test in Python and is declared in the entity model.
 - **An entity is registered by kind, too**: `register_entity` picks the kind
   with `isinstance(entity, BackendDriven)`, which Codon decides by the
   static type and does not match for a subclass (a `VehicleEntity`), so a

@@ -14,7 +14,7 @@ from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProj
 from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
 from ._vehicle_entity import (SpawnLocation, SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
-from .entity_role import _expect_role_name
+from .entity_role import _expect_role, _expect_role_name
 
 
 def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
@@ -304,6 +304,31 @@ class CarlaDriverEntity:
         compile_error("CarlaDriverEntity is not modelled: the static check cannot "
                       "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
 
+
+
+# entity.hils_entity imports socket and hils.protocol (socket); the checked
+# actions.communication_loss reaches the HILS ego through find_hils_entity()
+# (Codon resolves isinstance() of a vehicle by its static type) and calls its
+# disconnect() and reconnect(). Only those are declared; the constructor is
+# Python's and any call to it fails the check, as its HilsEgoConfig is not in
+# the model: a scenario cannot build one (ego.entity=hils builds it).
+class HilsEgoEntity:
+    def __init__(self, config=None, episode_name: str = ""):
+        compile_error("HilsEgoEntity is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
+
+    # Optional[Sequence[str]] in Python: the checked caller hands a tuple.
+    def disconnect(self, device: Optional[str] = None, messages = None,
+                   direction: str = "both") -> Optional[str]:
+        raise NotImplementedError()
+
+    def reconnect(self, cut_id: str) -> bool:
+        raise NotImplementedError()
+
+
+def find_hils_entity(role_name) -> Optional[HilsEgoEntity]:
+    _expect_role(role_name)
+    return None
 
 def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
     """An Optional[EgoVehicle] argument (Codon's Optional does not take a subclass)."""
