@@ -4598,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 219 of
-the package's 327 modules (67%; about 65,600 of 116,500 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 220 of
+the package's 327 modules (67%; about 65,700 of 116,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4630,7 +4630,8 @@ the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
 controller included, <code>entity._walker_ai</code>), the base of the externally driven egos
-(<code>entity.externally_driven</code>), the ego that takes its mission over the bridge
+(<code>entity.externally_driven</code>), the vehicle blueprint nearest a size that
+plays an entity of <code>vehicle_type: auto</code> (<code>entity.fit</code>, #728), the ego that takes its mission over the bridge
 (<code>entity.bridged_ego</code>) and the Autoware ego on it (<code>entity.autoware_entity</code>), the ego driven by ROS 2 nodes over DDS
 (<code>entity.ros2_entity</code>) with its configs, commands, arbitration and transport
 interface (<code>ros2</code>, <code>ros2.config</code>, <code>ros2.commands</code>, <code>ros2.transport</code>), the entity registry and the policy
@@ -4710,9 +4711,9 @@ which takes a message of any shape (<code>hils.wire.encode()</code>, a
 <code>prctl(PR_SET_PDEATHSIG)</code> call through ctypes (<code>_request_pdeathsig()</code>) and
 what runs a case in the forked child (<code>_run_in_child()</code>, which takes the
 signal mask, a <code>set[int | signal.Signals]</code>); the first and the last are
-compiled through their callers. The 108 <code>EXCLUDED</code> modules fall in
+compiled through their callers. The 107 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 83 import what Codon cannot
-compile, 31 build on an excluded module and 21 hold values Codon has no type
+compile, 31 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
 <li><strong>83 import what Codon cannot compile</strong>:
@@ -4751,9 +4752,9 @@ for), so each is counted once, in the first group that fits it:</p>
   <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
   holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.</li>
-<li><strong>4 hold values Codon has no type for</strong>, and nothing else keeps them out:
+<li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
-  field defaults, <code>entity.fit</code>'s world and blueprints), or a class as a value
+  field defaults), or a class as a value
   (<code>utils.config</code>, which <code>traffic.config</code>,
   <code>traffic.fidelity</code> and <code>traffic.sumo.config</code> import only in their uncalled
   <code>from_mapping()</code>).</li>
@@ -5245,7 +5246,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   and the files of <code>codon/</code> in step):</li>
 </ul>
 <!-- shims:start -->
-<p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>hashlib</code>,
+<p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>fnmatch</code>, <code>hashlib</code>,
   <code>importlib.metadata</code>, <code>json</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>queue</code>,
   <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
   <code>typing</code>, <code>typing_extensions</code> and <code>urllib.parse</code>
@@ -5464,7 +5465,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>ValueError</code> with <code>msg</code>, <code>doc</code> and <code>pos</code>. <code>shlex</code> declares
   <code>quote(s)</code> and <code>join(split_command)</code>, CPython 3.10's on Codon's <code>re</code>; a
   <code>quote()</code> of a false value that is no <code>str</code> (<code>None</code>, which CPython quotes
-  as <code>''</code>) is refused. <code>sys</code> replaces Codon's, keeping all of it (<code>argv</code>,
+  as <code>''</code>) is refused. <code>fnmatch</code> declares <code>fnmatch(name, pat)</code> and
+  <code>fnmatchcase(name, pat)</code>, CPython 3.10's shell-pattern match written
+  without a regular expression (CPython's translation uses a lookahead,
+  which Codon's <code>re</code> has no syntax for); <code>fnmatch()</code> takes a <code>str</code> or an
+  <code>os.PathLike</code> for either, read through <code>os.fspath()</code> as CPython's
+  <code>normcase()</code> reads it on POSIX, and <code>fnmatchcase()</code> two <code>str</code>s, as
+  CPython's does. <code>filter()</code> and <code>translate()</code> are not declared (#728). <code>sys</code> replaces Codon's, keeping all of it (<code>argv</code>,
   the standard streams, <code>exit()</code>, <code>maxsize</code>), and adds <code>platform</code>
   (<code>"linux"</code>) and <code>executable</code> (a <code>str</code>). <code>atexit</code>
   declares <code>register(func, *args, **kwargs)</code>, which takes the function by
@@ -5514,7 +5521,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   as attributes and as a tuple, <code>hostname</code>, <code>port</code>, <code>username</code>, <code>password</code>
   and <code>geturl()</code>). A scenario sees the same shims: it may import <code>pathlib</code>,
   <code>hashlib</code>, <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>importlib.metadata</code>,
-  <code>urllib.parse</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code> and <code>sys</code> and call what they
+  <code>urllib.parse</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code>, <code>fnmatch</code> and <code>sys</code> and call what they
   declare,
   file-system queries and the two writes included (<code>Path(...).exists()</code>, <code>Path(...).write_text(...)</code>), read
   and set the environment (<code>os.environ.get()</code>), copy, move and remove files
@@ -5525,7 +5532,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   distribution's version with <code>importlib.metadata.version()</code>, and catch the
   exceptions above. Any other name of them (<code>Path.is_socket()</code>, <code>hashlib.md5()</code>,
   <code>shutil.disk_usage()</code>, <code>subprocess.check_output()</code>, <code>os.scandir()</code>,
-  <code>importlib.import_module()</code>, <code>urllib.request</code>, <code>signal.getsignal()</code>) fails
+  <code>importlib.import_module()</code>, <code>urllib.request</code>, <code>signal.setitimer()</code>) fails
   its check wherever Codon compiles it. The model's top-level package declares <code>__file__</code> (a
   <code>str</code>, as CPython sets it on a regular package), which
   <code>authoring.framework_pin</code> imports (<code>from .. import __file__</code>).
@@ -6558,7 +6565,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 13:22:09 UTC"><span class="timeago" datetime="2026-10-29T13:22:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 13:22:09 UTC">2026-10-29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 17:50:56 UTC"><span class="timeago" datetime="2026-10-29T17:50:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 17:50:56 UTC">2026-10-29</span>
   </span>
 
     
