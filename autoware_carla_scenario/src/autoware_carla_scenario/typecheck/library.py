@@ -521,7 +521,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.t4_scene.__main__": "the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked",
     "autoware_carla_scenario.t4_scene._proto.t4_scene_pb2": "imports google.protobuf",
     "autoware_carla_scenario.t4_scene.convert": "reads JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) with orjson, imports numpy.typing (`NDArray`), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); an offline converter no checked module imports",
-    "autoware_carla_scenario.t4_scene.map_resource": "imports xml.etree.ElementTree, hashlib and tempfile (`TemporaryDirectory()`), which Codon has no shim for, and builds protobuf messages (t4_scene._proto)",
+    "autoware_carla_scenario.t4_scene.map_resource": "imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (`TemporaryDirectory()`), and builds protobuf messages (t4_scene._proto)",
     "autoware_carla_scenario.templating": "imports jinja2; toml_string() takes `object`",
     "autoware_carla_scenario.tools.detect_no_3d_model_lanelets": "imports omegaconf, tqdm, argparse",
     "autoware_carla_scenario.traffic.registry": 'holds backend factories behind the alias `Callable[[Mapping[str, Any]], TrafficBackend]` (registry.py:46, "expected type expression") and takes their options as `Mapping[str, Any]`, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package',
