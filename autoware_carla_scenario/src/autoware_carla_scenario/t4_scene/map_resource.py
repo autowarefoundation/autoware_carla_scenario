@@ -83,8 +83,9 @@ def local_meters_osm(lanelet_map: lanelet2.core.LaneletMap) -> bytes:
         root = ET.fromstring(path.read_bytes())
     for node in root.findall("node"):
         point = lanelet_map.pointLayer[int(node.attrib["id"])]
-        node.set("lat", repr(gps[point.id].lat))
-        node.set("lon", repr(gps[point.id].lon))
+        lat_lon = gps[point.id]
+        node.set("lat", repr(lat_lon.lat))
+        node.set("lon", repr(lat_lon.lon))
         tags = {tag.attrib["k"]: tag for tag in node.findall("tag")}
         for name, value in (
             ("local_x", point.x),

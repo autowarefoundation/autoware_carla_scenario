@@ -87,6 +87,7 @@ from typing import IO, Any, Optional
 import orjson
 import typesafe_carla.carla as carla
 
+from .constants import EGO_ROLES
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .utils.traffic_light import traffic_light_state_name
@@ -103,8 +104,6 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trajectory.schema.j
 DRAFT7_SCHEMA_PATH = Path(__file__).resolve().parent / "trajectory_recorder.schema.json"
 #: Actor type prefixes whose motion is recorded.
 RECORDED_KINDS = ("vehicle.", "walker.")
-#: ``role_name`` values whose control inputs are recorded.
-EGO_ROLES = ("ego", "hero")
 
 
 def _r(value: float) -> float:

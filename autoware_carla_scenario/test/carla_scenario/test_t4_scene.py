@@ -18,6 +18,7 @@ from autoware_carla_scenario.coordinate.projection import load_lanelet2, map_ori
 from autoware_carla_scenario.t4_scene import (
     MAP_SUFFIX,
     SCENE_SUFFIX,
+    T4SceneExport,
     trajectory_log_to_t4_scene,
     write_t4_scene,
 )
@@ -60,9 +61,14 @@ WALKER = {
 
 
 def _state(
-    actor_id: int, x: float, y: float, yaw: float = 0.0, vx: float = 0.0
+    actor_id: int,
+    x: float,
+    y: float,
+    yaw: float = 0.0,
+    vx: float = 0.0,
+    vy: float = 0.0,
 ) -> list:
-    return [actor_id, x, y, 0.5, 0.0, 0.0, yaw, vx, 0.0, 0.0]
+    return [actor_id, x, y, 0.5, 0.0, 0.0, yaw, vx, vy, 0.0]
 
 
 def _tick(frame: int, *states: list, lights: Optional[dict[str, str]] = None) -> dict:
@@ -147,8 +153,8 @@ def test_ego_is_its_rear_axle_in_the_map_frame(tmp_path: Path) -> None:
 
 
 def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> None:
-    state = _state(1, 0.0, 0.0, yaw=-90.0)
-    state[7:10] = [0.0, -5.0, 0.0]  # CARLA -y: the map's +y, the way it faces
+    # CARLA -y: the map's +y, the way it faces.
+    state = _state(1, 0.0, 0.0, yaw=-90.0, vy=-5.0)
     log = _write_log(tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, state))
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
     np.testing.assert_allclose(
@@ -349,9 +355,10 @@ def map_log(
     """A run on nishishinjuku with one light, whose stop waypoint is at a
     governed lanelet's stop line; and that lanelet's id."""
     lanelet_map, (ox, oy) = fixture_map
-    lanelet_id, stop, heading = next(iter(_stop_lines(lanelet_map)))
+    line = _stop_lines(lanelet_map)[0]
+    stop = line.segments[0].mean(axis=0)
     # The map frame back to CARLA's: y and yaw flip.
-    x, y, yaw = stop[0] - ox, -(stop[1] - oy), -math.degrees(heading)
+    x, y, yaw = stop[0] - ox, -(stop[1] - oy), -math.degrees(line.heading)
     record = _map_record((ox, oy), 0.0)
     record["lanelet2"] = {"path": str(OSM), "sha256": None, "bytes": 0}
     record["opendrive"] = {"path": str(XODR), "sha256": None, "bytes": 0}
@@ -371,12 +378,17 @@ def map_log(
         _tick(102, _state(1, x, y), lights={"9": "Green"}),
         map_record=record,
     )
-    return log, lanelet_id
+    return log, line.lanelet_id
 
 
-def test_the_map_is_a_resource_the_scene_names(map_log: tuple[Path, int]) -> None:
-    log, _ = map_log
-    export = trajectory_log_to_t4_scene(log)
+@pytest.fixture(scope="module")
+def map_export(map_log: tuple[Path, int]) -> T4SceneExport:
+    """The map log converted at the tick, once for the tests that read it."""
+    return trajectory_log_to_t4_scene(map_log[0], step_s=0.05)
+
+
+def test_the_map_is_a_resource_the_scene_names(map_export: T4SceneExport) -> None:
+    export = map_export
     resource = export.map_resource
     assert resource is not None
     assert resource.encoding == pb.MapResource.LANELET2_OSM
@@ -395,9 +407,11 @@ def test_the_map_is_a_resource_the_scene_names(map_log: tuple[Path, int]) -> Non
         assert registered.global_origin_3d.translation == pb.Vector3()
 
 
-def test_a_light_colours_the_lanelet_it_governs(map_log: tuple[Path, int]) -> None:
-    log, lanelet_id = map_log
-    lights = trajectory_log_to_t4_scene(log, step_s=0.05).scene.traffic_lights
+def test_a_light_colours_the_lanelet_it_governs(
+    map_log: tuple[Path, int], map_export: T4SceneExport
+) -> None:
+    lanelet_id = map_log[1]
+    lights = map_export.scene.traffic_lights
     offsets = list(_numeric(lights.lane_offsets))
     lane_ids = _numeric(lights.values.lane_ids)
     states = _numeric(lights.values.lane_states)
@@ -418,10 +432,9 @@ def test_a_light_colours_the_lanelet_it_governs(map_log: tuple[Path, int]) -> No
 
 
 def test_the_resource_keeps_exact_local_coordinates(
-    map_log: tuple[Path, int], fixture_map: tuple[Any, tuple[float, float]]
+    map_export: T4SceneExport, fixture_map: tuple[Any, tuple[float, float]]
 ) -> None:
-    log, _ = map_log
-    resource = trajectory_log_to_t4_scene(log).map_resource
+    resource = map_export.map_resource
     assert resource is not None
     lanelet_map, _ = fixture_map
     root = ET.fromstring(resource.data)

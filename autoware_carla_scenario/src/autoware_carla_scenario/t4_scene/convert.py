@@ -13,24 +13,26 @@ What the log does not hold is left out, not invented: the ego's acceleration,
 angular velocity, steering and turn indicator, a route and a goal; a vehicle's
 class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``).
 A tick the log does not have (it skips a tick without road users) is a row
-whose ego and objects are unavailable, never an interpolated one.
+whose ego, objects and lights are unavailable, never an interpolated one.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import math
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
 import orjson
 
-from ..constants import FIXED_DELTA_SECONDS
+from ..constants import EGO_ROLES, FIXED_DELTA_SECONDS
+from ..rerun import TRAJECTORY_SUFFIX
 from ._proto import t4_scene_pb2 as pb
 from .map_resource import map_resource
 
@@ -46,22 +48,31 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 #: The suffix of a trajectory log; the run's stem is the file name without it.
-LOG_SUFFIX = ".trajectory.jsonl"
+LOG_SUFFIX = TRAJECTORY_SUFFIX
 #: The T4Scene written for ``{stem}.trajectory.jsonl``: ``{stem}.t4scene.pb``.
 SCENE_SUFFIX = ".t4scene.pb"
 #: Its map, the ``MapResource`` the scene's ``MapReference`` names.
 MAP_SUFFIX = ".t4scene.map.pb"
 
 #: The contract's object categories this module writes (``Annotations.labels``).
-VEHICLE = 1
-PEDESTRIAN = 7
-#: The contract's effective lane states (``TrafficLights.lane_states``).
+_VEHICLE = 1
+_PEDESTRIAN = 7
+#: The contract's effective lane states (``TrafficLights.lane_states``); any
+#: other CARLA state (``Off``, ``Unknown``) is UNKNOWN, 0.
 _LANE_STATES = {"red": 1, "yellow": 2, "green": 3}
 #: How far (m) a light's stop-line waypoint may be from the stop line of a
-#: lanelet it governs.
-_STOP_LINE_TOLERANCE_M = 3.0
+#: lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
+_STOP_LINE_MATCH_M = 2.0
 
 _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
+_DTYPES = {
+    "?": pb.NumericArray.BOOL,
+    "i8": pb.NumericArray.INT64,
+    "f8": pb.NumericArray.FLOAT64,
+}
+#: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
+_FLIP_Y = np.array([1.0, -1.0, 1.0])
+_NO_STATES = np.zeros((0, 10))
 
 
 @dataclass(frozen=True)
@@ -72,11 +83,9 @@ class T4SceneExport:
     map_resource: Optional[pb.MapResource]
 
 
-@dataclass
-class _Actor:
+class _Actor(NamedTuple):
     """An ``actor`` record: what the log says once about a vehicle or walker."""
 
-    id: int
     type_id: str
     role: str
     extent: tuple[float, float, float]
@@ -85,22 +94,43 @@ class _Actor:
 
 @dataclass
 class _Log:
-    """The records of a trajectory log the conversion uses."""
+    """What the conversion uses of a trajectory log: its records, and the
+    ticks on the scene's grid -- the others only carry the lights' changes."""
 
     world: dict[str, Any] = field(default_factory=dict)
     map: Optional[dict[str, Any]] = None
     lights: list[dict[str, Any]] = field(default_factory=list)
     actors: dict[int, _Actor] = field(default_factory=dict)
-    ticks: list[dict[str, Any]] = field(default_factory=list)
+    #: Each grid frame the log has a tick on: its ``actors`` as an (N, 10)
+    #: array, and every light's state then.
+    rows: dict[int, tuple[npt.NDArray[np.float64], dict[int, str]]] = field(
+        default_factory=dict
+    )
+    first_frame: int = -1
+    last_frame: int = -1
     #: The frame an entity spawned hidden was put on its place, by actor id.
     spawned: dict[int, int] = field(default_factory=dict)
     #: The frame an entity was taken out, by actor id.
     despawned: dict[int, int] = field(default_factory=dict)
     result: Optional[dict[str, Any]] = None
 
+    def states(self, frame: int) -> npt.NDArray[np.float64]:
+        """The (N, 10) actor states of the tick on *frame*; none without one."""
+        return self.rows[frame][0] if frame in self.rows else _NO_STATES
 
-def _read_log(path: Path) -> _Log:
+    def on_scene(self, actor_id: int, frame: int) -> bool:
+        """Whether a road user is on the scene at *frame*, not parked out of
+        sight before its ``SpawnAction`` or after its ``DespawnAction``."""
+        spawned = self.spawned.get(actor_id)
+        despawned = self.despawned.get(actor_id)
+        return (spawned is None or frame >= spawned) and (
+            despawned is None or frame < despawned
+        )
+
+
+def _read_log(path: Path, step_frames: int) -> _Log:
     log = _Log()
+    lights: dict[int, str] = {}
     with path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
             if not line.strip():
@@ -112,29 +142,39 @@ def _read_log(path: Path) -> _Log:
                     f"{path}:{number}: not a JSON line ({error})"
                 ) from None
             kind = record.get("type")
-            if kind == "world":
-                log.world = record
-            elif kind == "map":
-                log.map = record
-            elif kind == "traffic_light":
-                log.lights.append(record)
+            if kind == "tick":
+                frame = int(record["frame"])
+                if log.first_frame < 0:
+                    log.first_frame = frame
+                log.last_frame = frame
+                # Light states are deltas: fold every tick's in, grid or not.
+                for light_id, state in (record.get("lights") or {}).items():
+                    lights[int(light_id)] = str(state)
+                if (frame - log.first_frame) % step_frames == 0:
+                    states = np.asarray(record["actors"], dtype=np.float64).reshape(
+                        -1, 10
+                    )
+                    log.rows[frame] = (states, dict(lights))
             elif kind == "actor":
                 log.actors[int(record["id"])] = _Actor(
-                    id=int(record["id"]),
                     type_id=str(record["type_id"]),
                     role=str(record.get("role") or ""),
                     extent=_xyz(record["extent"]),
                     center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
                 )
-            elif kind == "tick":
-                log.ticks.append(record)
+            elif kind == "world":
+                log.world = record
+            elif kind == "map":
+                log.map = record
+            elif kind == "traffic_light":
+                log.lights.append(record)
             elif kind == "spawn" and record.get("id") is not None:
                 log.spawned.setdefault(int(record["id"]), int(record["frame"]))
             elif kind == "despawn" and record.get("id") is not None:
                 log.despawned.setdefault(int(record["id"]), int(record["frame"]))
             elif kind == "result":
                 log.result = record
-    if not log.ticks:
+    if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log
 
@@ -145,103 +185,74 @@ def _xyz(values: Sequence[float]) -> tuple[float, float, float]:
 
 @dataclass(frozen=True)
 class _MapFrame:
-    """CARLA's world frame to Autoware's ``map`` frame (docs/trajectory_log.md)."""
+    """CARLA's world frame to Autoware's ``map`` frame (docs/trajectory_log.md,
+    ``coordinate.transform.to_map_frame``): ``y`` flips and the map's offsets
+    are added; ``roll`` keeps its sign, ``pitch`` and ``yaw`` flip."""
 
-    offset_x: float = 0.0
-    offset_y: float = 0.0
-    offset_z: float = 0.0
+    offset: npt.NDArray[np.float64]
 
     @classmethod
     def of(cls, record: Optional[Mapping[str, Any]]) -> _MapFrame:
-        if record is None:
-            return cls()
-        mgrs = record.get("mgrs_offset") or (0.0, 0.0)
-        return cls(float(mgrs[0]), float(mgrs[1]), float(record.get("z_offset") or 0.0))
+        mgrs = (record or {}).get("mgrs_offset") or (0.0, 0.0)
+        z = float((record or {}).get("z_offset") or 0.0)
+        return cls(np.array([float(mgrs[0]), float(mgrs[1]), z]))
 
-    def position(self, x: float, y: float, z: float) -> npt.NDArray[np.float64]:
-        return np.array([x + self.offset_x, -y + self.offset_y, z + self.offset_z])
+    def positions(self, xyz: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """(N, 3) CARLA locations as map-frame positions."""
+        return xyz * _FLIP_Y + self.offset
 
     @staticmethod
-    def rotation(roll: float, pitch: float, yaw: float) -> npt.NDArray[np.float64]:
-        """The body-to-map rotation of a CARLA rotation (degrees): ``roll``
-        keeps its sign, ``pitch`` and ``yaw`` flip (``to_map_frame``)."""
-        r, p, w = math.radians(roll), -math.radians(pitch), -math.radians(yaw)
-        cr, sr, cp, sp, cw, sw = (
-            math.cos(r),
-            math.sin(r),
-            math.cos(p),
-            math.sin(p),
-            math.cos(w),
-            math.sin(w),
-        )
-        return np.array(
-            [
-                [cw * cp, cw * sp * sr - sw * cr, cw * sp * cr + sw * sr],
-                [sw * cp, sw * sp * sr + cw * cr, sw * sp * cr - cw * sr],
-                [-sp, cp * sr, cp * cr],
-            ]
-        )
+    def angles(rpy_deg: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """(N, 3) CARLA rotations (roll, pitch, yaw; degrees) as map-frame
+        Euler angles (radians)."""
+        return np.radians(rpy_deg) * np.array([1.0, -1.0, -1.0])
 
 
-def _quaternion_xyzw(rotation: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """A unit quaternion ``(x, y, z, w)`` of a proper rotation matrix."""
-    m = rotation
-    trace = m[0, 0] + m[1, 1] + m[2, 2]
-    if trace > 0.0:
-        s = 2.0 * math.sqrt(trace + 1.0)
-        q = [
-            (m[2, 1] - m[1, 2]) / s,
-            (m[0, 2] - m[2, 0]) / s,
-            (m[1, 0] - m[0, 1]) / s,
-            s / 4,
-        ]
-    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        s = 2.0 * math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
-        q = [
-            s / 4,
-            (m[0, 1] + m[1, 0]) / s,
-            (m[0, 2] + m[2, 0]) / s,
-            (m[2, 1] - m[1, 2]) / s,
-        ]
-    elif m[1, 1] > m[2, 2]:
-        s = 2.0 * math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
-        q = [
-            (m[0, 1] + m[1, 0]) / s,
-            s / 4,
-            (m[1, 2] + m[2, 1]) / s,
-            (m[0, 2] - m[2, 0]) / s,
-        ]
-    else:
-        s = 2.0 * math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
-        q = [
-            (m[0, 2] + m[2, 0]) / s,
-            (m[1, 2] + m[2, 1]) / s,
-            s / 4,
-            (m[1, 0] - m[0, 1]) / s,
-        ]
-    quaternion = np.array(q)
-    return quaternion / np.linalg.norm(quaternion)
+def _rotations(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """(N, 3, 3) body-to-map rotations of (N, 3) roll/pitch/yaw (ZYX)."""
+    cr, cp, cw = np.cos(angles).T
+    sr, sp, sw = np.sin(angles).T
+    return np.stack(
+        [
+            np.stack(
+                [cw * cp, cw * sp * sr - sw * cr, cw * sp * cr + sw * sr], axis=-1
+            ),
+            np.stack(
+                [sw * cp, sw * sp * sr + cw * cr, sw * sp * cr - cw * sr], axis=-1
+            ),
+            np.stack([-sp, cp * sr, cp * cr], axis=-1),
+        ],
+        axis=-2,
+    )
+
+
+def _quaternions(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """(N, 4) unit quaternions ``(x, y, z, w)`` of (N, 3) roll/pitch/yaw (ZYX)."""
+    cr, cp, cw = np.cos(angles / 2).T
+    sr, sp, sw = np.sin(angles / 2).T
+    return np.stack(
+        [
+            sr * cp * cw - cr * sp * sw,
+            cr * sp * cw + sr * cp * sw,
+            cr * cp * sw - sr * sp * cw,
+            cr * cp * cw + sr * sp * sw,
+        ],
+        axis=-1,
+    )
 
 
 def _array(
     values: npt.ArrayLike, dtype: str, mask: Optional[npt.ArrayLike] = None
 ) -> pb.NumericArray:
-    """*values* as a ``NumericArray``: C-order little-endian bytes of *dtype*,
-    zeroed where *mask* marks them missing."""
-    data = np.ascontiguousarray(
-        np.asarray(values, dtype=np.dtype(dtype).newbyteorder("<"))
-    )
-    codes = {
-        "?": pb.NumericArray.BOOL,
-        "i8": pb.NumericArray.INT64,
-        "f8": pb.NumericArray.FLOAT64,
-    }
-    result = pb.NumericArray(dtype=codes[dtype], shape=data.shape)
+    """*values* as a ``NumericArray``: little-endian bytes of *dtype*, zeroed
+    where *mask* marks them missing."""
+    data = np.array(values, dtype=dtype if dtype == "?" else "<" + dtype)
+    result = pb.NumericArray(dtype=_DTYPES[dtype], shape=data.shape)
     if mask is not None:
         missing = np.broadcast_to(np.asarray(mask, dtype=bool), data.shape)
         if missing.any():
-            data = np.where(missing, np.zeros((), dtype=data.dtype), data)
-            result.mask = np.ascontiguousarray(missing, dtype=np.uint8).tobytes()
+            data[missing] = 0
+            result.mask = missing.tobytes()
     result.data = data.tobytes()
     return result
 
@@ -250,37 +261,51 @@ def _register_in_map_frame(target: Any) -> None:
     """Register *target*'s axes (a ``T4Scene``'s or a ``MapReference``'s) as
     the world's: the scene's poses and the map's points are both in Autoware's
     ``map`` frame, which is the frame the two are registered in."""
-    target.global_origin.CopyFrom(pb.Pose2D(x=0.0, y=0.0, cos_yaw=1.0, sin_yaw=0.0))
+    target.global_origin.CopyFrom(pb.Pose2D(cos_yaw=1.0))
     target.global_origin_3d.CopyFrom(
         pb.RigidTransform3D(
-            rotation=pb.Matrix3x3(m00=1.0, m11=1.0, m22=1.0),
-            translation=pb.Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=pb.Matrix3x3(m00=1.0, m11=1.0, m22=1.0), translation=pb.Vector3()
         )
     )
 
 
 def _is_ego(role: str) -> bool:
-    return role.lower() in ("ego", "hero")
+    return role.lower() in EGO_ROLES
 
 
-def _rows(
-    ticks: Sequence[Mapping[str, Any]], step_frames: int
-) -> tuple[list[int], dict[int, int]]:
-    """The grid's CARLA frames, from the first tick to the last, and the tick
-    (its index in *ticks*) on each frame the log has."""
-    by_frame = {int(tick["frame"]): index for index, tick in enumerate(ticks)}
-    first, last = int(ticks[0]["frame"]), int(ticks[-1]["frame"])
-    return list(range(first, last + 1, step_frames)), by_frame
+class _StopLine(NamedTuple):
+    """Where a lanelet a traffic light governs stops its traffic."""
+
+    lanelet_id: int
+    #: The stop line as (S, 2, 2) segments in the map frame.
+    segments: npt.NDArray[np.float64]
+    #: The lanelet's heading there (radians).
+    heading: float
 
 
-def _visible(actor_id: int, frame: int, log: _Log) -> bool:
-    """Whether a road user is on the scene at *frame*, not parked out of sight
-    before its ``SpawnAction`` or after its ``DespawnAction``."""
-    spawned = log.spawned.get(actor_id)
-    despawned = log.despawned.get(actor_id)
-    return (spawned is None or frame >= spawned) and (
-        despawned is None or frame < despawned
-    )
+class _Map(NamedTuple):
+    """A run's map, ready for its scenes: the resource, the source file's
+    SHA-256, and the stop lines of the lanelets its lights govern."""
+
+    resource: pb.MapResource
+    digest: str
+    stop_lines: tuple[_StopLine, ...]
+
+
+@functools.lru_cache(maxsize=4)
+def _read_map(
+    lanelet2_path: Path,
+    xodr_path: Optional[Path],
+    projector_type: Optional[str],
+    _mtime: int,
+) -> _Map:
+    """A map as the run read it, encoded once however many logs ran on it
+    (``_mtime`` ties the cache to the file's contents)."""
+    from ..sweeper.map_loader import load_lanelet2_map  # noqa: PLC0415
+
+    lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path, projector_type)
+    digest = hashlib.sha256(lanelet2_path.read_bytes()).hexdigest()
+    return _Map(map_resource(lanelet_map), digest, tuple(_stop_lines(lanelet_map)))
 
 
 def _load_map(
@@ -288,8 +313,9 @@ def _load_map(
     lanelet2_path: Optional[Path],
     xodr_path: Optional[Path],
     projector_type: Optional[str],
-) -> Optional[tuple[Any, Optional[str]]]:
-    """The run's Lanelet2 map, read as the run read it, and its file's SHA-256;
+) -> Optional[_Map]:
+    """The run's Lanelet2 map, read as the run read it (so it lands in the frame
+    the log's ``mgrs_offset`` and ``z_offset`` convert the poses into);
     ``None`` when there is none to read."""
     record = log.map or {}
     lanelet2_record = record.get("lanelet2") or {}
@@ -307,86 +333,269 @@ def _load_map(
     if xodr_path is None and (record.get("opendrive") or {}).get("path"):
         candidate = Path(record["opendrive"]["path"])
         xodr_path = candidate if candidate.is_file() else None
-    digest = hashlib.sha256(lanelet2_path.read_bytes()).hexdigest()
-    if lanelet2_record.get("sha256") and lanelet2_record["sha256"] != digest:
+    loaded = _read_map(
+        lanelet2_path.resolve(),
+        None if xodr_path is None else xodr_path.resolve(),
+        projector_type if projector_type is not None else record.get("projector_type"),
+        lanelet2_path.stat().st_mtime_ns,
+    )
+    if lanelet2_record.get("sha256") and lanelet2_record["sha256"] != loaded.digest:
         logger.warning(
             "%s is not the Lanelet2 map the run read (SHA-256 %s, the log says %s)",
             lanelet2_path,
-            digest,
+            loaded.digest,
             lanelet2_record["sha256"],
         )
-    # Read as MapManager reads it, so the map lands in the frame the log's
-    # mgrs_offset and z_offset convert the poses into.
-    import lanelet2.io  # noqa: PLC0415
-
-    from ..coordinate.projection import load_lanelet2, map_origin  # noqa: PLC0415
-
-    (lat, lon, _), _ = map_origin(lanelet2_path, xodr_path)
-    lanelet_map, _, _ = load_lanelet2(
-        lanelet2_path,
-        lanelet2.io.Origin(lat, lon),
-        projector_type if projector_type is not None else record.get("projector_type"),
-    )
-    return lanelet_map, digest
+    return loaded
 
 
-def _stop_lines(
-    lanelet_map: Any,
-) -> Iterator[tuple[int, npt.NDArray[np.float64], float]]:
-    """Every lanelet a traffic light governs: its id, the middle of its stop
-    line (the end of the lanelet without one) and its heading there."""
+def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
+    """Every lanelet a traffic light governs, and its stop line: its traffic
+    light regulatory element's, else the lanelet's end."""
+    from ..utils.stop_line import regulatory_element_stop_lines  # noqa: PLC0415
+
+    governed = []
     for lanelet in lanelet_map.laneletLayer:
-        governed = [
+        elements = [
             element
             for element in lanelet.regulatoryElements
             if element.attributes["subtype"] == "traffic_light"
         ]
-        if not governed:
-            continue
         centerline = np.array([(p.x, p.y) for p in lanelet.centerline])
-        if len(centerline) < 2:
+        if not elements or len(centerline) < 2:
             continue
+        line = next(
+            (
+                found[0]
+                for element in elements
+                if (found := regulatory_element_stop_lines(element, set()))
+            ),
+            None,
+        )
+        ends: list[Any] = (
+            [lanelet.leftBound[-1], lanelet.rightBound[-1]]
+            if line is None or len(line) < 2
+            else list(line)
+        )
+        points = np.array([(p.x, p.y) for p in ends])
         direction = centerline[-1] - centerline[-2]
-        heading = math.atan2(direction[1], direction[0])
-        stop = centerline[-1]
-        for element in governed:
-            lines = (
-                element.parameters["ref_line"]
-                if "ref_line" in element.parameters
-                else []
+        governed.append(
+            _StopLine(
+                lanelet.id,
+                np.stack([points[:-1], points[1:]], axis=1),
+                math.atan2(direction[1], direction[0]),
             )
-            if len(lines):
-                points = np.array([(p.x, p.y) for p in lines[0]])
-                stop = points.mean(axis=0)
-                break
-        yield lanelet.id, stop, heading
+        )
+    return governed
+
+
+def _distance_to(
+    segments: npt.NDArray[np.float64], point: npt.NDArray[np.float64]
+) -> float:
+    """The distance from *point* to the nearest of (S, 2, 2) *segments*."""
+    start, along = segments[:, 0], segments[:, 1] - segments[:, 0]
+    t = ((point - start) * along).sum(axis=1) / np.maximum(
+        (along**2).sum(axis=1), 1e-12
+    )
+    nearest = start + np.clip(t, 0.0, 1.0)[:, None] * along
+    return float(np.hypot(*(nearest - point).T).min())
 
 
 def _lane_lights(
-    lights: Iterable[Mapping[str, Any]], lanelet_map: Any, frame: _MapFrame
+    log: _Log, stop_lines: Sequence[_StopLine], frame: _MapFrame
 ) -> dict[int, int]:
     """The CARLA light (its id) governing each lanelet that has a traffic
-    light: the light with a stop-line waypoint at the lanelet's stop line,
-    facing the lanelet's way."""
+    light: the nearest light with a stop-line waypoint on the lanelet's stop
+    line, facing the lanelet's way."""
     stops = [
-        (int(light["id"]), frame.position(*stop[:3])[:2], -math.radians(float(stop[3])))
-        for light in lights
+        (
+            int(light["id"]),
+            frame.positions(np.array(stop[:3], dtype=np.float64))[:2],
+            -math.radians(float(stop[3])),
+        )
+        for light in log.lights
         for stop in light.get("stops") or ()
     ]
     governed: dict[int, int] = {}
-    if not stops:
-        return governed
-    for lanelet_id, stop_line, heading in _stop_lines(lanelet_map):
-        best: Optional[tuple[float, int]] = None
-        for light_id, point, yaw in stops:
-            distance = float(np.hypot(*(point - stop_line)))
-            if distance > _STOP_LINE_TOLERANCE_M or math.cos(yaw - heading) < 0.5:
-                continue
-            if best is None or distance < best[0]:
-                best = (distance, light_id)
-        if best is not None:
-            governed[lanelet_id] = best[1]
+    for line in stop_lines:
+        nearest = min(
+            (
+                (_distance_to(line.segments, point), light_id)
+                for light_id, point, yaw in stops
+                if math.cos(yaw - line.heading) >= 0.5
+            ),
+            default=None,
+        )
+        if nearest is not None and nearest[0] <= _STOP_LINE_MATCH_M:
+            governed[line.lanelet_id] = nearest[1]
     return governed
+
+
+def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
+    metadata = scene.scene_metadata
+    metadata.scene_id = stem
+    if log.world.get("episode") is not None:
+        metadata.recording_id = str(log.world["episode"])
+    metadata.tags.append("autoware_carla_scenario")
+    if log.map is not None and log.map.get("name"):
+        metadata.tags.append(f"map:{log.map['name']}")
+    if log.result is not None:
+        metadata.tags.append(
+            "result:passed" if log.result.get("passed") else "result:failed"
+        )
+
+
+def _fill_ego(
+    scene: pb.T4Scene,
+    log: _Log,
+    frames: Sequence[int],
+    ego_id: int,
+    ego: _Actor,
+    frame: _MapFrame,
+    rear_axle: float,
+) -> list[Optional[npt.NDArray[np.float64]]]:
+    """Write the ego's rows; return its origin (map-frame x, y) on each row,
+    ``None`` on a row it is not on."""
+    count = len(frames)
+    poses = np.zeros((count, 3))
+    poses_3d = np.tile(np.eye(4), (count, 1, 1))
+    velocities = np.zeros((count, 2))
+    speeds = np.zeros(count)
+    origins: list[Optional[npt.NDArray[np.float64]]] = [None] * count
+    for row, carla_frame in enumerate(frames):
+        states = log.states(carla_frame)
+        mine = states[states[:, 0] == ego_id]
+        if not len(mine):
+            continue
+        state = mine[0]
+        rotation = _rotations(_MapFrame.angles(state[None, 4:7]))[0]
+        origin = frame.positions(state[1:4])
+        base_link = origin + rotation[:, 0] * rear_axle
+        velocity = state[7:10] * _FLIP_Y
+        poses[row] = (
+            base_link[0],
+            base_link[1],
+            math.atan2(rotation[1, 0], rotation[0, 0]),
+        )
+        poses_3d[row, :3, :3] = rotation
+        poses_3d[row, :3, 3] = base_link
+        velocities[row] = velocity[:2]
+        speeds[row] = float(velocity @ rotation[:, 0])
+        origins[row] = origin[:2]
+    available = np.array([origin is not None for origin in origins])
+    missing = ~available
+    message = scene.ego
+    message.poses.CopyFrom(_array(poses, "f8", missing[:, None]))
+    message.poses_3d.CopyFrom(_array(poses_3d, "f8", missing[:, None, None]))
+    message.velocities.CopyFrom(_array(velocities, "f8", missing[:, None]))
+    message.longitudinal_speeds.CopyFrom(_array(speeds, "f8", missing))
+    message.available.CopyFrom(_array(available, "?"))
+    ex, ey, _ = ego.extent
+    message.shape.length = 2.0 * ex
+    message.shape.width = 2.0 * ey
+    message.shape.base_link_to_front = ego.center[0] + ex - rear_axle
+    message.shape.base_link_to_rear_axle = 0.0
+    return origins
+
+
+def _fill_annotations(
+    scene: pb.T4Scene,
+    log: _Log,
+    frames: Sequence[int],
+    ego_origins: Sequence[Optional[npt.NDArray[np.float64]]],
+    frame: _MapFrame,
+    max_distance_m: Optional[float],
+) -> None:
+    """Write every other road user's box on each row, a tick at a time."""
+    others = {i: actor for i, actor in log.actors.items() if not _is_ego(actor.role)}
+    rows: list[tuple[npt.NDArray[Any], ...]] = []
+    for row, carla_frame in enumerate(frames):
+        states = log.states(carla_frame)
+        ids = states[:, 0].astype(np.int64)
+        keep = np.array(
+            [int(i) in others and log.on_scene(int(i), carla_frame) for i in ids],
+            dtype=bool,
+        )
+        origins = frame.positions(states[:, 1:4])
+        centre = ego_origins[row]
+        if max_distance_m is not None and centre is not None:
+            keep &= np.hypot(*(origins[:, :2] - centre).T) <= max_distance_m
+        states, ids, origins = states[keep], ids[keep], origins[keep]
+        actors = [others[int(i)] for i in ids]
+        angles = _MapFrame.angles(states[:, 4:7])
+        rotations = _rotations(angles)
+        # The box's centre is given in CARLA's (left-handed) actor frame.
+        centres = np.array([a.center for a in actors]).reshape(-1, 3) * _FLIP_Y
+        extents = np.array([a.extent for a in actors]).reshape(-1, 3)
+        rows.append(
+            (
+                origins + np.einsum("nij,nj->ni", rotations, centres),
+                2.0 * extents[:, [1, 0, 2]],  # (width, length, height)
+                np.arctan2(rotations[:, 1, 0], rotations[:, 0, 0]),
+                states[:, 7:9] * _FLIP_Y[:2],
+                np.array(
+                    [
+                        _PEDESTRIAN if a.type_id.startswith("walker.") else _VEHICLE
+                        for a in actors
+                    ],
+                    dtype=np.int64,
+                ),
+                ids,
+                _quaternions(angles),
+            )
+        )
+    positions, dimensions, headings, velocities, labels, track_ids, orientations = (
+        np.concatenate(column) for column in zip(*rows)
+    )
+    values = scene.annotations.values
+    values.positions.CopyFrom(_array(positions, "f8"))
+    values.dimensions.CopyFrom(_array(dimensions, "f8"))
+    values.headings.CopyFrom(_array(headings, "f8"))
+    values.velocities.CopyFrom(_array(velocities, "f8"))
+    values.labels.CopyFrom(_array(labels, "i8"))
+    values.orientations.CopyFrom(_array(orientations, "f8"))
+    values.track_ids.values.extend(pb.OptionalString(value=str(i)) for i in track_ids)
+    counts = [len(row[0]) for row in rows]
+    scene.annotations.offsets.CopyFrom(
+        _array(np.concatenate([[0], np.cumsum(counts)]), "i8")
+    )
+    scene.annotations.available.CopyFrom(_array([f in log.rows for f in frames], "?"))
+
+
+def _fill_lights(
+    scene: pb.T4Scene, log: _Log, frames: Sequence[int], lane_lights: Mapping[int, int]
+) -> None:
+    """Write the effective state of each governed lanelet on every row.
+
+    Only effective lane states: the log has CARLA's lights, not the map's
+    regulatory elements and their bulbs, so raw groups are not observed
+    (``group_available``), rather than observed empty.
+    """
+    lanes = sorted(lane_lights)
+    available = np.array([f in log.rows for f in frames])
+    states = np.array(
+        [
+            [
+                _LANE_STATES.get(log.rows[f][1].get(lane_lights[lane], "").lower(), 0)
+                for lane in lanes
+            ]
+            for f in frames
+            if f in log.rows
+        ],
+        dtype=np.int64,
+    ).reshape(-1)
+    lights = scene.traffic_lights
+    lights.values.lane_ids.CopyFrom(_array(np.tile(lanes, int(available.sum())), "i8"))
+    lights.values.lane_states.CopyFrom(_array(states, "i8"))
+    # A CARLA light is one round lamp: no lane's state comes from an arrow.
+    lights.values.lane_is_arrow.CopyFrom(_array(np.zeros(len(states)), "?"))
+    lights.group_offsets.CopyFrom(_array(np.zeros(len(frames) + 1), "i8"))
+    lights.lane_offsets.CopyFrom(
+        _array(np.concatenate([[0], np.cumsum(available * len(lanes))]), "i8")
+    )
+    lights.available.CopyFrom(_array(available, "?"))
+    lights.group_available.CopyFrom(_array(np.zeros(len(frames)), "?"))
+    lights.lane_available.CopyFrom(_array(available, "?"))
 
 
 def trajectory_log_to_t4_scene(
@@ -428,7 +637,6 @@ def trajectory_log_to_t4_scene(
             *current_index* does not fit it.
     """
     path = Path(log_path)
-    log = _read_log(path)
     step_frames = round(step_s / FIXED_DELTA_SECONDS)
     if step_frames < 1 or not math.isclose(
         step_frames * FIXED_DELTA_SECONDS, step_s, rel_tol=0.0, abs_tol=1e-9
@@ -436,60 +644,36 @@ def trajectory_log_to_t4_scene(
         raise ValueError(
             f"step_s={step_s} is not a multiple of the log's tick ({FIXED_DELTA_SECONDS} s)"
         )
-    egos = [actor for actor in log.actors.values() if _is_ego(actor.role)]
-    if not egos:
+    log = _read_log(path, step_frames)
+    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
+    if ego_id is None:
         raise ValueError(f"{path} has no ego (an actor whose role is 'ego' or 'hero')")
-    ego = egos[0]
-    frame = _MapFrame.of(log.map)
-    frames, by_frame = _rows(log.ticks, step_frames)
-    count = len(frames)
-    if not -count <= current_index < count:
+    ego = log.actors[ego_id]
+    frames = list(range(log.first_frame, log.last_frame + 1, step_frames))
+    if not -len(frames) <= current_index < len(frames):
         raise ValueError(
-            f"current_index={current_index} is outside the scene's {count} rows"
+            f"current_index={current_index} is outside the scene's {len(frames)} rows"
         )
-    anchor = current_index % count
 
-    scene = pb.T4Scene(current_index=anchor)
+    scene = pb.T4Scene(current_index=current_index % len(frames))
     stem = (
         path.name[: -len(LOG_SUFFIX)] if path.name.endswith(LOG_SUFFIX) else path.stem
     )
-    scene.scene_metadata.scene_id = stem
-    if log.world.get("episode") is not None:
-        scene.scene_metadata.recording_id = str(log.world["episode"])
-    tags = ["autoware_carla_scenario"]
-    if log.map is not None and log.map.get("name"):
-        tags.append(f"map:{log.map['name']}")
-    if log.result is not None:
-        tags.append("result:passed" if log.result.get("passed") else "result:failed")
-    scene.scene_metadata.tags.extend(tags)
-    first = frames[0]
-    scene.timestamps_ns.CopyFrom(_array([(f - first) * _TICK_NS for f in frames], "i8"))
+    _fill_metadata(scene, log, stem)
+    scene.timestamps_ns.CopyFrom(
+        _array([(f - frames[0]) * _TICK_NS for f in frames], "i8")
+    )
     scene.frame_indices.CopyFrom(_array(frames, "i8"))
     _register_in_map_frame(scene)
 
+    frame = _MapFrame.of(log.map)
     rear_axle = (
         -0.5 * ego.extent[0] if rear_axle_offset_m is None else rear_axle_offset_m
     )
-    poses = np.zeros((count, 3))
-    poses_3d = np.tile(np.eye(4), (count, 1, 1))
-    velocities = np.zeros((count, 2))
-    speeds = np.zeros(count)
-    ego_available = np.zeros(count, dtype=bool)
-    ego_xy: list[Optional[npt.NDArray[np.float64]]] = [None] * count
+    ego_origins = _fill_ego(scene, log, frames, ego_id, ego, frame, rear_axle)
+    _fill_annotations(scene, log, frames, ego_origins, frame, max_distance_m)
 
-    positions: list[npt.NDArray[np.float64]] = []
-    dimensions: list[tuple[float, float, float]] = []
-    headings: list[float] = []
-    object_velocities: list[tuple[float, float]] = []
-    labels: list[int] = []
-    track_ids: list[str] = []
-    orientations: list[npt.NDArray[np.float64]] = []
-    offsets = [0]
-    objects_available = np.zeros(count, dtype=bool)
-
-    lane_lights: dict[int, int] = {}
-    lanelet_map = None
-    resource: Optional[pb.MapResource] = None
+    loaded = None
     if with_map:
         loaded = _load_map(
             log,
@@ -497,140 +681,16 @@ def trajectory_log_to_t4_scene(
             None if xodr_path is None else Path(xodr_path),
             projector_type,
         )
-        if loaded is not None:
-            lanelet_map, digest = loaded
-            resource = map_resource(lanelet_map)
-            scene.map.sha256 = resource.sha256
-            scene.map.scope = pb.MapReference.FULL
-            scene.map.has_elevation = True
-            _register_in_map_frame(scene.map)
-            if digest is not None:
-                scene.map.map_id = f"lanelet2-sha256:{digest}"
-            lane_lights = _lane_lights(log.lights, lanelet_map, frame)
-
-    light_states: dict[int, str] = {}
-    lane_rows: list[list[tuple[int, int]]] = []
-    lights_available = np.zeros(count, dtype=bool)
-    # Light states are deltas: carry them over the ticks between rows too.
-    tick_cursor = 0
-    for row, carla_frame in enumerate(frames):
-        while (
-            tick_cursor < len(log.ticks)
-            and int(log.ticks[tick_cursor]["frame"]) <= carla_frame
-        ):
-            for light_id, state in (log.ticks[tick_cursor].get("lights") or {}).items():
-                light_states[int(light_id)] = str(state)
-            tick_cursor += 1
-        index = by_frame.get(carla_frame)
-        if index is None:
-            offsets.append(len(positions))
-            lane_rows.append([])
-            continue
-        tick = log.ticks[index]
-        states: dict[int, list[float]] = {
-            int(state[0]): state for state in tick["actors"]
-        }
-
-        ego_state = states.get(ego.id)
-        if ego_state is not None:
-            rotation = frame.rotation(ego_state[4], ego_state[5], ego_state[6])
-            origin = frame.position(ego_state[1], ego_state[2], ego_state[3])
-            base_link = origin + rotation @ np.array([rear_axle, 0.0, 0.0])
-            yaw = math.atan2(rotation[1, 0], rotation[0, 0])
-            velocity = np.array([ego_state[7], -ego_state[8], ego_state[9]])
-            poses[row] = (base_link[0], base_link[1], yaw)
-            poses_3d[row, :3, :3] = rotation
-            poses_3d[row, :3, 3] = base_link
-            velocities[row] = velocity[:2]
-            speeds[row] = float(velocity @ rotation[:, 0])
-            ego_available[row] = True
-            ego_xy[row] = origin[:2]
-
-        objects_available[row] = True
-        for actor_id, state in states.items():
-            actor = log.actors.get(actor_id)
-            if actor is None or actor_id == ego.id or _is_ego(actor.role):
-                continue
-            if not _visible(actor_id, carla_frame, log):
-                continue
-            origin = frame.position(state[1], state[2], state[3])
-            centre = ego_xy[row]
-            if (
-                max_distance_m is not None
-                and centre is not None
-                and float(np.hypot(*(origin[:2] - centre))) > max_distance_m
-            ):
-                continue
-            rotation = frame.rotation(state[4], state[5], state[6])
-            cx, cy, cz = actor.center
-            positions.append(origin + rotation @ np.array([cx, -cy, cz]))
-            ex, ey, ez = actor.extent
-            dimensions.append((2.0 * ey, 2.0 * ex, 2.0 * ez))
-            headings.append(math.atan2(rotation[1, 0], rotation[0, 0]))
-            object_velocities.append((state[7], -state[8]))
-            labels.append(
-                PEDESTRIAN if actor.type_id.startswith("walker.") else VEHICLE
-            )
-            track_ids.append(str(actor_id))
-            orientations.append(_quaternion_xyzw(rotation))
-        offsets.append(len(positions))
-
-        lights_available[row] = True
-        lane_rows.append(
-            [
-                (
-                    lanelet_id,
-                    _LANE_STATES.get(light_states.get(light_id, "").lower(), 0),
-                )
-                for lanelet_id, light_id in sorted(lane_lights.items())
-            ]
-        )
-
-    missing = ~ego_available
-    ego_message = scene.ego
-    ego_message.poses.CopyFrom(_array(poses, "f8", missing[:, None]))
-    ego_message.poses_3d.CopyFrom(_array(poses_3d, "f8", missing[:, None, None]))
-    ego_message.velocities.CopyFrom(_array(velocities, "f8", missing[:, None]))
-    ego_message.longitudinal_speeds.CopyFrom(_array(speeds, "f8", missing))
-    ego_message.available.CopyFrom(_array(ego_available, "?"))
-    ex, ey, _ = ego.extent
-    ego_message.shape.length = 2.0 * ex
-    ego_message.shape.width = 2.0 * ey
-    ego_message.shape.base_link_to_front = ego.center[0] + ex - rear_axle
-    ego_message.shape.base_link_to_rear_axle = 0.0
-
-    annotations = scene.annotations
-    values = annotations.values
-    values.positions.CopyFrom(_array(np.reshape(positions, (-1, 3)), "f8"))
-    values.dimensions.CopyFrom(_array(np.reshape(dimensions, (-1, 3)), "f8"))
-    values.headings.CopyFrom(_array(headings, "f8"))
-    values.velocities.CopyFrom(_array(np.reshape(object_velocities, (-1, 2)), "f8"))
-    values.labels.CopyFrom(_array(labels, "i8"))
-    values.orientations.CopyFrom(_array(np.reshape(orientations, (-1, 4)), "f8"))
-    values.track_ids.values.extend(
-        pb.OptionalString(value=track) for track in track_ids
-    )
-    annotations.offsets.CopyFrom(_array(offsets, "i8"))
-    annotations.available.CopyFrom(_array(objects_available, "?"))
-
-    if lanelet_map is not None:
-        lights = scene.traffic_lights
-        lane_ids = [lanelet_id for row in lane_rows for lanelet_id, _ in row]
-        lane_states = [state for row in lane_rows for _, state in row]
-        lane_offsets = np.concatenate([[0], np.cumsum([len(row) for row in lane_rows])])
-        # Effective lane states only: the log has CARLA's lights, not the map's
-        # regulatory elements and their bulbs, so raw groups are not observed
-        # (group_available), rather than observed empty.
-        lights.values.lane_ids.CopyFrom(_array(lane_ids, "i8"))
-        lights.values.lane_states.CopyFrom(_array(lane_states, "i8"))
-        # A CARLA light is one round lamp: no lane's state comes from an arrow.
-        lights.values.lane_is_arrow.CopyFrom(_array(np.zeros(len(lane_ids)), "?"))
-        lights.group_offsets.CopyFrom(_array(np.zeros(count + 1), "i8"))
-        lights.lane_offsets.CopyFrom(_array(lane_offsets, "i8"))
-        lights.available.CopyFrom(_array(lights_available, "?"))
-        lights.group_available.CopyFrom(_array(np.zeros(count), "?"))
-        lights.lane_available.CopyFrom(_array(lights_available, "?"))
-    return T4SceneExport(scene=scene, map_resource=resource)
+    if loaded is None:
+        return T4SceneExport(scene=scene, map_resource=None)
+    reference = scene.map
+    reference.sha256 = loaded.resource.sha256
+    reference.scope = pb.MapReference.FULL
+    reference.has_elevation = True
+    reference.map_id = f"lanelet2-sha256:{loaded.digest}"
+    _register_in_map_frame(reference)
+    _fill_lights(scene, log, frames, _lane_lights(log, loaded.stop_lines, frame))
+    return T4SceneExport(scene=scene, map_resource=loaded.resource)
 
 
 def write_t4_scene(

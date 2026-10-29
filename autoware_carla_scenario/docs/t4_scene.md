@@ -76,8 +76,11 @@ What the log does not hold is left out, never made up:
   `shape.base_link_to_front` is from there to its box's front, and
   `base_link_to_rear_axle` is 0.
 - A light governs a lanelet when one of its stop-line waypoints is within
-  3 m of the lanelet's stop line (its traffic-light regulatory element's
-  `ref_line`, else its end) and faces the lanelet's way.
+  2 m of the lanelet's stop line (its traffic-light regulatory element's, else
+  its end), as `TrafficSignalAction` matches them, and faces the lanelet's
+  way; the nearest such light, when several are.
+
+`scenario-t4scene` reads a map once however many of its logs ran on it.
 
 ## The map
 

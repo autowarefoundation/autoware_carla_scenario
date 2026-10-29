@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from ..constants import FIXED_DELTA_SECONDS
 from .convert import LOG_SUFFIX, write_t4_scene
 
 
@@ -40,7 +41,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--step",
         type=float,
         default=0.1,
-        help="the scene's time step in seconds, a multiple of the 0.05 s tick (default 0.1)",
+        help=f"the scene's time step in seconds, a multiple of the {FIXED_DELTA_SECONDS} s tick "
+        "(default 0.1)",
     )
     parser.add_argument(
         "--current-index",
@@ -81,7 +83,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     logs = _logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
-    failed = 0
+    failed = False
     for log in logs:
         try:
             scene, resource = write_t4_scene(
@@ -97,7 +99,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         except (OSError, ValueError) as error:
             print(f"{log}: {error}", file=sys.stderr)  # noqa: T201
-            failed += 1
+            failed = True
             continue
         print(scene if resource is None else f"{scene} (map: {resource})")  # noqa: T201
     return 1 if failed else 0
