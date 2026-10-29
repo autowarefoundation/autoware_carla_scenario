@@ -262,8 +262,8 @@ uv run scenario scenario=my_scenario/default scenario.timeout_seconds=20.0
 # Start the viewer (defaults to port 9000)
 uv run viewer
 
-# Or point at a specific output directory
-VIEWER_BASE_PATH=outputs uv run viewer
+# Or scan another project: the directory containing outputs/ and multirun/
+uv run viewer --base-path /path/to/project
 ```
 
 Open <http://localhost:9000> in your browser. The viewer has three levels of
