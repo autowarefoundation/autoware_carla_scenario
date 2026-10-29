@@ -243,17 +243,21 @@ class FakeWorld:
         )
 
 
-def _speed_and_accel(plan: Trajectory, time_us: int, delta_us: int = 20_000) -> tuple[float, float]:
-    """The plan's speed and longitudinal acceleration at ``time_us``, by central differences.
+def _speed_and_accel(plan: Trajectory, time_us: int) -> tuple[float, float]:
+    """The plan's speed and longitudinal acceleration at ``time_us``, a knot of it.
 
     The instantaneous values, not the step's average: from rest, the average over
-    the first step is half the speed the plan reaches at its end.
+    the first step is half the speed the plan reaches at its end. Differenced over
+    the plan's own spacing: it is piecewise linear, so a finer difference across a
+    knot reads the change of a whole segment's speed as happening in that span.
     """
-    poses = [plan.interpolate(time_us + k * delta_us) for k in (-1, 0, 1)]
-    if any(pose is None for pose in poses):
+    knots = np.asarray(plan.timestamps_us)
+    spacing_us = int(np.median(np.diff(knots))) if len(knots) >= 2 else 0
+    poses = [plan.interpolate(time_us + k * spacing_us) for k in (-1, 0, 1)]
+    if spacing_us <= 0 or any(pose is None for pose in poses):
         return 0.0, 0.0
     before, now, after = (pose.position[:2] for pose in poses)  # type: ignore[union-attr]
-    dt = delta_us * 1e-6
+    dt = spacing_us * 1e-6
     speed_before = float(np.linalg.norm(now - before)) / dt
     speed_after = float(np.linalg.norm(after - now)) / dt
     return 0.5 * (speed_before + speed_after), (speed_after - speed_before) / dt

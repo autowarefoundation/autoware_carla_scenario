@@ -45,6 +45,7 @@ pythonpath = ["."]
 timeout = 300
 markers = [
   "slow: closed-loop rollouts and latency benchmarks",
+  "latency: wall-clock budgets, which hold on a quiet machine and not on a shared runner",
 ]
 
 [tool.ruff]

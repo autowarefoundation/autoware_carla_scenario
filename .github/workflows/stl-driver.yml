@@ -56,6 +56,9 @@ jobs:
     - name: Run the fast tests
       run: uv run pytest -v --tb=short -m "not slow"
 
-    # The closed-loop rollouts and the latency benchmarks: a few minutes.
+    # The closed-loop rollouts: a few minutes. Not the latency benchmarks
+    # (`latency`): they time steps against the 100 ms the runtime allows, and
+    # on a shared runner they measure its neighbours -- they missed by 5-40%
+    # on a 4-core machine before stl_driver moved here. Run them locally.
     - name: Run the slow tests
-      run: uv run pytest -v --tb=short -m slow
+      run: uv run pytest -v --tb=short -m "slow and not latency"

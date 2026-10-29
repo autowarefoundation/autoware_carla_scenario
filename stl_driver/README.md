@@ -217,6 +217,7 @@ uv run stl-driver demo --steps 200
 ```bash
 uv run pytest -m "not slow"   # rules, rollout, perception, policy  (~30 s)
 uv run pytest                 # plus closed-loop rollouts and latency  (~6 min)
+uv run pytest -m latency      # the step-time budgets alone; on a quiet machine
 ```
 
 The tests worth knowing about:

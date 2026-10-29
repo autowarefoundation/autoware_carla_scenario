@@ -26,7 +26,7 @@ from carla_driver_interface.protocol import DynamicState, Vec3
 from stl_driver.policy import EgoPolicy
 from tests.conftest import curved_route
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.latency]
 
 N_MEASUREMENTS = 40
 
