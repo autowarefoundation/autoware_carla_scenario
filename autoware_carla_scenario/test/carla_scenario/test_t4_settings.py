@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -154,8 +156,9 @@ def test_the_lens_fit_is_the_numpy_polynomial_one(
         with pytest.raises(ValueError, match=str(exc)):
             t4_settings.opencv_of_ftheta(lens, width, height, samples=samples)
         return
-    assert t4_settings.opencv_of_ftheta(lens, width, height, samples=samples) == (
-        expected
+    # repr: bit for bit, the sign of a zero included.
+    assert repr(t4_settings.opencv_of_ftheta(lens, width, height, samples=samples)) == (
+        repr(expected)
     )
 
 
@@ -175,3 +178,44 @@ def test_the_horner_helpers_are_numpy_polyval(coef: list[float]) -> None:
     for value in (*x[::10], 0.0, -0.0, 1.226783919):
         assert t4_settings._polyval_at(float(value), c) == float(poly.polyval(value, c))
     np.testing.assert_array_equal(t4_settings._polyval_on(x, c), poly.polyval(x, c))
+
+
+#: Coefficients and arguments numpy answers with signed zeros, infinities and
+#: NaNs.
+_SPECIAL = [0.0, -0.0, 1.0, -2.5, 1e308, -1e-320, np.nan, np.inf, -np.inf]
+
+
+def _bits(value: Any) -> bytes:
+    """*value*'s bits, the sign of a zero included; a NaN's sign and payload,
+    which the CPU picks, are not compared."""
+    array = np.array(value, np.float64)
+    array[np.isnan(array)] = np.nan
+    return array.tobytes()
+
+
+@pytest.mark.parametrize("length", [1, 2, 3])
+def test_the_horner_helpers_are_numpy_polyval_bit_for_bit(length: int) -> None:
+    poly = np.polynomial.polynomial
+    x = np.asarray(_SPECIAL, np.float64)
+    with np.errstate(all="ignore"):
+        for coef in itertools.product(_SPECIAL, repeat=length):
+            c = np.asarray(coef, np.float64)
+            for value in (*_SPECIAL, np.float64(1.25)):
+                assert _bits(t4_settings._polyval_at(value, c)) == _bits(
+                    poly.polyval(value, c)
+                ), (coef, value)
+            on = t4_settings._polyval_on(x, c)
+            assert on.dtype == np.float64
+            assert _bits(on) == _bits(poly.polyval(x, c)), coef
+
+
+@pytest.mark.parametrize("length", [1, 2, 3, 6])
+def test_the_derivative_at_zero_is_numpy_polyder(length: int) -> None:
+    poly = np.polynomial.polynomial
+    with np.errstate(all="ignore"):
+        for first in _SPECIAL:
+            for second in _SPECIAL:
+                c = np.asarray([first, second, 0.5, -1.0, 2.0, 3.0][:length])
+                assert _bits(t4_settings._polyder_at_zero(c)) == _bits(
+                    poly.polyder(c)[0]
+                ), c

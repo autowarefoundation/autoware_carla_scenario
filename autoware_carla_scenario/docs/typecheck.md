@@ -3534,8 +3534,10 @@ What Codon 0.19 needs that Python does not, beyond
 - **Codon's numpy has no `numpy.polynomial`**: evaluate a polynomial by
   Horner's scheme from its highest coefficient, starting at `0.0` (so at
   `c[-1] + 0.0 * x`, as `polyval()` starts at `c[-1] + x * 0`), and read
-  `polyder(c)[0]` as `c[1]`: every operation is numpy's, so the result is
-  too, bit for bit (`t4_settings._polyval_at()` and `_polyval_on()`, #731,
+  `polyder(c)[0]` as `c[1]` (as `c[0] * 0.0` of a constant `c`, which
+  numpy answers with `c[:1] * 0`): every operation is numpy's, so the result is
+  too, bit for bit (`t4_settings._polyval_at()`, `_polyval_on()` and
+  `_polyder_at_zero()`, #731,
   which `test_t4_settings.py` compares with numpy). Nor does Codon unpack a
   generator (`c, d, e = (float(v) for v in cde)`): read `cde[0]`, `cde[1]`,
   `cde[2]`.

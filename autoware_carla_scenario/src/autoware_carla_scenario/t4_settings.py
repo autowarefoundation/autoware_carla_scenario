@@ -151,7 +151,7 @@ _PINHOLE_MAX_ANGLE_RAD = np.radians(85.0)
 # numpy.polynomial, which Codon's NumPy lacks, evaluated as its polyval()
 # does (Horner's scheme from the highest coefficient, starting at
 # ``c[-1] + x * 0``), so the fit's every operation, and so its result, is
-# unchanged (test_t4_dataset.py compares the two).
+# unchanged (test_t4_settings.py compares the two).
 
 
 def _polyval_at(x: float, coef: np.ndarray[tuple[int], np.dtype[np.float64]]) -> float:
@@ -171,6 +171,15 @@ def _polyval_on(
     for k in range(len(coef) - 1, -1, -1):
         value = float(coef[k]) + value * x
     return value
+
+
+def _polyder_at_zero(coef: np.ndarray[tuple[int], np.dtype[np.float64]]) -> float:
+    """``numpy.polynomial.polynomial.polyder(coef)[0]``, the derivative at 0:
+    ``1 * coef[1]``, or ``coef[0] * 0`` of a constant (``-0.0`` of a negative
+    one, NaN of an infinite one), as numpy answers."""
+    if len(coef) > 1:
+        return float(coef[1])
+    return float(coef[0]) * 0.0
 
 
 def opencv_of_ftheta(
@@ -209,8 +218,7 @@ def opencv_of_ftheta(
     cx, cy = float(lens.principal_point[0]), float(lens.principal_point[1])
     to_angle = np.asarray(lens.pixeldist_to_angle_poly, np.float64)
     to_radius = np.asarray(lens.angle_to_pixeldist_poly, np.float64)
-    # The derivative's constant term (numpy's polyder(to_radius)[0]).
-    focal = float(to_radius[1]) if len(to_radius) > 1 else 0.0
+    focal = _polyder_at_zero(to_radius)
 
     # The farthest the image reaches from the principal point, as a radius in
     # the lens (linear_cde undone), and its angle, within the lens.
