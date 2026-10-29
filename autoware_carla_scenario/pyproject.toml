@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "19.10.0"
+version = "19.11.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -200,3 +200,5 @@ viewer = "autoware_carla_scenario.ui:main"
 scenario-editor = "autoware_carla_scenario.editor:main"
 # Stream the run's ego to ECUs under test (the `hils` extra; docs/hils.md).
 scenario-hils = "autoware_carla_scenario.hils.cli:main"
+# Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit (docs/t4_scene.md).
+scenario-t4scene = "autoware_carla_scenario.t4_scene.__main__:main"

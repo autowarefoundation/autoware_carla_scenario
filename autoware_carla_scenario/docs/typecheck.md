@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 218 of
-the package's 321 modules (68%; about 65,600 of 115,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 219 of
+the package's 327 modules (67%; about 65,600 of 116,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2475,13 +2475,13 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 103 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 79 import what Codon cannot
-compile, 30 build on an excluded module and 21 hold values Codon has no type
+compiled through their callers. The 108 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 83 import what Codon cannot
+compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **79 import what Codon cannot compile**:
-  pydantic, pickle, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
+- **83 import what Codon cannot compile**:
+  pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
   a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
@@ -2496,15 +2496,16 @@ for), so each is counted once, in the first group that fits it:
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the T4Scene
+  export of its log (`t4_scene`), and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **20 build on an excluded module**, and import nothing Codon lacks
+- **21 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
-  packages that re-export one (`authoring`, `odd`, `sweeper`,
+  packages that re-export one (`authoring`, `odd`, `sweeper`, `t4_scene`,
   `examples`, `scaffold`, `slurm`, `hils`), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
@@ -2513,7 +2514,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 20
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
 - **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s

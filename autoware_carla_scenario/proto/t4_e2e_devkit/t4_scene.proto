@@ -1,0 +1,247 @@
+// Experimental public Scene exchange contract, not a dataset storage format.
+// Contract version: 0.1.0
+// Usage: README.md; history: CHANGELOG.md.
+syntax = "proto3";
+package t4.devkit.experimental.v1;
+
+// Component timestamps identify the time represented by the accompanying data.
+// Raw samples use measurement time; interpolated or motion-compensated results
+// use their target time. Selecting a nearby sample or changing spatial axes alone
+// does not retime it. All times use int64 nanoseconds on a source-established
+// common clock. Missing times stay absent/masked; no implicit Scene-time fallback.
+// Original acquisition history and processing/arrival times are not encoded here.
+
+// Dense C-order, little-endian numeric data. Missing message = absent array.
+// Byte length must equal product(shape) * sizeof(dtype). Empty shape = scalar.
+// Each field fixes its dtype and every dimension but the leading count(s) in
+// its comment, e.g. "float64 [T,3]"; readers reject any other dtype or width.
+// Symbolic dimensions denote variable counts.
+message NumericArray {
+  enum DType {
+    UNSPECIFIED = 0;
+    BOOL = 1; // One byte per value, exactly 0 or 1.
+    INT32 = 2;
+    INT64 = 3;
+    FLOAT32 = 4;
+    FLOAT64 = 5;
+    UINT8 = 6;
+    UINT32 = 7;
+    UINT64 = 8;
+    INT8 = 9;
+    INT16 = 10;
+    UINT16 = 11;
+    FLOAT16 = 12; // IEEE 754 binary16.
+  }
+  DType dtype = 1;
+  repeated uint64 shape = 2;
+  bytes data = 3;
+  // Absent = unmasked ndarray. Present = one byte per element; 1 = missing.
+  // Underlying bytes at missing positions are zeroed by the encoder.
+  optional bytes mask = 4;
+}
+
+// Fixed-size values. Every field is required: absence is the enclosing
+// message field being unset, never a missing element.
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+message Matrix3x3 { // Row-major: m<row><column>.
+  double m00 = 1;
+  double m01 = 2;
+  double m02 = 3;
+  double m10 = 4;
+  double m11 = 5;
+  double m12 = 6;
+  double m20 = 7;
+  double m21 = 8;
+  double m22 = 9;
+}
+// Planar pose; (cos_yaw, sin_yaw) is a unit heading.
+message Pose2D {
+  double x = 1; // metres
+  double y = 2; // metres
+  double cos_yaw = 3;
+  double sin_yaw = 4;
+}
+// Rigid transform; the homogeneous [4,4] form has bottom row 0,0,0,1.
+message RigidTransform3D {
+  Matrix3x3 rotation = 1; // Proper rotation (orthonormal, det = +1).
+  Vector3 translation = 2; // metres
+}
+
+message SceneMetadata {
+  string scene_id = 1;
+  optional string recording_id = 2;
+  repeated string tags = 3;
+}
+message EgoShape {
+  optional double length = 1; // metres
+  optional double width = 2;
+  optional double wheel_base = 3;
+  optional double base_link_to_front = 4;
+  // Positive when base_link is ahead of the rear axle.
+  optional double base_link_to_rear_axle = 5;
+}
+message EgoSequence {
+  NumericArray poses = 1; // float64 [T,3] x/y/yaw, metres/radians, Scene axes.
+  NumericArray velocities = 2; // float64 [T,2], m/s, Scene axes.
+  NumericArray accelerations = 3; // float64 [T,2], m/s^2, Scene axes.
+  EgoShape shape = 4;
+  NumericArray available = 5; // bool [T], no masked elements; absent means every time present.
+  NumericArray longitudinal_speeds = 6; // float64 [T], signed forward m/s.
+  NumericArray angular_velocities = 7; // float64 [T,3], body x/y/z, rad/s; masks per axis.
+  NumericArray tire_steering_angles = 8; // float64 [T], rad.
+  NumericArray steering_wheel_angles = 9; // float64 [T], rad.
+  // int64 [T]: unknown=0, disabled=1, left=2, right=3, hazard=4.
+  NumericArray turn_indicators = 10;
+  NumericArray poses_3d = 11; // float64 [T,4,4], body-to-Scene rigid transforms, metres.
+  NumericArray odometry_timestamps_ns = 12; // int64 [T], reference ns, masks mark unknown.
+  NumericArray acceleration_timestamps_ns = 13; // int64 [T].
+  NumericArray tire_steering_timestamps_ns = 14; // int64 [T].
+  NumericArray steering_wheel_timestamps_ns = 15; // int64 [T].
+  NumericArray turn_indicator_timestamps_ns = 16; // int64 [T].
+}
+message OptionalString { optional string value = 1; }
+message StringColumn { repeated OptionalString values = 1; }
+message Annotations {
+  NumericArray positions = 1; // float64 [M,3] x/y/z, metres, Scene axes.
+  NumericArray dimensions = 2; // float64 [M,3] width/length/height, metres, object axes.
+  NumericArray headings = 3; // float64 [M], yaw radians in Scene axes.
+  NumericArray velocities = 4; // float64 [M,2], m/s, Scene axes.
+  NumericArray accelerations = 5; // float64 [M,2], m/s^2, Scene axes.
+  // int64 [M] categories: unknown=0, vehicle=1, car=2, truck=3, bus=4,
+  // motorcycle=5, bicycle=6, pedestrian=7, trailer=8, animal=9, hazard=10,
+  // over_drivable=11, under_drivable=12. Missing values use mask, not zero.
+  NumericArray labels = 6;
+  StringColumn track_ids = 7; // Absent column, absent ID, and empty ID differ.
+  NumericArray orientations = 8; // float64 [M,4] object-to-Scene unit quaternion x/y/z/w.
+  optional int64 timestamp_ns = 9; // Batch reference ns; unset for packed values.
+}
+message AnnotationSequence {
+  Annotations values = 1;
+  NumericArray offsets = 2; // int64 [T+1] known boundaries, from 0 to M; no masked elements.
+  // bool [T], no masked elements. True + zero rows = observed empty; false = unavailable.
+  NumericArray available = 3;
+  NumericArray timestamps_ns = 4; // int64 [T], reference ns; masks mark unknown.
+}
+message T4Scene {
+  SceneMetadata scene_metadata = 1;
+  // int64 [T] strictly increasing, equally spaced recording-clock times, in ns.
+  // Source chooses anchor and positive integer step; no fixed rate or masked elements.
+  // Row i = timestamps_ns[current_index] + (i - current_index) * step_ns.
+  // A one-row Scene does not determine the step. Component times remain independent.
+  NumericArray timestamps_ns = 2;
+  uint64 current_index = 3; // Decision anchor on the grid; recorded future starts at current_index + 1.
+  NumericArray frame_indices = 4; // int64 [T], original source indices; no masked elements.
+  EgoSequence ego = 5;
+  AnnotationSequence annotations = 6;
+  Pose2D global_origin = 7; // World pose of the Scene axes.
+  RigidTransform3D global_origin_3d = 8; // Scene-to-world.
+  NumericArray goal_poses = 9; // float64 [T,4] Scene x/y/cos(yaw)/sin(yaw).
+  NumericArray goal_poses_3d = 10; // float64 [T,4,4] goal-to-Scene transforms.
+  MapReference map = 11; // One static map for the interval; no map bytes in a Scene.
+  reserved 12;
+  RouteSequence routes = 13; // Optional [T], IDs refer to the static Scene map.
+  TrafficLightSequence traffic_lights = 14;
+  CameraSequence cameras = 15; // Already-loaded pixels only; no implicit IO.
+  LidarSequence lidar = 16; // Already-loaded arrays only; no implicit IO.
+  // Python ModelData implementations are runtime behavior, not wire data.
+}
+
+// Registered separately, once per resource. SHA-256 covers the encoding,
+// projection profile and exact OSM bytes; it is not a semantic geometry hash.
+message MapResource {
+  enum Encoding {
+    ENCODING_UNSPECIFIED = 0;
+    LANELET2_OSM = 1;
+  }
+  enum Projection {
+    PROJECTION_UNSPECIFIED = 0;
+    // Already projected metres in MapData axes, including recovered local maps.
+    // Every node has exact local_x/local_y/ele tags. Auxiliary lat/lon encode
+    // the same coordinates with Mercator(0,0); they are NOT real geolocation.
+    // Readers restore local coordinates and rebuild spatial indices after IO.
+    LOCAL_METERS = 1;
+  }
+  string sha256 = 1; // 64 lowercase hex characters; content identity, not a locator.
+  Encoding encoding = 2;
+  bytes data = 3; // Lanelet2 OSM XML; native IDs, relations and custom centerlines.
+  Projection projection = 4; // Required explicit coordinate interpretation.
+}
+message MapReference {
+  string sha256 = 1; // Must resolve in a caller-owned resource store.
+  optional string map_id = 2; // Source provenance, e.g. original OSM + projection hash.
+  Pose2D global_origin = 3; // Map-to-world registration, not part of geometry bytes.
+  RigidTransform3D global_origin_3d = 4;
+  enum Scope {
+    SCOPE_UNSPECIFIED = 0;
+    FULL = 1;
+    LOCAL = 2;
+  }
+  Scope scope = 5;
+  optional bool has_elevation = 7; // Required; false means z is a planar placeholder.
+}
+message RouteData {
+  NumericArray lane_ids = 1; // Required int64 [R], known ordered IDs in Scene.map; may be empty.
+  NumericArray preferred_lane_ids = 2; // Optional int64 [P], known IDs in the same map.
+}
+message RouteRow { RouteData value = 1; }
+message RouteSequence { repeated RouteRow rows = 1; } // [T], absent row != empty route.
+
+// Dynamic observations. Group IDs identify native regulatory elements; lane
+// IDs identify lanelets, including generated local fragments. Neither is a row
+// index. Missing raw group relationships are not inferred from effective states.
+message TrafficLights {
+  NumericArray group_ids = 1; // int64 [G], known regulatory-element IDs.
+  NumericArray element_offsets = 2; // int64 [G+1], known boundaries from 0 to E.
+  NumericArray element_colors = 3; // int64 [E]: unknown=0,red=1,yellow=2,green=3,white=4.
+  NumericArray element_shapes = 4; // int64 [E]: unknown=0,circle=1,left=2,right=3,up=4,
+  // up_left=5,up_right=6,down=7,down_left=8,down_right=9,cross=10.
+  NumericArray element_statuses = 5; // int64 [E]: unknown=0,off=1,on=2,flashing=3.
+  NumericArray element_confidences = 6; // float64 [E], unitless [0,1].
+  NumericArray element_timestamps_ns = 7; // int64 [E], reference ns; masks mark unknown.
+  NumericArray lane_ids = 8; // int64 [L], known lanelet IDs in Scene.map.
+  NumericArray lane_states = 9; // int64 [L]: unknown=0,red=1,yellow=2,green=3,white=4,
+  // no_signal=5,white_or_no_signal=6. Explicit UNKNOWN differs from missing/masked.
+  NumericArray lane_is_arrow = 10; // bool [L], masked when directional evidence was lost.
+  optional int64 timestamp_ns = 11; // Batch reference ns, also valid for observed empty sets.
+}
+message TrafficLightSequence {
+  TrafficLights values = 1; // Required packed observations, without one batch timestamp.
+  NumericArray group_offsets = 2; // Required int64 [T+1], known boundaries into group_ids.
+  NumericArray lane_offsets = 3; // Required int64 [T+1], known boundaries into lane_ids.
+  NumericArray available = 4; // Required bool [T], known; false requires zero rows.
+  NumericArray timestamps_ns = 5; // Optional int64 [T], reference ns; masks mark unknown.
+  NumericArray group_available = 6; // Optional known bool [T]; absent uses available.
+  NumericArray lane_available = 7; // Optional known bool [T]; absent uses available.
+}
+message Camera {
+  string name = 1;
+  NumericArray image = 2; // uint8 [H,W,3] RGB pixels, inline, uncompressed.
+  // Camera axes: x right, y down, z forward. Ego: x forward,y left,z up.
+  Matrix3x3 camera2ego_rotation = 3; // Camera -> ego.
+  Vector3 camera2ego_translation = 4; // Metres in ego axes.
+  Matrix3x3 intrinsics = 5; // Calibrated to image's resolution.
+  NumericArray distortion = 6; // float64 [D], source camera-model coefficients.
+  optional int64 timestamp_ns = 7; // Image reference time; may differ from Scene anchor.
+  // Optional objects corrected to this image's reference time, in ego axes.
+  Annotations annotations = 8;
+}
+message Cameras {
+  repeated Camera cameras = 1; // Register order is significant; names are unique.
+}
+message CameraRow { Cameras value = 1; }
+message CameraSequence { repeated CameraRow rows = 1; } // [T], absent row allowed.
+message Lidar {
+  // float32 [N,5]: x,y,z,intensity,source-defined extra value.
+  // The fifth column may be ring index, time, etc.; its meaning/units remain
+  // source-defined. Preserve it verbatim; consumers must not assume a meaning.
+  // Coordinates follow the source's existing concatenated-cloud convention;
+  // reference time below is independent of the Scene anchor.
+  NumericArray lidar_pc = 1;
+  optional int64 timestamp_ns = 2; // Cloud reference ns; compensation target when compensated.
+}
+message LidarRow { Lidar value = 1; }
+message LidarSequence { repeated LidarRow rows = 1; } // [T]
