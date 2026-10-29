@@ -37,8 +37,14 @@ pytestmark = pytest.mark.slow
 def run_rollout(
     world: FakeWorld | None = None, *, steps: int = 200, policy: EgoPolicy | None = None
 ) -> Rollout:
-    """Serve the policy and drive one rollout against it."""
-    return (world or FakeWorld()).run(policy or EgoPolicy(), steps)
+    """Serve the policy and drive one rollout against it.
+
+    Warmed up first, as a runtime should load it: on a cold torch cache the
+    compile takes longer than the loop's deadline for ``start_session``.
+    """
+    policy = policy or EgoPolicy()
+    policy.warm_up()
+    return (world or FakeWorld()).run(policy, steps)
 
 
 # ---------------------------------------------------------------------------
