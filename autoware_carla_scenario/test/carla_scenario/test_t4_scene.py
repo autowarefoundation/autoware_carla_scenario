@@ -174,6 +174,23 @@ def test_rear_axle_offset_can_be_given(tmp_path: Path) -> None:
     assert scene.ego.shape.base_link_to_front == pytest.approx(0.1 + 2.4 + 1.5)
 
 
+def test_the_rear_axle_is_the_one_the_run_recorded(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        {"type": "rear_axle", "id": 1, "offset": -1.5},
+        _tick(100, _state(1, 0.0, 0.0)),
+    )
+    scene = trajectory_log_to_t4_scene(log, with_map=False).scene
+    assert _numeric(scene.ego.poses)[0][0] == pytest.approx(1000.0 - 1.5)
+    assert scene.ego.shape.base_link_to_front == pytest.approx(0.1 + 2.4 + 1.5)
+    # Given, it wins over the log's.
+    given = trajectory_log_to_t4_scene(
+        log, with_map=False, rear_axle_offset_m=-1.0
+    ).scene
+    assert _numeric(given.ego.poses)[0][0] == pytest.approx(1000.0 - 1.0)
+
+
 def test_rows_are_a_uniform_grid_and_a_missing_tick_is_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -460,6 +477,53 @@ def test_a_light_colours_the_lanelet_it_governs(
     assert not lights.values.HasField("element_offsets")
     assert list(_numeric(lights.group_offsets)) == [0, 0, 0, 0]
     assert list(_numeric(lights.group_available)) == [False, False, False]
+
+
+def test_a_light_its_controller_switches_colours_the_lanelet_wherever_it_stands(
+    tmp_path: Path, fixture_map: tuple[Any, tuple[float, float]]
+) -> None:
+    from autoware_carla_scenario.maps.road_network_cache import open_road_network
+    from autoware_carla_scenario.utils.traffic_light import (
+        get_signal_ids_for_controller,
+        lanelet2_traffic_light_id_to_opendrive_controller_id,
+    )
+
+    lanelet_map, (ox, oy) = fixture_map
+    network = open_road_network(XODR)
+    lanelet_id, signal = next(
+        (line.lanelet_id, signals[0])
+        for line in _stop_lines(lanelet_map)
+        for element in line.traffic_lights
+        if (
+            controller := lanelet2_traffic_light_id_to_opendrive_controller_id(
+                network, element
+            )
+        )
+        is not None
+        and (signals := get_signal_ids_for_controller(network, controller))
+    )
+    record = _map_record((ox, oy), 0.0)
+    record["lanelet2"] = {"path": str(OSM), "sha256": None, "bytes": 0}
+    record["opendrive"] = {"path": str(XODR), "sha256": None, "bytes": 0}
+    # A kilometre from any stop line: only its controller ties it to the lanelet.
+    far = [5000.0, 5000.0, 0.0]
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        {
+            "type": "traffic_light",
+            "id": 9,
+            "opendrive_id": signal,
+            "location": far,
+            "boxes": [],
+            "stops": [[*far, 0.0]],
+        },
+        EGO,
+        _tick(100, _state(1, 5000.0, 5000.0), lights={"9": "Yellow"}),
+        map_record=record,
+    )
+    lights = trajectory_log_to_t4_scene(log).scene.traffic_lights
+    lane_ids = list(_numeric(lights.values.lane_ids))
+    assert _numeric(lights.values.lane_states)[lane_ids.index(lanelet_id)] == 2
 
 
 def test_the_resource_keeps_exact_local_coordinates(

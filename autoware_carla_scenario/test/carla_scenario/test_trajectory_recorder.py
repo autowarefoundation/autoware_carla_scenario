@@ -192,6 +192,7 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
         "map",
         "traffic_light",
         "actor",
+        "rear_axle",
         "tick",
         "tick",
     ]
@@ -206,7 +207,9 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     assert records[2]["stops"] == [[5.0, 18.0, 0.0, -90.0]]
     # Only vehicles/walkers are recorded; the camera is looked up once and skipped.
     assert records[3]["id"] == 1 and records[3]["role"] == "Ego"
-    first, second = records[4], records[5]
+    # The ego's rear axle: half its box behind, the vehicle having no wheels.
+    assert records[4] == {"type": "rear_axle", "id": 1, "offset": -1.225}
+    first, second = records[5], records[6]
     assert first["actors"] == [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0]]
     assert first["control"] == {"1": [0.5, 0.0, 0.0, 1]}
     assert first["lights"] == {"9": "Red"}
@@ -222,6 +225,23 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
 class _UnnamedLight(_Light):
     def get_opendrive_id(self) -> str:
         raise RuntimeError("no signal")
+
+
+def test_the_rear_axle_is_the_one_a_driver_entity_offered(tmp_path: Path) -> None:
+    from autoware_carla_scenario import t4
+
+    world = _World()
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    t4.offer_driver_sensors(-1.4)
+    try:
+        recorder.record(world, 0.0)
+    finally:
+        t4.withdraw_driver_sensors()
+    recorder.close()
+    rear_axles = [r for r in _lines(recorder.path) if r["type"] == "rear_axle"]
+    assert rear_axles == [{"type": "rear_axle", "id": 1, "offset": -1.4}]
 
 
 def test_records_without_an_ego_or_a_light_change_follow_the_schema(
@@ -508,6 +528,7 @@ def test_actors_that_come_later_and_go_are_written_when_they_do(tmp_path) -> Non
     kinds = [(r["type"], r.get("id")) for r in records[3:]]
     assert kinds == [
         ("actor", 1),
+        ("rear_axle", 1),
         ("tick", None),
         ("actor", 3),
         ("tick", None),

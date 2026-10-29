@@ -18,6 +18,8 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "actor", "id", "type_id", "role", "extent": [x,y,z],
   "center": [x,y,z]}`` -- the first time a vehicle/walker is seen; ``extent`` is
   the bounding box's half size, ``center`` its offset from the actor origin.
+* ``{"type": "rear_axle", "id", "offset"}`` -- right after an ego's ``actor``
+  record: where its rear axle (``base_link``) is along its x axis.
 * ``{"type": "traffic_light", "id", "opendrive_id", "location": [x,y,z],
   "boxes": [[x, y, z, ex, ey, ez, yaw], ...], "stops": [[x, y, z, yaw], ...]}``
   -- every traffic light, once: its light heads' boxes (world frame, half
@@ -110,6 +112,26 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trajectory.schema.j
 DRAFT7_SCHEMA_PATH = Path(__file__).resolve().parent / "trajectory_recorder.schema.json"
 #: Actor type prefixes whose motion is recorded.
 RECORDED_KINDS = ("vehicle.", "walker.")
+
+
+def _rear_axle(actor: Any) -> Optional[float]:
+    """Where the run takes an ego's rear axle to be, along its x axis from its
+    origin: the rig origin a driver entity offered, else from its wheels or
+    its box (``driver.observation.rear_axle_offset``, as the T4 dataset takes
+    it); ``None`` when neither can be read."""
+    from .driver.observation import rear_axle_offset  # noqa: PLC0415
+    from .t4 import offered_rear_axle  # noqa: PLC0415
+
+    offered = offered_rear_axle()
+    if offered is not None:
+        return offered
+    try:
+        return rear_axle_offset(actor)
+    except Exception:  # noqa: BLE001 - the log goes on without it
+        logger.debug(
+            "No rear axle for actor %s", getattr(actor, "id", "?"), exc_info=True
+        )
+        return None
 
 
 def _r(value: float) -> float:
@@ -684,6 +706,12 @@ class TrajectoryRecorder:
                         ],
                     }
                 )
+                if role.lower() in EGO_ROLES:
+                    offset = _rear_axle(actor)
+                    if offset is not None:
+                        self._emit(
+                            {"type": "rear_axle", "id": actor.id, "offset": _r(offset)}
+                        )
             for actor_id in new:  # gone before it could be looked up
                 self._known.setdefault(actor_id, None)
 

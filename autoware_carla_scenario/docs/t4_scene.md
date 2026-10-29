@@ -70,15 +70,21 @@ What the log does not hold is left out, never made up:
   says, with the `mgrs_offset` and `z_offset` of its `map` record. Both the
   scene and the map are registered at the identity (`global_origin`,
   `global_origin_3d`), so the devkit draws and scores one against the other.
-- The ego's `base_link` is its **rear axle**, as in T4 data: half its box
-  behind its origin, which is where the run takes it on CARLA UE5 (no wheel
-  positions), or `--rear-axle-offset` metres along its x axis.
+- The ego's `base_link` is its **rear axle**, as in T4 data: where the run
+  took it to be, which the log's `rear_axle` record says (the driver policy's
+  rig origin, else from the wheels), or `--rear-axle-offset` metres along its
+  x axis; in a log without that record, half its box behind its origin, where
+  the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and
   `base_link_to_rear_axle` is 0.
-- A light governs a lanelet when one of its stop-line waypoints is within
-  2 m of the lanelet's stop line (its traffic-light regulatory element's, else
-  its end), as `TrafficSignalAction` matches them, and faces the lanelet's
-  way; the nearest such light, when several are.
+- A light governs a lanelet as `TrafficSignalAction` maps them: when it
+  switches an OpenDRIVE signal (its `opendrive_id`) of the controller named
+  after the lanelet's traffic-light regulatory element
+  (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention); else, for a
+  map without such controllers (roadgen's, say), when one of its stop-line
+  waypoints is within 2 m of the lanelet's stop line (its traffic-light
+  regulatory element's, else its end) and faces the lanelet's way -- the
+  nearest such light, when several are.
 
 `scenario-t4scene` reads a map once however many of its logs ran on it.
 

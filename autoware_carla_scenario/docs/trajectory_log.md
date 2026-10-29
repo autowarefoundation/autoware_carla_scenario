@@ -30,7 +30,7 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 `action` and `result`, and `schema_version` itself; a file of version 1 has no
 `schema_version` and none of those records, and still follows the schema.
 The records marked (2) in the table below that are not in that list
-(`plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`,
+(`rear_axle`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`,
 `spawn`, `despawn`) came later within version 2: a reader of version 2 that does not
 know one skips it.
 Every change keeps the records there are: a new version adds records (and
@@ -39,10 +39,11 @@ any later file.
 
 ## Records
 
-Each line is one of eighteen records, told apart by `type`. A file starts with one
+Each line is one of nineteen records, told apart by `type`. A file starts with one
 `world` line and one `map` line, then one `traffic_light` line per light and one
 `warmup` line. After that come the ticks: each `tick` line is preceded by an
-`actor` line for every vehicle or walker appearing in it for the first time and
+`actor` line for every vehicle or walker appearing in it for the first time
+(an ego's followed by a `rear_axle` line) and
 an `actor_gone` line for every one that has gone since the last, and followed
 by a `markers` line when the ego's plan changed on it (and a `plan` line after
 it, the plan timed), a `condition` line for
@@ -71,6 +72,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `lights` `{id: state}` (changes only) |
 | `map` (2) | once, after `world` | `name` (short map name), `source` (`map.source`, else `map.directory`, else null), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
 | `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
+| `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: the rig origin a driver policy's entity uses, else from its wheels, else half its box behind) |
 | `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |
 | `markers` (2) | after a tick on which the ego's debug markers changed | `frame`, `t`, `actor` (the ego, or null), `polylines` `[{points [[x,y,z]], color [r,g,b], thickness, point_size}]`; they hold until the next `markers` line, and none (`[]`) clears them |
 | `plan` (2) | right after the `markers` line of a driver's plan (a driver policy's, `CarlaDriverEntity`, or an Autoware ego's trajectory command, `Ros2EgoEntity`; `ego_plan.PlanMarkers`), once per plan, even an empty one | `frame`, `t`, `actor` (the ego, or null), `step` (the plan's number in the driver's session, from 1), `planned_at_us` (when it was made, on the driver's clock -- a policy's microseconds since its session began, an Autoware command's stamp -- not `t`), `policy`, `inference_seconds` (0 when not said, null for NaN or infinity), `turn_indicator` (0 no command, 1 off, 2 left, 3 right), `debug_scalars` `{name: value}` (null for NaN or infinity), `points` `[[dt,x,y,z,yaw]]` (the rig's planned poses, `dt` seconds after the plan was made; world frame, not lifted as the markers are; a pose that is not finite left out) |

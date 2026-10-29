@@ -112,6 +112,8 @@ class _Log:
     spawned: dict[int, int] = field(default_factory=dict)
     #: The frame an entity was taken out, by actor id.
     despawned: dict[int, int] = field(default_factory=dict)
+    #: Where an ego's rear axle is along its x axis, by actor id (``rear_axle``).
+    rear_axles: dict[int, float] = field(default_factory=dict)
     result: Optional[dict[str, Any]] = None
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
@@ -165,6 +167,8 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                     extent=_xyz(record["extent"]),
                     center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
                 )
+            elif kind == "rear_axle":
+                log.rear_axles[int(record["id"])] = float(record["offset"])
             elif kind == "world":
                 log.world = record
             elif kind == "map":
@@ -280,6 +284,8 @@ class _StopLine(NamedTuple):
     """Where a lanelet a traffic light governs stops its traffic."""
 
     lanelet_id: int
+    #: The ids of the traffic light regulatory elements governing it.
+    traffic_lights: tuple[int, ...]
     #: The stop line as (S, 2, 2) segments in the map frame.
     segments: npt.NDArray[np.float64]
     #: The lanelet's heading there (radians).
@@ -293,6 +299,11 @@ class _Map(NamedTuple):
     resource: pb.MapResource
     digest: str
     stop_lines: tuple[_StopLine, ...]
+    #: The OpenDRIVE signals each traffic light regulatory element switches,
+    #: by the controller named after it (``Controller_TL_{id}``, the
+    #: Lanelet2-to-OpenDRIVE convention ``TrafficSignalAction`` follows);
+    #: empty without an OpenDRIVE file or such controllers.
+    signals: Mapping[int, tuple[str, ...]]
 
 
 @functools.lru_cache(maxsize=4)
@@ -308,7 +319,25 @@ def _read_map(
 
     lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path, projector_type)
     digest = hashlib.sha256(lanelet2_path.read_bytes()).hexdigest()
-    return _Map(map_resource(lanelet_map), digest, tuple(_stop_lines(lanelet_map)))
+    stop_lines = tuple(_stop_lines(lanelet_map))
+    signals: dict[int, tuple[str, ...]] = {}
+    if xodr_path is not None:
+        from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
+        from ..utils.traffic_light import (  # noqa: PLC0415
+            get_signal_ids_for_controller,
+            lanelet2_traffic_light_id_to_opendrive_controller_id,
+        )
+
+        network = open_road_network(xodr_path)
+        for element_id in {i for line in stop_lines for i in line.traffic_lights}:
+            controller = lanelet2_traffic_light_id_to_opendrive_controller_id(
+                network, element_id
+            )
+            if controller is not None:
+                signals[element_id] = tuple(
+                    get_signal_ids_for_controller(network, controller)
+                )
+    return _Map(map_resource(lanelet_map), digest, stop_lines, signals)
 
 
 def _load_map(
@@ -391,6 +420,7 @@ def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
         governed.append(
             _StopLine(
                 lanelet.id,
+                tuple(element.id for element in elements),
                 np.stack([points[:-1], points[1:]], axis=1),
                 math.atan2(direction[1], direction[0]),
             )
@@ -410,12 +440,16 @@ def _distance_to(
     return float(np.hypot(*(nearest - point).T).min())
 
 
-def _lane_lights(
-    log: _Log, stop_lines: Sequence[_StopLine], frame: _MapFrame
-) -> dict[int, int]:
+def _lane_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
     """The CARLA light (its id) governing each lanelet that has a traffic
-    light: the nearest light with a stop-line waypoint on the lanelet's stop
-    line, facing the lanelet's way."""
+    light: one switching an OpenDRIVE signal its regulatory element's
+    controller names, as ``TrafficSignalAction`` maps them; else, as its
+    fallback does, the nearest light with a stop-line waypoint on the
+    lanelet's stop line, facing the lanelet's way."""
+    by_signal: dict[str, int] = {}
+    for light in log.lights:
+        if light.get("opendrive_id") is not None:
+            by_signal.setdefault(str(light["opendrive_id"]), int(light["id"]))
     stops = [
         (
             int(light["id"]),
@@ -426,7 +460,16 @@ def _lane_lights(
         for stop in light.get("stops") or ()
     ]
     governed: dict[int, int] = {}
-    for line in stop_lines:
+    for line in loaded.stop_lines:
+        switched = [
+            by_signal[signal]
+            for element in line.traffic_lights
+            for signal in loaded.signals.get(element, ())
+            if signal in by_signal
+        ]
+        if switched:
+            governed[line.lanelet_id] = switched[0]
+            continue
         nearest = min(
             (
                 (_distance_to(line.segments, point), light_id)
@@ -684,9 +727,11 @@ def trajectory_log_to_t4_scene(
     _register_in_map_frame(scene)
 
     frame = _MapFrame.of(log.map)
-    rear_axle = (
-        -0.5 * ego.extent[0] if rear_axle_offset_m is None else rear_axle_offset_m
-    )
+    # Given, else as the run took it, else half the box behind the origin:
+    # where the run takes it on CARLA UE5 without wheel positions.
+    rear_axle = rear_axle_offset_m
+    if rear_axle is None:
+        rear_axle = log.rear_axles.get(ego_id, -0.5 * ego.extent[0])
     ego_origins = _fill_ego(scene, log, frames, ego_id, ego, frame, rear_axle)
     _fill_annotations(scene, log, frames, ego_id, ego_origins, frame, max_distance_m)
 
@@ -706,7 +751,7 @@ def trajectory_log_to_t4_scene(
     reference.has_elevation = True
     reference.map_id = f"lanelet2-sha256:{loaded.digest}"
     _register_in_map_frame(reference)
-    _fill_lights(scene, log, frames, _lane_lights(log, loaded.stop_lines, frame))
+    _fill_lights(scene, log, frames, _lane_lights(log, loaded, frame))
     return T4SceneExport(scene=scene, map_resource=loaded.resource)
 
 
