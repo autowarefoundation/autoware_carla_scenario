@@ -39,6 +39,7 @@ it); they are re-exported here.
 from __future__ import annotations
 
 import json
+import math
 import socket
 from typing import Any, Dict, List, Optional
 
@@ -64,6 +65,23 @@ __all__ = [
     "encode",
     "parse_address",
 ]
+
+#: The largest magnitude a command field may have: CARLA's controls are 32-bit
+#: floats, which turn a larger (finite) double into an infinity.
+COMMAND_VALUE_LIMIT = 3.4028234663852886e38
+
+
+def command_value(value: Any) -> Optional[float]:
+    """A command field's *value* as a float, or ``None`` when it is not a
+    number CARLA can take: not finite (NaN, an infinity), or beyond
+    :data:`COMMAND_VALUE_LIMIT` (an integer too large for a float included)."""
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or abs(number) > COMMAND_VALUE_LIMIT:
+        return None
+    return number
 
 
 class LineReader:
