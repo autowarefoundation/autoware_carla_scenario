@@ -53,11 +53,14 @@ Each scene is what the log converts to (below), built as the run goes from the
 same records (`t4_scene.live`): the last rows on the 0.1 s grid, history only,
 the current one last. A run younger than `t4_scene_history_s` sends the rows it
 has. On top of what the log holds, a scene carries what the policy is told and
-a log does not: the ego's acceleration (the estimate the egodriver observations
-carry too), body angular velocity, front tyres' angle and odometry times; the
-first LiDAR's current sweep on the current row (`[N, 5]` in the rig frame,
-intensity on the 0-255 scale, the fifth column zero); the route's lanelets on
-every row, and the goal. Its map is written once into the map set as the `t4`
+a log does not: the ego's velocity and acceleration as the egodriver
+observations carry them (of `base_link`, the acceleration an estimate), body
+angular velocity, front tyres' angle and odometry times; the first LiDAR's
+current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
+0-255 scale, the fifth column zero); the route on every row -- the road ahead
+the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets,
+after the few the ego has just passed -- and the scenario's goal. A policy
+reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the `t4`
 format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene
 references. Every other observation is sent as before: a policy that does not
 read scenes is unchanged.
@@ -135,14 +138,16 @@ What the log does not hold is left out, never made up:
   the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and
   `base_link_to_rear_axle` is 0.
-- A light governs a lanelet as `TrafficSignalAction` maps them: when it
-  switches an OpenDRIVE signal (its `opendrive_id`) of the controller named
-  after the lanelet's traffic-light regulatory element
-  (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention); else, for a
-  map without such controllers (roadgen's, say), when one of its stop-line
-  waypoints is within 2 m of the lanelet's stop line (its traffic-light
-  regulatory element's, else its end) and faces the lanelet's way -- the
-  nearest such light, when several are.
+- A light shows a traffic-light regulatory element when it switches an
+  OpenDRIVE signal (its `opendrive_id`) of the controller named after the
+  element (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention, as
+  `TrafficSignalAction` maps them); else, for a map without such controllers
+  (roadgen's, carla-ue5-maps'), when one of its stop-line waypoints is on a
+  lanelet the element governs or within 50 m of lanelets before one -- the
+  first such light, in the log's order. That is how
+  `carla_driver_interface.hdmap` finds a light on a Lanelet2 map: CARLA puts
+  its stop waypoints where its own junction starts, often metres before the
+  map's stop line.
 
 `scenario-t4scene` reads a map once however many of its logs ran on it.
 

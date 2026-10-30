@@ -543,23 +543,22 @@ def test_a_light_colours_the_regulatory_element_of_the_lanelet_it_governs(
     np.testing.assert_array_equal(_numeric(lights.values.element_confidences), 1.0)
 
 
-@pytest.mark.parametrize(
-    ("before_m", "beside_m", "matched"),
-    [(6.0, 0.0, True), (-1.0, 0.0, True), (12.0, 0.0, False), (6.0, 6.0, False)],
-)
+@pytest.mark.parametrize(("before_m", "matched"), [(6.0, True), (None, False)])
 def test_a_light_whose_stop_waypoint_is_before_the_line_colours_its_lanelet(
     tmp_path: Path,
     fixture_map: tuple[Any, tuple[float, float]],
-    before_m: float,
-    beside_m: float,
+    before_m: Optional[float],
     matched: bool,
 ) -> None:
     lanelet_map, (ox, oy) = fixture_map
     line = _stop_lines(lanelet_map)[0]
     forward = np.array([math.cos(line.heading), math.sin(line.heading)])
-    across = np.array([-forward[1], forward[0]])
-    # CARLA's stop waypoint, before the map's line in the lane (or beside it).
-    stop = line.segments[0].mean(axis=0) - before_m * forward + beside_m * across
+    # CARLA's stop waypoint, in the lane before the map's line; or on no lane.
+    stop = (
+        line.segments[0].mean(axis=0) - before_m * forward
+        if before_m is not None
+        else np.array([ox + 5000.0, oy + 5000.0])
+    )
     x, y, yaw = stop[0] - ox, -(stop[1] - oy), -math.degrees(line.heading)
     record = _map_record((ox, oy), 0.0)
     # No OpenDRIVE: no controller ties the light to a lanelet.

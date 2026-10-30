@@ -26,6 +26,7 @@ import math
 import uuid
 from typing import (
     TYPE_CHECKING,
+    Any,
     Dict,
     FrozenSet,
     List,
@@ -201,6 +202,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: That route's lanelets, in order, and the goal as ``(x, y, yaw)`` in
         #: Autoware's ``map`` frame: what a T4Scene carries of them.
         self._route_lanelet_ids: Optional[List[int]] = None
+        #: The road ahead last sent: the ego's pose then and the rig-frame points.
+        self._road_ahead: Optional[Tuple[Pose, Any]] = None
         self._goal_in_map: Optional[Tuple[float, float, float]] = None
         #: The run so far as T4Scenes (``driver.t4_scene``), while one runs.
         self._t4: Optional["LiveT4Scene"] = None
@@ -492,6 +495,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._map = None
         self._renderer = None
         self._t4 = None
+        self._road_ahead = None
 
         reason = self.termination_reason
         logger.info(
@@ -657,6 +661,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             route_roads=self._route_roads,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
+        if self._t4 is not None:
+            # The T4Scene's route is this road ahead, on the map's lanelets.
+            self._road_ahead = (observation.pose, waypoints)
         if self._config.send_ground_truth and len(waypoints):
             self._client.submit_recording_ground_truth(
                 self._sim_time_us,
@@ -797,6 +804,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 acceleration_rig=observation.linear_acceleration[:2],
                 angular_velocity=observation.angular_velocity[:3],
                 tire_steering_angle=steering,
+                velocity_rig=observation.linear_velocity[:2],
             ),
         )
 
@@ -817,10 +825,25 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             self._scene_id,
             lidar_points=points,
             lidar_age_ns=age_ns,
-            route_lanelet_ids=self._route_lanelet_ids,
+            road_ahead=self._road_ahead_in_map(),
             goal_pose=self._goal_in_map,
         )
         return b"" if scene is None else scene.SerializeToString()
+
+    def _road_ahead_in_map(self) -> Any:
+        """The road ahead last sent, ``(N, 2)`` in Autoware's ``map`` frame;
+        ``None`` before one was."""
+        if self._road_ahead is None or not len(self._road_ahead[1]):
+            return None
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+        pose, waypoints = self._road_ahead
+        # The local frame is CARLA's with y flipped; the map's adds its offset.
+        offset_x, offset_y = MapManager.get_instance().mgrs_offset
+        points = pose.transform_points(waypoints)[:, :2].copy()
+        points[:, 0] += offset_x
+        points[:, 1] += offset_y
+        return points
 
     def _submit_camera_frames(self) -> None:
         """Encode and send the latest frame from each camera."""

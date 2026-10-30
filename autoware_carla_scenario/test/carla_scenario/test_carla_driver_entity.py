@@ -11,7 +11,7 @@ import importlib.util
 import math
 from concurrent import futures
 from types import SimpleNamespace
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
 
 import grpc
@@ -1423,13 +1423,19 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
     monkeypatch.setattr(module, "RendererDataBuilder", _FakeRenderer)
     monkeypatch.setattr(CarlaDriverEntity, "_write_map", lambda self: "town-1")
     monkeypatch.setattr(module, "_tire_steering_angle", lambda actor: 0.02)
+    sent: list = []
+
+    def road_ahead_in_map(self: CarlaDriverEntity) -> Any:
+        sent.append(self._road_ahead)  # noqa: SLF001
+        return "the road ahead"
+
+    monkeypatch.setattr(CarlaDriverEntity, "_road_ahead_in_map", road_ahead_in_map)
     entity, client = _entity(
         policy_timestep_s=0.1,
         send_renderer_data=True,
         map_dir="/maps",
         t4_scene=True,
     )
-    entity._route_lanelet_ids = [11, 12]  # noqa: SLF001 - as route_to sets them
     entity._goal_in_map = (1.0, 2.0, 0.5)  # noqa: SLF001
     world = _world_with_route()
     entity.on_scenario_start(world)
@@ -1446,7 +1452,9 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
         data = carla_driver_pb2.CarlaRendererData.FromString(payload)
         scene = t4_scene_pb2.T4Scene.FromString(data.t4_scene)
         assert scene.current_index == ticks - 1
-    assert live.asked[-1]["route_lanelet_ids"] == [11, 12]
+    # The road ahead the policy was sent this step, on the scene's lanelets.
+    assert live.asked[-1]["road_ahead"] == "the road ahead"
+    assert all(road is not None and len(road[1]) for road in sent)
     assert live.asked[-1]["goal_pose"] == (1.0, 2.0, 0.5)
     entity.on_scenario_end(world)
     assert entity._t4 is None  # noqa: SLF001

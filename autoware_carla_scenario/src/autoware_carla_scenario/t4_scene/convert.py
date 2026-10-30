@@ -69,13 +69,13 @@ _STATUS_UNKNOWN, _STATUS_OFF, _STATUS_ON = 0, 1, 2
 #: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
 #: log's ``turn_indicators`` states.
 _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
-#: How far (m) a light's stop-line waypoint may be past, or beside, the stop
-#: line of a lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
-_STOP_LINE_MATCH_M = 2.0
-#: How far (m) before that stop line it may be. CARLA puts its stop waypoints
-#: where its own junction starts, which is not where a Lanelet2 map draws the
-#: line: on Town10HD_Opt's carla-ue5-maps map, some 6 m before it.
-_STOP_POINT_BEFORE_M = 10.0
+#: How far (m) of lanelets past the one a light's stop waypoint is on its
+#: traffic light regulatory elements are looked for; and how near (m) a
+#: lanelet's start is to another's end to follow it.  As
+#: ``carla_driver_interface.hdmap`` finds a light on a Lanelet2 map: a policy
+#: that took its lights from there is shown the same lanelets lit.
+_LIGHT_SEARCH_M = 50.0
+_JOIN_M = 0.3
 
 _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
 _DTYPES = {
@@ -329,9 +329,24 @@ class _StopLine(NamedTuple):
     heading: float
 
 
+class _Lanes(NamedTuple):
+    """A Lanelet2 map's lanelets, as far as finding a light's lanelets takes:
+    each one's outline, length, traffic light regulatory elements and the
+    lanelets that start where it ends."""
+
+    ids: tuple[int, ...]
+    outlines: tuple[npt.NDArray[np.float64], ...]
+    #: ``(L, 4)``: each outline's min x, min y, max x, max y.
+    boxes: npt.NDArray[np.float64]
+    lengths: Mapping[int, float]
+    elements: Mapping[int, tuple[int, ...]]
+    successors: Mapping[int, tuple[int, ...]]
+
+
 class _Map(NamedTuple):
     """A run's map, ready for its scenes: the resource, the source file's
-    SHA-256, and the stop lines of the lanelets its lights govern."""
+    SHA-256, the stop lines of the lanelets its lights govern and the
+    lanelets a light's stop waypoint is looked up on."""
 
     resource: pb.MapResource
     digest: str
@@ -341,6 +356,7 @@ class _Map(NamedTuple):
     #: Lanelet2-to-OpenDRIVE convention ``TrafficSignalAction`` follows);
     #: empty without an OpenDRIVE file or such controllers.
     signals: Mapping[int, tuple[str, ...]]
+    lanes: _Lanes
 
 
 @functools.lru_cache(maxsize=4)
@@ -384,7 +400,9 @@ def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
                 signals[element_id] = tuple(
                     get_signal_ids_for_controller(network, controller)
                 )
-    return _Map(map_resource(lanelet_map), digest, stop_lines, signals)
+    return _Map(
+        map_resource(lanelet_map), digest, stop_lines, signals, _lanes_of(lanelet_map)
+    )
 
 
 def _load_map(
@@ -475,64 +493,116 @@ def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
     return governed
 
 
-def _gap_before(line: _StopLine, point: npt.NDArray[np.float64]) -> Optional[float]:
-    """How far *point* is before *line* along its lanelet (negative: past it),
-    or ``None`` when it is beside the line rather than in its lane."""
-    ends = line.segments.reshape(-1, 2)
-    first, last = ends[0], ends[-1]
-    middle = (first + last) / 2
-    forward = np.array([math.cos(line.heading), math.sin(line.heading)])
-    across = np.array([-forward[1], forward[0]])
-    half_width = abs(float((last - first) @ across)) / 2
-    if abs(float((point - middle) @ across)) > half_width + _STOP_LINE_MATCH_M:
-        return None
-    return float((middle - point) @ forward)
+def _lanes_of(lanelet_map: Any) -> _Lanes:
+    """The lanelets of *lanelet_map*, read for :func:`_elements_ahead`."""
+    ids: list[int] = []
+    outlines: list[npt.NDArray[np.float64]] = []
+    lengths: dict[int, float] = {}
+    elements: dict[int, tuple[int, ...]] = {}
+    starts: dict[int, npt.NDArray[np.float64]] = {}
+    ends: dict[int, npt.NDArray[np.float64]] = {}
+    for lanelet in lanelet_map.laneletLayer:
+        left = np.array([(p.x, p.y) for p in lanelet.leftBound], dtype=np.float64)
+        right = np.array([(p.x, p.y) for p in lanelet.rightBound], dtype=np.float64)
+        if len(left) < 2 or len(right) < 2:
+            continue
+        ids.append(int(lanelet.id))
+        outlines.append(np.vstack([left, right[::-1]]))
+        lengths[ids[-1]] = 0.5 * float(
+            np.linalg.norm(np.diff(left, axis=0), axis=1).sum()
+            + np.linalg.norm(np.diff(right, axis=0), axis=1).sum()
+        )
+        elements[ids[-1]] = tuple(
+            int(element.id)
+            for element in lanelet.regulatoryElements
+            if "subtype" in element.attributes
+            and element.attributes["subtype"] == "traffic_light"
+        )
+        starts[ids[-1]] = (left[0] + right[0]) / 2
+        ends[ids[-1]] = (left[-1] + right[-1]) / 2
+    start_ids = list(starts)
+    start_points = np.array([starts[i] for i in start_ids]).reshape(-1, 2)
+    successors = {
+        lanelet_id: tuple(
+            start_ids[k]
+            for k in np.flatnonzero(np.hypot(*(start_points - end).T) < _JOIN_M)
+            if start_ids[k] != lanelet_id
+        )
+        for lanelet_id, end in ends.items()
+    }
+    boxes = np.array(
+        [[*o.min(axis=0), *o.max(axis=0)] for o in outlines], dtype=np.float64
+    ).reshape(-1, 4)
+    return _Lanes(tuple(ids), tuple(outlines), boxes, lengths, elements, successors)
 
 
-def _lane_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
-    """The CARLA light (its id) governing each lanelet that has a traffic
-    light: one switching an OpenDRIVE signal its regulatory element's
-    controller names, as ``TrafficSignalAction`` maps them; else the light
-    with a stop-line waypoint nearest the lanelet's stop line, in its lane and
-    facing its way: on it, or before it as CARLA's often are
-    (``_STOP_POINT_BEFORE_M``)."""
+def _inside(point: npt.NDArray[np.float64], outline: npt.NDArray[np.float64]) -> bool:
+    """Whether *point* is inside the polygon *outline* (even-odd rule)."""
+    x, y = float(point[0]), float(point[1])
+    xs, ys = outline[:, 0], outline[:, 1]
+    xs2, ys2 = np.roll(xs, -1), np.roll(ys, -1)
+    crosses = (ys > y) != (ys2 > y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        at = xs + (y - ys) * (xs2 - xs) / (ys2 - ys)
+    return bool(np.count_nonzero(crosses & (x < at)) % 2)
+
+
+def _elements_ahead(lanes: _Lanes, point: npt.NDArray[np.float64]) -> list[int]:
+    """The traffic light regulatory elements of the first lanelets on or ahead
+    of the lanelets *point* is on that carry one: each branch stops at its
+    first such lanelet, or once ``_LIGHT_SEARCH_M`` of lanelets lie behind it
+    (``carla_driver_interface.hdmap``'s ``rules_ahead``)."""
+    b = lanes.boxes
+    near = np.flatnonzero(
+        (b[:, 0] <= point[0])
+        & (point[0] <= b[:, 2])
+        & (b[:, 1] <= point[1])
+        & (point[1] <= b[:, 3])
+    )
+    start = {lanes.ids[i] for i in near if _inside(point, lanes.outlines[i])}
+    found: dict[int, None] = {}
+    queue = [(lanelet_id, 0.0) for lanelet_id in sorted(start)]
+    seen: set[int] = set()
+    while queue:
+        lanelet_id, travelled = queue.pop(0)
+        if lanelet_id in seen:
+            continue
+        seen.add(lanelet_id)
+        if lanes.elements[lanelet_id]:
+            found.update(dict.fromkeys(lanes.elements[lanelet_id]))
+            continue
+        ahead = (
+            travelled if lanelet_id in start else travelled + lanes.lengths[lanelet_id]
+        )
+        if ahead <= _LIGHT_SEARCH_M:
+            queue += [(nxt, ahead) for nxt in lanes.successors[lanelet_id]]
+    return list(found)
+
+
+def _element_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
+    """The CARLA light (its id) each traffic light regulatory element shows.
+
+    One switching an OpenDRIVE signal the element's controller names, as
+    ``TrafficSignalAction`` maps them; else the first light, in the log's
+    order, with a stop waypoint on a lanelet the element governs or before
+    it (:func:`_elements_ahead`) -- where CARLA puts its stop waypoints, at
+    its own junction's start, is not where a Lanelet2 map draws the stop line.
+    """
     by_signal: dict[str, int] = {}
     for light in log.lights:
         if light.get("opendrive_id") is not None:
             by_signal.setdefault(str(light["opendrive_id"]), int(light["id"]))
-    stops = [
-        (
-            int(light["id"]),
-            frame.positions(np.array(stop[:3], dtype=np.float64))[:2],
-            -math.radians(float(stop[3])),
-        )
-        for light in log.lights
-        for stop in light.get("stops") or ()
-    ]
-    governed: dict[int, int] = {}
-    for line in loaded.stop_lines:
-        switched = [
-            by_signal[signal]
-            for element in line.traffic_lights
-            for signal in loaded.signals.get(element, ())
-            if signal in by_signal
-        ]
+    lights: dict[int, int] = {}
+    for element, signals in loaded.signals.items():
+        switched = [by_signal[signal] for signal in signals if signal in by_signal]
         if switched:
-            governed[line.lanelet_id] = switched[0]
-            continue
-        nearest = min(
-            (
-                (abs(gap), light_id)
-                for light_id, point, yaw in stops
-                if math.cos(yaw - line.heading) >= 0.5
-                and (gap := _gap_before(line, point)) is not None
-                and -_STOP_LINE_MATCH_M <= gap <= _STOP_POINT_BEFORE_M
-            ),
-            default=None,
-        )
-        if nearest is not None:
-            governed[line.lanelet_id] = nearest[1]
-    return governed
+            lights[element] = switched[0]
+    for light in log.lights:
+        for stop in light.get("stops") or ():
+            point = frame.positions(np.array(stop[:3], dtype=np.float64))[:2]
+            for element in _elements_ahead(loaded.lanes, point):
+                lights.setdefault(element, int(light["id"]))
+    return lights
 
 
 def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
@@ -689,27 +759,13 @@ def _fill_annotations(
     scene.annotations.available.CopyFrom(_array(available, "?"))
 
 
-def _group_lights(loaded: _Map, lane_lights: Mapping[int, int]) -> dict[int, int]:
-    """The CARLA light (its id) each traffic light regulatory element shows:
-    the one governing the lanelets it is on (:func:`_lane_lights`), the first
-    such lanelet's when they differ."""
-    groups: dict[int, int] = {}
-    for line in loaded.stop_lines:
-        light = lane_lights.get(line.lanelet_id)
-        if light is None:
-            continue
-        for element in line.traffic_lights:
-            groups.setdefault(element, light)
-    return groups
-
-
 def _fill_lights(
     scene: pb.T4Scene, log: _Log, frames: Sequence[int], group_lights: Mapping[int, int]
 ) -> None:
     """Write each traffic light regulatory element's lamp on every row.
 
     A group is a regulatory element of the map, its one element the round lamp
-    of the CARLA light it shows (:func:`_group_lights`): its colour, on --
+    of the CARLA light it shows (:func:`_element_lights`): its colour, on --
     off for CARLA's ``Off`` -- and unknown otherwise. A consumer derives the
     lanelets' states from the map's regulatory elements, as for any source.
     """
@@ -884,9 +940,7 @@ def log_to_scene(
     reference.has_elevation = True
     reference.map_id = f"lanelet2-sha256:{loaded.digest}"
     _register_in_map_frame(reference)
-    _fill_lights(
-        scene, log, frames, _group_lights(loaded, _lane_lights(log, loaded, frame))
-    )
+    _fill_lights(scene, log, frames, _element_lights(log, loaded, frame))
     return scene
 
 

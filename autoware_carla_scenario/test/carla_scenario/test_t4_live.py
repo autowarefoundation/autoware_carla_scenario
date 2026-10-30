@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 
 from autoware_carla_scenario.t4_scene._proto import t4_scene_pb2 as pb
-from autoware_carla_scenario.t4_scene.live import EgoExtras, LiveT4Scene, _t4_points
+from autoware_carla_scenario.t4_scene.convert import _Lanes
+from autoware_carla_scenario.t4_scene.live import (
+    EgoExtras,
+    LiveT4Scene,
+    _t4_points,
+    lanelets_along,
+)
 
 
 def _vec(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> SimpleNamespace:
@@ -102,6 +108,7 @@ def _run(ticks: int, history_rows: int = 3, extras: bool = True) -> LiveT4Scene:
                 acceleration_rig=np.array([1.0, 0.0]),
                 angular_velocity=np.array([0.0, 0.0, 0.1]),
                 tire_steering_angle=0.02,
+                velocity_rig=np.array([9.5, 0.25]),
             )
             if extras
             else None,
@@ -138,6 +145,8 @@ def test_the_ego_carries_what_the_policy_was_told() -> None:
     # The fake ego faces CARLA's +y (yaw 90), the map's -y: its rig's +x
     # acceleration points along the map's -y.
     np.testing.assert_allclose(_numeric(ego.accelerations)[-1], [0.0, -1.0], atol=1e-9)
+    # The velocity the policy was told (base_link's), not the actor's origin's.
+    np.testing.assert_allclose(_numeric(ego.velocities)[-1], [0.25, -9.5], atol=1e-9)
     np.testing.assert_allclose(_numeric(ego.angular_velocities)[-1], [0.0, 0.0, 0.1])
     np.testing.assert_allclose(_numeric(ego.tire_steering_angles), 0.02)
     assert list(_numeric(ego.odometry_timestamps_ns)) == list(
@@ -184,3 +193,53 @@ def test_the_current_sweep_route_and_goal_ride_along() -> None:
 def test_t4_points_scale_the_intensity_and_zero_the_fifth_column() -> None:
     out = _t4_points(np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32))
     assert out.shape == (1, 5) and out[0, 3] == 255.0 and out[0, 4] == 0.0
+
+
+# -- the road ahead on the lanelets ---------------------------------------------
+
+
+def _box(x0: float, x1: float, y0: float, y1: float) -> np.ndarray:
+    return np.array([[x0, y1], [x1, y1], [x1, y0], [x0, y0]], dtype=np.float64)
+
+
+def _fork() -> _Lanes:
+    """Lanelet 1 (x 0-10) on to 2 (10-20, straight on), or to 3 (10-20, which
+    overlaps 2's first metres and then bends away to y 3-6 beyond x 13)."""
+    outlines = {
+        1: _box(0.0, 10.0, -1.5, 1.5),
+        2: _box(10.0, 20.0, -1.5, 1.5),
+        3: np.array(
+            [
+                [10.0, 1.5],
+                [13.0, 6.0],
+                [20.0, 6.0],
+                [20.0, 3.0],
+                [14.0, 3.0],
+                [13.0, -1.5],
+                [10.0, -1.5],
+            ]
+        ),
+    }
+    ids = tuple(outlines)
+    return _Lanes(
+        ids=ids,
+        outlines=tuple(outlines[i] for i in ids),
+        boxes=np.array([[*o.min(axis=0), *o.max(axis=0)] for o in outlines.values()]),
+        lengths={1: 10.0, 2: 10.0, 3: 11.0},
+        elements={1: (), 2: (), 3: ()},
+        successors={1: (2, 3), 2: (), 3: ()},
+    )
+
+
+def test_the_road_ahead_takes_the_branch_it_keeps_to() -> None:
+    straight = np.array([[x, 0.0] for x in np.arange(1.0, 20.0, 2.0)])
+    assert lanelets_along(_fork(), straight) == [1, 2]
+    bending = np.array(
+        [[x, 0.0] for x in (1.0, 5.0, 9.0, 11.0)] + [[15.0, 4.5], [19.0, 4.5]]
+    )
+    assert lanelets_along(_fork(), bending) == [1, 3]
+
+
+def test_a_road_ahead_on_no_lanelet_is_the_pin_alone() -> None:
+    assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]]), pin=1) == [1]
+    assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]])) == []
