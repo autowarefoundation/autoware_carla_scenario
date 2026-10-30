@@ -1,0 +1,2628 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CARLA scenario testing framework for Autoware autonomous driving software">
+      
+      
+      
+        <link rel="canonical" href="https://hakuturu583.github.io/autoware_carla_scenario/19.14.2/slurm/">
+      
+      
+        <link rel="prev" href="../logical_scenarios/">
+      
+      
+        <link rel="next" href="../coverage/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Running a Batch on SLURM - Autoware CARLA Scenario</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../css/timeago.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#running-a-batch-on-slurm" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Autoware CARLA Scenario" class="md-header__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Autoware CARLA Scenario
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Running a Batch on SLURM
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../scenario_editor/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Scenario Editor
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../scenarios/" class="md-tabs__link">
+          
+  
+  
+  Example Scenarios
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../maps/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HD Maps
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../autoware/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Autoware as the Ego
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../driver_interface/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  External Driver Interface
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../ros2/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ROS 2 over DDS
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../hils/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  HILS Bridge
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../traffic_backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Traffic Backends
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectories and Recorded-Scene Replay
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../trajectory_log/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectory Log
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../t4_dataset/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  T4 Dataset
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../t4_scene/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  T4 Scene
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../adversity/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Adversarial Actions and NADE
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logical_scenarios/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Running a Batch on SLURM
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../coverage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Coverage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../odd/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  ODD
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../metrics/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Metrics
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../typecheck/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Static Check
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../docker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Container Image
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrating
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Autoware CARLA Scenario" class="md-nav__button md-logo" aria-label="Autoware CARLA Scenario" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Autoware CARLA Scenario
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hakuturu583/autoware_carla_scenario" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hakuturu583/autoware_carla_scenario
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenario_editor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Scenarios
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Example Scenarios
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/traffic_light_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Light Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/temporary_stop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Temporary Stop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/intersection_passing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intersection Passing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/lane_change/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lane Change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/pedestrian_dart_out/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Dart-out
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scenarios/cut_in/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cut-in
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../autoware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Autoware as the Ego
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../driver_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Driver Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ros2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS 2 over DDS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HILS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic_backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory_log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectory Log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../t4_dataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    T4 Dataset
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../t4_scene/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    T4 Scene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adversity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adversarial Actions and NADE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logical_scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logical Scenarios from Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running a Batch on SLURM
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running a Batch on SLURM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#following-collecting-resubmitting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following, collecting, resubmitting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-jobs-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The job's environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-submit-host-with-other-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A submit host with other paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ports
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../odd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typecheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Image
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#following-collecting-resubmitting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following, collecting, resubmitting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-jobs-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The job's environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-submit-host-with-other-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A submit host with other paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ports
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="running-a-batch-on-slurm">Running a Batch on SLURM<a class="headerlink" href="#running-a-batch-on-slurm" title="Permanent link">&para;</a></h1>
+<p>A batch (<code>scenario 'scenario=&lt;glob&gt;'</code>, and with <code>--multirun</code> every case of each
+scenario's sweep) runs its cases one after another, in one process, on one
+CARLA. On a machine or cluster with <a href="https://slurm.schedmd.com/">SLURM</a>, the
+same batch can run its cases as the tasks of a SLURM array job instead, several
+at once, each on a CARLA of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">24</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nv">launcher</span><span class="o">=</span>slurm<span class="w"> </span>launcher.array_parallelism<span class="o">=</span><span class="m">2</span><span class="w"> </span>launcher.gres<span class="o">=</span>shard:1<span class="w"> </span>launcher.mem<span class="o">=</span>12G
+</code></pre></div>
+<p><strong>It is off unless a run selects it.</strong> The <code>launcher</code> config group is not part
+of the default config: a run that does not name it composes the same config as
+before, and the batch runs here, exactly as it always has. <code>launcher=local</code>
+says the same explicitly.</p>
+<p>The batch writes what a local batch writes, where a local batch writes it
+(<code>outputs/&lt;date&gt;/&lt;time&gt;/</code>), under the same names: every case's
+<code>{Scenario}_result.json</code>, <code>{Scenario}.trajectory.jsonl</code>, coverage, ODD archive,
+environment and CARLA recording, and <code>batch_results.json</code> with the summary
+table at the end. A case's outputs do not depend on which task ran it or when.</p>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p>On the machine you run <code>scenario</code> on (a SLURM submit host):</p>
+<ol>
+<li>The batch is expanded, labelled, built and statically checked exactly as a
+   local batch is: the ODD sampling, the case labels, the <a href="../typecheck/">static
+   check</a> (once a config shape), the map fetched. A config error
+   is refused here, before anything is submitted.</li>
+<li>A manifest is written into the batch's output directory
+   (<code>slurm/manifest.json</code>): every case's scenario and overrides, its resolved
+   config, and the file stem it is to be named by.</li>
+<li><code>sbatch --array=0-(N-1)%K</code> submits the cases, <code>launcher.cases_per_task</code> to a
+   task, at most <code>launcher.array_parallelism</code> tasks at once.</li>
+<li>By default <code>scenario</code> follows the array (<code>squeue</code>, and the outcome each task
+   records) until it ends, then prints the summary and writes
+   <code>batch_results.json</code>, as a local batch does, and exits 0 when every case
+   passed. Ctrl-C cancels the batch's jobs, waits (up to 60 s) for their tasks
+   to leave the queue, and collects. With <code>--no-wait</code>
+   (<code>launcher.wait=false</code>) it submits and exits, and a small job that runs once
+   the array has ended (<code>--dependency=afterany</code>) collects the batch; should
+   that job not be submitted, <code>scenario</code> says so, with the array's job id, and
+   exits non-zero (<code>scenario-slurm wait</code> collects the batch instead).</li>
+</ol>
+<p>Each task, on its node:</p>
+<ol>
+<li>takes a slot of ports no other task on the node holds and nothing listens on
+   (<a href="#ports">Ports</a>);</li>
+<li>composes each of its cases' configs from the manifest's scenario and
+   overrides, and refuses to run one that no longer resolves to the config it
+   was submitted with (a job that does not run in the submitting environment);</li>
+<li>builds them (not checked again: the submitting process did), starts a
+   CARLA on its ports and runs its cases one after another through the same
+   queue a local batch uses, writing their files into the batch's directory
+   under the names a local batch gives them;</li>
+<li>records each case's outcome as soon as it has run
+   (<code>slurm/results/&lt;case&gt;.json</code>), and its own progress in
+   <code>slurm/tasks/&lt;submission&gt;-&lt;task&gt;.json</code> (host, ports, state, peak resident
+   memory); with <code>rerun.enabled=true</code> it also converts each case's trajectory
+   log into its Rerun recording (<code>{stem}.rrd</code>) and records whether that
+   failed, so <code>collect</code> reports the recordings as a local batch does
+   (<a href="../usage/#seeing-a-run">Seeing a run</a>). The submitting process only
+   checks that the <code>rerun</code> extra is installed; the nodes need it too;</li>
+<li>stops its CARLA however it ends: at the end, on <code>scancel</code>, on the signal SLURM
+   sends <code>launcher.signal_grace_seconds</code> before <code>launcher.time</code> runs out, and
+   -- through the job script -- when the worker itself was killed, even by the
+   <code>SIGKILL</code> that ends a <code>scancel</code> after SLURM's <code>KillWait</code> (CARLA runs in a
+   session of its own, which that signal misses): a small watchdog process of
+   its own, started once the slot is taken, stops CARLA when the worker ends
+   without having done so, and keeps the slot locked until then.</li>
+</ol>
+<h2 id="following-collecting-resubmitting">Following, collecting, resubmitting<a class="headerlink" href="#following-collecting-resubmitting" title="Permanent link">&para;</a></h2>
+<p><code>scenario-slurm</code> takes the batch's output directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>scenario-slurm<span class="w"> </span>status<span class="w">   </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># cases, jobs, tasks</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>scenario-slurm<span class="w"> </span><span class="nb">wait</span><span class="w">     </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># follow, then collect</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>scenario-slurm<span class="w"> </span>collect<span class="w">  </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># summary, batch_results.json</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>scenario-slurm<span class="w"> </span>resubmit<span class="w"> </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># the cases with no result</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>scenario-slurm<span class="w"> </span>cancel<span class="w">   </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># scancel the batch's jobs</span>
+</code></pre></div>
+<p>A case that has no outcome -- its task was cancelled, ran out of time, was
+killed for memory, or its node failed -- is reported as <code>ERROR</code> with a message
+saying so, and <code>collect</code> lists them. <code>resubmit</code> submits again the cases with no
+outcome and those that raised on every attempt (<code>ERROR</code>); <code>--failed</code> adds the
+ones that ran and failed, <code>--cases a,b</code> names them (labels or indices; a case
+named twice runs once), and <code>--array-parallelism</code>/<code>--cases-per-task</code> change
+how they are spread. A case run again replaces its earlier files, so
+<code>resubmit</code> refuses while a job of the batch is queued or running, or while
+<code>squeue</code> cannot tell whether one is (<code>--force</code> submits all the same).
+<code>collect</code> can be run any number of times.</p>
+<p><code>sacct</code> is not needed: the batch is followed through <code>squeue</code> and the files the
+tasks write.</p>
+<p>The result viewer does the same from its pages: its run panel submits a
+batch with <code>launcher=slurm</code>, and a SLURM batch's page shows its cases, jobs
+and tasks as they run and resubmits, collects or cancels it
+(<a href="../usage/#running-through-slurm">Running through SLURM</a>).</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p><code>launcher=slurm</code> selects <code>conf/launcher/slurm.yaml</code>; every key can be set on the
+command line (<code>launcher.mem=12G</code>), or in a config.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>partition</code>, <code>account</code>, <code>qos</code></td>
+<td><code>null</code></td>
+<td><code>sbatch --partition/--account/--qos</code></td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td><code>null</code></td>
+<td><code>sbatch --time</code>; the task is sent SIGTERM <code>signal_grace_seconds</code> before it runs out</td>
+</tr>
+<tr>
+<td><code>mem</code>, <code>cpus_per_task</code>, <code>gres</code></td>
+<td><code>null</code></td>
+<td><code>sbatch --mem/--cpus-per-task/--gres</code> (<code>gpu:1</code>, or <code>shard:1</code> to share a GPU)</td>
+</tr>
+<tr>
+<td><code>array_parallelism</code></td>
+<td><code>null</code></td>
+<td>at most this many tasks at once (<code>--array=...%K</code>); <code>null</code>: no cap</td>
+</tr>
+<tr>
+<td><code>cases_per_task</code></td>
+<td><code>null</code></td>
+<td>cases a task runs on its CARLA; <code>null</code>: the cases spread evenly over <code>array_parallelism</code> tasks (one case a task without a cap)</td>
+</tr>
+<tr>
+<td><code>job_name</code></td>
+<td><code>null</code></td>
+<td><code>acs-&lt;date&gt;-&lt;time&gt;</code> of the output directory</td>
+</tr>
+<tr>
+<td><code>extra_sbatch_args</code></td>
+<td><code>[]</code></td>
+<td>further <code>sbatch</code> arguments</td>
+</tr>
+<tr>
+<td><code>export</code></td>
+<td><code>null</code></td>
+<td><code>sbatch --export</code>; <code>null</code>: <code>ALL</code>, or <code>NONE</code> with <code>remote_cwd</code></td>
+</tr>
+<tr>
+<td><code>env_passthrough</code></td>
+<td><code>null</code></td>
+<td>variables recorded at submission and set again in the job; <code>null</code>: see below, or none with <code>remote_cwd</code></td>
+</tr>
+<tr>
+<td><code>setup</code></td>
+<td><code>[]</code></td>
+<td>shell lines the job runs before the worker (<code>module load</code>, <code>source .venv/bin/activate</code>)</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td><code>{}</code></td>
+<td>variables set in the job, last</td>
+</tr>
+<tr>
+<td><code>python</code></td>
+<td><code>null</code></td>
+<td>the interpreter the jobs run (the tasks and the collect job): an absolute path, a path relative to the job's working directory (<code>.venv/bin/python</code>), <code>~/...</code> (the home on the node), or a command on the node's <code>PATH</code> (<code>python3</code>); <code>null</code>: the submitting one</td>
+</tr>
+<tr>
+<td><code>remote_cwd</code></td>
+<td><code>null</code></td>
+<td>where the jobs work on the nodes, for a submit host that sees their file system at another path (<a href="#a-submit-host-with-other-paths">A submit host with other paths</a>); <code>null</code>: the directory <code>scenario</code> runs in</td>
+</tr>
+<tr>
+<td><code>headless</code></td>
+<td><code>true</code></td>
+<td>unset <code>DISPLAY</code> in the job, so CARLA renders off-screen</td>
+</tr>
+<tr>
+<td><code>start_stagger_seconds</code></td>
+<td><code>0</code></td>
+<td>no task of the batch starts sooner than this after another did: the first wave, the tasks started as slots free up, a resubmit's (<a href="#limits">Shared state</a>)</td>
+</tr>
+<tr>
+<td><code>wait</code></td>
+<td><code>true</code></td>
+<td>follow and collect; <code>false</code> (or <code>--no-wait</code>): submit and exit</td>
+</tr>
+<tr>
+<td><code>poll_seconds</code></td>
+<td><code>15</code></td>
+<td>how often <code>wait</code> asks <code>squeue</code></td>
+</tr>
+<tr>
+<td><code>cancel_on_interrupt</code></td>
+<td><code>true</code></td>
+<td>Ctrl-C while waiting cancels the batch's jobs</td>
+</tr>
+<tr>
+<td><code>collect_job</code></td>
+<td><code>true</code></td>
+<td>with <code>wait: false</code>, a job that collects once the array ends</td>
+</tr>
+<tr>
+<td><code>collect_mem</code></td>
+<td><code>2G</code></td>
+<td>its <code>--mem</code></td>
+</tr>
+<tr>
+<td><code>signal_grace_seconds</code></td>
+<td><code>120</code></td>
+<td><code>--signal=B:TERM@N</code></td>
+</tr>
+<tr>
+<td><code>port_base</code>, <code>port_slots</code></td>
+<td><code>20000</code>, <code>1000</code></td>
+<td>where the tasks' port slots are (<a href="#ports">Ports</a>); <code>port_slots</code> at least 1</td>
+</tr>
+<tr>
+<td><code>port_lock_dir</code></td>
+<td><code>null</code></td>
+<td>where the slots' locks are; <code>null</code>: <code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code>, else <code>/tmp</code> (<a href="#ports">Ports</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>cases_per_task</code> trades a task's start -- CARLA takes about 50 s to start, and
+a driver policy about as long to load -- against how evenly the cases spread
+and how many a lost task takes with it.</p>
+<h3 id="the-jobs-environment">The job's environment<a class="headerlink" href="#the-jobs-environment" title="Permanent link">&para;</a></h3>
+<p>A task runs with the Python the batch was submitted from (<code>sys.executable</code>,
+or <code>launcher.python</code>) and its environment:</p>
+<ol>
+<li><code>sbatch --export=ALL</code> (<code>launcher.export</code>) hands the job the environment of
+   the shell <code>sbatch</code> runs from;</li>
+<li>the job script then sets again, as they were when the batch was submitted,
+   the variables <code>launcher.env_passthrough</code> matches: <code>PATH</code>,
+   <code>LD_LIBRARY_PATH</code>, <code>PYTHONPATH</code>, <code>PYTHONHOME</code>, <code>VIRTUAL_ENV</code>,
+   <code>CONDA_PREFIX</code>, <code>CARLA_*</code> (<code>CARLA_EXECUTABLE</code>), <code>AUTOWARE_*</code>,
+   <code>ONEPLANNER_*</code>, <code>TYPESAFE_CARLA_*</code>, <code>GLIBC_TUNABLES</code>, <code>MALLOC_*</code>,
+   <code>CUDA_HOME</code>, <code>CUDA_PATH</code>, <code>CUDAToolkit_ROOT</code> -- so <code>scenario-slurm resubmit</code>
+   from another shell runs the cases as they were submitted;</li>
+<li><code>launcher.setup</code> runs;</li>
+<li><code>launcher.env</code> is set.</li>
+</ol>
+<p>A driver policy's variables belong on <code>env_passthrough</code> (a pattern:
+<code>launcher.env_passthrough=[...]</code> replaces the list) or in <code>launcher.env</code>. No
+token or credential is on the default list, and a name with <code>TOKEN</code>,
+<code>SECRET</code>, <code>KEY</code>, <code>PASSWORD</code> or <code>CREDENTIAL</code> in it (in any case) is not
+recorded through a pattern (<code>AUTOWARE_*</code>) either -- only when
+<code>env_passthrough</code> names it exactly, or <code>launcher.env</code> sets it: the manifest
+and the job scripts holding the values are files in the batch's output
+directory (both the user's alone, mode <code>0600</code> and <code>0700</code>). With
+<code>export: NONE</code>, the job has only what steps 2 to 4 give it.</p>
+<p>With <code>launcher.remote_cwd</code> set, none of this comes from the submit host: the
+job has the environment SLURM gives it on the node (<code>export: NONE</code>), the
+variables <code>env_passthrough</code> names only when it is given, then <code>setup</code> and
+<code>env</code> (<a href="#a-submit-host-with-other-paths">A submit host with other paths</a>).</p>
+<p>A config that reads the environment (<code>${oc.env:ONEPLANNER_MAP_DIR}</code>) is
+resolved in the task too; a case whose config resolves differently there than
+where it was submitted is refused, naming the keys that differ.</p>
+<h3 id="a-submit-host-with-other-paths">A submit host with other paths<a class="headerlink" href="#a-submit-host-with-other-paths" title="Permanent link">&para;</a></h3>
+<p>By default the jobs run where <code>scenario</code> was run: the directory it ran in, the
+interpreter it ran with and the batch's output directory are recorded by
+their absolute paths, which the nodes must see as the submit host does. A
+submit host that sees the nodes' file system somewhere else -- a workstation
+that mounts a node's <code>~/workspace/OnePlanner</code> with sshfs or NFS at
+<code>~/mnt/node/OnePlanner</code>, under another user's home -- names the nodes' paths
+instead, none of them absolute:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># On the submit host, in its mount of the node's ~/workspace/OnePlanner:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">cd</span><span class="w"> </span>~/mnt/node/OnePlanner
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">24</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nv">launcher</span><span class="o">=</span>slurm<span class="w"> </span>launcher.partition<span class="o">=</span>main<span class="w"> </span>launcher.gres<span class="o">=</span>shard:1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>launcher.remote_cwd<span class="o">=</span>workspace/OnePlanner<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>launcher.python<span class="o">=</span>.venv/bin/python<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="s2">"launcher.setup=['source ~/workspace/opt/env.sh']"</span>
+</code></pre></div>
+<ul>
+<li><code>launcher.remote_cwd</code> is where every job -- each task and the collect job --
+  works on the node. A relative path is relative to the job user's home on the
+  node, <code>~/...</code> is that home too, and an absolute path is used as it is. It is
+  expanded by the job script on the node, never here: the home is the one the
+  node's passwd database gives the job's user (whatever <code>$HOME</code> the job was
+  handed), so the user name and home may differ from the submit host's.</li>
+<li><code>launcher.python</code> is then required: the submit host's interpreter is not the
+  node's. A relative path (<code>.venv/bin/python</code>) is relative to <code>remote_cwd</code>, a
+  bare name (<code>python3</code>) is looked up on the node's <code>PATH</code> as <code>setup</code> leaves it.</li>
+<li>The batch's output directory must lie under the directory <code>scenario</code> runs in
+  (<code>outputs/&lt;date&gt;/&lt;time&gt;/</code> does), which is what the node sees at
+  <code>remote_cwd</code>; <code>scenario</code> refuses a batch elsewhere. The manifest records it
+  relative to that directory (<code>batch_dir_relative</code>, a version 2 manifest), and
+  the jobs find it under their own working directory. On the submit host,
+  <code>scenario-slurm</code> takes the batch's directory as this host sees it
+  (<code>scenario-slurm wait ~/mnt/node/OnePlanner/outputs/&lt;date&gt;/&lt;time&gt;</code>), and
+  <code>resubmit</code> submits with the settings the batch was submitted with.</li>
+<li>Nothing of the submit host's environment reaches the job: <code>export</code> is
+  <code>NONE</code> (the job starts with the environment SLURM gives it on the node,
+  which on most clusters is the user's login environment) and
+  <code>env_passthrough</code> is empty, unless either is set. Set the node's
+  environment with <code>setup</code>, which runs in <code>remote_cwd</code> and may read unset
+  variables (<code>source ~/workspace/opt/env.sh</code>, <code>module load cuda</code>,
+  <code>source .venv/bin/activate</code>), and <code>env</code>.</li>
+<li>SLURM writes a job's output before the job knows where the batch is: each
+  job starts in <code>/tmp</code> with its output there
+  (<code>/tmp/acs-slurm-&lt;user&gt;-&lt;job&gt;_&lt;task&gt;.out</code> on the node) and sends it on to
+  the batch's <code>slurm/logs/</code> once it is in <code>remote_cwd</code>. The file in <code>/tmp</code>
+  keeps what came before (a <code>remote_cwd</code> the node does not have) and what SLURM
+  itself writes (a time limit, a cancel).</li>
+<li>A case's config that resolves to absolute paths -- an ODD file in a
+  scenario package, a map -- resolves to the node's paths there; see below
+  for when that is still the same config.</li>
+</ul>
+<p>Without <code>remote_cwd</code> the batch is submitted and run exactly as before (a
+version 1 manifest).</p>
+<p>A value that is a path may differ and still be the same config. That is the
+case when it is the submitting directory's path seen from the job's working
+directory (<code>&lt;cwd&gt;/x</code> there, <code>&lt;remote_cwd&gt;/x</code> here), or when it names a file
+with the content it had where the batch was submitted: <code>scenario</code> records the
+SHA-256 of every file an absolute path in a case's config names (the
+manifest's <code>files</code>), and the task compares the file its own config names. A
+file missing on the node, or with other content, is refused, naming the key
+and both paths. This holds with or without <code>remote_cwd</code>: a package installed
+in another environment names its files at other paths too.</p>
+<h3 id="ports">Ports<a class="headerlink" href="#ports" title="Permanent link">&para;</a></h3>
+<p>Each task's CARLA needs ports no other CARLA on the node uses, and a user may
+run one on the defaults (2000, TrafficManager 8100). A task takes a slot of 10
+ports from <code>port_base</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>base+0</code></td>
+<td>CARLA RPC (<code>server.port</code>)</td>
+</tr>
+<tr>
+<td><code>base+1</code></td>
+<td>CARLA streaming (<code>-carla-streaming-port</code>)</td>
+</tr>
+<tr>
+<td><code>base+2</code></td>
+<td>CARLA secondary (<code>-carla-secondary-port</code>)</td>
+</tr>
+<tr>
+<td><code>base+3</code></td>
+<td>TrafficManager (<code>traffic_manager.port</code>)</td>
+</tr>
+<tr>
+<td><code>base+4</code></td>
+<td>the Autoware bridge the run hosts (<code>autoware.address</code>)</td>
+</tr>
+<tr>
+<td><code>base+5</code></td>
+<td>the driver bridge the run hosts (<code>driver.bridge.address</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The slot a task tries first is its array job id plus its task id, so the tasks
+of an array start on different slots. It takes one only when no other task
+holds it (an exclusive lock,
+<code>&lt;lock dir&gt;/autoware_carla_scenario-port-&lt;base&gt;.lock</code>, which goes when the
+task's process does) and none of its ports is bound; else the next. The lock
+directory must be one every job on the node sees, which <code>/tmp</code> is not where
+SLURM gives each job a private one (<code>job_container/tmpfs</code>): it is
+<code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code> (or <code>/tmp</code> where that cannot be made), or
+<code>launcher.port_lock_dir</code>. The default range, 20000-29999, is below Linux's
+ephemeral ports.</p>
+<p><code>driver.address</code> is not changed: a policy the run serves itself
+(<code>driver.policy</code>) listens on a port the OS picks, and one it does not is a
+server someone else runs, which every task dials. <code>driver.transport</code> is not
+changed either: with <code>direct</code> a task calls the policy it serves without a
+socket, and with <code>unix</code> it serves it on a socket in a directory of its own
+(under <code>$TMPDIR</code>, which SLURM does not set by default, so usually <code>/tmp</code>), so neither needs a port of the slot and tasks
+sharing a node never meet; a <code>unix:</code> <code>driver.address</code> someone else serves is
+dialled by every task, as a TCP one is.</p>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Memory.</strong> A task runs a CARLA (about 6 GB resident) and a scenario process
+  (about 6 GB with a TensorRT driver policy loaded). Without cgroups, SLURM
+  uses <code>--mem</code> only to schedule, so set it, and <code>array_parallelism</code>, to what
+  the node has.</li>
+<li><strong>Shared state.</strong> The tasks share the map caches (<code>~/autoware_data/maps</code>), the
+  map files a driver policy reads (<code>driver.map_dir</code>) and the batch's output
+  directory, so these must be on a file system every node sees. Map files,
+  and the OpenDRIVE a run captures from the loaded world on a map's first run,
+  are written atomically, so tasks that fill a cache at once do not break it.
+  A driver policy's own caches are its own: one that two processes cannot
+  load at once (OnePlanner's TensorRT engines, whose identity file is written
+  under one temporary name, so two loads at the same moment fail one case
+  with <code>filesystem error: cannot rename</code>) needs <code>start_stagger_seconds</code>,
+  enough for one task to load it before the next starts (30 s for
+  OnePlanner, which loads it once a task).</li>
+<li><strong>ROS 2 and Autoware egos</strong> (<code>ego.entity=ros2</code>, <code>ego.entity=autoware</code> with
+  a launcher) run their stacks on DDS, whose domain the tasks would share; give
+  each its own <code>ROS_DOMAIN_ID</code> (the Autoware launcher's <code>ros_domain_ids</code>), or
+  run such batches locally.</li>
+<li><strong>File names.</strong> A case is named by its position in the batch, which is the
+  name a local batch gives it whenever every earlier case opened its trajectory
+  log. A case that raises before it opens it (while its ego is created or the
+  world is set to synchronous mode) leaves its name to the next case in a local
+  batch; under SLURM every case keeps its own.</li>
+<li><strong><code>build_scenario_fn</code>.</strong> A batch run from code with a <code>build_scenario_fn</code> is
+  run by the tasks only when that function can be imported by name.</li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 22:24:24 UTC"><span class="timeago" datetime="2026-10-19T22:24:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 22:24:24 UTC">2026-10-19</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 10:22:58 UTC"><span class="timeago" datetime="2026-10-18T10:22:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 10:22:58 UTC">2026-10-18</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/hakuturu583/autoware_carla_scenario" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../js/timeago.min.js"></script>
+      
+        <script src="../js/timeago_mkdocs_material.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
