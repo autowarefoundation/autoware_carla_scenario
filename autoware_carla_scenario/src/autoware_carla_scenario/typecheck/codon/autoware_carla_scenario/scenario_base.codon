@@ -16,6 +16,7 @@ from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_op
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
+from .failure import FailureCategory
 from .coverage import (SamplingEvent, _expect_sampling_event, _expect_cover_expression,
                        _expect_optional_range, _expect_optional_edges, _expect_optional_values,
                        _expect_optional_ignore)
@@ -190,8 +191,13 @@ class BaseScenario:
         _expect_condition(condition)
         raise NotImplementedError()
 
-    def register_fail_condition(self, condition: BaseCondition) -> None:
+    def register_fail_condition(self, condition: BaseCondition, *_kw,
+                                category: Optional[FailureCategory] = None) -> None:
+        _keyword_only(_kw, "BaseScenario.register_fail_condition(): category")
         _expect_condition(condition)
+        raise NotImplementedError()
+
+    def fail_category(self, index: int) -> FailureCategory:
         raise NotImplementedError()
 
     def register_measure(self, key: str, read, *_kw, unit: str = "", text: str = "") -> None:
@@ -315,6 +321,8 @@ class BaseScenario:
             _acs_expect_return(r, NoneType, "BaseScenario.register_pass_condition() returns None")
         elif name == "register_fail_condition":
             _acs_expect_return(r, NoneType, "BaseScenario.register_fail_condition() returns None")
+        elif name == "fail_category":
+            _acs_expect_return(r, FailureCategory, "BaseScenario.fail_category() returns FailureCategory")
         elif name == "register_measure":
             _acs_expect_return(r, NoneType, "BaseScenario.register_measure() returns None")
         elif name == "measure":

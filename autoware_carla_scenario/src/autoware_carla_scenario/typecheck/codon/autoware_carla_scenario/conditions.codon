@@ -12,6 +12,7 @@ from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
 from .entity_role import EntityRole, _expect_role, _expect_optional_role, find_actor_in_list
+from .failure import Failure, FailureCategory
 
 
 @tuple
@@ -383,15 +384,18 @@ class ScenarioResult:
     elapsed_seconds: float
     condition_statuses: List[ConditionStatus]
     rerun_recording: Optional[str]
+    failure: Optional[Failure]
 
     def __init__(self, passed: bool, message: str, elapsed_seconds: float,
                  condition_statuses: List[ConditionStatus] = List[ConditionStatus](),
-                 rerun_recording: Optional[str] = None):
+                 rerun_recording: Optional[str] = None,
+                 failure: Optional[Failure] = None):
         self.passed = passed
         self.message = message
         self.elapsed_seconds = elapsed_seconds
         self.condition_statuses = condition_statuses
         self.rerun_recording = rerun_recording
+        self.failure = failure
 
     def to_json(self, **kwargs) -> str:
         raise NotImplementedError()
@@ -428,9 +432,14 @@ class BaseCondition:
         check checks (_acs_hook_return in _tc.codon, #238)."""
         if name == "check":
             _acs_expect_return(r, Optional[ScenarioResult], "BaseCondition.check() returns Optional[ScenarioResult]")
+        elif name == "failure_category":
+            _acs_expect_return(r, Optional[FailureCategory], "BaseCondition.failure_category() returns Optional[FailureCategory]")
 
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         raise NotImplementedError()
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        return None
 
 
 def _expect_optional_condition(condition) -> Optional[BaseCondition]:

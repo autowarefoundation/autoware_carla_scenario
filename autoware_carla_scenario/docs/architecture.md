@@ -386,6 +386,7 @@ classDiagram
         +message: str
         +elapsed_seconds: float
         +condition_statuses: list
+        +failure: Failure
     }
 
     class TimeoutCondition

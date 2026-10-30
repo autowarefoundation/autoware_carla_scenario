@@ -179,6 +179,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity.ros2_entity",
     "autoware_carla_scenario.entity.vehicle_entity",
     "autoware_carla_scenario.entity_role",
+    "autoware_carla_scenario.failure",
     "autoware_carla_scenario.examples.conf",
     "autoware_carla_scenario.examples.configs",
     "autoware_carla_scenario.examples.cut_in",
@@ -352,6 +353,8 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.base.BaseCondition.to_summary_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ConditionStatus.to_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ScenarioResult.to_dict": _DETAILS,
+    "autoware_carla_scenario.failure.Failure.to_dict": _DETAILS,
+    "autoware_carla_scenario.failure.Failure.from_dict": "reads the dict to_dict() wrote, a `Mapping[str, Any]` of mixed value types (see `_DETAILS`), which Codon cannot express",
     "autoware_carla_scenario.conditions.base.ScenarioResult.to_json": "serialises to_dict(), a `dict[str, Any]` of mixed value types (see `_DETAILS`), and forwards `**kwargs: Any`, which Codon cannot express",
     "autoware_carla_scenario.conditions.comparison.ScalarComparisonRule.to_dict": _DETAILS,
     "autoware_carla_scenario.conditions.collision.CollisionCondition.get_details": _DETAILS,
@@ -579,6 +582,9 @@ REPLACED_MODELS: dict[str, tuple[str, ...]] = {
     # So a scenario hands the GroundProjectionConfig it imports from the
     # top-level package (the model) to the checked VehicleEntityConfig (#99).
     "_ground_projection": ("autoware_carla_scenario.coordinate.snap",),
+    # So a checked scenario (examples) hands the FailureCategory it imports
+    # from the model to the checked BaseScenario.register_fail_condition().
+    "failure": ("autoware_carla_scenario.failure",),
     # So the model GitMapCache (maps/cache.codon) takes and returns the
     # checked MapSource that the checked maps.resolver hands it.
     "_map_source": ("autoware_carla_scenario.maps.source",),

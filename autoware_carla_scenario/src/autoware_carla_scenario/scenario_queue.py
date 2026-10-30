@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, Generator, List, Optional, Union
 
 from .scenario_runner import ScenarioRunner
 from .conditions import ScenarioResult
+from .failure import Failure, FailureCategory
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
@@ -457,10 +458,17 @@ class ScenarioQueue:
                     ) from last_error
                 # All attempts exhausted: the case is recorded as errored and
                 # the run goes on.
+                message = f"Errored after {max_attempts} attempt(s): {last_message}"
                 result = ScenarioResult(
                     passed=False,
-                    message=f"Errored after {max_attempts} attempt(s): {last_message}",
+                    message=message,
                     elapsed_seconds=0.0,
+                    failure=Failure(
+                        condition="",
+                        category=FailureCategory.INFRASTRUCTURE,
+                        at=0.0,
+                        message=message,
+                    ),
                 )
                 logger.error(
                     "[%d/%d] Scenario %s errored after %d attempt(s), "

@@ -71,6 +71,7 @@ from autoware_carla_scenario import (
     snap_to_carla_road,
     to_opendrive,
 )
+from autoware_carla_scenario.failure import FailureCategory
 
 from autoware_carla_scenario.coordinate import MapManager, route_road_ids
 from autoware_carla_scenario.metrics import STEERING_REVERSALS, TURN_INDICATOR_CHANGES
@@ -263,7 +264,8 @@ class IntersectionPassingScenario(BaseScenario):
                             label="ego_min_speed",
                         ),
                     ]
-                )
+                ),
+                category=FailureCategory.PROGRESS,
             )
 
         # --- Fail: no indicator for the turn, close to the junction ---
@@ -307,7 +309,8 @@ class IntersectionPassingScenario(BaseScenario):
                     ),
                     cfg.turn_indicator_grace_seconds,
                     label=f"no_{cfg.turn_direction}_indicator",
-                )
+                ),
+                category=FailureCategory.SIGNALLING,
             )
 
         # --- Fail: the steering turned back, or the indicators changed, too

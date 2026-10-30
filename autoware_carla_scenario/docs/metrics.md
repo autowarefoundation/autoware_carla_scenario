@@ -159,6 +159,15 @@ metric to hold for a while (off the road for more than a second), `NotCondition`
 to pass only while it does not. In the [Scenario Editor](scenario_editor.md) it
 is the **Metric** card, under World.
 
+A run a metric condition fails is a failure of what the metric reads
+([Why a run failed](usage.md#output-files)): a collision
+metric `collision`, `offroad` and `min_distance_to_lane_boundary_m`
+`lane_keeping`, `wrong_lane` `traffic_rule`, `min_distance_to_obstacle_m`
+`safety_margin`, and the weaving metrics and `turn_indicator_changes`
+`stability`. `offroad_or_collision` and its at-fault twin read two things and
+say neither, nor does the importance-sampling weight: register a condition on
+them with its `category`.
+
 To read a metric yourself -- in a probe, a test, a recorder --
 `read_metric(key, world)` returns its value in the frame, or `None`.
 

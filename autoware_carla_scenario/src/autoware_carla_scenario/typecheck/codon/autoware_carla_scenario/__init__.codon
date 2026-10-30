@@ -50,6 +50,7 @@ from .driver.egodriver_client import EgoDriverGrpcClient
 from .entity import (CarlaDriverEntity, EgoVehicle, PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
                      SpawnPointIndex, SpawnTransform, VehicleEntity, VehicleEntityConfig)
 from .entity_role import EntityRole
+from .failure import FailureCategory
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
 from .coverage import SamplingEvent

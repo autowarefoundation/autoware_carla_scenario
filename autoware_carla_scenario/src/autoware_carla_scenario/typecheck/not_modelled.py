@@ -645,6 +645,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
+    "Failure": {
+        "to_dict": _AS_DICT,
+        "from_dict": _FROM_MAPPING,
+    },
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},

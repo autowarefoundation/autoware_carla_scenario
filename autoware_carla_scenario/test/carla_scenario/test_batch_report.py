@@ -25,6 +25,7 @@ class _Result:
         self.message = ""
         self.elapsed_seconds = 0.0
         self.condition_statuses: list[Any] = []
+        self.failure = None
         if recording is not False:
             self.rerun_recording = recording
 

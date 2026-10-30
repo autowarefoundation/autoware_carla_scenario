@@ -11,6 +11,7 @@ from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
+from ...failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -111,6 +112,10 @@ class TimeHeadwayCondition(CompositionCondition):
         self._comparison = ScalarComparisonRule(
             field="headway", rule=rule, value=value, tolerance=tolerance
         )
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """Too little headway: :attr:`~FailureCategory.SAFETY_MARGIN`."""
+        return FailureCategory.SAFETY_MARGIN
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()

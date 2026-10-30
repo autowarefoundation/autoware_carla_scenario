@@ -770,6 +770,66 @@ condition's message.
 }
 ```
 
+**Why a run failed:**
+
+A failed run's result has a `failure`: the fail condition that ended it, and a
+*category* that names what went wrong the same way in every scenario, where
+the condition's label is the scenario author's. A batch, a sweep or two
+versions of a driver can then be compared by what went wrong
+(`batch_results.json` carries it for every case, and the summary prints it).
+
+```json
+"failure": {
+  "condition": "fail[1](scenario_timeout)",
+  "category": "progress",
+  "at": 25.0,
+  "message": "Timeout after 25.00s (limit: 25.0s)",
+  "detail": "stalled",
+  "also_triggered": []
+}
+```
+
+| Category | What went wrong |
+|---|---|
+| `collision` | The ego hit something |
+| `traffic_rule` | It broke a traffic rule: ran a red light, drove against the traffic |
+| `signalling` | It did not signal what it did (no turn indicator) |
+| `lane_keeping` | It left its lane or the road |
+| `stability` | It did not drive steadily: sawed at the steering, weaved, flicked its indicators |
+| `safety_margin` | It came too close: time to collision, headway, distance |
+| `progress` | It did not get where the scenario asked in time |
+| `driver` | The driver ended the run itself |
+| `infrastructure` | The run could not go on: the ego vanished, or the run raised |
+| `other` | None of these, or a condition that does not say |
+
+A scenario gives a fail condition its category when it registers it:
+
+```python
+from autoware_carla_scenario.failure import FailureCategory
+
+self.register_fail_condition(
+    PersistentCondition(AndCondition([...]), 0.5, label="no_left_indicator"),
+    category=FailureCategory.SIGNALLING,
+)
+```
+
+Without one, the condition says (`BaseCondition.failure_category()`): a
+collision condition is `collision`, a timeout `progress`, a time-to-collision
+or headway condition `safety_margin`, the ego's existence `infrastructure`,
+and a `MetricCondition` what its metric reads (the
+collision metrics `collision`, `offroad` `lane_keeping`, `wrong_lane`
+`traffic_rule`, the weaving ones `stability`). A sticky or persistent
+condition says what it wraps. A combination of conditions (AND, OR, NOT) says
+nothing, and the run's failure is `other`: give it a category.
+
+`detail` tells a `progress` failure apart by how the ego ended the run:
+`never_moved` (it never went faster than 0.5 m/s), `stalled` (it had stood
+still for 3 s or more: waiting for something that never cleared) or `moving`
+(it was driving, but not where the scenario's pass condition asked). The other
+fail conditions that held when the run ended are in `also_triggered`. The
+driver ending the run is `driver`, and a case that raised on every attempt is
+`infrastructure`.
+
 ### Exit Codes
 
 | Code | Meaning |

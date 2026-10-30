@@ -206,6 +206,10 @@ def set_importance_sampling_weight(weight: Optional[float]) -> None:
     raise NotImplementedError()
 
 
+def ego_progress() -> Optional[Tuple[bool, float]]:
+    raise NotImplementedError()
+
+
 def reset_ego_motion() -> None:
     raise NotImplementedError()
 

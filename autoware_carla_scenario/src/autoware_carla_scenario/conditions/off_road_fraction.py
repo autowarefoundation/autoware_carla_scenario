@@ -12,6 +12,7 @@ from ..constants import EGO_ROLE_NAME
 from ..coordinate.map_manager import run_carla_map
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
+from ..failure import FailureCategory
 
 __all__ = ["OffRoadFractionCondition"]
 
@@ -89,6 +90,10 @@ class OffRoadFractionCondition(BaseCondition):
         """The fraction of sample points off the driving lanes when last
         checked, or ``None`` before the entity was first found."""
         return self._last_fraction
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """Off the road: :attr:`~FailureCategory.LANE_KEEPING`."""
+        return FailureCategory.LANE_KEEPING
 
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {

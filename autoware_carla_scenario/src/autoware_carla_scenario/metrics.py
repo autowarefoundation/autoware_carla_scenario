@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
+from .failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -78,6 +79,7 @@ __all__ = [
     "WRONG_LANE",
     "is_metric",
     "read_metric",
+    "ego_progress",
     "reset_ego_motion",
     "set_importance_sampling_weight",
     "track_ego_motion",
@@ -635,6 +637,10 @@ class _Motion:
     #: before the first frame, and how many times they changed since.
     indicator: int
     indicator_changes: int
+    #: Whether the ego has moved (:data:`_MOVED_MPS`), and since when it has
+    #: stood still (:data:`_STILL_MPS`), ``None`` while it moves.
+    moved: bool
+    still_since: Optional[float]
 
     def __init__(self) -> None:
         self.ego_id = -1
@@ -645,6 +651,8 @@ class _Motion:
         self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
         self.indicator = -1
         self.indicator_changes = 0
+        self.moved = False
+        self.still_since = None
 
     def wobble(self) -> Optional[float]:
         """The RMS of :attr:`lateral` over the window about the straight line
@@ -700,6 +708,8 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     except Exception:
         pass
     _track_indicator(motion, ego)
+    velocity = ego.get_velocity()
+    _track_progress(motion, math.hypot(velocity.x, velocity.y), elapsed)
     if last is not None:
         # The ego's centre alone, not the frame :func:`_frame` reads: that
         # reads every actor, and this runs every tick whether or not anything
@@ -713,7 +723,6 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         # A junction's lanes overlap, and the one read may be another's, at
         # any angle to the ego's: its drift holds through the junction.
         if waypoint is not None and not waypoint.is_junction:
-            velocity = ego.get_velocity()
             yaw = math.radians(waypoint.transform.rotation.yaw)
             # A lane the other way (overtaking on it) is crossed the ego's way.
             if math.cos(yaw - math.radians(transform.rotation.yaw)) < 0.0:
@@ -725,6 +734,37 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     while motion.window and motion.window[0][0] < start:
         motion.window.popleft()
     motion.window.append((elapsed, motion.lateral))
+
+
+#: The ego has moved once it has gone faster than this (m/s).
+_MOVED_MPS = 0.5
+#: It stands still while it goes slower than this (m/s).
+_STILL_MPS = 0.3
+
+
+def _track_progress(motion: _Motion, speed: float, elapsed: float) -> None:
+    """Note whether the ego, going at *speed* (m/s), has moved and since when
+    it has stood still."""
+    if speed > _MOVED_MPS:
+        motion.moved = True
+    if speed >= _STILL_MPS:
+        motion.still_since = None
+    elif motion.still_since is None:
+        motion.still_since = elapsed
+
+
+def ego_progress() -> Optional[tuple[bool, float]]:
+    """Whether the ego has moved this run, and how long it had stood still
+    at its last frame, in seconds; ``None`` before its first frame.
+
+    What tells a timeout apart (:func:`~autoware_carla_scenario.failure.progress_detail`).
+    """
+    motion = _MOTION[0]
+    at = motion.at
+    if at is None:
+        return None
+    since = motion.still_since
+    return motion.moved, 0.0 if since is None else at - since
 
 
 def _track_indicator(motion: _Motion, ego: "carla.Actor") -> None:
@@ -1020,6 +1060,27 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             aggregation="last",
         ),
     ]
+}
+
+#: What a run a metric fails is a failure of
+#: (:mod:`autoware_carla_scenario.failure`), when a
+#: :class:`~autoware_carla_scenario.conditions.MetricCondition` on it is
+#: registered without saying.  A metric not here reads more than one thing
+#: (off the road *or* a collision) or no failure (a weight), and says nothing.
+_FAILURE_CATEGORIES: dict[str, FailureCategory] = {
+    COLLISION_ANY: FailureCategory.COLLISION,
+    COLLISION_FRONT: FailureCategory.COLLISION,
+    COLLISION_REAR: FailureCategory.COLLISION,
+    COLLISION_LATERAL: FailureCategory.COLLISION,
+    COLLISION_AT_FAULT: FailureCategory.COLLISION,
+    OFFROAD: FailureCategory.LANE_KEEPING,
+    MIN_DISTANCE_TO_LANE_BOUNDARY_M: FailureCategory.LANE_KEEPING,
+    WRONG_LANE: FailureCategory.TRAFFIC_RULE,
+    MIN_DISTANCE_TO_OBSTACLE_M: FailureCategory.SAFETY_MARGIN,
+    LATERAL_REVERSALS: FailureCategory.STABILITY,
+    LATERAL_WOBBLE_M: FailureCategory.STABILITY,
+    STEERING_REVERSALS: FailureCategory.STABILITY,
+    TURN_INDICATOR_CHANGES: FailureCategory.STABILITY,
 }
 
 
