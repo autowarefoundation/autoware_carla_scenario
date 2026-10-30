@@ -578,6 +578,16 @@ class TestLinksInAMapDirectory:
         resolved = self._resolve_with(tmp_path, cache, name, targets[kind])
         assert getattr(resolved, _MAP_FILES[name]) is None
 
+    @pytest.mark.parametrize("name", ["TownL.xodr", "map_projector_info.yaml"])
+    def test_a_link_that_loops_is_ignored(
+        self, tmp_path: Path, cache: GitMapCache, name: str
+    ) -> None:
+        """Resolving a loop raises RuntimeError before Python 3.13."""
+        resolved = self._resolve_with(
+            tmp_path, cache, name, lambda directory: directory / name
+        )
+        assert getattr(resolved, _MAP_FILES[name]) is None
+
     def test_a_derived_xodr_linked_out_of_the_cache_is_refused(
         self, origin_repo: Path, cache: GitMapCache, outside: Path
     ) -> None:

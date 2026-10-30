@@ -134,12 +134,13 @@ def _is_within(root: Path, path: Path) -> bool:
 
     Both sides are resolved, so a link anywhere along *path* -- the file itself,
     or a directory it sits in -- is judged by where it lands, and a ``..`` is
-    judged by what it climbs to.
+    judged by what it climbs to.  A link that loops is outside everything:
+    before Python 3.13 resolving one raises ``RuntimeError``, not ``OSError``.
     """
     try:
         top = root.resolve()
         real = path.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     return real == top or top in real.parents
 
@@ -158,7 +159,12 @@ def _is_map_file(directory: Path, candidate: Path) -> bool:
     consumer arrives.  A link that stays inside *directory* is followed; one
     that leaves it, dangles, or names a directory is not a map file.
     """
-    return _is_within(directory, candidate) and candidate.resolve().is_file()
+    if not _is_within(directory, candidate):
+        return False
+    try:
+        return candidate.resolve().is_file()
+    except (OSError, RuntimeError):
+        return False
 
 
 def _climbs_out(path: str) -> bool:
