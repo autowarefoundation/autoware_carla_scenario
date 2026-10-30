@@ -2502,8 +2502,8 @@ for), so each is counted once, in the first group that fits it:
   transport and its message types), or
   a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
   `importlib`
-  beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
-  `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
+  beyond `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
+  `signal`, `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI and the command line they
   share (`serve_cli`), authoring, the sweeper's
