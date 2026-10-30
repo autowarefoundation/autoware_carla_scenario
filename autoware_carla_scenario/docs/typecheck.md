@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 229 of
-the package's 335 modules (68%; about 68,400 of 118,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 230 of
+the package's 336 modules (68%; about 68,500 of 118,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2438,7 +2438,11 @@ measure reads a given value (`placement`), the planning of a scenario's route on
 Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
 lookups included, what a run's T4 dataset holds (its settings, channels
 and categories and the OpenCV model fitted to an F-theta camera,
-`t4_settings`, #731), and the scenario configs (`scenario_config`, `examples.configs`), the camera
+`t4_settings`, #731), and the scenario configs (`scenario_config`, `examples.configs`), what the
+`scenario` command reads off its command line and environment
+(`--resume-from`, the `scenario=` override and whether it is a glob, the
+summary's case labels and whether the malloc arenas are already capped:
+`examples.argv`, #752), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
