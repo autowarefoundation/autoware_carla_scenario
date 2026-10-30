@@ -3292,6 +3292,14 @@ surface, but the helper modules are importable for tooling:</p>
 <td>A session's cases with their case, coverage and metrics (<code>load_results</code>, <code>case_metrics</code>), the cases in an ODD cell, and sessions compared case by case and cell by cell (<code>compare</code>).</td>
 </tr>
 <tr>
+<td><code>ui.case_paths</code></td>
+<td>The path guard (<code>contained</code>, <code>session_dir</code>, <code>job_dir</code>), <code>CaseFiles</code> and the stems of a directory's cases, which <code>ui.cases</code> re-exports; checked by the library check.</td>
+</tr>
+<tr>
+<td><code>ui.drive_metrics</code></td>
+<td>The box gaps and the running metrics of the ego's ticks (<code>DriveMetrics</code>) that <code>ui.results.case_metrics</code> reads a trajectory log with; checked by the library check.</td>
+</tr>
+<tr>
 <td><code>ui.slurm_launch</code></td>
 <td>Submitting a batch with <code>launcher=slurm</code> from the viewer (<code>build_command</code>, <code>start_submit</code>), a SLURM batch's progress (<code>batch_status</code>), and <code>scenario-slurm</code> run on it.</td>
 </tr>

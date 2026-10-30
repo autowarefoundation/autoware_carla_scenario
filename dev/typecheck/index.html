@@ -4598,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 226 of
-the package's 332 modules (68%; about 67,600 of 117,900 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 228 of
+the package's 334 modules (68%; about 67,900 of 118,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4641,11 +4641,13 @@ warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (<code>scenario_runner</code>, <code>scenario_queue</code>), the UI's runner, which runs them in
 a subprocess on a thread (<code>ui.runner</code>, over a model of the pydantic
-<code>ui.models</code>), what the viewer's SLURM run panel may set, the Hydra
-overrides it becomes and the <code>scenario</code> command line that submits the batch
-(<code>ui.slurm_options</code>, #742; not how it reads the panel's fields, values of any
-type, nor how it splits <code>VIEWER_SCENARIO_COMMAND</code>, which <code>ui.slurm_launch</code>
-keeps),
+<code>ui.models</code>), the viewer's guard on every path it builds from a request and
+the stems of a session's cases (<code>ui.case_paths</code>, #741), the box gaps and
+metrics it reads off a trajectory log's ticks (<code>ui.drive_metrics</code>), what
+the viewer's SLURM run panel may set, the Hydra overrides it becomes and the
+<code>scenario</code> command line that submits the batch (<code>ui.slurm_options</code>, #742;
+not how it reads the panel's fields, values of any type, nor how it splits
+<code>VIEWER_SCENARIO_COMMAND</code>, which <code>ui.slurm_launch</code> keeps),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
