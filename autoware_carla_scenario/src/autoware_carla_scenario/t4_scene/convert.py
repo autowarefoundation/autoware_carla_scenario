@@ -10,7 +10,7 @@ govern, on one uniform time grid, in Autoware's ``map`` frame, with the
 Lanelet2 map the run was on as a separate ``MapResource``.
 
 What the log does not hold is left out, not invented: the ego's acceleration,
-angular velocity, steering and turn indicator, a route and a goal; a vehicle's
+angular velocity and steering, a route and a goal; a vehicle's
 class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``).
 A tick the log does not have (it skips a tick without road users) is a row
 whose ego, objects and lights are unavailable, never an interpolated one.
@@ -18,6 +18,7 @@ whose ego, objects and lights are unavailable, never an interpolated one.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import hashlib
 import logging
@@ -60,6 +61,9 @@ _PEDESTRIAN = 7
 #: The contract's effective lane states (``TrafficLights.lane_states``); any
 #: other CARLA state (``Off``, ``Unknown``) is UNKNOWN, 0.
 _LANE_STATES = {"red": 1, "yellow": 2, "green": 3}
+#: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
+#: log's ``turn_indicators`` states.
+_TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
 #: How far (m) a light's stop-line waypoint may be from the stop line of a
 #: lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
 _STOP_LINE_MATCH_M = 2.0
@@ -114,6 +118,11 @@ class _Log:
     despawned: dict[int, int] = field(default_factory=dict)
     #: Where an ego's rear axle is along its x axis, by actor id (``rear_axle``).
     rear_axles: dict[int, float] = field(default_factory=dict)
+    #: Each vehicle's turn indicators as they changed, by actor id: the
+    #: frames, in order, and the state from each (``turn_indicators``).
+    turn_indicators: dict[int, tuple[list[int], list[str]]] = field(
+        default_factory=dict
+    )
     result: Optional[dict[str, Any]] = None
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
@@ -169,6 +178,11 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                 )
             elif kind == "rear_axle":
                 log.rear_axles[int(record["id"])] = float(record["offset"])
+            elif kind == "turn_indicators":
+                for actor_id, state in record["states"].items():
+                    changes = log.turn_indicators.setdefault(int(actor_id), ([], []))
+                    changes[0].append(int(record["frame"]))
+                    changes[1].append(str(state))
             elif kind == "world":
                 log.world = record
             elif kind == "map":
@@ -542,6 +556,19 @@ def _fill_ego(
     message.velocities.CopyFrom(_array(velocities, "f8", missing[:, None]))
     message.longitudinal_speeds.CopyFrom(_array(speeds, "f8", missing))
     message.available.CopyFrom(_array(available, "?"))
+    changes = log.turn_indicators.get(ego_id)
+    if changes is not None:
+        # Each row shows the state from the last change at or before it;
+        # unknown before the first, and on a row the ego is not on.
+        indicators = np.zeros(count, dtype=np.int64)
+        unknown = missing.copy()
+        for row, carla_frame in enumerate(frames):
+            last = bisect.bisect_right(changes[0], carla_frame) - 1
+            if last < 0:
+                unknown[row] = True
+            else:
+                indicators[row] = _TURN_INDICATORS.get(changes[1][last], 0)
+        message.turn_indicators.CopyFrom(_array(indicators, "i8", unknown))
     ex, ey, _ = ego.extent
     message.shape.length = 2.0 * ex
     message.shape.width = 2.0 * ey

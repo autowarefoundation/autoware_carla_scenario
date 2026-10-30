@@ -36,6 +36,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   ``control`` only for the ego; ``lights`` only the lights whose state changed
   since the last written tick (all of them in the first).  Ticks without any
   vehicle/walker are not written.
+* ``{"type": "turn_indicators", "frame", "t", "states": {id:
+  "off"|"left"|"right"|"hazard"}}`` -- right after a tick on which a recorded
+  vehicle's turn indicators changed (every vehicle's the first time it is
+  seen): only the vehicles whose indicators changed.
 * ``{"type": "markers", "frame", "t", "actor", "polylines": [...]}`` -- after
   a tick on which the ego's debug markers (its plan) changed.
 * ``{"type": "plan", "frame", "t", "actor", "step", "planned_at_us",
@@ -99,6 +103,7 @@ from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .ego_plan import PlanMarkers
 from .utils.traffic_light import traffic_light_state_name
+from .utils.turn_indicator import turn_indicator_state
 from .waypoint_arrival import WaypointArrival
 
 logger = logging.getLogger(__name__)
@@ -289,6 +294,9 @@ class TrajectoryRecorder:
         self._egos: dict[int, Any] = {}
         self._lights: list[Any] = []
         self._shown: dict[int, str] = {}
+        # Each recorded vehicle's turn indicators as last written; None once
+        # the world could not say (its light states are then left out).
+        self._indicators: Optional[dict[int, str]] = {}
         # The recorded actors of the last tick, to tell the ones gone.
         self._present: set[int] = set()
         # The tick last recorded (written or not): what later records refer to.
@@ -775,6 +783,41 @@ class TrajectoryRecorder:
         if changed:
             record["lights"] = changed
         self._emit(record)
+        self._record_turn_indicators(world, present, elapsed)
+
+    def _record_turn_indicators(
+        self, world: carla.World, present: set[int], elapsed: float
+    ) -> None:
+        """Write the turn indicators of the recorded vehicles that changed
+        since the last tick, from every vehicle's light state at once."""
+        if self._indicators is None:
+            return
+        try:
+            light_states = world.get_vehicles_light_states()
+        except Exception:  # noqa: BLE001 - the log goes on without them
+            logger.debug(
+                "No vehicle light states; turn indicators left out", exc_info=True
+            )
+            self._indicators = None
+            return
+        changed: dict[str, str] = {}
+        for actor_id, light_state in light_states.items():
+            if actor_id not in present:
+                continue
+            state = turn_indicator_state(int(light_state)).name.lower()
+            if self._indicators.get(actor_id) != state:
+                self._indicators[actor_id] = changed[str(actor_id)] = state
+        if changed:
+            self._emit(
+                {
+                    "type": "turn_indicators",
+                    "frame": self._frame,
+                    "t": _r(elapsed),
+                    "states": dict(
+                        sorted(changed.items(), key=lambda item: int(item[0]))
+                    ),
+                }
+            )
 
 
 __all__ = [
