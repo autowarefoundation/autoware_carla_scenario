@@ -219,3 +219,13 @@ def test_t4_scenes_are_off_by_default_and_reach_three_seconds_back() -> None:
     assert DriverClientConfig(t4_scene=True, map_dir="/maps").t4_scene
     with pytest.raises(ValueError, match="t4_scene_history_s"):
         DriverClientConfig(t4_scene_history_s=-1.0)
+
+
+def test_t4_scenes_take_the_scenarios_goal_and_the_runs_map_by_default() -> None:
+    config = DriverClientConfig()
+    assert (config.t4_scene_goal, config.t4_scene_map) == ("scenario", "run")
+    assert DriverClientConfig(t4_scene_goal="road_ahead", t4_scene_map="map_set")
+    with pytest.raises(ValueError, match="t4_scene_goal"):
+        DriverClientConfig(t4_scene_goal="anywhere")
+    with pytest.raises(ValueError, match="t4_scene_map"):
+        DriverClientConfig(t4_scene_map="roadgen")

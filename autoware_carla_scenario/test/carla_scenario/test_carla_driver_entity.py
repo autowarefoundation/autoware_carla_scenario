@@ -1475,3 +1475,15 @@ def test_route_to_keeps_the_routes_lanelets_and_the_goal_for_the_scenes(
     assert entity._route_lanelet_ids == [10, 11, 12]  # noqa: SLF001
     assert entity._route_roads == {"r10", "r11", "r12"}  # noqa: SLF001
     assert entity._goal_in_map == (5.0, 6.0, 0.25)  # noqa: SLF001
+
+
+def test_the_road_aheads_far_end_heads_along_its_last_half_metre() -> None:
+    from autoware_carla_scenario.entity.carla_driver_entity import _far_end
+
+    road = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [10.0, 10.1]])
+    end = _far_end(road)
+    assert end is not None
+    x, y, yaw = end
+    assert (x, y) == (10.0, 10.1) and yaw == pytest.approx(math.pi / 2)
+    assert _far_end(np.array([[0.0, 0.0], [0.1, 0.0]])) is None
+    assert _far_end(None) is None

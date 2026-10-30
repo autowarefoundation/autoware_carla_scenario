@@ -389,6 +389,19 @@ class DriverClientConfig:
     """The ego's wheel base, written in the scenes' ego shape; ``None`` leaves
     it out (CARLA 0.10 reports no wheel positions)."""
 
+    t4_scene_goal: str = "scenario"
+    """The scenes' goal: ``scenario``, where the scenario routes the ego
+    (none without a ``route_to``); ``road_ahead``, the far end of the road
+    ahead the policy is sent (``route_horizon_m``), where a policy reading
+    the egodriver observations has its goal."""
+
+    t4_scene_map: str = "run"
+    """The map the scenes are on: ``run``, the run's own Lanelet2 map;
+    ``map_set``, the map set's (``map_dir``, the one a policy reading the
+    egodriver observations is given -- roadgen's from the world's OpenDRIVE,
+    or ``lanelet2_path``), so a scene policy reads the same map as one of
+    those."""
+
     def __post_init__(self) -> None:
         if self.transport not in DRIVER_TRANSPORTS:
             raise ValueError(
@@ -424,6 +437,15 @@ class DriverClientConfig:
             raise ValueError(
                 "driver.t4_scene rides in renderer_data and references its map in "
                 "the map set: it needs driver.send_renderer_data and driver.map_dir"
+            )
+        if self.t4_scene_goal not in ("scenario", "road_ahead"):
+            raise ValueError(
+                "driver.t4_scene_goal must be 'scenario' or 'road_ahead', got "
+                f"{self.t4_scene_goal!r}"
+            )
+        if self.t4_scene_map not in ("run", "map_set"):
+            raise ValueError(
+                f"driver.t4_scene_map must be 'run' or 'map_set', got {self.t4_scene_map!r}"
             )
         if self.t4_scene_history_s < 0.0:
             raise ValueError(

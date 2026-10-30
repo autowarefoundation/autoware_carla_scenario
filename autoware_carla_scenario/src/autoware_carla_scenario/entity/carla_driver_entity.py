@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import uuid
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -561,8 +562,21 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         """
         if self._config.map_dir is None or self._map is None:
             return ""
-        from ..driver.hdmap_export import export_map  # noqa: PLC0415
+        from ..driver.hdmap_export import MAP_FORMATS, export_map  # noqa: PLC0415
 
+        if self._t4 is not None and self._config.t4_scene_map == "map_set":
+            # The scenes go on the set's Lanelet2 map: write the set without
+            # them first, then again with the map they reference.
+            plain = export_map(
+                str(self._map.to_opendrive()),
+                str(self._map.name),
+                self._config.map_dir,
+                ("lanelet2",),
+                lanelet2_path=self._config.lanelet2_path,
+            )
+            self._t4.use_map(
+                Path(self._config.map_dir) / plain / MAP_FORMATS["lanelet2"]
+            )
         resource = None if self._t4 is None else self._t4.map_resource
         return export_map(
             str(self._map.to_opendrive()),
@@ -821,12 +835,17 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             sweep = sweeps[0]
             points = np.frombuffer(sweep.points_xyzi, dtype="<f4").reshape(-1, 4)
             age_ns = (self._sim_time_us - int(sweep.timestamp_us)) * 1000
+        road_ahead = self._road_ahead_in_map()
         scene = self._t4.scene(
             self._scene_id,
             lidar_points=points,
             lidar_age_ns=age_ns,
-            road_ahead=self._road_ahead_in_map(),
-            goal_pose=self._goal_in_map,
+            road_ahead=road_ahead,
+            goal_pose=(
+                _far_end(road_ahead)
+                if self._config.t4_scene_goal == "road_ahead"
+                else self._goal_in_map
+            ),
         )
         return b"" if scene is None else scene.SerializeToString()
 
@@ -977,6 +996,24 @@ def _in_map_frame(pose: "Lanelet2Pose") -> Optional[Tuple[float, float, float]]:
     q = placed.rotation
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     return (float(placed.position.x), float(placed.position.y), yaw)
+
+
+#: A goal's heading is taken over at least this much road, so a last point
+#: duplicated (or nearly) by the walk's sampling cannot spin it.
+_GOAL_HEADING_SPAN_M = 0.5
+
+
+def _far_end(points: Any) -> Optional[Tuple[float, float, float]]:
+    """``(x, y, yaw)`` at the far end of a road's ``(N, 2)`` points, heading
+    along its last ``_GOAL_HEADING_SPAN_M``; ``None`` for a road shorter."""
+    if points is None or not len(points):
+        return None
+    end = points[-1]
+    for before in points[-2::-1]:
+        if math.hypot(end[0] - before[0], end[1] - before[1]) >= _GOAL_HEADING_SPAN_M:
+            yaw = math.atan2(end[1] - before[1], end[0] - before[0])
+            return (float(end[0]), float(end[1]), yaw)
+    return None
 
 
 def _tire_steering_angle(actor: "carla.Actor") -> float:

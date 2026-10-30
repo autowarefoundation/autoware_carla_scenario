@@ -48,6 +48,7 @@ from .convert import (
     _Log,
     _load_map,
     _Map,
+    _read_map,
     log_to_scene,
     map_of,
 )
@@ -107,6 +108,12 @@ class _LiveRecorder(TrajectoryRecorder):
     def _emit(self, record: dict[str, Any]) -> None:
         self._log.feed(record)
 
+    @staticmethod
+    def _state_value(value: float) -> float:
+        """Unrounded: a scene's poses are the ones the policy is told, not a
+        file's millimetres."""
+        return float(value)
+
 
 class LiveT4Scene:
     """The run's history as a T4Scene, on a 0.1 s grid, as it runs.
@@ -161,6 +168,7 @@ class LiveT4Scene:
         self._route: list[int] = []
         self._map: Optional[_Map] = None
         self._map_read = False
+        self._map_path: Optional[Path] = None
 
     # -- recording ------------------------------------------------------------
 
@@ -184,6 +192,13 @@ class LiveT4Scene:
         for frame in [f for f in self._extras if f < oldest]:
             del self._extras[frame]
 
+    def use_map(self, lanelet2_path: Path) -> None:
+        """Put the scenes on the Lanelet2 map *lanelet2_path*, in the run's
+        local frame (as a map set's is), instead of the run's own map."""
+        self._map_path = Path(lanelet2_path)
+        self._map = None
+        self._map_read = False
+
     @property
     def map_resource(self) -> Optional[pb.MapResource]:
         """The run's map as the scenes reference it, read once; ``None`` without one."""
@@ -196,7 +211,10 @@ class LiveT4Scene:
         if not self._map_read:
             self._map_read = True
             try:
-                self._map = _load_map(self._log, None, None, None)
+                if self._map_path is not None:
+                    self._map = _local_map(self._log, self._map_path)
+                else:
+                    self._map = _load_map(self._log, None, None, None)
                 if self._map is None:
                     self._map = _manager_map()
             except Exception:  # noqa: BLE001 - scenes go on without a map
@@ -443,6 +461,24 @@ def lanelets_along(
             order.append(max(candidates, key=lambda c: reach(c, k)))
             unexplained = 0
     return order or ([pin] if pin is not None else [])
+
+
+def _local_map(log: _Log, lanelet2_path: Path) -> Optional[_Map]:
+    """A Lanelet2 map in the run's local frame (``local_x``/``local_y``), on
+    the scenes' ``map`` frame; ``None`` -- the run's own map then -- when that
+    frame is offset from the local one."""
+    record = log.map or {}
+    if any(float(v) for v in (record.get("mgrs_offset") or ())) or float(
+        record.get("z_offset") or 0.0
+    ):
+        logger.warning(
+            "%s is in the run's local frame, which its map frame is offset from; "
+            "the scenes keep the run's own map",
+            lanelet2_path,
+        )
+        return None
+    path = lanelet2_path.resolve()
+    return _read_map(path, None, "local_cartesian", (path.stat().st_mtime_ns, None))
 
 
 def _manager_map() -> Optional[_Map]:

@@ -48,18 +48,20 @@ uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
 | `driver.t4_scene` | bool | `false` | Send each drive's scene; needs `driver.map_dir` and `driver.send_renderer_data` |
 | `driver.t4_scene_history_s` | float | `3.0` | How far back a scene reaches, the current row aside |
 | `driver.t4_scene_wheel_base_m` | float or null | `null` | The ego's wheel base in the scenes' ego shape; `null` leaves it out |
+| `driver.t4_scene_goal` | `scenario` or `road_ahead` | `scenario` | The scenes' goal: where the scenario routes the ego (`route_to`; none without one), or the far end of the road ahead the policy is sent -- where a policy reading the egodriver observations has its goal |
+| `driver.t4_scene_map` | `run` or `map_set` | `run` | The scenes' map: the run's Lanelet2 map, or the map set's (`map_dir`: roadgen's from the world's OpenDRIVE, or `lanelet2_path`), the one a policy reading the egodriver observations is given. The route and the lights are placed on it |
 
 Each scene is what the log converts to (below), built as the run goes from the
 same records (`t4_scene.live`): the last rows on the 0.1 s grid, history only,
-the current one last. A run younger than `t4_scene_history_s` sends the rows it
-has. On top of what the log holds, a scene carries what the policy is told and
+the current one last, its states unrounded (the log keeps millimetres). A run
+younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of `base_link`, the acceleration an estimate), body
 angular velocity, front tyres' angle and odometry times; the first LiDAR's
 current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
 the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets,
-after the few the ego has just passed -- and the scenario's goal. A policy
+after the few the ego has just passed -- and the goal (`t4_scene_goal`). A policy
 reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the `t4`
 format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene
 references. Every other observation is sent as before: a policy that does not

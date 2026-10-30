@@ -243,3 +243,16 @@ def test_the_road_ahead_takes_the_branch_it_keeps_to() -> None:
 def test_a_road_ahead_on_no_lanelet_is_the_pin_alone() -> None:
     assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]]), pin=1) == [1]
     assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]])) == []
+
+
+def test_a_scene_keeps_the_poses_unrounded() -> None:
+    # The log keeps millimetres; a scene keeps what the policy is told.
+    world = _World()
+    live = LiveT4Scene(1)
+    live.start(world)
+    world.snapshot = [_ActorSnapshot(1, 0.1234567, 10.0)]
+    live.record(world, 0.0)
+    scene = live.scene("run")
+    assert scene is not None
+    # Facing the map's -y, base_link is behind the origin along y, not x.
+    assert _numeric(scene.ego.poses)[-1, 0] == pytest.approx(0.1234567, abs=1e-12)

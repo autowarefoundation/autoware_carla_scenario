@@ -282,6 +282,12 @@ class TrajectoryRecorder:
             map's with, if any.
     """
 
+    @staticmethod
+    def _state_value(value: float) -> float:
+        """An actor state's value as the log keeps it: to the millimetre (and
+        the thousandth of a degree, of a metre per second)."""
+        return _r(value)
+
     def __init__(
         self,
         path: Path,
@@ -734,6 +740,7 @@ class TrajectoryRecorder:
                 self._known.setdefault(actor_id, None)
 
         rows = []
+        kept = self._state_value
         for s in snapshot:
             if self._known.get(s.id) is None:
                 continue
@@ -742,15 +749,15 @@ class TrajectoryRecorder:
             rows.append(
                 [
                     s.id,
-                    _r(loc.x),
-                    _r(loc.y),
-                    _r(loc.z),
-                    _r(rot.roll),
-                    _r(rot.pitch),
-                    _r(rot.yaw),
-                    _r(v.x),
-                    _r(v.y),
-                    _r(v.z),
+                    kept(loc.x),
+                    kept(loc.y),
+                    kept(loc.z),
+                    kept(rot.roll),
+                    kept(rot.pitch),
+                    kept(rot.yaw),
+                    kept(v.x),
+                    kept(v.y),
+                    kept(v.z),
                 ]
             )
         present = {row[0] for row in rows}
