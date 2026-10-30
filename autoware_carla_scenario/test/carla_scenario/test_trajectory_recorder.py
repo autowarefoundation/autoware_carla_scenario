@@ -102,6 +102,14 @@ class _World:
         self.snapshot: list[_ActorSnapshot] = []
         self.frame = 100
 
+    #: What get_vehicles_light_states() gives; None: a world that cannot say.
+    vehicle_light_states: dict[int, int] | None = None
+
+    def get_vehicles_light_states(self) -> dict[int, int]:
+        if self.vehicle_light_states is None:
+            raise RuntimeError("no vehicle light states in this world")
+        return dict(self.vehicle_light_states)
+
     def get_map(self) -> SimpleNamespace:
         return SimpleNamespace(name="Carla/Maps/Town10HD_Opt")
 
@@ -937,3 +945,48 @@ def test_an_unparsable_projector_file_is_left_out(tmp_path) -> None:
     recorder.close()
     [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
     assert record["projector_info"] is None and record["lanelet2"] is not None
+
+
+def test_turn_indicators_are_written_when_they_change(tmp_path: Path) -> None:
+    recorder, world = _run(tmp_path)
+    left = int(carla.VehicleLightState.LeftBlinker)
+    right = int(carla.VehicleLightState.RightBlinker)
+    lights = {1: 0}
+    world.vehicle_light_states = lights
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0), _ActorSnapshot(3, 5.0, 0.0)]
+    recorder.record(world, 0.0)
+    world.frame += 1  # unchanged: nothing written
+    recorder.record(world, 0.05)
+    world.frame += 1
+    lights[1] = left | int(carla.VehicleLightState.Position)  # other lights don't count
+    recorder.record(world, 0.1)
+    world.frame += 1
+    lights[1] = left | right
+    recorder.record(world, 0.15)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] == "turn_indicators"]
+    # The walker (3) has none; the vehicle's first state is written, then each change.
+    assert records == [
+        {"type": "turn_indicators", "frame": 100, "t": 0.0, "states": {"1": "off"}},
+        {"type": "turn_indicators", "frame": 102, "t": 0.1, "states": {"1": "left"}},
+        {"type": "turn_indicators", "frame": 103, "t": 0.15, "states": {"1": "hazard"}},
+    ]
+    kinds = [r["type"] for r in _lines(recorder.path)]
+    # Each right after the tick it belongs to.
+    assert kinds[kinds.index("turn_indicators") - 1] == "tick"
+
+
+def test_a_world_without_light_states_leaves_the_turn_indicators_out(
+    tmp_path: Path,
+) -> None:
+    recorder, world = _run(tmp_path)
+
+    world.vehicle_light_states = None
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    world.frame += 1
+    recorder.record(world, 0.05)
+    recorder.close()
+    kinds = [r["type"] for r in _lines(recorder.path)]
+    assert "turn_indicators" not in kinds and kinds.count("tick") == 2

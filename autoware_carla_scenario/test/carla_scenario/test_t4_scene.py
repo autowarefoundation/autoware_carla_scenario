@@ -191,6 +191,45 @@ def test_the_rear_axle_is_the_one_the_run_recorded(tmp_path: Path) -> None:
     assert _numeric(given.ego.poses)[0][0] == pytest.approx(1000.0 - 1.0)
 
 
+def test_the_ego_shows_the_turn_indicators_the_log_records(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        _tick(100, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+        # Written after the tick they belong to; the car's are not the ego's.
+        {"type": "turn_indicators", "frame": 101, "t": 0.05, "states": {"2": "right"}},
+        _tick(101, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+        _tick(102, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+        {"type": "turn_indicators", "frame": 102, "t": 0.1, "states": {"1": "off"}},
+        _tick(103, _state(1, 0.0, 0.0)),
+        {"type": "turn_indicators", "frame": 103, "t": 0.15, "states": {"1": "left"}},
+        _tick(104, _state(1, 0.0, 0.0)),
+        _tick(105, _state(1, 0.0, 0.0)),
+        {"type": "turn_indicators", "frame": 105, "t": 0.25, "states": {"1": "hazard"}},
+    )
+    scene = trajectory_log_to_t4_scene(log, with_map=False, step_s=0.05).scene
+    indicators = _numeric(scene.ego.turn_indicators)
+    # Unknown until the ego's first record; then disabled, left, left, hazard.
+    assert list(np.ma.getmaskarray(indicators)) == [
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+    assert list(indicators.compressed()) == [1, 2, 2, 4]
+
+
+def test_a_log_without_turn_indicators_leaves_them_out(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    scene = trajectory_log_to_t4_scene(log, with_map=False).scene
+    assert not scene.ego.HasField("turn_indicators")
+
+
 def test_rows_are_a_uniform_grid_and_a_missing_tick_is_unavailable(
     tmp_path: Path,
 ) -> None:
