@@ -183,6 +183,18 @@ def test_links_escaping_the_tree_are_refused(
     assert secret.stat().st_nlink == 1
 
 
+def test_a_hard_link_to_a_missing_member_is_reported(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archive = tmp_path / "carla.tar.gz"
+    archive.write_bytes(
+        _linked_package({f"{_TOP}/Linux/b": (tarfile.LNKTYPE, f"{_TOP}/missing")})
+    )
+    assert carla_install.main(["--url", archive.as_uri()]) == 1
+    assert "hard link's target is not in the archive" in capsys.readouterr().err
+    assert not install_dir().exists()
+
+
 def test_it_installs_a_package_with_hard_links(home: Path, tmp_path: Path) -> None:
     archive = tmp_path / "carla.tar.gz"
     with tarfile.open(archive, "w:gz") as packed:

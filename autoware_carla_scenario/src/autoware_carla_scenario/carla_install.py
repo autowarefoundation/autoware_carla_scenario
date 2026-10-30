@@ -378,7 +378,14 @@ def _unpack(stream: IO[bytes], destination: Path) -> None:
     destination.mkdir(parents=True)
     # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
     with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
-        archive.extractall(destination, filter=_strip_top)
+        try:
+            archive.extractall(destination, filter=_strip_top)
+        except KeyError as exc:
+            # tarfile's own report of a hard link whose target is not (yet) on
+            # disk nor in the archive; a TarError, so main() reports it cleanly.
+            raise tarfile.ExtractError(
+                f"a hard link's target is not in the archive: {exc}"
+            ) from exc
 
 
 def main(argv: Optional[list[str]] = None) -> int:
