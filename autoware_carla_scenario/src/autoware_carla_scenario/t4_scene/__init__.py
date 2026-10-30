@@ -8,6 +8,9 @@ Lanelet2 map the run was on; :func:`write_t4_scene` writes the two as
 
     scenario-t4scene outputs/2026-10-29/10-00-00
 
+With ``t4scene.enabled=true`` the runner does it as each run ends
+(:class:`T4SceneExporter`).
+
 See docs/t4_scene.md for what goes where, and how the devkit reads them.
 """
 
@@ -21,6 +24,7 @@ from .convert import (
     trajectory_log_to_t4_scene,
     write_t4_scene,
 )
+from .exporter import T4SceneExporter
 from .map_resource import map_resource
 
 __all__ = [
@@ -28,6 +32,7 @@ __all__ = [
     "MAP_SUFFIX",
     "SCENE_SUFFIX",
     "T4SceneExport",
+    "T4SceneExporter",
     "map_resource",
     "trajectory_log_to_t4_scene",
     "write_t4_scene",

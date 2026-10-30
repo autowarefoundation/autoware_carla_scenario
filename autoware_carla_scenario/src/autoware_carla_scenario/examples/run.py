@@ -70,7 +70,7 @@ from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
-from autoware_carla_scenario.constants import DEFAULT_TM_PORT
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT, FIXED_DELTA_SECONDS
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
@@ -82,6 +82,7 @@ from autoware_carla_scenario.rerun import (
 from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
+from autoware_carla_scenario.t4_scene import T4SceneExporter
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -674,6 +675,7 @@ def run_scenario_with_queue(
     t4: T4Recorder | None = None,
     world_reset: str = "reload",
     reload_every: int = 0,
+    t4scene: T4SceneExporter | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -686,7 +688,8 @@ def run_scenario_with_queue(
     is closed (:func:`build_rerun_converter`); the caller waits for it.
     *t4* writes the run as a T4 dataset (:func:`build_t4_recorder`).
     *world_reset* and *reload_every* are how the queue resets the world
-    (:func:`world_reset_settings`).
+    (:func:`world_reset_settings`).  *t4scene* writes the run's trajectory log
+    as a T4Scene once it is closed (:func:`build_t4scene_exporter`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -722,6 +725,7 @@ def run_scenario_with_queue(
         t4=t4,
         world_reset=world_reset,
         reload_every=reload_every,
+        t4scene=t4scene,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -868,6 +872,33 @@ def build_t4_recorder(*cfgs: DictConfig) -> T4Recorder | None:
             driver, _to_dict(t4_cfg) if isinstance(t4_cfg, DictConfig) else t4_cfg
         )
         return T4Recorder(settings)
+    return None
+
+
+def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
+    """What writes each run's trajectory log as a T4Scene as the run ends,
+    when the first of *cfgs* that sets ``t4scene.enabled`` does, with its
+    ``step_s`` and ``max_distance_m``; ``None`` otherwise.
+
+    Raises:
+        ValueError: ``t4scene.step_s`` is not a positive multiple of the tick.
+    """
+    for cfg in cfgs:
+        t4scene_cfg = cfg.get("t4scene") or {}
+        if not t4scene_cfg.get("enabled", False):
+            continue
+        step_s = float(t4scene_cfg.get("step_s", 0.1))
+        ticks = round(step_s / FIXED_DELTA_SECONDS)
+        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - step_s) > 1e-9:
+            raise ValueError(
+                f"t4scene.step_s={step_s} is not a positive multiple of the "
+                f"{FIXED_DELTA_SECONDS} s tick"
+            )
+        max_distance = t4scene_cfg.get("max_distance_m", 100.0)
+        return T4SceneExporter(
+            step_s=step_s,
+            max_distance_m=None if max_distance is None else float(max_distance),
+        )
     return None
 
 
@@ -1226,6 +1257,7 @@ def _batch_queue(
         t4=build_t4_recorder(first_cfg),
         world_reset=world_reset,
         reload_every=reload_every,
+        t4scene=build_t4scene_exporter(first_cfg),
     )
 
 
@@ -1365,8 +1397,10 @@ def run_batch(
     # SLURM each task converts its own cases (slurm/worker.py), so this only
     # checks.
     rerun = build_rerun_converter(*configs)
-    # Likewise a batch asking for T4 datasets without the `t4` extra.
+    # Likewise a batch asking for T4 datasets without the `t4` extra, and
+    # T4Scenes at a step that does not fit the tick.
     build_t4_recorder(*configs)
+    build_t4scene_exporter(*configs)
     if rerun is not None and launcher == "slurm":
         rerun.close()
         rerun = None
@@ -1656,6 +1690,7 @@ def run_scenario(
     # Before anything is built: refused at once without the extras.
     rerun = build_rerun_converter(cfg)
     build_t4_recorder(cfg)
+    build_t4scene_exporter(cfg)
     try:
         apply_canvas(cfg)
         return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
@@ -1727,6 +1762,7 @@ def _run_scenario(
         t4=build_t4_recorder(cfg),
         world_reset=world_reset,
         reload_every=reload_every,
+        t4scene=build_t4scene_exporter(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"
