@@ -7,8 +7,8 @@ way onto it, and shares no point with it: Autoware's maps are drawn that way,
 and so is every map roadgen writes (its crossings run ``CROSSWALK_OVERLAP``
 onto the pavement each side).  A walkway is also one lanelet the length of a
 block, so a crosswalk meets it part way along, where no lanelet ends.  And a
-walkway tagged ``one_way: yes`` -- as roadgen tags every lanelet -- is
-one-way for a pedestrian in Lanelet2's rules.  The Lanelet2 graph of such a
+walkway tagged ``one_way: yes`` -- as roadgen tagged every lanelet before
+0.41.2 -- is one-way for a pedestrian in Lanelet2's rules.  The Lanelet2 graph of such a
 map has no way across a road at all.
 
 :class:`WalkGraph` is the graph a pedestrian walks instead.  Its nodes are
