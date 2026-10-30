@@ -2332,6 +2332,14 @@ Autoware publishes, and the one the editor's Map library looks for:</p>
 <code>.xodr</code> if there is one, and the YAML beside them. The point cloud stays a
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
 from costing 22 MB.</p>
+<p>A repository can carry symlinks, so each file is checked for where it really
+is. The <code>.osm</code>, the <code>.xodr</code> and <code>map_projector_info.yaml</code> are used only when
+they resolve to a regular file inside the map directory: a link within the
+directory is followed, but one that leads out of it, dangles, or names a
+directory is ignored, as if the file were absent. An OpenDRIVE read back from
+CARLA is held to the same rule inside its derived directory. A <code>#path</code> that is
+itself a link out of the checkout, or that contains <code>..</code>, is refused. Local
+directories (<code>map.directory</code>) go through the same file checks.</p>
 <h3 id="how-a-map-is-read">How a map is read<a class="headerlink" href="#how-a-map-is-read" title="Permanent link">&para;</a></h3>
 <p><code>map_projector_info.yaml</code> names the projection the map's lat/lon is read
 with, and every loader in this framework -- the run's <code>MapManager</code>, the
@@ -2491,6 +2499,14 @@ elsewhere has to be added there to be previewed.</p>
 <td>The <code>#path</code> is wrong for that ref. Browse the repository in the Map library.</td>
 </tr>
 <tr>
+<td><code>names a directory outside the repository</code> / <code>names a link to a directory outside the repository</code></td>
+<td>The <code>#path</code> contains <code>..</code>, or is a symlink leading out of the checkout. Point it at the real directory.</td>
+</tr>
+<tr>
+<td>A map's <code>.xodr</code> or <code>map_projector_info.yaml</code> is ignored</td>
+<td>It is a symlink to a file outside the map directory, a dangling link, or a link to a directory.</td>
+</tr>
+<tr>
 <td>A pinned source re-clones on a machine that has the map</td>
 <td>Expected: a pinned source never trusts an unpacked directory, because it records no revision.</td>
 </tr>
@@ -2518,7 +2534,7 @@ elsewhere has to be added there to be previewed.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 06:06:07 UTC"><span class="timeago" datetime="2026-10-28T06:06:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 06:06:07 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 21:30:00 UTC"><span class="timeago" datetime="2026-10-30T21:30:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 21:30:00 UTC">2026-10-30</span>
   </span>
 
     
