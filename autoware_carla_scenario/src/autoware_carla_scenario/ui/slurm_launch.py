@@ -94,11 +94,41 @@ def partitions() -> list[str]:
     return default + sorted({n.rstrip("*") for n in names} - set(default))
 
 
+#: An unquoted value Hydra reads as something other than that string: its
+#: grammar's INT, FLOAT, BOOL and NULL tokens (``hydra/grammar/OverrideLexer.g4``).
+_NOT_A_STRING = re.compile(
+    r"[+-]?(?:"
+    r"(?:0|[1-9](?:_?\d)*)"  # INT
+    r"|(?:(?:0|[1-9](?:_?\d)*)\.|(?:0|[1-9](?:_?\d)*)?\.\d(?:_?\d)*)"  # POINT_FLOAT
+    r"(?:[eE][+-]?\d(?:_?\d)*)?"
+    r"|(?:0|[1-9](?:_?\d)*)[eE][+-]?\d(?:_?\d)*"  # EXPONENT_FLOAT
+    r"|inf|nan"
+    r")|true|false|null",
+    re.IGNORECASE,
+)
+#: A run of backslashes a quote ends, and one that ends the value.
+_BEFORE_QUOTE = re.compile(r"(\\*)'")
+_AT_END = re.compile(r"(\\+)\Z")
+
+
 def _quote(value: str) -> str:
-    """*value* as a Hydra override's value: as it is when plain, else quoted."""
-    if _SIMPLE.match(value):
+    """*value* as a Hydra override's value that Hydra reads back as exactly
+    this string: as it is when plain, else single-quoted.
+
+    In a quoted value Hydra un-escapes only what the grammar's
+    ``QUOTED_VALUE`` needs (``_unescape_quoted_string``): a quote is ``\\'``,
+    and a run of backslashes is doubled when a quote or the end of the value
+    follows it; every other backslash is itself (``a\\b`` is ``a\\b``).
+    """
+    if _SIMPLE.fullmatch(value) and not _NOT_A_STRING.fullmatch(value):
         return value
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    return _quote_always(value)
+
+
+def _quote_always(value: str) -> str:
+    """*value* single-quoted, as :func:`_quote` quotes it."""
+    body = _BEFORE_QUOTE.sub(lambda m: m[1] * 2 + "\\'", value)
+    return "'" + _AT_END.sub(lambda m: m[1] * 2, body) + "'"
 
 
 @dataclass
@@ -154,8 +184,16 @@ class SlurmOptions:
                 raise ValueError("each extra env line is NAME=value")
         for name, value in dict(raw_env).items():
             name = str(name).strip()
-            if not _ENV_NAME.match(name):
+            if not _ENV_NAME.fullmatch(name):
                 raise ValueError(f"{name!r} is not an environment variable name")
+            # The value becomes an OmegaConf string: `${` would be an
+            # interpolation, not the text the job is to see.
+            if "${" in str(value):
+                raise ValueError(
+                    f"env {name}={value!r}: no ${{...}} -- the value is exported "
+                    "as written, not expanded (set it in a setup line, e.g. "
+                    "export NAME=$HOME/x, or set launcher.env in a config)"
+                )
             env[name] = str(value)
         time = text("time")
         if time is not None and not _TIME.match(time):
@@ -181,12 +219,20 @@ class SlurmOptions:
             raw_setup = raw_setup.splitlines()
         setup = [str(line).strip() for line in raw_setup if str(line).strip()]
         for line in setup:
-            # A Hydra override's value, then an OmegaConf string: a backslash
-            # or an interpolation would not reach the job as written.
-            if "\\" in line or "${" in line:
+            # A Hydra override's value, then an OmegaConf string: an
+            # interpolation would not reach the job as written.
+            if "${" in line:
                 raise ValueError(
-                    f"setup line {line!r}: write $NAME rather than ${{NAME}}, and "
-                    "no backslash (or set launcher.setup in a config)"
+                    f"setup line {line!r}: write $NAME rather than ${{NAME}} "
+                    "(or set launcher.setup in a config)"
+                )
+            # The job script holds each line as written: a line ending in an
+            # unescaped backslash would run on into the next line the script
+            # has (`set -u`, say), not end where the field's line does.
+            if (len(line) - len(line.rstrip("\\"))) % 2:
+                raise ValueError(
+                    f"setup line {line!r} ends in a backslash: write each command "
+                    "on one line"
                 )
         return cls(
             partition=text("partition"),
@@ -217,12 +263,12 @@ class SlurmOptions:
             "python",
         ):
             value = getattr(self, key)
-            if value is not None:
-                out.append(f"launcher.{key}={_quote(str(value))}")
+            if isinstance(value, (int, float)):
+                out.append(f"launcher.{key}={value}")
+            elif value is not None:
+                out.append(f"launcher.{key}={_quote(value)}")
         if self.setup:
-            lines = ",".join(
-                "'" + line.replace("'", "\\'") + "'" for line in self.setup
-            )
+            lines = ",".join(_quote_always(line) for line in self.setup)
             out.append(f"launcher.setup=[{lines}]")
         # `env` is an empty mapping in the config: a new key is added (++).
         out.extend(
@@ -306,7 +352,7 @@ def _submit(command: list[str], base: Path, record: Submission) -> None:
         )
         output = "\n".join(s for s in (done.stdout, done.stderr) if s)
         returncode = done.returncode
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
         output, returncode = f"Could not run {command[0]}: {exc}", None
     match = None
     for match in _OUTPUTS_IN.finditer(output):

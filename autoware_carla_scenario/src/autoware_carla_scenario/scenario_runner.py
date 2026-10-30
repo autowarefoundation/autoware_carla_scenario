@@ -58,6 +58,7 @@ from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
 from .t4 import T4Recorder, T4Recording
+from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
 from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
@@ -616,6 +617,9 @@ class ScenarioRunner:
     #: What writes each run as a T4 dataset, with sensors of its own on the
     #: ego (``t4.enabled``), or None for no dataset.  The queue sets it.
     t4: Optional[T4Recorder]
+    #: What writes each run's trajectory log as a T4Scene once the log is
+    #: closed (``t4scene.enabled``), or None for none.  The queue sets it.
+    t4scene: Optional[T4SceneExporter]
 
     def __init__(
         self,
@@ -686,6 +690,7 @@ class ScenarioRunner:
         self.projector_type = None
         self.rerun = None
         self.t4 = None
+        self.t4scene = None
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -1819,6 +1824,11 @@ class ScenarioRunner:
                     recording = converter.submit(trajectory.path, file_stem)
                     if result is not None:
                         result.rerun_recording = str(recording)
+                if self.t4scene is not None:
+                    # Best effort, as the log itself: a failure is logged.
+                    exporter: T4SceneExporter = self.t4scene
+                    exporter.export(trajectory.path)
+
             if TYPE_CHECKING:
                 # describe() and fidelity_census() are dicts of mixed value
                 # types, which Codon cannot express (UNCALLED in

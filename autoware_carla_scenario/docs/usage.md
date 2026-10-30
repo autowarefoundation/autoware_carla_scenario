@@ -505,6 +505,13 @@ driver policy's sensors (`driver.lidars`, `driver.cameras`) at each policy
 step, and the box of every vehicle and pedestrian from CARLA's ground truth
 (the `t4` extra; [T4 Dataset](t4_dataset.md)).
 
+#### A T4Scene of a run
+
+With `t4scene.enabled=true` each run's trajectory log is also written as a
+T4Scene, `{ScenarioName}.t4scene.pb` with its map, `{ScenarioName}.t4scene.map.pb`,
+the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
+`scenario-t4scene <output dir>` does the same after a run.
+
 ### Sensors in the recording
 
 The trajectory log holds no sensor data. With `rerun.enabled=true` and:
@@ -735,6 +742,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
@@ -1146,8 +1154,9 @@ With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
 "time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
 "remote_cwd": "workspace/OnePlanner", "python": ".venv/bin/python",
 "setup": "source ~/env.sh", "env": {"NAME": "value"}}` (`setup`: a shell line
-per line, without `${...}` or backslashes; `env`: `NAME=value` lines, or a
-mapping).
+per line, without `${...}` or a backslash continuing it; `env`: `NAME=value`
+lines, or a mapping, each value exported as written, so without `${...}` either
+-- an OmegaConf interpolation in the override the viewer passes on).
 
 **Progress SSE event format:**
 
