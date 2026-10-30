@@ -69,6 +69,7 @@ from autoware_carla_scenario import (
     place_at_stop_line_distance,
     vehicle_bumpers,
 )
+from autoware_carla_scenario.failure import FailureCategory
 from autoware_carla_scenario.measures import bumpers_of, stop_line_distance_between
 
 from .configs import TrafficLightComplianceConfig
@@ -410,6 +411,10 @@ class RedLightViolationCondition(BaseCondition):
     def __init__(self, watch: StopLineWatch, *, label: str) -> None:
         super().__init__(label=label)
         self._watch = watch
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """Running the red, or not stopping for it: :attr:`~FailureCategory.TRAFFIC_RULE`."""
+        return FailureCategory.TRAFFIC_RULE
 
     def get_details(self) -> dict[str, Optional[float]]:
         return self._watch.details()

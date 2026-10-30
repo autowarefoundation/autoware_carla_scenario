@@ -1,0 +1,100 @@
+# Model of autoware_carla_scenario.failure: the categories a scenario gives
+# its fail conditions (BaseScenario.register_fail_condition(category=)), and
+# what a failed run records (Failure, progress_detail).
+
+
+@tuple
+class FailureCategory:
+    value: int
+    COLLISION: ClassVar[FailureCategory] = FailureCategory(1)
+    TRAFFIC_RULE: ClassVar[FailureCategory] = FailureCategory(2)
+    SIGNALLING: ClassVar[FailureCategory] = FailureCategory(3)
+    LANE_KEEPING: ClassVar[FailureCategory] = FailureCategory(4)
+    STABILITY: ClassVar[FailureCategory] = FailureCategory(5)
+    SAFETY_MARGIN: ClassVar[FailureCategory] = FailureCategory(6)
+    PROGRESS: ClassVar[FailureCategory] = FailureCategory(7)
+    DRIVER: ClassVar[FailureCategory] = FailureCategory(8)
+    INFRASTRUCTURE: ClassVar[FailureCategory] = FailureCategory(9)
+    OTHER: ClassVar[FailureCategory] = FailureCategory(10)
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == FailureCategory.COLLISION:
+            return "COLLISION"
+        if self == FailureCategory.TRAFFIC_RULE:
+            return "TRAFFIC_RULE"
+        if self == FailureCategory.SIGNALLING:
+            return "SIGNALLING"
+        if self == FailureCategory.LANE_KEEPING:
+            return "LANE_KEEPING"
+        if self == FailureCategory.STABILITY:
+            return "STABILITY"
+        if self == FailureCategory.SAFETY_MARGIN:
+            return "SAFETY_MARGIN"
+        if self == FailureCategory.PROGRESS:
+            return "PROGRESS"
+        if self == FailureCategory.DRIVER:
+            return "DRIVER"
+        if self == FailureCategory.INFRASTRUCTURE:
+            return "INFRASTRUCTURE"
+        if self == FailureCategory.OTHER:
+            return "OTHER"
+        raise ValueError("not a member of FailureCategory")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[FailureCategory]:
+        return [FailureCategory.COLLISION, FailureCategory.TRAFFIC_RULE, FailureCategory.SIGNALLING, FailureCategory.LANE_KEEPING, FailureCategory.STABILITY, FailureCategory.SAFETY_MARGIN, FailureCategory.PROGRESS, FailureCategory.DRIVER, FailureCategory.INFRASTRUCTURE, FailureCategory.OTHER]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> FailureCategory:
+        if name == "COLLISION":
+            return FailureCategory.COLLISION
+        if name == "TRAFFIC_RULE":
+            return FailureCategory.TRAFFIC_RULE
+        if name == "SIGNALLING":
+            return FailureCategory.SIGNALLING
+        if name == "LANE_KEEPING":
+            return FailureCategory.LANE_KEEPING
+        if name == "STABILITY":
+            return FailureCategory.STABILITY
+        if name == "SAFETY_MARGIN":
+            return FailureCategory.SAFETY_MARGIN
+        if name == "PROGRESS":
+            return FailureCategory.PROGRESS
+        if name == "DRIVER":
+            return FailureCategory.DRIVER
+        if name == "INFRASTRUCTURE":
+            return FailureCategory.INFRASTRUCTURE
+        if name == "OTHER":
+            return FailureCategory.OTHER
+        raise KeyError(name)
+
+
+NEVER_MOVED: str = "never_moved"
+STALLED: str = "stalled"
+MOVING: str = "moving"
+
+
+def progress_detail(moved: bool, still_s: float) -> str:
+    raise NotImplementedError()
+
+
+class Failure:
+    condition: str
+    category: FailureCategory
+    at: float
+    message: str
+    detail: Optional[str]
+    also_triggered: List[str]
+
+    def __init__(self, condition: str, category: FailureCategory, at: float, message: str,
+                 detail: Optional[str] = None, also_triggered: List[str] = List[str]()):
+        self.condition = condition
+        self.category = category
+        self.at = at
+        self.message = message
+        self.detail = detail
+        self.also_triggered = also_triggered

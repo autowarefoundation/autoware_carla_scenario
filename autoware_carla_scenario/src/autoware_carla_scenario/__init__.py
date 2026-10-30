@@ -253,6 +253,7 @@ if TYPE_CHECKING:
         VehicleEntityConfig as VehicleEntityConfig,
     )
     from .entity_role import EntityRole as EntityRole
+    from .failure import FailureCategory as FailureCategory
     from .kinematics import (
         AbsoluteAcceleration as AbsoluteAcceleration,
         AbsoluteVelocity as AbsoluteVelocity,
@@ -338,6 +339,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EGO_ROLE_NAME",
     "EntityRole",
+    "FailureCategory",
     "ScenarioRunner",
     "CarlaScenarioFixture",
     "CarlaServerManager",
@@ -695,6 +697,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # constants / entity_role
     "EGO_ROLE_NAME": (".constants", "EGO_ROLE_NAME"),
     "EntityRole": (".entity_role", "EntityRole"),
+    "FailureCategory": (".failure", "FailureCategory"),
     # coordinate
     "CarlaWorldPose": (".coordinate", "CarlaWorldPose"),
     "CoordinateFrame": (".coordinate", "CoordinateFrame"),

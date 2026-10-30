@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult
+from ..failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -59,6 +60,10 @@ class StickyCondition(BaseCondition):
     def close(self) -> None:
         """Close the child (:meth:`BaseCondition.close`)."""
         self._condition.close()
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """What the wrapped condition says."""
+        return self._condition.failure_category()
 
     def get_details(self) -> dict[str, Any]:
         return {

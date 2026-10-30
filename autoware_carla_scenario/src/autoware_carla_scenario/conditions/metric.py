@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..metrics import BUILT_IN_METRICS, read_metric
+from ..metrics import _FAILURE_CATEGORIES, BUILT_IN_METRICS, read_metric
 from .base import BaseCondition, ScenarioResult
 from .comparison import ComparisonRule, ScalarComparisonRule
+from ..failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -80,6 +81,13 @@ class MetricCondition(BaseCondition):
     def metric(self) -> str:
         """The metric's key."""
         return self._metric
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """What the metric reads: a collision metric
+        :attr:`~FailureCategory.COLLISION`, the weaving ones
+        :attr:`~FailureCategory.STABILITY`; ``None`` for one that reads more
+        than one thing (off the road *or* a collision) or no failure."""
+        return _FAILURE_CATEGORIES.get(self._metric)
 
     def get_details(self) -> dict[str, Any]:
         return {

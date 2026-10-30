@@ -28,12 +28,14 @@ from .conditions import (
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
+from .failure import Failure, FailureCategory, progress_detail
 from .maps.opendrive import map_asset_env_var
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .metrics import (
+    ego_progress,
     reset_ego_motion,
     set_importance_sampling_weight,
     track_ego_motion,
@@ -207,6 +209,42 @@ def _log_ego_opendrive_position(
         )
 
 
+def _status_label(role: str, index: int, cond: BaseCondition) -> str:
+    """A condition's label in the run's statuses: ``fail[2](late)``."""
+    return f"{role}[{index}]({cond.label})"
+
+
+def _failure(
+    condition: str,
+    category: FailureCategory,
+    at: float,
+    message: str,
+    statuses: list[ConditionStatus],
+) -> Failure:
+    """Why a run failed: by *condition* (its :func:`_status_label`, ``""``
+    for none), of *category*, at *at* seconds, with *message*; the other fail
+    conditions that held, from *statuses*.  A run out of time says how the ego ended it
+    (:func:`~autoware_carla_scenario.failure.progress_detail`)."""
+    detail: Optional[str] = None
+    if category == FailureCategory.PROGRESS:
+        progress = ego_progress()
+        if progress is not None:
+            detail = progress_detail(progress[0], progress[1])
+    also = [
+        status.label
+        for status in statuses
+        if status.role == "fail" and status.satisfied and status.label != condition
+    ]
+    return Failure(
+        condition=condition,
+        category=category,
+        at=at,
+        message=message,
+        detail=detail,
+        also_triggered=also,
+    )
+
+
 def _build_condition_status(
     cond: "BaseCondition",
     index: int,
@@ -235,7 +273,7 @@ def _build_condition_status(
         message = "not yet satisfied" if role == "pass" else "not triggered"
 
     return ConditionStatus(
-        label=f"{role}[{index}]({cond.label})",
+        label=_status_label(role, index, cond),
         satisfied=satisfied,
         message=message,
         condition_type=cond_type,
@@ -1697,12 +1735,20 @@ class ScenarioRunner:
                             condition.label,
                             check.message,
                         )
+                        statuses = _condition_statuses(
+                            scenario, world, elapsed, scenario_name
+                        )
                         result = ScenarioResult(
                             passed=False,
                             message=check.message,
                             elapsed_seconds=check.elapsed_seconds,
-                            condition_statuses=_condition_statuses(
-                                scenario, world, elapsed, scenario_name
+                            condition_statuses=statuses,
+                            failure=_failure(
+                                _status_label("fail", i, condition),
+                                scenario.fail_category(i),
+                                check.elapsed_seconds,
+                                check.message,
+                                statuses,
                             ),
                         )
                         break
@@ -1722,13 +1768,19 @@ class ScenarioRunner:
                         tick_count,
                     )
                     reason = ego.termination_reason
+                    message = "Ego entity requested session termination" + (
+                        "" if reason is None else f": {reason}"
+                    )
+                    statuses = _condition_statuses(
+                        scenario, world, elapsed, scenario_name
+                    )
                     result = ScenarioResult(
                         passed=False,
-                        message="Ego entity requested session termination"
-                        + ("" if reason is None else f": {reason}"),
+                        message=message,
                         elapsed_seconds=elapsed,
-                        condition_statuses=_condition_statuses(
-                            scenario, world, elapsed, scenario_name
+                        condition_statuses=statuses,
+                        failure=_failure(
+                            "", FailureCategory.DRIVER, elapsed, message, statuses
                         ),
                     )
                     break

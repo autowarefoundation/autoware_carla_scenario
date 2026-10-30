@@ -46,6 +46,7 @@ from autoware_carla_scenario import (
     debug_markers,
     entity_role,
     environment,
+    failure,
     kinematics,
     measures,
     metrics,
@@ -810,6 +811,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario imports of the checked metrics: every name of its
     # __all__, the values compared below.
     "metrics": (metrics, tuple(metrics.__all__)),
+    # What a scenario imports of the checked failure: every name of its
+    # __all__ (FailureCategory, to register a fail condition with).
+    "failure": (failure, tuple(failure.__all__)),
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),

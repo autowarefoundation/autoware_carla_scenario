@@ -40,6 +40,7 @@ from .entity.registry import register_entity as _register_entity
 from .entity.registry import register_pedestrian_entity as _register_pedestrian_entity
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .failure import FailureCategory
 from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
 from .traffic.base import TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
@@ -122,6 +123,7 @@ class _Registrations:
     post_tick_actions: List[BaseAction]
     pass_conditions: List[BaseCondition]
     fail_conditions: List[BaseCondition]
+    fail_categories: List[Optional[FailureCategory]]
     cover_items: List[CoverItem]
     cross_items: List[CrossItem]
     measures: dict[str, Measure]
@@ -139,6 +141,7 @@ class _Registrations:
         self.post_tick_actions = []
         self.pass_conditions = []
         self.fail_conditions = []
+        self.fail_categories = []
         self.cover_items = []
         self.cross_items = []
         self.measures = {}
@@ -180,6 +183,8 @@ class BaseScenario(ABC):
     _post_tick_actions: List[BaseAction]
     _pass_conditions: List[BaseCondition]
     _fail_conditions: List[BaseCondition]
+    #: The category each fail condition was registered with, by index.
+    _fail_categories: List[Optional[FailureCategory]]
     _cover_items: List[CoverItem]
     _cross_items: List[CrossItem]
     _measures: dict[str, Measure]
@@ -249,6 +254,7 @@ class BaseScenario(ABC):
         self._post_tick_actions = []
         self._pass_conditions = []
         self._fail_conditions = []
+        self._fail_categories = []
         self._cover_items = []
         self._cross_items = []
         self._measures = dict(BUILT_IN_MEASURES)
@@ -837,13 +843,36 @@ class BaseScenario(ABC):
         """
         self._pass_conditions.append(condition)
 
-    def register_fail_condition(self, condition: BaseCondition) -> None:
+    def register_fail_condition(
+        self,
+        condition: BaseCondition,
+        *,
+        category: Optional[FailureCategory] = None,
+    ) -> None:
         """Register a condition that marks the scenario as *failed*.
 
         Args:
             condition: Condition to add to the fail-condition list.
+            category: What a run it fails is a failure of
+                (:mod:`autoware_carla_scenario.failure`); ``None`` to let the
+                condition say (:meth:`BaseCondition.failure_category`).  Give
+                one for a combination of conditions (AND, OR, NOT), which
+                says nothing.
         """
         self._fail_conditions.append(condition)
+        self._fail_categories.append(category)
+
+    def fail_category(self, index: int) -> FailureCategory:
+        """The category of a run that fail condition *index* ends: the one it
+        was registered with, else what it says, else
+        :attr:`~FailureCategory.OTHER`."""
+        # The categories run beside the conditions register_fail_condition()
+        # adds; one added past it has none of its own.
+        categories = self._fail_categories
+        category = categories[index] if index < len(categories) else None
+        if category is None:
+            category = self._fail_conditions[index].failure_category()
+        return FailureCategory.OTHER if category is None else category
 
     # ------------------------------------------------------------------
     # Coverage
@@ -932,6 +961,7 @@ class BaseScenario(ABC):
             taken.post_tick_actions = list(self._post_tick_actions)
             taken.pass_conditions = list(self._pass_conditions)
             taken.fail_conditions = list(self._fail_conditions)
+            taken.fail_categories = list(self._fail_categories)
             taken.cover_items = list(self._cover_items)
             taken.cross_items = list(self._cross_items)
             taken.measures = dict(self._measures)
@@ -947,6 +977,7 @@ class BaseScenario(ABC):
         self._post_tick_actions = list(initial.post_tick_actions)
         self._pass_conditions = list(initial.pass_conditions)
         self._fail_conditions = list(initial.fail_conditions)
+        self._fail_categories = list(initial.fail_categories)
         self._cover_items = list(initial.cover_items)
         self._cross_items = list(initial.cross_items)
         self._measures = dict(initial.measures)

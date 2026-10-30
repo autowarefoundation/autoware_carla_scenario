@@ -12,6 +12,7 @@ import typesafe_carla.carla as carla
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult
+from ..failure import FailureCategory
 
 __all__ = ["CollisionCondition", "CollisionTargetType"]
 
@@ -138,6 +139,10 @@ class CollisionCondition(BaseCondition):
         self._other_is_actor = True
         self._last_attach_attempt: float = -math.inf
         self._cached_result: Optional[ScenarioResult] = None
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """A collision: :attr:`~FailureCategory.COLLISION`."""
+        return FailureCategory.COLLISION
 
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {"min_impulse": self._min_impulse}

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
+from ..failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -54,6 +55,10 @@ class EntityExistenceCondition(BaseCondition):
         self._entity_name = str(entity_name)
         self._quiet = quiet
         self._said_absent = False
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """An entity that vanished: :attr:`~FailureCategory.INFRASTRUCTURE`."""
+        return FailureCategory.INFRASTRUCTURE
 
     def get_details(self) -> dict[str, Any]:
         return {"entity_name": str(self._entity_name)}

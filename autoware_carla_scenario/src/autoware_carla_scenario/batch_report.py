@@ -4,7 +4,8 @@ Free of heavy imports (CARLA, Hydra), so that ``scenario-slurm collect``
 (docs/slurm.md) reports a batch that SLURM ran exactly as a batch run in one
 process reports itself (``examples/run.py``).  A result is anything with a
 :class:`~autoware_carla_scenario.conditions.ScenarioResult`'s attributes
-(``rerun_recording`` optionally: a result without it has no recording).
+(``rerun_recording`` and ``failure`` optionally: a result without them has no
+recording, and says nothing of why it failed).
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from pathlib import Path
 # typing's, not collections.abc's: Codon has no collections.abc (the library
 # check compiles this module, docs/typecheck.md).
 from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
+
+from .failure import Failure
 
 __all__ = ["print_summary", "write_batch_result_json"]
 
@@ -58,6 +61,11 @@ class _Result(Protocol):
         """Optional: a result without it has no recording (see _recording)."""
         return None
 
+    @property
+    def failure(self) -> Failure | None:
+        """Optional: a result without it says nothing of why (see _category)."""
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return dict[str, Any]()
 
@@ -69,6 +77,20 @@ def _recording(result: _Result) -> str | None:
     except AttributeError:
         return None
     return None if recording is None else str(recording)
+
+
+def _category(result: _Result) -> str | None:
+    """Why *result*'s run failed, as ``category`` or ``category: detail``
+    (:mod:`autoware_carla_scenario.failure`), if it says."""
+    try:
+        failure = result.failure
+    except (AttributeError, TypeError, ValueError):
+        # A result without one, or with one this version cannot read.
+        return None
+    if failure is None:
+        return None
+    name = failure.category.name.lower()
+    return name if failure.detail is None else f"{name}: {failure.detail}"
 
 
 def _member(member_json: str) -> str:
@@ -192,6 +214,9 @@ def print_summary(
         tag = "ERROR" if index in errored else "PASS" if result.passed else "FAIL"
         print(f"  [{tag}] {name} ({result.elapsed_seconds:.1f}s)")  # noqa: T201
         if not result.passed:
+            category = _category(result)
+            if category is not None:
+                print(f"         [{category}]")  # noqa: T201
             for line in result.message.splitlines():
                 print(f"         {line}")  # noqa: T201
         if result.condition_statuses:
