@@ -288,6 +288,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "model declares only the T4Recorder and T4Recording the checked "
         "runner drives",
     ),
+    f"{_PACKAGE}.t4_scene": _each(
+        "LOG_SUFFIX MAP_SUFFIX SCENE_SUFFIX T4SceneExport map_resource "
+        "trajectory_log_to_t4_scene write_t4_scene",
+        "writes a run's trajectory log as a T4Scene, which the runner does "
+        "after a run (t4scene.enabled) and scenario-t4scene does from the "
+        "shell, not a scenario; the model declares only the T4SceneExporter "
+        "the checked runner hands each log to",
+    ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
             "the path of the JSON Schema beside the Python module "
@@ -606,6 +614,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "start_sensors and stop_sensors whatever it is"
         ),
     },
+    "T4SceneExporter": _members(
+        "max_distance_m step_s",
+        "the settings the exporter was made with, which only its own export() "
+        "reads; the checked runner calls export() whatever they are",
+    ),
     "T4Recorder": {
         "settings": (
             "the T4Settings the recorder was made with (the sensors, the "
