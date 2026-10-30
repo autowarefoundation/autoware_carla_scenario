@@ -4303,7 +4303,7 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.expected_route_lanelet_ids</code></td>
 <td>list[int]</td>
 <td>varies</td>
-<td>Lanelet IDs the ego must traverse</td>
+<td>Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it</td>
 </tr>
 <tr>
 <td><code>scenario.timeout_seconds</code></td>
@@ -4328,6 +4328,30 @@ one warns that it is ignored and says the above.</p>
 <td>str | null</td>
 <td>null</td>
 <td><code>"left"</code>, <code>"right"</code>, or <code>null</code> for straight</td>
+</tr>
+<tr>
+<td><code>scenario.turn_indicator_before_m</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of <code>turn_direction</code> (<code>left</code> or <code>right</code>); it fails once it has not for <code>turn_indicator_grace_seconds</code>. <code>null</code> disables the check</td>
+</tr>
+<tr>
+<td><code>scenario.turn_indicator_grace_seconds</code></td>
+<td>float</td>
+<td><code>0.5</code></td>
+<td>How long the indicator may be wrong before the run fails</td>
+</tr>
+<tr>
+<td><code>scenario.max_steering_reversals</code></td>
+<td>int | null</td>
+<td>null</td>
+<td>Fail once the steering has turned back this many times since the start (the <code>steering_reversals</code> metric, <a href="../metrics/#weaving">metrics.md</a>). <code>null</code> disables the check</td>
+</tr>
+<tr>
+<td><code>scenario.max_turn_indicator_changes</code></td>
+<td>int | null</td>
+<td>null</td>
+<td>Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the <code>turn_indicator_changes</code> metric). <code>null</code> disables the check</td>
 </tr>
 <tr>
 <td><code>scenario.npc_vehicles</code></td>
@@ -5453,7 +5477,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 04:13:21 UTC"><span class="timeago" datetime="2026-10-30T04:13:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 04:13:21 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 11:38:26 UTC"><span class="timeago" datetime="2026-10-29T11:38:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 11:38:26 UTC">2026-10-29</span>
   </span>
 
     

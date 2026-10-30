@@ -1734,6 +1734,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The built-in metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#weaving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weaving
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1969,6 +1986,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The built-in metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#weaving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weaving
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2147,6 +2181,30 @@ value with the aggregation in the last column (<code>Metric.aggregation</code>).
 <td>Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's <code>p/q</code> and <code>(1-p)/(1-q)</code> (<code>AdversarialTrafficAction</code>); <code>1</code> without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count</td>
 <td>last</td>
 </tr>
+<tr>
+<td><code>lateral_reversals</code></td>
+<td>count</td>
+<td>Not AlpaSim's: how many times so far the ego's drift across its lane turned back by more than 0.1 m (<a href="#weaving">Weaving</a>)</td>
+<td>last</td>
+</tr>
+<tr>
+<td><code>lateral_wobble_m</code></td>
+<td>m</td>
+<td>Not AlpaSim's: how far the ego strayed across its lane about its course over the last 4 s, RMS (<a href="#weaving">Weaving</a>)</td>
+<td>max</td>
+</tr>
+<tr>
+<td><code>steering_reversals</code></td>
+<td>count</td>
+<td>Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.05 of full lock (<a href="#weaving">Weaving</a>)</td>
+<td>last</td>
+</tr>
+<tr>
+<td><code>turn_indicator_changes</code></td>
+<td>count</td>
+<td>Not AlpaSim's: how many times so far the ego's turn indicators changed, between off, left, right and hazard (<a href="#weaving">Weaving</a>)</td>
+<td>last</td>
+</tr>
 </tbody>
 </table>
 <p>Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
@@ -2158,6 +2216,54 @@ Boxes are those of vehicles (<code>vehicle.*</code>) and pedestrians (<code>walk
 are not road users. <code>collision_*</code> reads the boxes, not CARLA's collision
 sensor (<code>CollisionCondition</code>): it sees a collision as AlpaSim does, and tells
 the front from the rear.</p>
+<h3 id="weaving">Weaving<a class="headerlink" href="#weaving" title="Permanent link">&para;</a></h3>
+<p>Three metrics read how the ego weaves from side to side, and a fourth how
+often its turn indicators changed. Unlike the others they read the run so far,
+not one frame: the runner hands the ego's motion to
+<code>autoware_carla_scenario.metrics</code> every tick (<code>track_ego_motion</code>), and they read
+what it has gathered.</p>
+<p>The ego's drift is how far it has moved across its lanes since the run began:
+its velocity across the lane under its centre, summed over time. The lane's
+heading is taken anew every frame, so following a bend is not a drift, and
+moving to the next lane is a drift of a lane's width with no jump at the lane
+line. Off the driving lanes the drift holds until the ego is back on one.</p>
+<ul>
+<li><code>lateral_reversals</code> counts the times the drift turned back by more than
+  0.1 m: it went right, then came back left by 0.1 m or more. This is the
+  reversal count of driver-workload studies (Markkula and Engström, 2006). A
+  lane change is one drift, however long, and adds nothing; a weave adds two a
+  cycle. Under 0.1 m it is the noise of holding a lane.</li>
+<li><code>lateral_wobble_m</code> is how far the drift strayed about its course over the
+  last 4 s: the RMS about the straight line that fits it best there. A weave of
+  0.25 Hz or faster turns back within the window and reads nearly in full
+(about 92% at 0.5 Hz); a lane
+  change, slower, is mostly the course, and adds about a tenth of the lane's
+  width while it lasts. It reads nothing before the third frame.</li>
+<li>In a junction, whose lanes overlap, the drift holds, as it does off the
+  driving lanes; a lane the other way is crossed the ego's way.</li>
+<li><code>steering_reversals</code> counts the times the steering applied to the ego
+  (<code>get_control().steer</code>, <code>1</code> the vehicle's full lock) turned back by more
+  than 0.05, about 3.5 degrees at the wheels of a car that locks at 70. It sees
+  the controller's weaving before the vehicle shows it. Closed loop, a driver
+  policy's controller moves its steer by a few hundredths while it holds a
+  lane or a bend, which the gap leaves out; sawing through a turn is a tenth
+  or more.</li>
+</ul>
+<p><code>turn_indicator_changes</code> counts the changes of the indicators the ego shows
+(its CARLA light state: off, left, right, hazard), from the first frame on: a
+turn signalled and cancelled is two. It is counted apart from the steering, so
+an indicator that flickers through a turn and a steering that saws there each
+read on their own count. A vehicle's light state holds while an indicator is
+commanded, so its blinking is not a change.</p>
+<p>The counts are of the run so far, so a longer run reads more: compare runs of
+one scenario, or fail on a count, not on a rate:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">MetricCondition</span><span class="p">(</span><span class="n">LATERAL_REVERSALS</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">GREATER_THAN</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"weaving"</span><span class="p">)</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">MetricCondition</span><span class="p">(</span><span class="n">LATERAL_WOBBLE_M</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">GREATER_THAN</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"weaving"</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
+</code></pre></div>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
 <thead>
@@ -2195,29 +2301,29 @@ metric satisfies the comparison. The rule defaults to
 <code>GREATER_THAN_OR_EQUAL</code> and the value to <code>1</code>, so an event metric on its own
 reads "it happens". A frame the metric reads nothing in does not satisfy it.
 It is usually a fail condition:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">COLLISION_AT_FAULT</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">OFFROAD</span><span class="p">,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="o">...</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">COLLISION_AT_FAULT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"collision at fault"</span><span class="p">)</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="p">)</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">MetricCondition</span><span class="p">(</span><span class="n">OFFROAD</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"off the road"</span><span class="p">))</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>                <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>                <span class="mf">0.5</span><span class="p">,</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"closer than half a metre"</span><span class="p">,</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>            <span class="p">)</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">COLLISION_AT_FAULT</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">OFFROAD</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        <span class="o">...</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">COLLISION_AT_FAULT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"collision at fault"</span><span class="p">)</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="p">)</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">MetricCondition</span><span class="p">(</span><span class="n">OFFROAD</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"off the road"</span><span class="p">))</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>                <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>                <span class="mf">0.5</span><span class="p">,</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"closer than half a metre"</span><span class="p">,</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>            <span class="p">)</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>        <span class="p">)</span>
 </code></pre></div>
 <p>It composes like any other condition: <code>PersistentCondition</code> to require a
 metric to hold for a while (off the road for more than a second), <code>NotCondition</code>
@@ -2233,9 +2339,9 @@ where the vehicle drives, counts though the vehicle is in its lane, so
 <code>MetricCondition(OFFROAD, ...)</code> fails such runs. To judge a run by how much of
 the box is off instead, use <code>OffRoadFractionCondition(fraction, entity_name,
 *, label)</code>, a condition rather than a metric:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">OffRoadFractionCondition</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">OffRoadFractionCondition</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"offroad"</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">OffRoadFractionCondition</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">OffRoadFractionCondition</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"offroad"</span><span class="p">))</span>
 </code></pre></div>
 <p>Every tick it samples a 5 x 3 grid of points over the entity's bounding box
 (the ego's unless <code>entity_name</code> names another): 5 evenly spaced along its
@@ -2280,7 +2386,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 13:10:33 UTC"><span class="timeago" datetime="2026-10-20T13:10:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 13:10:33 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 05:11:25 UTC"><span class="timeago" datetime="2026-10-30T05:11:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 05:11:25 UTC">2026-10-30</span>
   </span>
 
     
