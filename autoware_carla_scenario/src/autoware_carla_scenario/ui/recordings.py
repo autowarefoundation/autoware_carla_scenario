@@ -375,7 +375,11 @@ def _swap_into_place(staging: Path, target: Path) -> None:
     old: Path | None = None
     if target.exists():
         old = Path(tempfile.mkdtemp(prefix=f".{target.name}.old.", dir=target.parent))
-        os.replace(target, old)
+        try:
+            os.replace(target, old)
+        except OSError:
+            old.rmdir()  # still the empty directory mkdtemp made
+            raise
     try:
         os.replace(staging, target)
     except OSError:

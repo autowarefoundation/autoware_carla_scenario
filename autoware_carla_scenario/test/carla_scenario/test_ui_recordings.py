@@ -401,6 +401,36 @@ def test_a_fetch_replaces_the_old_copy(
     assert sorted(p.name for p in target.parent.iterdir()) == ["0.38.1"]
 
 
+@pytest.mark.parametrize("failing", ["aside", "into place"])
+def test_a_failed_swap_keeps_the_old_copy(
+    tmp_path: Path,
+    converter: _FakeConverter,
+    _cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing: str,
+) -> None:
+    recordings.fetch_web_viewer(
+        tarball=_package_tarball(tmp_path / "old.tgz", "0.38.1", wasm=b"\0asm old")
+    )
+    before = _cache_listing(_cache)
+    replace = os.replace
+    calls = []
+
+    def flaky(src: Path, dst: Path) -> None:
+        calls.append(src)
+        if len(calls) == (1 if failing == "aside" else 2):
+            raise OSError("no room")
+        replace(src, dst)
+
+    monkeypatch.setattr(recordings.os, "replace", flaky)
+    new = _package_tarball(tmp_path / "new.tgz", "0.38.1", wasm=b"\0asm new")
+    with pytest.raises(OSError, match="no room"):
+        recordings.fetch_web_viewer(tarball=new)
+    # The old copy is back in place, and nothing else is left in the cache.
+    assert _cache_listing(_cache) == before
+    assert sorted(p.name for p in (_cache / "rerun-web-viewer").iterdir()) == ["0.38.1"]
+
+
 @pytest.mark.parametrize(
     ("setting", "source", "base_url"),
     [
