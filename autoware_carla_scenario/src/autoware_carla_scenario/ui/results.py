@@ -4,7 +4,9 @@ Each case of a session is read with what it left on disk (``ui.cases``): its
 verdict (``batch_results.json`` or ``{stem}_result.json``), the case it ran (a
 sweep's overrides; the ODD values and buckets it was drawn at, from
 ``{stem}_coverage.json``'s ``case``), its coverage document, and a few metrics
-of how the ego drove, read off its trajectory log (:func:`case_metrics`).
+of how the ego drove, read off its trajectory log (:func:`case_metrics`, which
+hands the ego's ticks to ``ui.drive_metrics``, the box geometry and metric
+arithmetic the library check compiles).
 
 The ODD view is openodd's own coverage component (``openodd.CoverageView``)
 and its case plot (``openodd.CasePlot``), fed the sessions' coverage
@@ -23,6 +25,15 @@ from pathlib import Path
 from typing import Any
 
 from .cases import CaseFiles, case_files, job_dir, session_dir
+
+# The box geometry and the running metrics of the ego's ticks, compiled by the
+# library check; the names case_metrics used stay importable from here.
+from .drive_metrics import DECEL_WINDOW_S as _DECEL_WINDOW_S  # noqa: F401
+from .drive_metrics import DriveMetrics
+from .drive_metrics import _point_segment as _point_segment
+from .drive_metrics import _separated as _separated
+from .drive_metrics import box as _box
+from .drive_metrics import box_distance as _box_distance
 
 __all__ = [
     "CaseResult",
@@ -126,60 +137,7 @@ class CaseResult:
 # ── Metrics off the trajectory log ──────────────────────────────────────────
 
 
-def _box(
-    x: float, y: float, yaw: float, extent: tuple[float, float]
-) -> list[tuple[float, float]]:
-    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
-    ex, ey = extent
-    return [
-        (x + c * dx - s * dy, y + s * dx + c * dy)
-        for dx, dy in ((ex, ey), (-ex, ey), (-ex, -ey), (ex, -ey))
-    ]
-
-
-def _separated(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> bool:
-    for poly in (a, b):
-        for i in range(4):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i + 1) % 4]
-            nx, ny = y2 - y1, x1 - x2
-            pa = [nx * px + ny * py for px, py in a]
-            pb = [nx * px + ny * py for px, py in b]
-            if max(pa) < min(pb) or max(pb) < min(pa):
-                return True
-    return False
-
-
-def _point_segment(
-    p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
-) -> float:
-    ax, ay = a
-    dx, dy = b[0] - ax, b[1] - ay
-    length = dx * dx + dy * dy
-    t = (
-        0.0
-        if length == 0
-        else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / length))
-    )
-    return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
-
-
-def _box_distance(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
-    """The distance between two boxes on the ground (0 when they overlap)."""
-    if not _separated(a, b):
-        return 0.0
-    return min(
-        _point_segment(p, q[i], q[(i + 1) % 4])
-        for p_box, q in ((a, b), (b, a))
-        for p in p_box
-        for i in range(4)
-    )
-
-
 _metrics_cache: dict[str, tuple[float, dict[str, float]]] = {}
-
-#: The span the hardest braking is measured over.
-_DECEL_WINDOW_S = 0.5
 
 
 def case_metrics(trajectory: Path) -> dict[str, float]:
@@ -205,15 +163,7 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
         return cached[1]
     extents: dict[int, tuple[float, float]] = {}
     ego: int | None = None
-    min_gap = math.inf
-    distance = 0.0
-    max_speed = 0.0
-    final_speed: float | None = None
-    max_decel = 0.0
-    stop_time: float | None = None
-    moved = False
-    last: tuple[float, float, float, float] | None = None  # t, x, y, speed
-    window: list[tuple[float, float]] = []  # (t, speed) over the last window
+    drive = DriveMetrics()
     try:
         with trajectory.open(encoding="utf-8") as stream:
             for line in stream:
@@ -246,42 +196,21 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                 for other, state in states.items():
                     if other == ego:
                         continue
-                    gap = _box_distance(
-                        ego_box,
-                        _box(
-                            state[1], state[2], state[6], extents.get(other, (0.3, 0.3))
-                        ),
+                    drive.gap(
+                        _box_distance(
+                            ego_box,
+                            _box(
+                                state[1],
+                                state[2],
+                                state[6],
+                                extents.get(other, (0.3, 0.3)),
+                            ),
+                        )
                     )
-                    min_gap = min(min_gap, gap)
-                if last is not None:
-                    lt, lx, ly, ls = last
-                    distance += math.hypot(me[1] - lx, me[2] - ly)
-                # Braking over a window, not tick to tick: a single tick's
-                # velocity jumps (a spawn, a teleport) would read as braking.
-                window.append((t, speed))
-                while len(window) > 1 and t - window[1][0] >= _DECEL_WINDOW_S:
-                    window.pop(0)
-                wt, ws = window[0]
-                if t - wt >= _DECEL_WINDOW_S:
-                    max_decel = max(max_decel, (ws - speed) / 3.6 / (t - wt))
-                max_speed = max(max_speed, speed)
-                moved = moved or speed > 5.0
-                if moved and stop_time is None and speed < 0.5:
-                    stop_time = t
-                final_speed = speed
-                last = (t, float(me[1]), float(me[2]), speed)
+                drive.tick(t, float(me[1]), float(me[2]), speed)
     except (OSError, ValueError, KeyError, IndexError, TypeError):
         return {}
-    metrics: dict[str, float] = {}
-    if last is not None:
-        metrics["distance_m"] = round(distance, 2)
-        metrics["max_speed_kmh"] = round(max_speed, 2)
-        metrics["final_speed_kmh"] = round(final_speed or 0.0, 2)
-        metrics["max_decel_ms2"] = round(max_decel, 2)
-        if math.isfinite(min_gap):
-            metrics["min_gap_m"] = round(min_gap, 3)
-        if stop_time is not None:
-            metrics["stop_time_s"] = round(stop_time, 2)
+    metrics = drive.to_dict()
     _metrics_cache[str(trajectory)] = (stamp, metrics)
     return metrics
 

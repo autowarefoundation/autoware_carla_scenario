@@ -269,6 +269,8 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.sweeper.bindings",
     "autoware_carla_scenario.sweeper.constraints",
     "autoware_carla_scenario.trajectory.relative_lane",
+    "autoware_carla_scenario.ui.case_paths",
+    "autoware_carla_scenario.ui.drive_metrics",
     "autoware_carla_scenario.ui.runner",
     "autoware_carla_scenario.ui.slurm_options",
     "autoware_carla_scenario.utils",
