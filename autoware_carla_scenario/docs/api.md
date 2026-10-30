@@ -313,6 +313,7 @@ surface, but the helper modules are importable for tooling:
 | `ui.case_paths` | The path guard (`contained`, `session_dir`, `job_dir`), `CaseFiles` and the stems of a directory's cases, which `ui.cases` re-exports; checked by the library check. |
 | `ui.drive_metrics` | The box gaps and the running metrics of the ego's ticks (`DriveMetrics`) that `ui.results.case_metrics` reads a trajectory log with; checked by the library check. |
 | `ui.slurm_launch` | Submitting a batch with `launcher=slurm` from the viewer (`build_command`, `start_submit`), a SLURM batch's progress (`batch_status`), and `scenario-slurm` run on it. |
+| `ui.slurm_options` | The `launcher.*` keys the viewer sets (`SlurmOptions`), the checks of each field (`check_*`), the Hydra overrides they become (`SlurmOptions.overrides`) and the `scenario` command line that submits the batch (`build_command`, given how `scenario` is started); `ui.slurm_launch` reads them off the run panel (`SlurmOptions.from_request`) and re-exports them. |
 | `ui.recordings` | A case's Rerun recording, made on demand with `autoware_carla_scenario_rerun` when installed, and where the Rerun web viewer is loaded from. |
 | `ui.models` | Pydantic models (`SessionSummary`, `SessionItem`, `ConditionNode`, `ScenarioResultView`, `RunProgress`). |
 

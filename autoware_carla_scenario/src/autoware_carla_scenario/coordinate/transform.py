@@ -160,6 +160,31 @@ def lanelet_length(lanelet_id: int) -> float:
     return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
 
 
+def route_road_ids(lanelet_ids: list[int]) -> list[str]:
+    """The OpenDRIVE roads a route of lanelets runs on, each once, in order.
+
+    Each lanelet's road is read halfway along it: a lanelet begins where the
+    one before it ends, and the point there reads as the road before.  A
+    junction's lanelets are left out: its roads overlap, and a point on one
+    reads as another -- a left turn's as the road straight on.  The roads
+    before and after it say which way it is crossed.  A route of junction
+    lanelets alone is read as it is.
+    """
+    # Imported here: the ODD's probes import the coordinate package.
+    from ..odd.probes import lanelet_in_junction  # noqa: PLC0415
+
+    layer = MapManager.get_instance().lanelet_map.laneletLayer
+    plain = [i for i in lanelet_ids if not lanelet_in_junction(layer[i])] or lanelet_ids
+    roads: list[str] = []
+    for lanelet_id in plain:
+        pose = Lanelet2Pose(lanelet_id=lanelet_id, s=lanelet_length(lanelet_id) / 2.0)
+        road = str(to_opendrive(pose).road_id)
+        logger.debug("Lanelet %d -> OpenDRIVE road '%s'", lanelet_id, road)
+        if road not in roads:
+            roads.append(road)
+    return roads
+
+
 def lanelets_ahead(lanelet_id: int, distance_m: float) -> list[int]:
     """A lanelet and the lanelets that continue ahead of it, within a distance.
 
