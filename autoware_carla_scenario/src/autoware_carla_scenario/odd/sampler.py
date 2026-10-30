@@ -47,6 +47,11 @@ traffic backend that models drivers' sight (``sumo``) holds its traffic to
 it.  An ODD that names the visibility itself (the ``visibility`` probe) sets
 it through its knob, ``environment.visibility_m``, whatever the weather.
 
+With ``weights`` in the sweep (module -> share, or a YAML file of them),
+openodd's weighted strategy puts that share of the cases in each module
+named: ``{heavy_rain: 0.3}`` draws 30% of them in heavy rain
+(:func:`weights_from_config`).
+
 With ``flaky`` in the sweep, openodd's :class:`~openodd.FlakySearch` draws
 part of each batch where a small change flips the outcome, learning from the
 runs in ``coverage_from`` that recorded their case and outcome. Every drawn
@@ -64,6 +69,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import yaml
 from openodd.flaky import FlakyMetrics, FlakySearch, ParameterSpace
 from openodd.sampler import OddDraws, OddKnob, OddSample, knobs_from_mapping
 from openodd.sampler import OddSampler as _OddSampler
@@ -87,6 +93,7 @@ __all__ = [
     "sampler_from_config",
     "search_from_config",
     "TIRE_FRICTION_KEY",
+    "weights_from_config",
     "VISIBILITY_KEY",
     "with_tire_friction",
     "with_visibility",
@@ -120,6 +127,7 @@ SAMPLE_FIELDS = {
     "odd",
     "coverage_from",
     "knobs",
+    "weights",
     "flaky",
     "tire_friction",
     "visibility",
@@ -208,6 +216,50 @@ def controls_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob
     return knobs_from_mapping(plain)
 
 
+def weights_from_config(
+    raw: Union[str, Path, Mapping[str, Any], None], base_dir: Optional[Path] = None
+) -> Optional[dict[str, float]]:
+    """The shares of ``sweep.odd_sample.weights``: module -> the fraction of
+    the cases in it, given inline or as the path of a YAML file holding that
+    mapping (relative to *base_dir*). ``None`` when not given.
+
+    The modules are the ODD's own, named in its OpenODD files: the shares do
+    not name its taxonomy (docs/odd.md, "Sampling by shares of the ODD").
+
+    Raises:
+        ValueError: When the file or the mapping is not module -> number.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (str, Path)):
+        path = Path(raw)
+        if not path.is_absolute() and base_dir is not None:
+            path = base_dir / path
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except OSError as e:
+            raise ValueError(
+                f"sweep.odd_sample.weights: cannot read {path}: {e}"
+            ) from e
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"sweep.odd_sample.weights: {path} must hold module -> share"
+            )
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            "sweep.odd_sample.weights: expected module -> share, or a YAML file of them"
+        )
+    weights: dict[str, float] = {}
+    for module, share in raw.items():
+        if isinstance(share, bool) or not isinstance(share, (int, float)):
+            raise ValueError(
+                f"sweep.odd_sample.weights: the share of {module} must be a number, "
+                f"got {share!r}"
+            )
+        weights[str(module)] = float(share)
+    return weights
+
+
 def sampler_from_config(
     raw: Mapping[str, Any],
     *,
@@ -242,10 +294,12 @@ def search_from_config(
     ``flaky``), and the case count (``None`` when not given), from a
     ``sweep.odd_sample`` mapping.
 
-    Fields: ``count``, ``seed``, ``strategy``, ``odd`` (else *odd*, the
+    Fields: ``count``, ``seed``, ``strategy`` (``weighted`` with ``weights``,
+    else ``uniform``, when not given), ``odd`` (else *odd*, the
     run's), ``coverage_from`` (paths to earlier runs' coverage files or
     directories: the coverage ``strategy: coverage`` aims past, and the runs
-    the flaky search learns from), ``knobs``, and ``flaky``
+    the flaky search learns from), ``knobs``, ``weights``
+    (:func:`weights_from_config`), and ``flaky``
     (:data:`FLAKY_FIELDS`; ``{}`` or ``true`` for the defaults).
 
     *controls* are the scenario's own (its config's ``controls``), keyed by
@@ -282,14 +336,15 @@ def search_from_config(
     if resolved:
         coverage = load_and_merge(resolved)
     seed = int(raw.get("seed", 0))
-    strategy = str(raw.get("strategy", "uniform"))
+    strategy = raw.get("strategy")
     sampler = OddSampler(
         definition,
         controls_from_mapping(raw.get("knobs")),
         controls=controls_from_mapping(controls),
         seed=seed,
-        strategy=strategy,
+        strategy=None if strategy is None else str(strategy),
         coverage=coverage,
+        weights=weights_from_config(raw.get("weights"), base_dir),
         drawn=drawn.of(definition) if drawn is not None else (),
     )
     search = None

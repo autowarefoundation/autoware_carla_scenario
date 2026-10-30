@@ -74,7 +74,7 @@ See [ODD](odd.md).
 | `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
 | `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
 | `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
-| `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
+| `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries, weights)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first; `weights={module: share}` (`strategy="weighted"`) puts that share of the cases in each module. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
 | `OddKnob(key, *, values, scale, offset, integer, range)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
