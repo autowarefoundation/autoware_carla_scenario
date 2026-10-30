@@ -11,12 +11,13 @@ Free of heavy imports, so the light ``scenario-slurm`` commands can read it.
 
 from __future__ import annotations
 
+import dataclasses
 import fnmatch
 import math
 import os
 import shutil
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
@@ -41,35 +42,43 @@ LAUNCHER_TYPES = ("local", "slurm")
 #: script holding them is a file in the batch's output directory, and a name
 #: :data:`SENSITIVE_NAME_PATTERNS` matches is left out even when a pattern
 #: here matches it (:func:`snapshot_environment`).
-DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = (
-    "PATH",
-    "LD_LIBRARY_PATH",
-    "PYTHONPATH",
-    "PYTHONHOME",
-    "VIRTUAL_ENV",
-    "CONDA_PREFIX",
-    "CARLA_*",
-    "AUTOWARE_*",
-    "ONEPLANNER_*",
-    "TYPESAFE_CARLA_*",
-    "GLIBC_TUNABLES",
-    "MALLOC_*",
-    "CUDA_HOME",
-    "CUDA_PATH",
-    "CUDAToolkit_ROOT",
+#: ``tuple([...])``, not a tuple display: the library check reads it as the
+#: ``List[str]`` the ``env_passthrough`` field it defaults is checked as
+#: (docs/typecheck.md).
+DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = tuple(
+    [
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "CARLA_*",
+        "AUTOWARE_*",
+        "ONEPLANNER_*",
+        "TYPESAFE_CARLA_*",
+        "GLIBC_TUNABLES",
+        "MALLOC_*",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "CUDAToolkit_ROOT",
+    ]
 )
 
 
 #: Names never recorded through a pattern (case-insensitive): a secret's value
 #: would be written into the manifest and the job scripts.  A variable named
 #: exactly -- not through a ``*`` -- on ``env_passthrough``, or in
-#: ``launcher.env``, is recorded all the same.
-SENSITIVE_NAME_PATTERNS: tuple[str, ...] = (
-    "*TOKEN*",
-    "*SECRET*",
-    "*KEY*",
-    "*PASSWORD*",
-    "*CREDENTIAL*",
+#: ``launcher.env``, is recorded all the same.  ``tuple([...])``, as
+#: :data:`DEFAULT_ENV_PASSTHROUGH` is.
+SENSITIVE_NAME_PATTERNS: tuple[str, ...] = tuple(
+    [
+        "*TOKEN*",
+        "*SECRET*",
+        "*KEY*",
+        "*PASSWORD*",
+        "*CREDENTIAL*",
+    ]
 )
 
 
@@ -249,7 +258,7 @@ class SlurmSettings:
         """
         data = dict(launcher or {})
         data.pop("type", None)
-        known = {f.name for f in fields(cls)}
+        known = {f.name for f in dataclasses.fields(cls)}
         unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(
@@ -330,7 +339,7 @@ class SlurmSettings:
 
     def to_dict(self) -> dict[str, Any]:
         """A JSON-serialisable copy, as the manifest stores it."""
-        data = asdict(self)
+        data = dataclasses.asdict(self)
         data["env"] = dict(self.env)
         for key in ("extra_sbatch_args", "env_passthrough", "setup"):
             data[key] = list(data[key])

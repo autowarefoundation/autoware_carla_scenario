@@ -1514,7 +1514,7 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     the node at ``workspace/OnePlanner`` in its user's home, which is not the
     submit host's: each job finds it through ``remote_cwd``, relative to the
     home the node's passwd database gives it."""
-    from autoware_carla_scenario.slurm import cli, submit
+    from autoware_carla_scenario.slurm import cli, scripts
 
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     tmp: Path = fake_slurm.tmp
@@ -1537,7 +1537,7 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     getent.chmod(0o755)
     node_tmp = tmp / "node_tmp"
     node_tmp.mkdir()
-    mp.setattr(submit, "REMOTE_EARLY_OUTPUT_DIR", str(node_tmp))
+    mp.setattr(scripts, "REMOTE_EARLY_OUTPUT_DIR", str(node_tmp))
     mp.setenv("HOME", str(tmp / "submit_home"))
     mp.chdir(submit_side)
     output = submit_side / "outputs" / "2026-10-19" / "12-00-00"

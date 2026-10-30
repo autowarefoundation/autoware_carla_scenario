@@ -205,6 +205,9 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.route.model",
     "autoware_carla_scenario.route.positions",
     "autoware_carla_scenario.route.search",
+    "autoware_carla_scenario.slurm",
+    "autoware_carla_scenario.slurm.scripts",
+    "autoware_carla_scenario.slurm.settings",
     "autoware_carla_scenario.sweeper.isolation",
     "autoware_carla_scenario.sweeper.map_loader",
     "autoware_carla_scenario.t4_scene._proto",
@@ -315,6 +318,13 @@ _CONSTRAINT_SPECS = (
     "`if TYPE_CHECKING:`"
 )
 
+#: The reason of what reads a value of the ``launcher`` config.
+_LAUNCHER_VALUE = (
+    "takes a value of the `launcher` config of any type (`Any`: a Hydra "
+    "node's), which Codon cannot express; only SlurmSettings.from_mapping, "
+    "itself uncalled, calls it"
+)
+
 #: The reason of a function that reads a YAML document's values.
 _YAML = (
     "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
@@ -422,6 +432,12 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.sweeper.isolation._request_pdeathsig": "calls Linux's prctl through ctypes (imported inside it), which Codon has nothing for; _die_with_parent calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.sweeper.isolation._run_in_child": "takes the signal mask signal.pthread_sigmask() returns, a `set[int | signal.Signals]`, which Codon cannot express (a set of a union); _launch_isolated calls it with the mask it holds, so its body is compiled through it",
     "autoware_carla_scenario.sweeper.constraints.parse_constraint": _YAML,
+    "autoware_carla_scenario.slurm.settings.launcher_type": "takes the run's config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express",
+    "autoware_carla_scenario.slurm.settings._optional_str": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings._optional_int": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings.SlurmSettings.from_mapping": "takes the `launcher` config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the settings with `**` of a `dict[str, Any]`",
+    "autoware_carla_scenario.slurm.settings.SlurmSettings.to_dict": "returns the settings as the manifest stores them (`dataclasses.asdict()`), a `dict[str, Any]` of mixed value types, which Codon cannot express",
+    "autoware_carla_scenario.slurm.settings.SlurmSettings.replace": "takes `**changes: Any` and reads them, merged into to_dict()'s `dict[str, Any]`, back with from_mapping, which Codon cannot express",
     "autoware_carla_scenario.t4_settings.T4Settings.from_driver": "takes the `t4` config section (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with `**` of a `dict[str, Any]`",
     "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.maps.config._setting": "reads one `map` setting off a config of any shape (`map_config: Any`: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it",
@@ -515,14 +531,12 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (argparse, jinja2)",
     "autoware_carla_scenario.scaffold.generator": "imports argparse, keyword, templating (jinja2) and, inside a function, authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked",
     "autoware_carla_scenario.serve_cli": "imports argparse and ipaddress",
-    "autoware_carla_scenario.slurm": "re-exports slurm.settings (`dataclasses.asdict()` and `fields()`, `Mapping[str, Any]`), which is not checked",
-    "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.collect, slurm.submit and slurm.settings, which are not checked",
+    "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked",
     "autoware_carla_scenario.slurm.collect": "imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (`dict[str, Any]`)",
-    "autoware_carla_scenario.slurm.manifest": "imports more of os than its shim declares (`os.fdopen()`); reads and writes JSON documents of values of any type (`Any`)",
+    "autoware_carla_scenario.slurm.manifest": "imports more of os than its shim declares (`os.fdopen()`); reads and writes JSON documents of values of any type (`Any`); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths",
     "autoware_carla_scenario.slurm.ports": "imports fcntl, socket, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.access()`, `os.O_CREAT`, `os.O_RDONLY`); first_slot() takes `dict[str, str] | os._Environ[str]`, which Codon cannot express",
-    "autoware_carla_scenario.slurm.settings": "imports more of dataclasses than its shim declares (`asdict()`, `fields()`); reads the launcher config as `Mapping[str, Any]` and builds `SlurmSettings(**options)` from a `dict[str, Any]`, which Codon cannot express",
-    "autoware_carla_scenario.slurm.submit": "imports omegaconf (inside functions), slurm.manifest, slurm.settings and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.O_CREAT`, `os.O_WRONLY`, `os.O_TRUNC`); takes the manifest as `dict[str, Any]` and a function as `Callable[..., Any]`, which Codon cannot express",
-    "autoware_carla_scenario.slurm.worker": "imports socket, traceback, errno, fcntl (inside a function), `contextlib.contextmanager`, more of os, threading and importlib than their shims declare (`os.open()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and slurm.manifest, slurm.ports, slurm.settings and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (`Any`)",
+    "autoware_carla_scenario.slurm.submit": "imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.O_CREAT`, `os.O_WRONLY`, `os.O_TRUNC`); takes the manifest as `dict[str, Any]` and a function as `Callable[..., Any]`, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts",
+    "autoware_carla_scenario.slurm.worker": "imports socket, traceback, errno, fcntl (inside a function), `contextlib.contextmanager`, more of os, threading and importlib than their shims declare (`os.open()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (`Any`)",
     "autoware_carla_scenario.sweeper": "re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)",
     "autoware_carla_scenario.sweeper.expand": "imports omegaconf, and openodd inside a function; imports `OddDraws` (under `TYPE_CHECKING`) and, inside a function, `ODD_CASE_KEY`, `encode_case()`, `search_from_config()` and `with_tire_friction()` from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as `Any` and `Mapping[..., Any]`, which Codon cannot express",
     "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper": "imports omegaconf, hydra, tqdm; its cases are forked, stopped and waited for by the checked sweeper.isolation",
