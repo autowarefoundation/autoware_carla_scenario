@@ -79,6 +79,9 @@ def root(tmp_path: Path) -> Path:
         ("out", "key.txt"),
         ("in", "..", "..", "secret"),
         ("in/../../secret",),
+        # A sibling named like the root but for its case.
+        ("..", "Root"),
+        ("..", "root", "..", "secret"),
     ],
 )
 def test_contained_refuses_a_way_out_of_the_root(
@@ -99,6 +102,11 @@ def test_contained_refuses_a_way_out_of_the_root(
         (("missing", "x.json"), "missing/x.json"),
         (("in",), "in"),
         (("in", "b"), "in/b"),
+        (("a/",), "a"),
+        (("..", "root", "a"), "../root/a"),
+        # Windows separators are a name's characters on POSIX, not a way up.
+        (("a\\..\\..\\secret",), "a\\..\\..\\secret"),
+        (("x" * 300,), "x" * 300),
     ],
 )
 def test_contained_keeps_a_path_under_the_root(
@@ -133,12 +141,44 @@ def test_contained_refuses_a_symlink_loop(root: Path) -> None:
         ("batch", "2026-01-01", "00 00"),
         ("outputs", "2026-01-01", "00-00-00"),
         ("", "2026-01-01", "00-00-00"),
+        # Escapes a URL or another script spells ".." with: no such name.
+        ("batch", "%2e%2e", "00-00-00"),
+        ("batch", "..%2f", "00-00-00"),
+        ("batch", "\uff0e\uff0e", "00-00-00"),
+        ("batch", "\u2025", "00-00-00"),
+        ("batch", "..\u0338", "00-00-00"),
+        ("batch", "..\r", "00-00-00"),
+        ("batch", "2026-01-01/", "00-00-00"),
+        ("batch", "C:\\x", "00-00-00"),
+        ("batch", "x" * 256, "00-00-00"),
+        # The type is matched as written.
+        ("Batch", "2026-01-01", "00-00-00"),
+        ("MULTIRUN", "2026-01-01", "00-00-00"),
+        (" multirun", "2026-01-01", "00-00-00"),
+        ("multirun\n", "2026-01-01", "00-00-00"),
     ],
 )
 def test_session_dir_refuses_names_that_make_no_session(
     tmp_path: Path, session_type: str, date: str, time: str
 ) -> None:
     assert case_paths.session_dir(tmp_path, session_type, date, time) is None
+
+
+@pytest.mark.parametrize("name", ["..\n", ".\n", "...", "x" * 255])
+def test_session_dir_keeps_an_odd_name_under_the_base(
+    tmp_path: Path, name: str
+) -> None:
+    # ``$`` matches before a final newline, so "..\n" passes the name test,
+    # but it names a directory "..\n", not the parent: the guard still keeps
+    # the session under ``outputs/``.
+    found = case_paths.session_dir(tmp_path, "batch", name, "00-00-00")
+    assert found is None or found.resolve().is_relative_to(
+        (tmp_path / "outputs").resolve()
+    )
+    job = case_paths.job_dir(tmp_path, name, "00-00-00", 10**30)
+    assert job is None or job.resolve().is_relative_to(
+        (tmp_path / "multirun").resolve()
+    )
 
 
 def test_session_dir_refuses_a_session_symlinked_out_of_the_base(
