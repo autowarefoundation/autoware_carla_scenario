@@ -164,7 +164,12 @@ ODD, aimed at what earlier runs left uncovered, add a `sweep.odd_sample`
 `autoware.launcher.type=command` runs a command of your own instead, as a
 process group stopped with `SIGINT`, then `SIGTERM`, then `SIGKILL`. It is
 sent `SIGTERM` if the process that started it dies -- a sweeper job killed at
-its timeout -- so it does not outlive the job. `{bridge_address}`, `{index}` and `{name}`
+its timeout -- so it does not outlive the job. It starts with `SIGINT` and
+`SIGQUIT` at their defaults even when the run has them ignored, as a run in the
+background (every SLURM task, a `scenario ... &` in a script) does, so the
+`SIGINT` still shuts `ros2 launch` down cleanly rather than leaving it to the
+`SIGTERM` after `stop_timeout_s`; the Docker launcher's `docker run` starts
+the same way. `{bridge_address}`, `{index}` and `{name}`
 are filled in, and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
 `{scenario_bridge}` is a shell command that runs the `scenario_bridge` node with
 that address and `autoware.launcher.bridge_parameters`, for the command to run

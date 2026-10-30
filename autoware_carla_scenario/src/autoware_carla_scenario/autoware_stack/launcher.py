@@ -168,6 +168,16 @@ class AutowareLauncher(Protocol):
 #: kills this process's group (a sweeper does that to a job past its timeout),
 #: so it is told directly instead.  A wrapper rather than ``preexec_fn``, which
 #: would run Python in a forked copy of this process and its gRPC threads.
+#:
+#: It also hands the command ``SIGINT`` and ``SIGQUIT`` at their defaults
+#: (#759).  A run started in the background -- every SLURM task, any
+#: ``scenario ... &`` in a script -- has them ignored by the shell, ``exec``
+#: and ``Popen`` keep an ignored signal ignored, and ``ros2 launch`` only
+#: hears ``SIGINT`` through the handler Python installs when it starts with
+#: the default: inheriting ``SIG_IGN``, it would sit out the ``SIGINT``
+#: :meth:`ProcessGroup.stop` asks it to shut down with and be killed by the
+#: ``SIGTERM`` after it instead.  The run itself keeps ignoring them, as a
+#: background job should; only the stack it stops with ``SIGINT`` gets them.
 _DIE_WITH_PARENT = (
     "import ctypes, os, signal, sys\n"
     "parent = int(sys.argv[1])\n"
@@ -177,14 +187,18 @@ _DIE_WITH_PARENT = (
     "    pass\n"
     "if os.getppid() != parent:\n"
     "    sys.exit(143)\n"
+    "signal.signal(signal.SIGINT, signal.SIG_DFL)\n"
+    "signal.signal(signal.SIGQUIT, signal.SIG_DFL)\n"
     "os.execvp(sys.argv[2], sys.argv[2:])\n"
 )
 
 
 def _dying_with_parent(argv: Sequence[str]) -> list[str]:
-    """*argv*, run so that it is sent ``SIGTERM`` when this process dies (Linux)."""
-    if sys.platform != "linux":
-        return list(argv)
+    """*argv*, run so that it is sent ``SIGTERM`` when this process dies (Linux).
+
+    On every platform it starts with ``SIGINT`` and ``SIGQUIT`` at their
+    defaults, whatever this process has them at (#759).
+    """
     return [sys.executable, "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
 
 

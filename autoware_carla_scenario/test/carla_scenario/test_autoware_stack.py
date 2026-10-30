@@ -198,6 +198,85 @@ def test_process_group_stop_takes_the_children_too(tmp_path: Path) -> None:
     _wait_for(lambda: not _alive(child))
 
 
+_BACKGROUND_PARENT = """\
+import json, signal, sys, time
+from pathlib import Path
+from autoware_carla_scenario.autoware_stack import ProcessGroup
+
+out = Path(sys.argv[1])
+child_out = out.with_suffix(".child")
+child = (
+    "import json, os, signal, sys, time\\n"
+    "json.dump({'int_ignored': signal.getsignal(signal.SIGINT) == signal.SIG_IGN,"
+    " 'quit_default': signal.getsignal(signal.SIGQUIT) == signal.SIG_DFL},"
+    " open(sys.argv[1] + '.tmp', 'w'))\\n"
+    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\\n"
+    "time.sleep(120)\\n"
+)
+group = ProcessGroup([sys.executable, "-c", child, str(child_out)], stop_timeout_s=60.0)
+out.with_suffix(".pid").write_text(str(group.pid))
+deadline = time.monotonic() + 60.0
+while not child_out.exists():
+    if time.monotonic() > deadline:
+        break
+    time.sleep(0.05)
+code = group.stop()
+json.dump(
+    {
+        "parent_int_ignored": signal.getsignal(signal.SIGINT) == signal.SIG_IGN,
+        "child": json.loads(child_out.read_text()) if child_out.exists() else None,
+        "code": code,
+    },
+    open(out, "w"),
+)
+"""
+
+
+def test_process_group_child_hears_sigint_from_a_background_run(
+    tmp_path: Path,
+) -> None:
+    """A run with SIGINT ignored (a background job) still stops its stack with it (#759).
+
+    The shell starts a background job with ``SIGINT`` and ``SIGQUIT`` ignored;
+    the stack must not inherit that, or the ``SIGINT`` :meth:`stop` sends is
+    lost and only the ``SIGTERM`` after it, a long timeout later, stops it.
+    """
+    script = tmp_path / "parent.py"
+    script.write_text(_BACKGROUND_PARENT)
+    out = tmp_path / "result.json"
+    pid_file = out.with_suffix(".pid")
+
+    def ignore_sigint() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGQUIT, signal.SIG_IGN)
+
+    parent = subprocess.Popen(  # noqa: S603 - a fixed test command
+        [sys.executable, str(script), str(out)],
+        preexec_fn=ignore_sigint,  # noqa: PLW1509 - the point of the test
+        start_new_session=True,
+    )
+    try:
+        # Generous: the parent only exits this late if SIGINT went unheeded
+        # and the stop fell through to SIGTERM after stop_timeout_s (60 s).
+        parent.wait(timeout=120)
+    finally:
+        for pgid in (
+            parent.pid,
+            *([int(pid_file.read_text())] if pid_file.exists() else []),
+        ):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        parent.wait()
+
+    result = json.loads(out.read_text())
+    assert result["parent_int_ignored"] is True
+    assert result["child"] == {"int_ignored": False, "quit_default": True}
+    # Python dies of the SIGINT it did not catch; a SIGTERM would be -15.
+    assert result["code"] == -signal.SIGINT
+
+
 def test_process_group_logs_output(tmp_path: Path) -> None:
     log = tmp_path / "logs" / "out.log"
     group = ProcessGroup(["bash", "-c", "echo hello"], log_path=log)
