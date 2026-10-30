@@ -97,6 +97,8 @@ def test_a_submit_host_with_other_paths_sets_the_node_s() -> None:
         ("setup", "echo ${HOME}", "rather than"),
         ("env", "X=${HOME}", "no \\$\\{"),
         ("env", "X=a${oc.env:HOME}", "exported as written"),
+        ("setup", "module load a \\", "ends in a backslash"),
+        ("setup", "echo \\\\\\", "ends in a backslash"),
     ],
 )
 def test_options_sbatch_would_not_take_are_refused(
@@ -220,6 +222,65 @@ def test_a_backslash_is_not_doubled() -> None:
     assert SlurmOptions(env={"X": "null"}).overrides()[-1] == "++launcher.env.X='null'"
     # A setup line may hold a backslash now that it is escaped as Hydra reads it.
     assert SlurmOptions.from_request({"setup": "echo a\\b"}).setup == ["echo a\\b"]
+    # One that ends in an escaped backslash ends there.
+    assert SlurmOptions.from_request({"setup": "echo a\\\\"}).setup == ["echo a\\\\"]
+
+
+def test_the_job_script_runs_the_fields_as_written(tmp_path: Path) -> None:
+    """From the panel's fields to the job script: Hydra parses the overrides
+    into the launcher config, OmegaConf resolves it, and the script exports
+    each env value and runs each setup line exactly as typed."""
+    from hydra._internal.config_loader_impl import ConfigLoaderImpl
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.slurm import submit
+    from autoware_carla_scenario.slurm.manifest import BatchLayout
+    from autoware_carla_scenario.slurm.settings import SlurmSettings
+
+    env = {
+        "A": "a\\b",
+        "B": "C:\\dir\\",
+        "C": "it's \\'q\\' \"d\" $HOME `x` *",
+        "D": "null",
+        "E": "",
+    }
+    setup = ["X=a\\b", "Y='c\\'", 'Z="$X"\\\\']
+    options = SlurmOptions.from_request({"env": env, "setup": "\n".join(setup)})
+    cfg = OmegaConf.create({"launcher": {"type": "slurm", "setup": [], "env": {}}})
+    ConfigLoaderImpl._apply_overrides_to_config(
+        OverridesParser.create().parse_overrides(options.overrides()[1:]), cfg
+    )
+    launcher = OmegaConf.to_container(cfg.launcher, resolve=True)
+    settings = SlurmSettings.from_mapping(launcher)  # type: ignore[arg-type]
+    assert settings.setup == tuple(setup)
+    assert dict(settings.env) == env
+    script = submit.job_script(
+        BatchLayout(tmp_path),
+        {"python": "python3", "cwd": str(tmp_path), "env": {}},
+        settings,
+        0,
+    ).splitlines()
+    start = script.index("# launcher.setup") + 1
+    assert script[start : start + len(setup)] == setup
+    body = script[start : script.index("# launcher.env") + 1 + len(env)]
+    names = [*env, "X", "Y", "Z"]
+    dump = "".join(f'printf "%s\\0" "${{{n}-}}";' for n in names)
+    done = subprocess.run(
+        ["bash", "-c", "\n".join([*body, dump])],
+        capture_output=True,
+        check=True,
+    )
+    values = done.stdout.decode().split("\0")[:-1]
+    # The setup lines as bash reads them: `a\b` is `ab`, `'c\'` is `c\`.
+    assert values == [*env.values(), "ab", "c\\", "ab\\"]
+
+
+def test_a_command_that_cannot_be_run_fails_the_submission(tmp_path: Path) -> None:
+    record = slurm_launch.Submission(command=["scenario", "x\0y"])
+    slurm_launch._submit(record.command, tmp_path, record)
+    assert record.state == "failed"
+    assert "Could not run" in record.output
 
 
 def test_the_command_submits_and_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:

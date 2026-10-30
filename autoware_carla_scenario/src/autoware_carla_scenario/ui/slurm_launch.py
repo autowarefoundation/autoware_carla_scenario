@@ -226,6 +226,14 @@ class SlurmOptions:
                     f"setup line {line!r}: write $NAME rather than ${{NAME}} "
                     "(or set launcher.setup in a config)"
                 )
+            # The job script holds each line as written: a line ending in an
+            # unescaped backslash would run on into the next line the script
+            # has (`set -u`, say), not end where the field's line does.
+            if (len(line) - len(line.rstrip("\\"))) % 2:
+                raise ValueError(
+                    f"setup line {line!r} ends in a backslash: write each command "
+                    "on one line"
+                )
         return cls(
             partition=text("partition"),
             array_parallelism=number("array_parallelism", int),
@@ -344,7 +352,7 @@ def _submit(command: list[str], base: Path, record: Submission) -> None:
         )
         output = "\n".join(s for s in (done.stdout, done.stderr) if s)
         returncode = done.returncode
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
         output, returncode = f"Could not run {command[0]}: {exc}", None
     match = None
     for match in _OUTPUTS_IN.finditer(output):
