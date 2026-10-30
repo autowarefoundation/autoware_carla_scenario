@@ -555,6 +555,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.t4_scene._proto.t4_scene_pb2": "imports google.protobuf",
     "autoware_carla_scenario.t4_scene.exporter": "hands each log to t4_scene.convert, which is not checked; t4_scene.codon models the T4SceneExporter scenario_runner and scenario_queue hold",
     "autoware_carla_scenario.t4_scene.convert": "reads JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) with orjson, imports numpy.typing (`NDArray`), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); an offline converter no checked module imports",
+    "autoware_carla_scenario.t4_scene.live": "builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (`NDArray`); entity.carla_driver_entity (excluded) is all that uses it",
     "autoware_carla_scenario.t4_scene.map_resource": "imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (`TemporaryDirectory()`), and builds protobuf messages (t4_scene._proto)",
     "autoware_carla_scenario.templating": "imports jinja2; toml_string() takes `object`",
     "autoware_carla_scenario.tools.detect_no_3d_model_lanelets": "imports omegaconf, yaml, tqdm, argparse",

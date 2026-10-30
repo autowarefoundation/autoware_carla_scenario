@@ -319,8 +319,7 @@ class TrajectoryRecorder:
     def start(self, world: carla.World) -> None:
         """Open the file and write the world and its traffic lights."""
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._out = self.path.open("wb", buffering=0)
+            self._out = self._open()
             # The run's map, not a fresh get_map(): only its name is wanted,
             # and CARLA builds the whole road network for one.
             map_name = run_carla_map(world).name
@@ -338,6 +337,11 @@ class TrajectoryRecorder:
                 self._emit(_light_record(tl))
         except Exception:
             self._fail("could not start")
+
+    def _open(self) -> IO[bytes]:
+        """The stream the records go to: the file at :attr:`path`."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        return self.path.open("wb", buffering=0)
 
     def record(self, world: carla.World, elapsed: float) -> None:
         """Write the tick the world was just stepped to, at scenario time *elapsed*."""

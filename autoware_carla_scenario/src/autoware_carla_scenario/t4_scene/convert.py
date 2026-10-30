@@ -77,6 +77,7 @@ _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
 _DTYPES = {
     "?": pb.NumericArray.BOOL,
     "i8": pb.NumericArray.INT64,
+    "f4": pb.NumericArray.FLOAT32,
     "f8": pb.NumericArray.FLOAT64,
 }
 #: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
@@ -129,6 +130,61 @@ class _Log:
         default_factory=dict
     )
     result: Optional[dict[str, Any]] = None
+    #: Ticks between the scene's rows: only the ticks on that grid are kept.
+    step_frames: int = 1
+    #: Every light's state as of the last tick fed, folded from the deltas.
+    current_lights: dict[int, str] = field(default_factory=dict)
+
+    def feed(self, record: Mapping[str, Any]) -> None:
+        """Take one trajectory-log record, as the log holds it, in order."""
+        kind = record.get("type")
+        if kind == "tick":
+            frame = int(record["frame"])
+            if self.first_frame < 0:
+                self.first_frame = frame
+            self.last_frame = frame
+            # Light states are deltas: fold every tick's in, grid or not,
+            # into a new dict, so the rows share one until a light changes.
+            changes = record.get("lights")
+            if changes:
+                self.current_lights = {
+                    **self.current_lights,
+                    **{int(i): str(v) for i, v in changes.items()},
+                }
+            if (frame - self.first_frame) % self.step_frames == 0:
+                states = np.asarray(record["actors"], dtype=np.float64).reshape(-1, 10)
+                self.rows[frame] = (states, self.current_lights)
+        elif kind == "actor":
+            self.actors[int(record["id"])] = _Actor(
+                type_id=str(record["type_id"]),
+                role=str(record.get("role") or ""),
+                extent=_xyz(record["extent"]),
+                center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
+            )
+        elif kind == "rear_axle":
+            self.rear_axles[int(record["id"])] = float(record["offset"])
+        elif kind == "turn_indicators":
+            for actor_id, state in record["states"].items():
+                changes = self.turn_indicators.setdefault(int(actor_id), ([], []))
+                changes[0].append(int(record["frame"]))
+                changes[1].append(str(state))
+        elif kind == "world":
+            self.world = dict(record)
+        elif kind == "map":
+            self.map = dict(record)
+        elif kind == "traffic_light":
+            self.lights.append(dict(record))
+        elif kind == "spawn" and record.get("id") is not None:
+            self.spawned.setdefault(int(record["id"]), int(record["frame"]))
+        elif kind == "despawn" and record.get("id") is not None:
+            self.despawned.setdefault(int(record["id"]), int(record["frame"]))
+        elif kind == "result":
+            self.result = dict(record)
+
+    def forget_before(self, frame: int) -> None:
+        """Drop the rows before *frame*: a live log keeps only a window."""
+        for old in [f for f in self.rows if f < frame]:
+            del self.rows[old]
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
         """The (N, 10) actor states of the tick on *frame*; none without one."""
@@ -146,8 +202,7 @@ class _Log:
 
 
 def _read_log(path: Path, step_frames: int) -> _Log:
-    log = _Log()
-    lights: dict[int, str] = {}
+    log = _Log(step_frames=step_frames)
     with path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
             if not line.strip():
@@ -158,48 +213,7 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                 raise ValueError(
                     f"{path}:{number}: not a JSON line ({error})"
                 ) from None
-            kind = record.get("type")
-            if kind == "tick":
-                frame = int(record["frame"])
-                if log.first_frame < 0:
-                    log.first_frame = frame
-                log.last_frame = frame
-                # Light states are deltas: fold every tick's in, grid or not,
-                # into a new dict, so the rows share one until a light changes.
-                changes = record.get("lights")
-                if changes:
-                    lights = {**lights, **{int(i): str(v) for i, v in changes.items()}}
-                if (frame - log.first_frame) % step_frames == 0:
-                    states = np.asarray(record["actors"], dtype=np.float64).reshape(
-                        -1, 10
-                    )
-                    log.rows[frame] = (states, lights)
-            elif kind == "actor":
-                log.actors[int(record["id"])] = _Actor(
-                    type_id=str(record["type_id"]),
-                    role=str(record.get("role") or ""),
-                    extent=_xyz(record["extent"]),
-                    center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
-                )
-            elif kind == "rear_axle":
-                log.rear_axles[int(record["id"])] = float(record["offset"])
-            elif kind == "turn_indicators":
-                for actor_id, state in record["states"].items():
-                    changes = log.turn_indicators.setdefault(int(actor_id), ([], []))
-                    changes[0].append(int(record["frame"]))
-                    changes[1].append(str(state))
-            elif kind == "world":
-                log.world = record
-            elif kind == "map":
-                log.map = record
-            elif kind == "traffic_light":
-                log.lights.append(record)
-            elif kind == "spawn" and record.get("id") is not None:
-                log.spawned.setdefault(int(record["id"]), int(record["frame"]))
-            elif kind == "despawn" and record.get("id") is not None:
-                log.despawned.setdefault(int(record["id"]), int(record["frame"]))
-            elif kind == "result":
-                log.result = record
+            log.feed(record)
     if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log
@@ -338,16 +352,26 @@ def _read_map(
 
     lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path, projector_type)
     digest = hashlib.sha256(lanelet2_path.read_bytes()).hexdigest()
-    stop_lines = tuple(_stop_lines(lanelet_map))
-    signals: dict[int, tuple[str, ...]] = {}
+    network = None
     if xodr_path is not None:
         from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
+
+        network = open_road_network(xodr_path)
+    return map_of(lanelet_map, digest, network)
+
+
+def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
+    """A loaded Lanelet2 map, ready for scenes: its resource, the stop lines of
+    the lanelets its lights govern, and -- with the OpenDRIVE *network* -- the
+    signals each light's controller switches.  *digest* names its source."""
+    stop_lines = tuple(_stop_lines(lanelet_map))
+    signals: dict[int, tuple[str, ...]] = {}
+    if network is not None:
         from ..utils.traffic_light import (  # noqa: PLC0415
             get_signal_ids_for_controller,
             lanelet2_traffic_light_id_to_opendrive_controller_id,
         )
 
-        network = open_road_network(xodr_path)
         for element_id in {i for line in stop_lines for i in line.traffic_lights}:
             controller = lanelet2_traffic_light_id_to_opendrive_controller_id(
                 network, element_id
@@ -760,23 +784,77 @@ def trajectory_log_to_t4_scene(
             f"step_s={step_s} is not a multiple of the log's tick ({FIXED_DELTA_SECONDS} s)"
         )
     log = _read_log(path, step_frames)
-    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
-    if ego_id is None:
-        raise ValueError(f"{path} has no ego (an actor whose role is 'ego' or 'hero')")
-    ego = log.actors[ego_id]
     frames = list(range(log.first_frame, log.last_frame + 1, step_frames))
     if not -len(frames) <= current_index < len(frames):
         raise ValueError(
             f"current_index={current_index} is outside the scene's {len(frames)} rows"
         )
-
-    scene = pb.T4Scene(current_index=current_index % len(frames))
     stem = (
         path.name[: -len(LOG_SUFFIX)] if path.name.endswith(LOG_SUFFIX) else path.stem
     )
+    loaded = None
+    if with_map:
+        loaded = _load_map(
+            log,
+            None if lanelet2_path is None else Path(lanelet2_path),
+            None if xodr_path is None else Path(xodr_path),
+            projector_type,
+        )
+    scene = log_to_scene(
+        log,
+        frames,
+        current_index % len(frames),
+        stem,
+        loaded,
+        max_distance_m=max_distance_m,
+        rear_axle_offset_m=rear_axle_offset_m,
+        source=str(path),
+    )
+    return T4SceneExport(
+        scene=scene, map_resource=None if loaded is None else loaded.resource
+    )
+
+
+def ego_of(log: _Log, source: str = "the log") -> int:
+    """The id of *log*'s ego.
+
+    Raises:
+        ValueError: If it has none.
+    """
+    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
+    if ego_id is None:
+        raise ValueError(
+            f"{source} has no ego (an actor whose role is 'ego' or 'hero')"
+        )
+    return ego_id
+
+
+def log_to_scene(
+    log: _Log,
+    frames: Sequence[int],
+    current_index: int,
+    stem: str,
+    loaded: Optional[_Map],
+    *,
+    max_distance_m: Optional[float] = 100.0,
+    rear_axle_offset_m: Optional[float] = None,
+    source: str = "the log",
+) -> pb.T4Scene:
+    """The scene of *log*'s rows on *frames* (CARLA frames on its grid), its
+    decision anchor at *current_index*: what :func:`trajectory_log_to_t4_scene`
+    writes, from a log read whole or fed live; *loaded* is its map, if any.
+
+    Raises:
+        ValueError: If the log has no ego.
+    """
+    ego_id = ego_of(log, source)
+    ego = log.actors[ego_id]
+    scene = pb.T4Scene(current_index=current_index)
     _fill_metadata(scene, log, stem)
+    # Nanoseconds since the log's first tick: one clock for every scene of a
+    # run, however late its rows start.
     scene.timestamps_ns.CopyFrom(
-        _array([(f - frames[0]) * _TICK_NS for f in frames], "i8")
+        _array([(f - log.first_frame) * _TICK_NS for f in frames], "i8")
     )
     scene.frame_indices.CopyFrom(_array(frames, "i8"))
     _register_in_map_frame(scene)
@@ -789,17 +867,8 @@ def trajectory_log_to_t4_scene(
         rear_axle = log.rear_axles.get(ego_id, -0.5 * ego.extent[0])
     ego_origins = _fill_ego(scene, log, frames, ego_id, ego, frame, rear_axle)
     _fill_annotations(scene, log, frames, ego_id, ego_origins, frame, max_distance_m)
-
-    loaded = None
-    if with_map:
-        loaded = _load_map(
-            log,
-            None if lanelet2_path is None else Path(lanelet2_path),
-            None if xodr_path is None else Path(xodr_path),
-            projector_type,
-        )
     if loaded is None:
-        return T4SceneExport(scene=scene, map_resource=None)
+        return scene
     reference = scene.map
     reference.sha256 = loaded.resource.sha256
     reference.scope = pb.MapReference.FULL
@@ -809,7 +878,7 @@ def trajectory_log_to_t4_scene(
     _fill_lights(
         scene, log, frames, _group_lights(loaded, _lane_lights(log, loaded, frame))
     )
-    return T4SceneExport(scene=scene, map_resource=loaded.resource)
+    return scene
 
 
 def write_t4_scene(

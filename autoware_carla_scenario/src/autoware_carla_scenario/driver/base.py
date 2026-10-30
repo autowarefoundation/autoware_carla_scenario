@@ -366,6 +366,29 @@ class DriverClientConfig:
     other formats :attr:`map_formats` names, if any.  Needs :attr:`map_dir`.
     """
 
+    t4_scene: bool = False
+    """Whether every drive also carries the rollout so far as a T4Scene
+    (``CarlaRendererData.t4_scene``), the exchange format of tier4/e2e-devkit,
+    for a policy that plans from scenes (``carla_driver_interface``'s
+    ``T4SceneDriver``).
+
+    History only, the current row last, on a 0.1 s grid in Autoware's ``map``
+    frame (docs/t4_scene.md): the ego with what the policy is told of it, the
+    road users near it, the lights, the current LiDAR sweep, the route and the
+    goal. Its map, the run's Lanelet2 map, is written into the map set once as
+    the ``t4`` format. Needs :attr:`send_renderer_data` and :attr:`map_dir`,
+    and carla-driver-interface 2.4 or later. Every other observation is sent as
+    before.
+    """
+
+    t4_scene_history_s: float = 3.0
+    """How far back a scene reaches, the current row aside: its rows are 0.1 s
+    apart. A run younger than this sends the rows it has."""
+
+    t4_scene_wheel_base_m: Optional[float] = None
+    """The ego's wheel base, written in the scenes' ego shape; ``None`` leaves
+    it out (CARLA 0.10 reports no wheel positions)."""
+
     def __post_init__(self) -> None:
         if self.transport not in DRIVER_TRANSPORTS:
             raise ValueError(
@@ -396,6 +419,15 @@ class DriverClientConfig:
             raise ValueError(
                 "driver.lanelet2_path is written into the map set under "
                 "driver.map_dir, which is unset; set map_dir too"
+            )
+        if self.t4_scene and (self.map_dir is None or not self.send_renderer_data):
+            raise ValueError(
+                "driver.t4_scene rides in renderer_data and references its map in "
+                "the map set: it needs driver.send_renderer_data and driver.map_dir"
+            )
+        if self.t4_scene_history_s < 0.0:
+            raise ValueError(
+                f"driver.t4_scene_history_s must not be negative, got {self.t4_scene_history_s}"
             )
 
     @classmethod

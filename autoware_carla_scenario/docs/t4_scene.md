@@ -30,6 +30,38 @@ once however many cases ran on it). Like the log itself it is best effort: a
 log that cannot be converted is logged as a warning and the run's verdict
 stands.
 
+## To a driver policy, every step
+
+With `driver.t4_scene=true` (`ego.entity=carla_driver`), every drive also
+carries the run so far as a T4Scene, in `CarlaRendererData.t4_scene`
+(carla-driver-interface 2.4 and later), for a policy that plans from scenes --
+`carla_driver_interface`'s `T4SceneDriver`, which hands it to a devkit driver
+(`t4_e2e_devkit.driver.AbstractT4Driver`):
+
+```bash
+uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
+    driver.map_dir=/tmp/maps driver.t4_scene=true
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `driver.t4_scene` | bool | `false` | Send each drive's scene; needs `driver.map_dir` and `driver.send_renderer_data` |
+| `driver.t4_scene_history_s` | float | `3.0` | How far back a scene reaches, the current row aside |
+| `driver.t4_scene_wheel_base_m` | float or null | `null` | The ego's wheel base in the scenes' ego shape; `null` leaves it out |
+
+Each scene is what the log converts to (below), built as the run goes from the
+same records (`t4_scene.live`): the last rows on the 0.1 s grid, history only,
+the current one last. A run younger than `t4_scene_history_s` sends the rows it
+has. On top of what the log holds, a scene carries what the policy is told and
+a log does not: the ego's acceleration (the estimate the egodriver observations
+carry too), body angular velocity, front tyres' angle and odometry times; the
+first LiDAR's current sweep on the current row (`[N, 5]` in the rig frame,
+intensity on the 0-255 scale, the fifth column zero); the route's lanelets on
+every row, and the goal. Its map is written once into the map set as the `t4`
+format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene
+references. Every other observation is sent as before: a policy that does not
+read scenes is unchanged.
+
 ## After a run
 
 ```bash

@@ -61,6 +61,9 @@ MAP_FORMATS: Dict[str, str] = {
     "opendrive": "roadgen.xodr",
     "osm": "openstreetmap.osm",
     "clipgt": "clipgt",
+    # The run's Lanelet2 map as a tier4/e2e-devkit MapResource, for a policy
+    # reading T4Scenes (``driver.t4_scene``); never converted by roadgen.
+    "t4": "t4_map.pb",
 }
 
 
@@ -88,20 +91,30 @@ def export_map(
     map_dir: Union[str, Path],
     formats: Iterable[str] = ("lanelet2",),
     lanelet2_path: Union[str, Path, None] = None,
+    t4_map: Optional[bytes] = None,
 ) -> str:
     """Write ``opendrive`` as ``formats`` under ``<map_dir>/<map_id>/``; returns the id.
 
     With ``lanelet2_path``, that file is the set's Lanelet2 map, copied as it
     is rather than converted by roadgen (and ``lanelet2`` is written even if
     ``formats`` leaves it out), together with the ``map_projector_info.yaml``
-    beside it, if any. A complete set already holding every format is reused
+    beside it, if any. With ``t4_map``, a serialized ``MapResource`` of the
+    run's Lanelet2 map, the set holds it as its ``t4`` format (and ``t4`` is
+    written even if ``formats`` leaves it out); without, ``t4`` cannot be
+    written. A complete set already holding every format is reused
     as it is. A set is built in a scratch directory beside its destination and
     moved into place whole, so a reader never sees one half written.
     """
     provided: Dict[str, Path] = {}
     if lanelet2_path is not None:
         provided["lanelet2"] = Path(lanelet2_path).expanduser()
-    formats = tuple(dict.fromkeys((*formats, *provided)))
+    given: Dict[str, bytes] = {} if t4_map is None else {"t4": t4_map}
+    formats = tuple(dict.fromkeys((*formats, *provided, *given)))
+    if "t4" in formats and "t4" not in given:
+        raise ValueError(
+            "the t4 map format is the run's Lanelet2 map as the T4Scenes reference "
+            "it; it is written with driver.t4_scene, not converted"
+        )
     unknown = sorted(set(formats) - set(MAP_FORMATS))
     if unknown:
         raise ValueError(
@@ -111,7 +124,12 @@ def export_map(
         if not path.is_file():
             raise FileNotFoundError(f"the {name} map {path} is not a file")
     map_id = map_id_for(
-        map_name, opendrive, {name: _file_digest(p) for name, p in provided.items()}
+        map_name,
+        opendrive,
+        {
+            **{name: _file_digest(p) for name, p in provided.items()},
+            **{name: hashlib.sha256(data).digest() for name, data in given.items()},
+        },
     )
     root = Path(map_dir)
     target = root / map_id
@@ -119,7 +137,7 @@ def export_map(
         logger.info("map %s already written to %s", map_id, target)
         return map_id
 
-    converted = [name for name in formats if name not in provided]
+    converted = [name for name in formats if name not in provided and name not in given]
     roadgen = _import_roadgen(converted) if converted else None
 
     root.mkdir(parents=True, exist_ok=True)
@@ -151,6 +169,8 @@ def export_map(
             _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
         for name, path in provided.items():
             written[name] = _copy_provided(path, out / MAP_FORMATS[name])
+        for name, data in given.items():
+            written[name] = _write_given(data, out / MAP_FORMATS[name])
         manifest["formats"] = {name: written[name] for name in formats}
         (out / MANIFEST_FILE).write_text(
             json.dumps(manifest, indent=1), encoding="utf-8"
@@ -211,6 +231,14 @@ def _copy_provided(source: Path, destination: Path) -> Dict[str, Any]:
         shutil.copyfile(projector, destination.parent / PROJECTOR_FILE)
         entry["projector"] = PROJECTOR_FILE
     return entry
+
+
+def _write_given(data: bytes, destination: Path) -> Dict[str, Any]:
+    """Write a format given as bytes; its manifest entry, with an empty trace."""
+    destination.write_bytes(data)
+    trace = f"{destination.name}.trace.json"
+    _write_json(destination.parent / trace, _EMPTY_TRACE)
+    return {"path": destination.name, "trace": trace, "provided": True}
 
 
 def _import_roadgen(converted: Iterable[str]) -> Any:

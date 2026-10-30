@@ -198,3 +198,24 @@ def test_vision_pilot_preset_keeps_the_other_driver_defaults() -> None:
         == default.control.longitudinal_controller
     )
     assert preset.control.stopped_acc == default.control.stopped_acc
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"t4_scene": True},
+        {"t4_scene": True, "map_dir": "/maps", "send_renderer_data": False},
+    ],
+    ids=["no map_dir", "no renderer data"],
+)
+def test_t4_scenes_need_the_map_set_and_renderer_data(overrides: dict) -> None:
+    with pytest.raises(ValueError, match="driver.t4_scene"):
+        DriverClientConfig(**overrides)
+
+
+def test_t4_scenes_are_off_by_default_and_reach_three_seconds_back() -> None:
+    config = DriverClientConfig()
+    assert config.t4_scene is False and config.t4_scene_history_s == 3.0
+    assert DriverClientConfig(t4_scene=True, map_dir="/maps").t4_scene
+    with pytest.raises(ValueError, match="t4_scene_history_s"):
+        DriverClientConfig(t4_scene_history_s=-1.0)

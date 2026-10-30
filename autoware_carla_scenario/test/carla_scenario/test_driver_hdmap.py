@@ -391,3 +391,25 @@ def test_the_entity_writes_a_given_lanelet2_map(
     map_id = entity._write_map()  # noqa: SLF001
     written = tmp_path / "maps" / map_id / "lanelet2_map.osm"
     assert written.read_text() == _LOCAL_OSM
+
+
+def test_a_t4_map_is_written_as_given_into_the_set(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "roadgen", None)  # importing it now fails
+    maps = tmp_path / "maps"
+    resource = b"\x0a\x04abcd"
+    map_id = export_map(opendrive, "Town", maps, formats=(), t4_map=resource)
+
+    assert map_id != map_id_for("Town", opendrive), "the resource is in the id"
+    manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
+    entry = manifest["formats"]["t4"]
+    assert entry["provided"] is True
+    assert (maps / map_id / entry["path"]).read_bytes() == resource
+    # Any reader opens it, as the policy's T4SceneDriver does (format t4).
+    assert MapFiles.open(maps, map_id, "t4").path == maps / map_id / "t4_map.pb"
+
+
+def test_a_t4_map_is_not_converted(opendrive: str, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="driver.t4_scene"):
+        export_map(opendrive, "Town", tmp_path, formats=("t4",))
