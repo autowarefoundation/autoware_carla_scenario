@@ -23,6 +23,7 @@ from autoware_carla_scenario.autoware_bridge import (
     FakeAutowareBridge,
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
+from autoware_carla_scenario.ego_base_link import ego_base_link
 from autoware_carla_scenario.entity import AutowareEgoEntity
 
 #: Where the fake ego actually stands, and the same pose in the map frame.
@@ -489,6 +490,8 @@ class TestTheMissionIsHandedOverAtBaseLink:
             entity.on_scenario_start(world)
 
         derive.assert_called_once_with(entity.actor, None)
+        # The run's records put the ego's base_link where the stack has it (#739).
+        assert ego_base_link() == -2.0
         goal = bridge.configured_goal
         assert goal is not None
         assert (goal.position.x, goal.position.y) == pytest.approx(

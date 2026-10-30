@@ -81,7 +81,9 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 `null` leaves a topic unpublished. The pose is in the right-handed local frame --
 CARLA's world with `y` flipped, as CARLA's own ROS 2 interface publishes it -- with
 its origin on the rear axle, Autoware's `base_link` (`rear_axle_offset_m`, derived
-from the wheel physics when `null`).
+from the wheel physics when `null`). The run's [trajectory log](trajectory_log.md)
+(its `rear_axle` record) and [T4 dataset](t4_dataset.md) put the ego's `base_link`
+there too.
 
 Cameras and `/clock` are CARLA's to publish when the server is built with ROS 2. For a
 server built without it, the entity publishes them as well:

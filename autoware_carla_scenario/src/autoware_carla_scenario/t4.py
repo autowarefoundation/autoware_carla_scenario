@@ -59,6 +59,7 @@ from .driver.observation import (
     rear_axle_offset,
     sensor_pose_in_rig,
 )
+from .ego_base_link import ego_base_link
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
@@ -321,8 +322,13 @@ class T4Recording:
         with _lock:
             driver_rear_axle = _driver_rear_axle
         self.fed_by_driver = driver_rear_axle is not None
+        run_base_link = ego_base_link()
         if driver_rear_axle is not None:
             self._rear_axle = driver_rear_axle
+        elif run_base_link is not None:
+            # Where the running ego (a ROS 2 or a bridged stack's) has its
+            # base_link, rather than the driver config's offset.
+            self._rear_axle = run_base_link
         else:
             self._rear_axle = rear_axle_offset(ego, settings.rear_axle_offset_m)
 
