@@ -43,9 +43,11 @@ from ._proto import t4_scene_pb2 as pb
 from .convert import (
     _TICK_NS,
     _array,
+    _element_lights,
     _Log,
     _load_map,
     _Map,
+    _MapFrame,
     _read_map,
     log_to_scene,
     map_of,
@@ -165,6 +167,7 @@ class LiveT4Scene:
         )
         self._extras: dict[int, EgoExtras] = {}
         self._route: list[int] = []
+        self._lights: Optional[tuple[tuple[int, int], dict[int, int]]] = None
         self._map: Optional[_Map] = None
         self._map_read = False
         self._map_path: Optional[Path] = None
@@ -184,12 +187,16 @@ class LiveT4Scene:
         log = self._log
         if log.last_frame < 0:
             return
-        if extras is not None:
+        # A scene's rows are on the grid; a tick between them is read for
+        # nothing but the lights, which the log keeps.
+        if (
+            extras is not None
+            and (log.last_frame - log.first_frame) % log.step_frames == 0
+        ):
             self._extras[log.last_frame] = extras
-        # From the row a scene now ends on (frames()), on the grid: a tick
-        # between grid rows must not take the oldest row a scene still shows.
-        current = log.last_frame - (log.last_frame - log.first_frame) % log.step_frames
-        oldest = current - (self.history_rows - 1) * log.step_frames
+        # The oldest row a scene now shows, counted back from the newest on
+        # the grid, not from this tick.
+        oldest = self.frames()[0]
         log.forget_before(oldest)
         for frame in [f for f in self._extras if f < oldest]:
             del self._extras[frame]
@@ -267,15 +274,17 @@ class LiveT4Scene:
         frames = self.frames()
         if not frames:
             return None
+        loaded = self._loaded_map()
         scene = log_to_scene(
             self._log,
             frames,
             len(frames) - 1,
             stem,
-            self._loaded_map(),
+            loaded,
             max_distance_m=self.max_distance_m,
             rear_axle_offset_m=self.rear_axle_offset_m,
             source="the run",
+            element_lights=None if loaded is None else self._lights_on(loaded),
         )
         self._fill_ego_extras(scene, frames)
         rows = len(frames)
@@ -309,6 +318,15 @@ class LiveT4Scene:
                 _array(np.tile([x, y, math.cos(yaw), math.sin(yaw)], (rows, 1)), "f8")
             )
         return scene
+
+    def _lights_on(self, loaded: _Map) -> dict[int, int]:
+        """:func:`_element_lights` of the run on *loaded*, worked out once: the
+        lights and the map do not change while it runs."""
+        key = (id(loaded), len(self._log.lights))
+        if self._lights is None or self._lights[0] != key:
+            frame = _MapFrame.of(self._log.map)
+            self._lights = (key, _element_lights(self._log, loaded, frame))
+        return self._lights[1]
 
     def _route_along(
         self,

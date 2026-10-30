@@ -67,6 +67,7 @@ _COLORS = {"red": 1, "yellow": 2, "green": 3}
 _CIRCLE = 1
 #: ``TrafficLights.element_statuses``.
 _STATUS_UNKNOWN, _STATUS_OFF, _STATUS_ON = 0, 1, 2
+_STATUSES = {**dict.fromkeys(_COLORS, _STATUS_ON), "off": _STATUS_OFF}
 #: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
 #: log's ``turn_indicators`` states.
 _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
@@ -786,13 +787,7 @@ def _fill_lights(
         for group in groups:
             state = lights.get(group_lights[group], "").lower()
             colors.append(_COLORS.get(state, 0))
-            statuses.append(
-                _STATUS_ON
-                if state in _COLORS
-                else _STATUS_OFF
-                if state == "off"
-                else _STATUS_UNKNOWN
-            )
+            statuses.append(_STATUSES.get(state, _STATUS_UNKNOWN))
     rows = int(available.sum())
     values = scene.traffic_lights.values
     values.group_ids.CopyFrom(_array(np.tile(groups, rows), "i8"))
@@ -910,10 +905,13 @@ def log_to_scene(
     max_distance_m: Optional[float] = 100.0,
     rear_axle_offset_m: Optional[float] = None,
     source: str = "the log",
+    element_lights: Optional[Mapping[int, int]] = None,
 ) -> pb.T4Scene:
     """The scene of *log*'s rows on *frames* (CARLA frames on its grid), its
     decision anchor at *current_index*: what :func:`trajectory_log_to_t4_scene`
     writes, from a log read whole or fed live; *loaded* is its map, if any.
+    *element_lights* is :func:`_element_lights` of the log and map, when the
+    caller keeps it; worked out here otherwise.
 
     Raises:
         ValueError: If the log has no ego.
@@ -946,7 +944,9 @@ def log_to_scene(
     reference.has_elevation = True
     reference.map_id = f"lanelet2-sha256:{loaded.digest}"
     _register_in_map_frame(reference)
-    _fill_lights(scene, log, frames, _element_lights(log, loaded, frame))
+    if element_lights is None:
+        element_lights = _element_lights(log, loaded, frame)
+    _fill_lights(scene, log, frames, element_lights)
     return scene
 
 
