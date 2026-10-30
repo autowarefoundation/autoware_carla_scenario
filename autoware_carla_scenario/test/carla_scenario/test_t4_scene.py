@@ -687,3 +687,107 @@ def test_cli_fails_on_a_log_it_cannot_convert(
     )
     assert main([str(bad), "--no-map"]) == 1
     assert "no ego" in capsys.readouterr().err
+
+
+# -- as each run ends (t4scene.enabled) ---------------------------------------
+
+
+def test_the_exporter_writes_the_scene_beside_the_log(tmp_path: Path) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        *[_tick(frame, _state(1, 0.0, 0.0)) for frame in range(100, 104)],
+    )
+    scene = T4SceneExporter(step_s=0.05, max_distance_m=None).export(log)
+    assert scene == tmp_path / f"Run{SCENE_SUFFIX}"
+    frames = _numeric(pb.T4Scene.FromString(scene.read_bytes()).frame_indices)
+    assert list(frames) == [100, 101, 102, 103]
+
+
+def test_the_exporter_logs_a_log_it_cannot_convert_and_goes_on(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    bad = _write_log(
+        tmp_path / "Bad.trajectory.jsonl", CAR, _tick(100, _state(2, 0.0, 0.0))
+    )
+    with caplog.at_level("WARNING"):
+        assert T4SceneExporter().export(bad) is None
+    assert "Bad.trajectory.jsonl" in caplog.text
+    assert not (tmp_path / f"Bad{SCENE_SUFFIX}").exists()
+
+
+def test_the_shipped_config_writes_no_scene_and_enabling_it_does() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    plain = _shipped([])
+    assert plain.t4scene.enabled is False
+    assert run.build_t4scene_exporter(plain) is None
+    enabled = _shipped(["t4scene.enabled=true", "t4scene.max_distance_m=null"])
+    exporter = run.build_t4scene_exporter(plain, enabled)
+    assert exporter is not None
+    assert (exporter.step_s, exporter.max_distance_m) == (0.1, None)
+
+
+def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(ValueError, match="t4scene.step_s"):
+        run.build_t4scene_exporter(
+            _shipped(["t4scene.enabled=true", "t4scene.step_s=0.07"])
+        )
+
+
+def test_the_runner_hands_each_closed_log_to_the_exporter(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from .test_rerun import _FakeRecorder
+    from .test_scenario_runner import (
+        TestRunScenarioRegistersTheDefaultTimeout,
+        _make_runner,
+        _Stop,
+    )
+
+    runner = _make_runner(None)
+    assert runner.t4scene is None
+    runner.output_dir = tmp_path
+    runner._world = MagicMock()
+    exporter = MagicMock()
+    runner.t4scene = exporter
+    scenario = TestRunScenarioRegistersTheDefaultTimeout._scenario()
+    type(scenario).__name__ = "CutInScenario"
+    with (
+        patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+        patch("autoware_carla_scenario.scenario_runner._ScenarioClock"),
+        patch(
+            "autoware_carla_scenario.scenario_runner.TrajectoryRecorder", _FakeRecorder
+        ),
+        pytest.raises(_Stop),
+    ):
+        runner.run_scenario(scenario, reset_world=False)
+    # Even a run that raised: its log is what shows what happened.
+    [call] = exporter.export.call_args_list
+    (path,) = call.args
+    assert path.parent == tmp_path and path.name.endswith(".trajectory.jsonl")
+
+
+def test_the_queue_hands_its_exporter_to_the_runner() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from autoware_carla_scenario import ScenarioQueue
+
+    exporter = MagicMock()
+    queue = ScenarioQueue(server=MagicMock(), t4scene=exporter)
+    with (
+        patch("autoware_carla_scenario.scenario_queue.ScenarioRunner") as runner_cls,
+        patch("autoware_carla_scenario.scenario_queue.MapManager"),
+    ):
+        queue.start()
+    assert runner_cls.return_value.t4scene is exporter

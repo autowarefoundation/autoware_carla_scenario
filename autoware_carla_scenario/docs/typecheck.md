@@ -2364,7 +2364,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 225 of
-the package's 330 modules (68%; about 67,000 of 117,200 lines) are `CHECKED`:
+the package's 331 modules (68%; about 67,100 of 117,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2491,9 +2491,9 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 105 `EXCLUDED` modules fall in
+compiled through their callers. The 106 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 82 import what Codon cannot
-compile, 30 build on an excluded module and 19 hold values Codon has no type
+compile, 31 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **82 import what Codon cannot compile**:
@@ -2518,7 +2518,7 @@ for), so each is counted once, in the first group that fits it:
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **20 build on an excluded module**, and import nothing Codon lacks
+- **21 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`, `t4_scene`,
@@ -2530,7 +2530,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 20
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s

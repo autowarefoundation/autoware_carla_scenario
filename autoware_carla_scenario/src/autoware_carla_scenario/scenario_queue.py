@@ -15,6 +15,7 @@ from .maps import capture_opendrive
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .t4 import T4Recorder
+from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
@@ -81,6 +82,7 @@ class ScenarioQueue:
     _map_source: Optional[str]
     _rerun: Optional[RerunConverter]
     _t4: Optional[T4Recorder]
+    _t4scene: Optional[T4SceneExporter]
     _world_reset: str
     _reload_every: int
     _scenarios: List[BaseScenario]
@@ -127,6 +129,7 @@ class ScenarioQueue:
         t4: Optional[T4Recorder] = None,
         world_reset: str = RESET_RELOAD,
         reload_every: int = 0,
+        t4scene: Optional[T4SceneExporter] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -210,6 +213,8 @@ class ScenarioQueue:
             reload_every: With ``world_reset="soft"``, load the map instead on
                 every *reload_every*-th reset; 0 (the default) only when a
                 soft reset cannot be done.
+            t4scene: What writes each run's trajectory log as a T4Scene as the
+                run ends (``t4scene.enabled``); *None* writes none.
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
@@ -258,6 +263,7 @@ class ScenarioQueue:
         self._map_source = map_source
         self._rerun = rerun
         self._t4 = t4
+        self._t4scene = t4scene
 
         self._scenarios = []
         self._timeouts = {}
@@ -581,6 +587,7 @@ class ScenarioQueue:
         self._runner.map_source = self._map_source
         self._runner.rerun = self._rerun
         self._runner.t4 = self._t4
+        self._runner.t4scene = self._t4scene
         self._runner.lanelet2_path = self._lanelet2_path
         self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),
