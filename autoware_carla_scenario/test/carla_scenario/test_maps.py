@@ -488,6 +488,168 @@ class TestAMapThatIsNotAMap:
         assert "CANARY" not in served.text
 
 
+#: How each file the resolver hands out is read back off a ResolvedMap.
+_MAP_FILES = {
+    "lanelet2_map.osm": "lanelet2_path",
+    "TownL.xodr": "xodr_path",
+    "map_projector_info.yaml": "projector_info_path",
+}
+
+
+class TestLinksInAMapDirectory:
+    """Every file the resolver hands out is held to the ``.osm``'s rule (#760).
+
+    A link that stays inside the map directory is followed; one that leaves it,
+    dangles, or names a directory is not a map file.  The ``.xodr`` matters
+    most: ``map.overwrite_xodr`` copies it into the CARLA installation.
+    """
+
+    @pytest.fixture
+    def outside(self, tmp_path: Path) -> Path:
+        """A directory outside every repository, holding a canary and a map."""
+        directory = tmp_path / "outside"
+        directory.mkdir()
+        (directory / "secret.txt").write_text("CANARY")
+        (directory / "lanelet2_map.osm").write_text(_OSM)
+        return directory
+
+    def _repo(self, tmp_path: Path, build: Any) -> Path:
+        """A repository with ``maps/TownL``, laid out by *build*."""
+        repo = tmp_path / "linked"
+        directory = repo / "maps" / "TownL"
+        directory.mkdir(parents=True)
+        build(directory)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "A map with links")
+        return repo
+
+    def _resolve_with(
+        self, tmp_path: Path, cache: GitMapCache, name: str, target: Any
+    ) -> Any:
+        """Resolve a map whose *name* is a link to ``target(directory)``.
+
+        Every other map file is a real one, so only *name* is in question.
+        """
+
+        def build(directory: Path) -> None:
+            for other in _MAP_FILES:
+                if other != name:
+                    (directory / other).write_text(_OSM)
+            (directory / name).symlink_to(target(directory))
+
+        repo = self._repo(tmp_path, build)
+        return resolve_map(_uri(repo, "maps/TownL"), cache=cache)
+
+    @pytest.mark.parametrize("name", sorted(_MAP_FILES))
+    def test_a_link_inside_the_directory_is_followed(
+        self, tmp_path: Path, cache: GitMapCache, name: str
+    ) -> None:
+        def inside(directory: Path) -> Path:
+            (directory / "real").mkdir()
+            (directory / "real" / "file").write_text(_OSM)
+            return Path("real") / "file"
+
+        resolved = self._resolve_with(tmp_path, cache, name, inside)
+        found = getattr(resolved, _MAP_FILES[name])
+        assert found == resolved.directory / name
+        assert found.read_text() == _OSM
+
+    @pytest.mark.parametrize("name", sorted(_MAP_FILES))
+    @pytest.mark.parametrize("kind", ["outside", "dangling", "directory"])
+    def test_a_link_that_is_not_a_map_file_is_refused(
+        self,
+        tmp_path: Path,
+        cache: GitMapCache,
+        outside: Path,
+        name: str,
+        kind: str,
+    ) -> None:
+        targets = {
+            "outside": lambda directory: outside / "secret.txt",
+            "dangling": lambda directory: directory / "missing",
+            "directory": lambda directory: outside,
+        }
+        if name.endswith(".osm"):
+            # The only .osm there: refusing it leaves no map at all.
+            with pytest.raises(MapResolutionError):
+                self._resolve_with(tmp_path, cache, name, targets[kind])
+            return
+        resolved = self._resolve_with(tmp_path, cache, name, targets[kind])
+        assert getattr(resolved, _MAP_FILES[name]) is None
+
+    @pytest.mark.parametrize("name", ["TownL.xodr", "map_projector_info.yaml"])
+    def test_a_link_that_loops_is_ignored(
+        self, tmp_path: Path, cache: GitMapCache, name: str
+    ) -> None:
+        """Resolving a loop raises RuntimeError before Python 3.13."""
+        resolved = self._resolve_with(
+            tmp_path, cache, name, lambda directory: directory / name
+        )
+        assert getattr(resolved, _MAP_FILES[name]) is None
+
+    def test_a_derived_xodr_linked_out_of_the_cache_is_refused(
+        self, origin_repo: Path, cache: GitMapCache, outside: Path
+    ) -> None:
+        derived = resolve_map(_uri(origin_repo), cache=cache).derived
+        derived.mkdir(parents=True, exist_ok=True)
+        (derived / "TownA.xodr").symlink_to(outside / "secret.txt")
+
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_path is None
+
+    def test_a_derived_xodr_is_still_found(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        derived = resolve_map(_uri(origin_repo), cache=cache).derived
+        derived.mkdir(parents=True, exist_ok=True)
+        (derived / "TownA.xodr").write_text("<OpenDRIVE/>")
+
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_path == derived / "TownA.xodr"
+        assert resolved.xodr_is_derived
+
+    def test_a_map_directory_linked_out_of_the_checkout_is_refused(
+        self, tmp_path: Path, cache: GitMapCache, outside: Path
+    ) -> None:
+        """Otherwise every file check passes against the link's target."""
+        repo = self._repo(tmp_path, lambda d: (d / "lanelet2_map.osm").write_text(_OSM))
+        (repo / "maps" / "Evil").symlink_to(outside, target_is_directory=True)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "A map directory that is a link")
+
+        with pytest.raises(MapResolutionError, match="outside the repository"):
+            resolve_map(_uri(repo, "maps/Evil"), cache=cache)
+        assert cached_map(_uri(repo, "maps/Evil"), cache=cache) is None
+
+    @pytest.mark.parametrize(
+        "path", ["../outside", "../../../../outside", "maps/../../outside"]
+    )
+    def test_a_path_that_climbs_out_is_refused(
+        self, origin_repo: Path, cache: GitMapCache, outside: Path, path: str
+    ) -> None:
+        """Joined onto the checkout, the map root and the derived directory."""
+        # ``../outside`` from the map root is where ``outside`` really is, and
+        # it holds an .osm: without the check it is taken as a provisioned map.
+        with pytest.raises(MapResolutionError, match=r"\.\."):
+            resolve_map(_uri(origin_repo, path), cache=cache)
+        assert cached_map(_uri(origin_repo, path), cache=cache) is None
+
+    def test_a_local_directory_is_held_to_the_same_rule(
+        self, tmp_path: Path, outside: Path
+    ) -> None:
+        """As its ``.osm`` already was: discovery is shared with a checkout."""
+        directory = tmp_path / "local"
+        directory.mkdir()
+        (directory / "lanelet2_map.osm").write_text(_OSM)
+        (directory / "TownL.xodr").symlink_to(outside / "secret.txt")
+        (directory / "map_projector_info.yaml").symlink_to(outside / "secret.txt")
+
+        resolved = resolve_directory(directory, cache=GitMapCache(tmp_path / "root"))
+        assert resolved.xodr_path is None
+        assert resolved.projector_info_path is None
+
+
 class TestProvisionedMaps:
     """A map Autoware's own setup already downloaded is a map we have."""
 
