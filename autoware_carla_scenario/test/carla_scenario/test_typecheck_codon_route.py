@@ -18,9 +18,10 @@ from autoware_carla_scenario.typecheck import available_toolchain, typecheck_sce
 
 from .test_typecheck_codon import _CONFIG, _HEADER, _line_of, _only_error
 
-pytestmark = pytest.mark.skipif(
-    available_toolchain() is None, reason="no Codon compiler"
-)
+pytestmark = [
+    pytest.mark.codon,
+    pytest.mark.skipif(available_toolchain() is None, reason="no Codon compiler"),
+]
 
 _ROUTE_HEADER = _HEADER.replace(
     "    RelativeLanePose,\n",

@@ -24,6 +24,8 @@ _HEADER_WITH_ACTION = _HEADER.replace(
     "    BaseScenario,\n", "    BaseScenario,\n    SetSpeedAction,\n", 1
 )
 
+pytestmark = pytest.mark.codon
+
 needs_codon = pytest.mark.skipif(
     available_toolchain() is None, reason="no Codon compiler"
 )
