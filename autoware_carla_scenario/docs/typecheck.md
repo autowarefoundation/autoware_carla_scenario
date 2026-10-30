@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 224 of
-the package's 329 modules (68%; about 66,800 of 116,900 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 226 of
+the package's 331 modules (68%; about 67,100 of 117,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2406,7 +2406,9 @@ warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
 a subprocess on a thread (`ui.runner`, over a model of the pydantic
-`ui.models`),
+`ui.models`), the viewer's guard on every path it builds from a request and
+the stems of a session's cases (`ui.case_paths`, #741), and the box gaps
+and metrics it reads off a trajectory log's ticks (`ui.drive_metrics`),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
