@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 221 of
-the package's 328 modules (67%; about 65,900 of 116,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 224 of
+the package's 329 modules (68%; about 66,800 of 116,900 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2379,7 +2379,9 @@ world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`), how the Hydra sweeper runs each
 case in a forked child of its own process group, stops it and waits for the
-CARLA server it left (`sweeper.isolation`, #719), and the route's map questions,
+CARLA server it left (`sweeper.isolation`, #719), the SLURM launcher's
+settings and the job scripts and `sbatch` command lines it submits a batch
+with (`slurm`, `slurm.settings`, `slurm.scripts`, #732), and the route's map questions,
 frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
@@ -2437,8 +2439,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 109
-functions and methods of those modules are `UNCALLED` (26 of them
+below). 115
+functions and methods of those modules are `UNCALLED` (28 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2447,7 +2449,12 @@ match, a constraint or a binding from YAML values of any type
 `parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
 framework pin, a dict of str and bool values (`Pin.uv_source()`), the T4
 dataset's settings from the driver config and the `t4` config section
-(`T4Settings.from_driver()`, a `Mapping[str, Any]`), the two members of
+(`T4Settings.from_driver()`, a `Mapping[str, Any]`), what reads
+the SLURM launcher's settings off a config (`launcher_type()`,
+`SlurmSettings.from_mapping()`: a `Mapping[str, Any]`, with its helpers
+`_optional_str()` and `_optional_int()`, which take a value of any type) and
+what gives them back as the manifest's `dict[str, Any]`
+(`SlurmSettings.to_dict()`, `replace()`), the two members of
 `BaseScenario` built on the ego's class (`create_ego()`, which instantiates
 `ego_type`, a `type[EgoVehicle]`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
@@ -2480,12 +2487,12 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 107 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 83 import what Codon cannot
-compile, 31 build on an excluded module and 20 hold values Codon has no type
+compiled through their callers. The 105 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 82 import what Codon cannot
+compile, 30 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **83 import what Codon cannot compile**:
+- **82 import what Codon cannot compile**:
   pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -2507,11 +2514,11 @@ for), so each is counted once, in the first group that fits it:
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **21 build on an excluded module**, and import nothing Codon lacks
+- **20 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`, `t4_scene`,
-  `examples`, `scaffold`, `slurm`, `hils`), `slurm.collect`, the
+  `examples`, `scaffold`, `hils`), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
   the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
@@ -2519,7 +2526,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 20
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
