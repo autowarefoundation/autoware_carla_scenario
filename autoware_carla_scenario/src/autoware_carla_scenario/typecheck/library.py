@@ -270,6 +270,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.sweeper.constraints",
     "autoware_carla_scenario.trajectory.relative_lane",
     "autoware_carla_scenario.ui.runner",
+    "autoware_carla_scenario.ui.slurm_options",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.clearance",
     "autoware_carla_scenario.utils.opendrive",
@@ -562,7 +563,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.results": "imports yaml inside a function; reads JSON documents and trajectory log records of any type (`Any`)",
     "autoware_carla_scenario.ui.recordings": "imports base64, io, tarfile and urllib.request, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (`Any`)",
     "autoware_carla_scenario.ui.scanner": "imports yaml",
-    "autoware_carla_scenario.ui.slurm_launch": "imports re, shlex, datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the batch's JSON records of any type (`Any`)",
+    "autoware_carla_scenario.ui.slurm_launch": "imports more of shlex than its shim declares (`shlex.split()`, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (`Any`); the options' checks, their overrides and the command line are the checked ui.slurm_options'",
     "autoware_carla_scenario.ui.sweep_resolver": "imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
 }

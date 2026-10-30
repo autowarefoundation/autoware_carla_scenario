@@ -31,6 +31,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -192,6 +193,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The turn indicators last lit at the policy's request; ``NO_COMMAND``
         #: until it asks for any.
         self._turn_indicator: TurnIndicator = TurnIndicator.NO_COMMAND
+        #: The OpenDRIVE roads of the route to the scenario's goal, which pick the
+        #: way the policy's road ahead takes at a fork; ``None`` without a goal.
+        self._route_roads: Optional[Set[str]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -233,10 +237,21 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         ground_projection: Optional["GroundProjectionConfig"] = None,
         waypoints: Sequence["Lanelet2Pose"] = (),
     ) -> None:
-        """Hand *goal* to the bridged stack's mission; a no-op without a bridge.
+        """Hand *goal* to the bridged stack's mission, and route the road ahead.
 
-        The policy itself is given the road ahead rather than a destination.
+        The policy itself is given the road ahead rather than a destination, and
+        the road ahead turns at a fork the way the route to *goal* (through
+        *waypoints*) does: a turn the scenario asserts is the one the policy is
+        shown.  Without a route there -- no lane route reaches the goal -- it
+        takes the first way, as it does without a goal.
         """
+        start = initial_pose
+        if start is None and self.actor is not None:
+            from ..coordinate import CarlaWorldPose  # noqa: PLC0415
+
+            start = CarlaWorldPose.from_carla_transform(self.actor.get_transform())
+        if start is not None:
+            self._route_roads = _route_roads(start, [*waypoints, goal])
         if self._handshake is not None:
             self._handshake.route_to(
                 world, goal, initial_pose, ground_projection, waypoints
@@ -606,6 +621,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             observation.pose,
             horizon_m=self._config.route_horizon_m,
             resolution_m=self._config.route_resolution_m,
+            route_roads=self._route_roads,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
         if self._config.send_ground_truth and len(waypoints):
@@ -787,6 +803,42 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             "rear_axle_offset_m": self._rear_axle_offset_m,
             "turn_indicator": float(self._turn_indicator),
         }
+
+
+def _route_roads(
+    start: "CarlaWorldPose", stops: Sequence["Lanelet2Pose"]
+) -> Optional[Set[str]]:
+    """The OpenDRIVE roads of the lane route from *start* through *stops*.
+
+    The lanelets are :func:`~autoware_carla_scenario.odd.route_plan.route_lanelets`'s,
+    the route the ODD plans for the scenario, and their roads
+    :func:`~autoware_carla_scenario.coordinate.route_road_ids`': those outside
+    the junctions, which say which way each is crossed.  ``None``, said once,
+    when a stop is on no lane route from the one before or the map cannot answer.
+    """
+    from ..coordinate import route_road_ids, to_lanelet2  # noqa: PLC0415
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..odd.route_plan import PlannedRoute, RouteError, route_lanelets  # noqa: PLC0415
+
+    *via, goal = stops
+    try:
+        mm = MapManager.get_instance()
+        route = PlannedRoute(start=to_lanelet2(start), goal=goal, via=via)
+        lanelets = route_lanelets(route, mm.lanelet_map, mm.routing_graph)
+        return set(route_road_ids([int(lanelet.id) for lanelet in lanelets]))
+    except RouteError as error:
+        logger.warning(
+            "No lane route to the goal (%s): the policy's road ahead takes the "
+            "first way at a fork",
+            error,
+        )
+    except Exception:
+        logger.warning(
+            "Could not route the policy's road ahead to the goal: it takes the "
+            "first way at a fork",
+            exc_info=True,
+        )
+    return None
 
 
 class _CarriedActor:

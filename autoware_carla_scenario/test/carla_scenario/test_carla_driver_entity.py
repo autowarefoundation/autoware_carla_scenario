@@ -1275,3 +1275,101 @@ def test_the_markers_carry_the_plan_timed_in_the_world() -> None:
     assert [p[0] for p in plan.points] == pytest.approx([0.1, 0.2, 0.3, 0.4])
     assert [p[1] for p in plan.points] == pytest.approx([0.8, 1.6, 2.4, 3.2])
     assert plan.turn_indicator == 2
+
+
+# ---------------------------------------------------------------------------
+# The road ahead, routed to the goal
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _lane_routes(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Lanelets 10 -> 11 -> 12 (the turn) -> 13, and 20 nowhere near them; each
+    lanelet on the OpenDRIVE road ``r<id>``."""
+    import autoware_carla_scenario.coordinate as coordinate
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+    from autoware_carla_scenario.odd import route_plan
+
+    class _Layer(dict):
+        def exists(self, lanelet_id: int) -> bool:
+            return lanelet_id in self
+
+    layer = _Layer({i: SimpleNamespace(id=i) for i in (10, 11, 12, 13, 20)})
+    chain = [10, 11, 12, 13]
+
+    def shortest(a: SimpleNamespace, b: SimpleNamespace) -> Optional[list]:
+        if a.id in chain and b.id in chain and chain.index(a.id) < chain.index(b.id):
+            return [layer[i] for i in chain[chain.index(a.id) : chain.index(b.id) + 1]]
+        return None
+
+    mm = SimpleNamespace(
+        lanelet_map=SimpleNamespace(laneletLayer=layer),
+        routing_graph=SimpleNamespace(shortestPath=shortest),
+        # No CARLA map held: the run reads the world's.
+        carla_map=None,
+    )
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    monkeypatch.setattr(
+        coordinate, "to_lanelet2", lambda pose: SimpleNamespace(lanelet_id=10)
+    )
+    monkeypatch.setattr(
+        coordinate, "route_road_ids", lambda ids: [f"r{i}" for i in ids]
+    )
+    monkeypatch.setattr(
+        route_plan, "_lengths", lambda lanelets: [20.0 for _ in lanelets]
+    )
+    return layer
+
+
+def test_the_road_ahead_turns_where_the_route_to_the_goal_does(
+    _lane_routes: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.entity import carla_driver_entity as module
+
+    walked: list = []
+    real = module.route_waypoints_in_rig
+
+    def walk(*args, **kwargs):
+        walked.append(kwargs.get("route_roads"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "route_waypoints_in_rig", walk)
+    entity, _ = _entity()
+    world = _world_with_route()
+    entity.route_to(world, Lanelet2Pose(lanelet_id=13, s=0.0))
+    entity.on_scenario_start(world)
+
+    assert walked == [{"r10", "r11", "r12", "r13"}]
+
+
+def test_the_route_runs_through_the_waypoints(_lane_routes: dict) -> None:
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+    entity, _ = _entity()
+    entity.route_to(
+        _world_with_route(),
+        Lanelet2Pose(lanelet_id=13, s=0.0),
+        waypoints=[Lanelet2Pose(lanelet_id=12, s=5.0)],
+    )
+
+    assert entity._route_roads == {"r10", "r11", "r12", "r13"}  # noqa: SLF001
+
+
+def test_a_goal_no_lane_reaches_leaves_the_first_way(
+    _lane_routes: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+    entity, _ = _entity()
+    with caplog.at_level("WARNING"):
+        entity.route_to(_world_with_route(), Lanelet2Pose(lanelet_id=20, s=0.0))
+
+    assert entity._route_roads is None  # noqa: SLF001
+    assert "no route from lanelet 10 to lanelet 20" in caplog.text
+
+
+def test_without_a_goal_the_road_ahead_takes_the_first_way() -> None:
+    entity, _ = _entity()
+
+    assert entity._route_roads is None  # noqa: SLF001

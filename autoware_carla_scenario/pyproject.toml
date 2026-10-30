@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "19.15.0"
+version = "19.16.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -107,17 +107,18 @@ sumo = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.41.1",
+    "roadgen>=0.41.2",
 ]
 # Map files for a driver policy (`driver.map_dir`): roadgen converts the
 # world's OpenDRIVE into Lanelet2 and friends, with the stop lines CARLA
 # paints (0.33), each junction lanelet's `turn_direction` (0.34), the
 # traffic-light regulatory elements on the lanelets through the junction
 # with the stop line before them (0.35), and a stop sign's `traffic_sign`
-# element (0.36), as Autoware's maps have them; the same version as the
-# `sumo` extra's, so the two install together.
+# element (0.36), and walkways open both ways (`one_way: no`, 0.41.2), as
+# Autoware's maps have them; the same version as the `sumo` extra's, so the
+# two install together.
 map = [
-    "roadgen>=0.41.1",
+    "roadgen>=0.41.2",
 ]
 # An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
 # Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with

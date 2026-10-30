@@ -793,6 +793,7 @@ graph TB
 | **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404). |
 | **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
 | **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
+| **`slurm_options.py`** | `ui/slurm_options.py` | The `launcher.*` keys the run panel sets: what each may hold, the Hydra overrides they become (quoted as Hydra reads them back) and the `scenario ... --no-wait` command line. Checked by the library check (`docs/typecheck.md`). |
 | **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
 
 ### Data Models

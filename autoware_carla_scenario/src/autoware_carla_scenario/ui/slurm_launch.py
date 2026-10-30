@@ -32,6 +32,26 @@ from typing import Any
 
 from ..slurm.manifest import BatchLayout
 from ..slurm.submit import ACTIVE_STATES, squeue_states
+from . import slurm_options as _options
+
+# Checked by the library check, and re-exported: what each field may hold, the
+# overrides the options become and how the command line is put together.
+from .slurm_options import (  # noqa: F401
+    _BEFORE_QUOTE,
+    _ENV_NAME,
+    _NODE_PATH,
+    _NOT_A_STRING,
+    _SIMPLE,
+    _TIME,
+    _quote,
+    _quote_always,
+    check_at_least,
+    check_env,
+    check_node_path,
+    check_sbatch_value,
+    check_setup_line,
+    check_time,
+)
 
 __all__ = [
     "SlurmOptions",
@@ -51,11 +71,6 @@ __all__ = [
 #: must not have uv sync an environment).
 _ENV_COMMAND = "VIEWER_SCENARIO_COMMAND"
 
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_TIME = re.compile(r"^(\d+-)?\d{1,2}(:\d{2}){0,2}$|^\d+$")
-_SIMPLE = re.compile(r"^[A-Za-z0-9_.:/@+-]+$")
-#: A path on the nodes (``launcher.remote_cwd``, ``launcher.python``).
-_NODE_PATH = re.compile(r"^~?[A-Za-z0-9_.:/@+-]*$")
 _OUTPUTS_IN = re.compile(r"outputs in (?P<dir>\S+)")
 
 
@@ -94,61 +109,15 @@ def partitions() -> list[str]:
     return default + sorted({n.rstrip("*") for n in names} - set(default))
 
 
-#: An unquoted value Hydra reads as something other than that string: its
-#: grammar's INT, FLOAT, BOOL and NULL tokens (``hydra/grammar/OverrideLexer.g4``).
-_NOT_A_STRING = re.compile(
-    r"[+-]?(?:"
-    r"(?:0|[1-9](?:_?\d)*)"  # INT
-    r"|(?:(?:0|[1-9](?:_?\d)*)\.|(?:0|[1-9](?:_?\d)*)?\.\d(?:_?\d)*)"  # POINT_FLOAT
-    r"(?:[eE][+-]?\d(?:_?\d)*)?"
-    r"|(?:0|[1-9](?:_?\d)*)[eE][+-]?\d(?:_?\d)*"  # EXPONENT_FLOAT
-    r"|inf|nan"
-    r")|true|false|null",
-    re.IGNORECASE,
-)
-#: A run of backslashes a quote ends, and one that ends the value.
-_BEFORE_QUOTE = re.compile(r"(\\*)'")
+#: The run of backslashes that ends a value, which ui.slurm_options doubles
+#: when it quotes one (its tests compare that with this pattern's ``sub``).
 _AT_END = re.compile(r"(\\+)\Z")
 
 
-def _quote(value: str) -> str:
-    """*value* as a Hydra override's value that Hydra reads back as exactly
-    this string: as it is when plain, else single-quoted.
-
-    In a quoted value Hydra un-escapes only what the grammar's
-    ``QUOTED_VALUE`` needs (``_unescape_quoted_string``): a quote is ``\\'``,
-    and a run of backslashes is doubled when a quote or the end of the value
-    follows it; every other backslash is itself (``a\\b`` is ``a\\b``).
-    """
-    if _SIMPLE.fullmatch(value) and not _NOT_A_STRING.fullmatch(value):
-        return value
-    return _quote_always(value)
-
-
-def _quote_always(value: str) -> str:
-    """*value* single-quoted, as :func:`_quote` quotes it."""
-    body = _BEFORE_QUOTE.sub(lambda m: m[1] * 2 + "\\'", value)
-    return "'" + _AT_END.sub(lambda m: m[1] * 2, body) + "'"
-
-
-@dataclass
-class SlurmOptions:
-    """The ``launcher.*`` keys the viewer sets (the rest are the config's)."""
-
-    partition: str | None = None
-    array_parallelism: int | None = None
-    cases_per_task: int | None = None
-    time: str | None = None
-    mem: str | None = None
-    gres: str | None = None
-    start_stagger_seconds: float | None = None
-    #: Where the jobs work on the nodes, for a viewer whose host sees their
-    #: file system at another path (docs/slurm.md).
-    remote_cwd: str | None = None
-    python: str | None = None
-    #: ``launcher.setup``: shell lines a job runs first; empty: the config's.
-    setup: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
+class SlurmOptions(_options.SlurmOptions):
+    """The ``launcher.*`` keys the viewer sets (the rest are the config's):
+    ui.slurm_options' :class:`~autoware_carla_scenario.ui.slurm_options.SlurmOptions`,
+    read off the run panel's fields."""
 
     @classmethod
     def from_request(cls, data: dict[str, Any] | None) -> SlurmOptions:
@@ -171,8 +140,7 @@ class SlurmOptions:
                 parsed = kind(value)
             except ValueError as exc:
                 raise ValueError(f"{key} must be a number, not {value!r}") from exc
-            if parsed < (0 if kind is float else 1):
-                raise ValueError(f"{key} must be at least {0 if kind is float else 1}")
+            check_at_least(key, parsed, 0 if kind is float else 1)
             return parsed
 
         env: dict[str, str] = {}
@@ -184,56 +152,20 @@ class SlurmOptions:
                 raise ValueError("each extra env line is NAME=value")
         for name, value in dict(raw_env).items():
             name = str(name).strip()
-            if not _ENV_NAME.fullmatch(name):
-                raise ValueError(f"{name!r} is not an environment variable name")
-            # The value becomes an OmegaConf string: `${` would be an
-            # interpolation, not the text the job is to see.
-            if "${" in str(value):
-                raise ValueError(
-                    f"env {name}={value!r}: no ${{...}} -- the value is exported "
-                    "as written, not expanded (set it in a setup line, e.g. "
-                    "export NAME=$HOME/x, or set launcher.env in a config)"
-                )
+            check_env(name, str(value), repr(value))
             env[name] = str(value)
         time = text("time")
-        if time is not None and not _TIME.match(time):
-            raise ValueError(
-                f"time is sbatch's --time ([D-]HH:MM:SS or minutes), not {time!r}"
-            )
+        check_time(time)
         for key in ("partition", "mem", "gres"):
-            value = text(key)
-            if value is not None and not _SIMPLE.match(value):
-                raise ValueError(f"{key} {value!r} has characters sbatch does not take")
+            check_sbatch_value(key, text(key))
         for key in ("remote_cwd", "python"):
-            value = text(key)
-            if value is not None and (
-                not _NODE_PATH.match(value)
-                or (value.startswith("~") and value != "~" and value[1] != "/")
-            ):
-                raise ValueError(
-                    f"{key} {value!r} is not a path the launcher takes (letters, "
-                    "digits, _ . : / @ + -, and ~ or ~/ first)"
-                )
+            check_node_path(key, text(key))
         raw_setup = data.get("setup") or []
         if isinstance(raw_setup, str):
             raw_setup = raw_setup.splitlines()
         setup = [str(line).strip() for line in raw_setup if str(line).strip()]
         for line in setup:
-            # A Hydra override's value, then an OmegaConf string: an
-            # interpolation would not reach the job as written.
-            if "${" in line:
-                raise ValueError(
-                    f"setup line {line!r}: write $NAME rather than ${{NAME}} "
-                    "(or set launcher.setup in a config)"
-                )
-            # The job script holds each line as written: a line ending in an
-            # unescaped backslash would run on into the next line the script
-            # has (`set -u`, say), not end where the field's line does.
-            if (len(line) - len(line.rstrip("\\"))) % 2:
-                raise ValueError(
-                    f"setup line {line!r} ends in a backslash: write each command "
-                    "on one line"
-                )
+            check_setup_line(line)
         return cls(
             partition=text("partition"),
             array_parallelism=number("array_parallelism", int),
@@ -248,55 +180,23 @@ class SlurmOptions:
             env=env,
         )
 
-    def overrides(self) -> list[str]:
-        """``launcher=slurm`` and the keys set, as Hydra overrides."""
-        out = ["launcher=slurm"]
-        for key in (
-            "partition",
-            "array_parallelism",
-            "cases_per_task",
-            "time",
-            "mem",
-            "gres",
-            "start_stagger_seconds",
-            "remote_cwd",
-            "python",
-        ):
-            value = getattr(self, key)
-            if isinstance(value, (int, float)):
-                out.append(f"launcher.{key}={value}")
-            elif value is not None:
-                out.append(f"launcher.{key}={_quote(value)}")
-        if self.setup:
-            lines = ",".join(_quote_always(line) for line in self.setup)
-            out.append(f"launcher.setup=[{lines}]")
-        # `env` is an empty mapping in the config: a new key is added (++).
-        out.extend(
-            f"++launcher.env.{k}={_quote(v)}" for k, v in sorted(self.env.items())
-        )
-        return out
-
 
 def build_command(
     scenario: str,
     extra_overrides: list[str],
     sweeper: str,
-    options: SlurmOptions,
+    options: _options.SlurmOptions,
 ) -> list[str]:
-    """The ``scenario`` command that submits the batch and exits (``--no-wait``).
+    """The ``scenario`` command that submits the batch and exits (``--no-wait``),
+    started as :func:`scenario_command` says.
 
     With a sweeper the batch runs every case of each scenario's sweep
     (``--multirun``, expanded by the batch itself); without one each scenario
     the pattern matches runs once.
     """
-    cmd = scenario_command()
-    if sweeper:
-        cmd.append("--multirun")
-    cmd.append(f"scenario={scenario}")
-    cmd.extend(extra_overrides)
-    cmd.extend(options.overrides())
-    cmd.append("--no-wait")
-    return cmd
+    return _options.build_command(
+        scenario_command(), scenario, extra_overrides, sweeper, options
+    )
 
 
 # ── The submission the viewer started ──────────────────────────────────────

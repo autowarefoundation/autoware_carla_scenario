@@ -1,0 +1,1140 @@
+{
+ "build_command": {
+  "default-command": [
+   "uv",
+   "run",
+   "scenario",
+   "--multirun",
+   "scenario=cut_in/*",
+   "map=town10hd_opt",
+   "launcher=slurm",
+   "launcher.partition=main",
+   "launcher.array_parallelism=2",
+   "launcher.cases_per_task=3",
+   "launcher.time=1-00:00:00",
+   "launcher.mem=12G",
+   "launcher.gres=gpu:1",
+   "launcher.start_stagger_seconds=30.0",
+   "launcher.remote_cwd=workspace/OnePlanner",
+   "launcher.python=.venv/bin/python",
+   "launcher.setup=['module load cuda','echo \"it\\'s $HOME\"','X=a\\b\\\\\\\\']",
+   "++launcher.env.A='a b'",
+   "++launcher.env.B='2'",
+   "++launcher.env.C='null'",
+   "++launcher.env.D='C:\\dir\\\\'",
+   "--no-wait"
+  ],
+  "empty-command": [
+   "uv",
+   "run",
+   "scenario",
+   "scenario=x",
+   "launcher=slurm",
+   "--no-wait"
+  ],
+  "no-sweeper": [
+   "uv",
+   "run",
+   "scenario",
+   "scenario=x",
+   "launcher=slurm",
+   "--no-wait"
+  ],
+  "quoted-command": [
+   "uv",
+   "run",
+   "--project",
+   "/opt/my ws",
+   "scenario",
+   "--multirun",
+   "scenario=cut_in/*",
+   "launcher=slurm",
+   "launcher.partition=main",
+   "launcher.array_parallelism=2",
+   "launcher.cases_per_task=3",
+   "launcher.time=1-00:00:00",
+   "launcher.mem=12G",
+   "launcher.gres=gpu:1",
+   "launcher.start_stagger_seconds=30.0",
+   "launcher.remote_cwd=workspace/OnePlanner",
+   "launcher.python=.venv/bin/python",
+   "launcher.setup=['module load cuda','echo \"it\\'s $HOME\"','X=a\\b\\\\\\\\']",
+   "++launcher.env.A='a b'",
+   "++launcher.env.B='2'",
+   "++launcher.env.C='null'",
+   "++launcher.env.D='C:\\dir\\\\'",
+   "--no-wait"
+  ],
+  "text-values": [
+   "uv",
+   "run",
+   "scenario",
+   "--multirun",
+   "scenario=x",
+   "launcher=slurm",
+   "launcher.partition='a b'",
+   "launcher.time='a b'",
+   "launcher.remote_cwd='a b'",
+   "launcher.setup=['a b','a bx']",
+   "++launcher.env.V='a b'",
+   "--no-wait"
+  ],
+  "venv-command": [
+   ".venv/bin/scenario",
+   "scenario=x",
+   "a=1",
+   "b=2",
+   "launcher=slurm",
+   "launcher.array_parallelism=0",
+   "launcher.cases_per_task=100000000000000000000",
+   "launcher.start_stagger_seconds=0.30000000000000004",
+   "--no-wait"
+  ]
+ },
+ "from_request": {
+  "empty": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm"
+   ]
+  },
+  "empty-node-path-after-strip": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm"
+   ]
+  },
+  "env-bad-name": "ValueError: '1BAD' is not an environment variable name",
+  "env-bad-name-mapping": "ValueError: 'a-b' is not an environment variable name",
+  "env-dollar": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {
+     "X": "$HOME"
+    },
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "++launcher.env.X='$HOME'"
+   ]
+  },
+  "env-empty-name": "ValueError: '' is not an environment variable name",
+  "env-interpolation": "ValueError: env X='${HOME}': no ${...} -- the value is exported as written, not expanded (set it in a setup line, e.g. export NAME=$HOME/x, or set launcher.env in a config)",
+  "env-interpolation-list": "ValueError: env X=['${x}']: no ${...} -- the value is exported as written, not expanded (set it in a setup line, e.g. export NAME=$HOME/x, or set launcher.env in a config)",
+  "env-interpolation-mapping": "ValueError: env X='a${oc.env:HOME}': no ${...} -- the value is exported as written, not expanded (set it in a setup line, e.g. export NAME=$HOME/x, or set launcher.env in a config)",
+  "env-mapping": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {
+     "A": "1",
+     "B": "x y",
+     "C": "5",
+     "D": "None"
+    },
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "++launcher.env.A='1'",
+    "++launcher.env.B='x y'",
+    "++launcher.env.C='5'",
+    "++launcher.env.D=None"
+   ]
+  },
+  "env-pairs": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {
+     "A": "1",
+     "B": "2"
+    },
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "++launcher.env.A='1'",
+    "++launcher.env.B='2'"
+   ]
+  },
+  "env-text": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {
+     "A": "1",
+     "B": " 2",
+     "C": "=3"
+    },
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "++launcher.env.A='1'",
+    "++launcher.env.B=' 2'",
+    "++launcher.env.C='=3'"
+   ]
+  },
+  "env-text-no-value": "ValueError: each extra env line is NAME=value",
+  "everything": {
+   "fields": {
+    "array_parallelism": 4,
+    "cases_per_task": 2,
+    "env": {
+     "A": "first",
+     "M": "a\\b\\",
+     "Z": "last"
+    },
+    "gres": "gpu:a100:1",
+    "mem": "64G",
+    "partition": "main",
+    "python": "/opt/venv/bin/python",
+    "remote_cwd": "~/ws",
+    "setup": [
+     "module load cuda",
+     "export A='b c'",
+     "Y=\"d\" \\\\"
+    ],
+    "start_stagger_seconds": 2.5,
+    "time": "2-00"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.partition=main",
+    "launcher.array_parallelism=4",
+    "launcher.cases_per_task=2",
+    "launcher.time=2-00",
+    "launcher.mem=64G",
+    "launcher.gres=gpu:a100:1",
+    "launcher.start_stagger_seconds=2.5",
+    "launcher.remote_cwd='~/ws'",
+    "launcher.python=/opt/venv/bin/python",
+    "launcher.setup=['module load cuda','export A=\\'b c\\'','Y=\"d\" \\\\\\\\']",
+    "++launcher.env.A=first",
+    "++launcher.env.M='a\\b\\\\'",
+    "++launcher.env.Z=last"
+   ]
+  },
+  "falsy-fields": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm"
+   ]
+  },
+  "float-inf": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": Infinity,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.start_stagger_seconds=inf"
+   ]
+  },
+  "float-nan": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": NaN,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.start_stagger_seconds=nan"
+   ]
+  },
+  "float-negative": "ValueError: start_stagger_seconds must be at least 0",
+  "float-negative-zero": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": -0.0,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.start_stagger_seconds=-0.0"
+   ]
+  },
+  "float-text": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": 15.0,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.start_stagger_seconds=15.0"
+   ]
+  },
+  "gres-bad": "ValueError: gres 'gpu:1,shard' has characters sbatch does not take",
+  "gres-unicode": "ValueError: gres 'ä' has characters sbatch does not take",
+  "int-bool": "ValueError: array_parallelism must be a number, not 'True'",
+  "int-float": "ValueError: array_parallelism must be a number, not '1.5'",
+  "int-negative": "ValueError: array_parallelism must be at least 1",
+  "int-underscore": {
+   "fields": {
+    "array_parallelism": 10,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.array_parallelism=10"
+   ]
+  },
+  "int-word": "ValueError: cases_per_task must be a number, not 'two'",
+  "int-zero": "ValueError: cases_per_task must be at least 1",
+  "mem-bad": "ValueError: mem '12 G' has characters sbatch does not take",
+  "node-path-space": "ValueError: python 'a b' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
+  "node-paths": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": ".venv/bin/python",
+    "remote_cwd": "workspace/OnePlanner",
+    "setup": [
+     "source ~/workspace/opt/env.sh",
+     "echo \"it's $HOME\""
+    ],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.remote_cwd=workspace/OnePlanner",
+    "launcher.python=.venv/bin/python",
+    "launcher.setup=['source ~/workspace/opt/env.sh','echo \"it\\'s $HOME\"']"
+   ]
+  },
+  "none": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm"
+   ]
+  },
+  "numbers-as-json": {
+   "fields": {
+    "array_parallelism": 3,
+    "cases_per_task": 1,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.array_parallelism=3",
+    "launcher.cases_per_task=1"
+   ]
+  },
+  "order-env-before-time": "ValueError: '1BAD' is not an environment variable name",
+  "order-number-ranges": "ValueError: array_parallelism must be at least 1",
+  "order-numbers": "ValueError: cases_per_task must be a number, not 'y'",
+  "order-partition-before-mem": "ValueError: partition 'a b' has characters sbatch does not take",
+  "order-paths-before-setup": "ValueError: python 'a b' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
+  "order-setup-before-numbers": "ValueError: setup line '${X}': write $NAME rather than ${NAME} (or set launcher.setup in a config)",
+  "order-text-before-paths": "ValueError: gres 'a b' has characters sbatch does not take",
+  "order-time-before-partition": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not 'x'",
+  "panel": {
+   "fields": {
+    "array_parallelism": 2,
+    "cases_per_task": null,
+    "env": {
+     "FOO": "a'b",
+     "ONEPLANNER_MAP_DIR": "/maps/town 10"
+    },
+    "gres": "shard:1",
+    "mem": "12G",
+    "partition": "main",
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": 30.0,
+    "time": "01:30:00"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.partition=main",
+    "launcher.array_parallelism=2",
+    "launcher.time=01:30:00",
+    "launcher.mem=12G",
+    "launcher.gres=shard:1",
+    "launcher.start_stagger_seconds=30.0",
+    "++launcher.env.FOO='a\\'b'",
+    "++launcher.env.ONEPLANNER_MAP_DIR='/maps/town 10'"
+   ]
+  },
+  "partition-bad": "ValueError: partition 'main; rm -rf' has characters sbatch does not take",
+  "setup-backslash-end": "ValueError: setup line 'module load a \\\\' ends in a backslash: write each command on one line",
+  "setup-inner-backslash": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [
+     "echo a\\b"
+    ],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.setup=['echo a\\b']"
+   ]
+  },
+  "setup-interpolation": "ValueError: setup line 'echo ${HOME}': write $NAME rather than ${NAME} (or set launcher.setup in a config)",
+  "setup-list": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [
+     "a",
+     "3",
+     "b"
+    ],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.setup=['a','3','b']"
+   ]
+  },
+  "setup-three-backslashes": "ValueError: setup line 'echo \\\\\\\\\\\\' ends in a backslash: write each command on one line",
+  "setup-trailing-space-backslash": "ValueError: setup line 'echo \\\\' ends in a backslash: write each command on one line",
+  "setup-two-backslashes": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [
+     "echo a\\\\"
+    ],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.setup=['echo a\\\\\\\\']"
+   ]
+  },
+  "tilde": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": "~/x",
+    "remote_cwd": "~",
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.remote_cwd='~'",
+    "launcher.python='~/x'"
+   ]
+  },
+  "tilde-twice": "ValueError: python '~~' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
+  "tilde-user": "ValueError: remote_cwd '~bob/work' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
+  "time-bad": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not 'tomorrow'",
+  "time-bad-tail": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not '01:00:00x'",
+  "time-forms": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": "1-2:03:04"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.time=1-2:03:04"
+   ]
+  },
+  "time-minutes": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": "90"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.time='90'"
+   ]
+  },
+  "time-seconds-only": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not '1:2'"
+ },
+ "overrides": {
+  "bools": [
+   "launcher=slurm",
+   "launcher.array_parallelism=True",
+   "launcher.start_stagger_seconds=False"
+  ],
+  "bytes-in-text-key": "TypeError",
+  "defaults": [
+   "launcher=slurm"
+  ],
+  "empty-text": [
+   "launcher=slurm",
+   "launcher.partition=''",
+   "launcher.gres=''"
+  ],
+  "env-only": [
+   "launcher=slurm",
+   "++launcher.env.X='\\\\'",
+   "++launcher.env.Y='\\''",
+   "++launcher.env.Z=''"
+  ],
+  "every-key": [
+   "launcher=slurm",
+   "launcher.partition=main",
+   "launcher.array_parallelism=2",
+   "launcher.cases_per_task=3",
+   "launcher.time=1-00:00:00",
+   "launcher.mem=12G",
+   "launcher.gres=gpu:1",
+   "launcher.start_stagger_seconds=30.0",
+   "launcher.remote_cwd=workspace/OnePlanner",
+   "launcher.python=.venv/bin/python",
+   "launcher.setup=['module load cuda','echo \"it\\'s $HOME\"','X=a\\b\\\\\\\\']",
+   "++launcher.env.A='a b'",
+   "++launcher.env.B='2'",
+   "++launcher.env.C='null'",
+   "++launcher.env.D='C:\\dir\\\\'"
+  ],
+  "float-huge": [
+   "launcher=slurm",
+   "launcher.start_stagger_seconds=1e+22"
+  ],
+  "float-nan": [
+   "launcher=slurm",
+   "launcher.start_stagger_seconds=nan"
+  ],
+  "float-specials": [
+   "launcher=slurm",
+   "launcher.start_stagger_seconds=inf"
+  ],
+  "float-tiny": [
+   "launcher=slurm",
+   "launcher.start_stagger_seconds=1e-07"
+  ],
+  "int-stagger": [
+   "launcher=slurm",
+   "launcher.start_stagger_seconds=5"
+  ],
+  "list-in-number-key": "TypeError",
+  "list-in-text-key": "TypeError",
+  "number-in-text-keys": [
+   "launcher=slurm",
+   "launcher.partition=5",
+   "launcher.time=1.5",
+   "launcher.python=False"
+  ],
+  "numbers": [
+   "launcher=slurm",
+   "launcher.array_parallelism=0",
+   "launcher.cases_per_task=100000000000000000000",
+   "launcher.start_stagger_seconds=0.30000000000000004"
+  ],
+  "setup-empty-line": [
+   "launcher=slurm",
+   "launcher.setup=['']"
+  ],
+  "setup-only": [
+   "launcher=slurm",
+   "launcher.setup=['a']"
+  ],
+  "text-0": [
+   "launcher=slurm",
+   "launcher.partition=''",
+   "launcher.time=''",
+   "launcher.remote_cwd=''",
+   "launcher.setup=['','x']",
+   "++launcher.env.V=''"
+  ],
+  "text-1": [
+   "launcher=slurm",
+   "launcher.partition=main",
+   "launcher.time=main",
+   "launcher.remote_cwd=main",
+   "launcher.setup=['main','mainx']",
+   "++launcher.env.V=main"
+  ],
+  "text-10": [
+   "launcher=slurm",
+   "launcher.partition='C:\\dir\\\\'",
+   "launcher.time='C:\\dir\\\\'",
+   "launcher.remote_cwd='C:\\dir\\\\'",
+   "launcher.setup=['C:\\dir\\\\','C:\\dir\\x']",
+   "++launcher.env.V='C:\\dir\\\\'"
+  ],
+  "text-11": [
+   "launcher=slurm",
+   "launcher.partition='\\\\\\\\\\\\'",
+   "launcher.time='\\\\\\\\\\\\'",
+   "launcher.remote_cwd='\\\\\\\\\\\\'",
+   "launcher.setup=['\\\\\\\\\\\\','\\\\\\x']",
+   "++launcher.env.V='\\\\\\\\\\\\'"
+  ],
+  "text-12": [
+   "launcher=slurm",
+   "launcher.partition='it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'",
+   "launcher.time='it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'",
+   "launcher.remote_cwd='it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'",
+   "launcher.setup=['it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\','it\\'s \\\\\\\\\\'quoted\\\\\\' \\x']",
+   "++launcher.env.V='it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'"
+  ],
+  "text-13": [
+   "launcher=slurm",
+   "launcher.partition='null'",
+   "launcher.time='null'",
+   "launcher.remote_cwd='null'",
+   "launcher.setup=['null','nullx']",
+   "++launcher.env.V='null'"
+  ],
+  "text-14": [
+   "launcher=slurm",
+   "launcher.partition='NULL'",
+   "launcher.time='NULL'",
+   "launcher.remote_cwd='NULL'",
+   "launcher.setup=['NULL','NULLx']",
+   "++launcher.env.V='NULL'"
+  ],
+  "text-15": [
+   "launcher=slurm",
+   "launcher.partition='true'",
+   "launcher.time='true'",
+   "launcher.remote_cwd='true'",
+   "launcher.setup=['true','truex']",
+   "++launcher.env.V='true'"
+  ],
+  "text-16": [
+   "launcher=slurm",
+   "launcher.partition='False'",
+   "launcher.time='False'",
+   "launcher.remote_cwd='False'",
+   "launcher.setup=['False','Falsex']",
+   "++launcher.env.V='False'"
+  ],
+  "text-17": [
+   "launcher=slurm",
+   "launcher.partition='inf'",
+   "launcher.time='inf'",
+   "launcher.remote_cwd='inf'",
+   "launcher.setup=['inf','infx']",
+   "++launcher.env.V='inf'"
+  ],
+  "text-18": [
+   "launcher=slurm",
+   "launcher.partition='-inf'",
+   "launcher.time='-inf'",
+   "launcher.remote_cwd='-inf'",
+   "launcher.setup=['-inf','-infx']",
+   "++launcher.env.V='-inf'"
+  ],
+  "text-19": [
+   "launcher=slurm",
+   "launcher.partition='nan'",
+   "launcher.time='nan'",
+   "launcher.remote_cwd='nan'",
+   "launcher.setup=['nan','nanx']",
+   "++launcher.env.V='nan'"
+  ],
+  "text-2": [
+   "launcher=slurm",
+   "launcher.partition=gpu-a100",
+   "launcher.time=gpu-a100",
+   "launcher.remote_cwd=gpu-a100",
+   "launcher.setup=['gpu-a100','gpu-a100x']",
+   "++launcher.env.V=gpu-a100"
+  ],
+  "text-20": [
+   "launcher=slurm",
+   "launcher.partition='+NaN'",
+   "launcher.time='+NaN'",
+   "launcher.remote_cwd='+NaN'",
+   "launcher.setup=['+NaN','+NaNx']",
+   "++launcher.env.V='+NaN'"
+  ],
+  "text-21": [
+   "launcher=slurm",
+   "launcher.partition='1'",
+   "launcher.time='1'",
+   "launcher.remote_cwd='1'",
+   "launcher.setup=['1','1x']",
+   "++launcher.env.V='1'"
+  ],
+  "text-22": [
+   "launcher=slurm",
+   "launcher.partition='-1'",
+   "launcher.time='-1'",
+   "launcher.remote_cwd='-1'",
+   "launcher.setup=['-1','-1x']",
+   "++launcher.env.V='-1'"
+  ],
+  "text-23": [
+   "launcher=slurm",
+   "launcher.partition=01",
+   "launcher.time=01",
+   "launcher.remote_cwd=01",
+   "launcher.setup=['01','01x']",
+   "++launcher.env.V=01"
+  ],
+  "text-24": [
+   "launcher=slurm",
+   "launcher.partition='1_000'",
+   "launcher.time='1_000'",
+   "launcher.remote_cwd='1_000'",
+   "launcher.setup=['1_000','1_000x']",
+   "++launcher.env.V='1_000'"
+  ],
+  "text-25": [
+   "launcher=slurm",
+   "launcher.partition=1__0",
+   "launcher.time=1__0",
+   "launcher.remote_cwd=1__0",
+   "launcher.setup=['1__0','1__0x']",
+   "++launcher.env.V=1__0"
+  ],
+  "text-26": [
+   "launcher=slurm",
+   "launcher.partition='1.'",
+   "launcher.time='1.'",
+   "launcher.remote_cwd='1.'",
+   "launcher.setup=['1.','1.x']",
+   "++launcher.env.V='1.'"
+  ],
+  "text-27": [
+   "launcher=slurm",
+   "launcher.partition='.5'",
+   "launcher.time='.5'",
+   "launcher.remote_cwd='.5'",
+   "launcher.setup=['.5','.5x']",
+   "++launcher.env.V='.5'"
+  ],
+  "text-28": [
+   "launcher=slurm",
+   "launcher.partition='1e5'",
+   "launcher.time='1e5'",
+   "launcher.remote_cwd='1e5'",
+   "launcher.setup=['1e5','1e5x']",
+   "++launcher.env.V='1e5'"
+  ],
+  "text-29": [
+   "launcher=slurm",
+   "launcher.partition='1.5E-3'",
+   "launcher.time='1.5E-3'",
+   "launcher.remote_cwd='1.5E-3'",
+   "launcher.setup=['1.5E-3','1.5E-3x']",
+   "++launcher.env.V='1.5E-3'"
+  ],
+  "text-3": [
+   "launcher=slurm",
+   "launcher.partition=shard:1",
+   "launcher.time=shard:1",
+   "launcher.remote_cwd=shard:1",
+   "launcher.setup=['shard:1','shard:1x']",
+   "++launcher.env.V=shard:1"
+  ],
+  "text-30": [
+   "launcher=slurm",
+   "launcher.partition='1_0.0_1e1_0'",
+   "launcher.time='1_0.0_1e1_0'",
+   "launcher.remote_cwd='1_0.0_1e1_0'",
+   "launcher.setup=['1_0.0_1e1_0','1_0.0_1e1_0x']",
+   "++launcher.env.V='1_0.0_1e1_0'"
+  ],
+  "text-31": [
+   "launcher=slurm",
+   "launcher.partition=0x10",
+   "launcher.time=0x10",
+   "launcher.remote_cwd=0x10",
+   "launcher.setup=['0x10','0x10x']",
+   "++launcher.env.V=0x10"
+  ],
+  "text-32": [
+   "launcher=slurm",
+   "launcher.partition=infinity",
+   "launcher.time=infinity",
+   "launcher.remote_cwd=infinity",
+   "launcher.setup=['infinity','infinityx']",
+   "++launcher.env.V=infinity"
+  ],
+  "text-33": [
+   "launcher=slurm",
+   "launcher.partition=nullx",
+   "launcher.time=nullx",
+   "launcher.remote_cwd=nullx",
+   "launcher.setup=['nullx','nullxx']",
+   "++launcher.env.V=nullx"
+  ],
+  "text-34": [
+   "launcher=slurm",
+   "launcher.partition='~/work'",
+   "launcher.time='~/work'",
+   "launcher.remote_cwd='~/work'",
+   "launcher.setup=['~/work','~/workx']",
+   "++launcher.env.V='~/work'"
+  ],
+  "text-35": [
+   "launcher=slurm",
+   "launcher.partition='ünïcödé 東京'",
+   "launcher.time='ünïcödé 東京'",
+   "launcher.remote_cwd='ünïcödé 東京'",
+   "launcher.setup=['ünïcödé 東京','ünïcödé 東京x']",
+   "++launcher.env.V='ünïcödé 東京'"
+  ],
+  "text-36": [
+   "launcher=slurm",
+   "launcher.partition='k=v'",
+   "launcher.time='k=v'",
+   "launcher.remote_cwd='k=v'",
+   "launcher.setup=['k=v','k=vx']",
+   "++launcher.env.V='k=v'"
+  ],
+  "text-37": [
+   "launcher=slurm",
+   "launcher.partition='${HOME}'",
+   "launcher.time='${HOME}'",
+   "launcher.remote_cwd='${HOME}'",
+   "launcher.setup=['${HOME}','${HOME}x']",
+   "++launcher.env.V='${HOME}'"
+  ],
+  "text-38": [
+   "launcher=slurm",
+   "launcher.partition='$HOME'",
+   "launcher.time='$HOME'",
+   "launcher.remote_cwd='$HOME'",
+   "launcher.setup=['$HOME','$HOMEx']",
+   "++launcher.env.V='$HOME'"
+  ],
+  "text-39": [
+   "launcher=slurm",
+   "launcher.partition='a,b'",
+   "launcher.time='a,b'",
+   "launcher.remote_cwd='a,b'",
+   "launcher.setup=['a,b','a,bx']",
+   "++launcher.env.V='a,b'"
+  ],
+  "text-4": [
+   "launcher=slurm",
+   "launcher.partition=12G",
+   "launcher.time=12G",
+   "launcher.remote_cwd=12G",
+   "launcher.setup=['12G','12Gx']",
+   "++launcher.env.V=12G"
+  ],
+  "text-40": [
+   "launcher=slurm",
+   "launcher.partition='[a]'",
+   "launcher.time='[a]'",
+   "launcher.remote_cwd='[a]'",
+   "launcher.setup=['[a]','[a]x']",
+   "++launcher.env.V='[a]'"
+  ],
+  "text-41": [
+   "launcher=slurm",
+   "launcher.partition='{a: 1}'",
+   "launcher.time='{a: 1}'",
+   "launcher.remote_cwd='{a: 1}'",
+   "launcher.setup=['{a: 1}','{a: 1}x']",
+   "++launcher.env.V='{a: 1}'"
+  ],
+  "text-5": [
+   "launcher=slurm",
+   "launcher.partition=01:30:00",
+   "launcher.time=01:30:00",
+   "launcher.remote_cwd=01:30:00",
+   "launcher.setup=['01:30:00','01:30:00x']",
+   "++launcher.env.V=01:30:00"
+  ],
+  "text-6": [
+   "launcher=slurm",
+   "launcher.partition='a b'",
+   "launcher.time='a b'",
+   "launcher.remote_cwd='a b'",
+   "launcher.setup=['a b','a bx']",
+   "++launcher.env.V='a b'"
+  ],
+  "text-7": [
+   "launcher=slurm",
+   "launcher.partition='a\\'b'",
+   "launcher.time='a\\'b'",
+   "launcher.remote_cwd='a\\'b'",
+   "launcher.setup=['a\\'b','a\\'bx']",
+   "++launcher.env.V='a\\'b'"
+  ],
+  "text-8": [
+   "launcher=slurm",
+   "launcher.partition='a\"b'",
+   "launcher.time='a\"b'",
+   "launcher.remote_cwd='a\"b'",
+   "launcher.setup=['a\"b','a\"bx']",
+   "++launcher.env.V='a\"b'"
+  ],
+  "text-9": [
+   "launcher=slurm",
+   "launcher.partition='a\\b'",
+   "launcher.time='a\\b'",
+   "launcher.remote_cwd='a\\b'",
+   "launcher.setup=['a\\b','a\\bx']",
+   "++launcher.env.V='a\\b'"
+  ],
+  "text-in-number-keys": [
+   "launcher=slurm",
+   "launcher.array_parallelism='4'",
+   "launcher.cases_per_task='two words'",
+   "launcher.start_stagger_seconds='null'"
+  ]
+ },
+ "quote": {
+  "": "''",
+  "$HOME": "'$HOME'",
+  "${HOME}": "'${HOME}'",
+  "+NaN": "'+NaN'",
+  "-1": "'-1'",
+  "-inf": "'-inf'",
+  ".5": "'.5'",
+  "01": "01",
+  "01:30:00": "01:30:00",
+  "0x10": "0x10",
+  "1": "'1'",
+  "1.": "'1.'",
+  "1.5E-3": "'1.5E-3'",
+  "12G": "12G",
+  "1_0.0_1e1_0": "'1_0.0_1e1_0'",
+  "1_000": "'1_000'",
+  "1__0": "1__0",
+  "1e5": "'1e5'",
+  "C:\\dir\\": "'C:\\dir\\\\'",
+  "False": "'False'",
+  "NULL": "'NULL'",
+  "[a]": "'[a]'",
+  "\\\\\\": "'\\\\\\\\\\\\'",
+  "a b": "'a b'",
+  "a\"b": "'a\"b'",
+  "a'b": "'a\\'b'",
+  "a,b": "'a,b'",
+  "a\\b": "'a\\b'",
+  "gpu-a100": "gpu-a100",
+  "inf": "'inf'",
+  "infinity": "infinity",
+  "it's \\\\'quoted\\' \\": "'it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'",
+  "k=v": "'k=v'",
+  "main": "main",
+  "nan": "'nan'",
+  "null": "'null'",
+  "nullx": "nullx",
+  "shard:1": "shard:1",
+  "true": "'true'",
+  "{a: 1}": "'{a: 1}'",
+  "~/work": "'~/work'",
+  "ünïcödé 東京": "'ünïcödé 東京'"
+ },
+ "quote_always": {
+  "": "''",
+  "$HOME": "'$HOME'",
+  "${HOME}": "'${HOME}'",
+  "+NaN": "'+NaN'",
+  "-1": "'-1'",
+  "-inf": "'-inf'",
+  ".5": "'.5'",
+  "01": "'01'",
+  "01:30:00": "'01:30:00'",
+  "0x10": "'0x10'",
+  "1": "'1'",
+  "1.": "'1.'",
+  "1.5E-3": "'1.5E-3'",
+  "12G": "'12G'",
+  "1_0.0_1e1_0": "'1_0.0_1e1_0'",
+  "1_000": "'1_000'",
+  "1__0": "'1__0'",
+  "1e5": "'1e5'",
+  "C:\\dir\\": "'C:\\dir\\\\'",
+  "False": "'False'",
+  "NULL": "'NULL'",
+  "[a]": "'[a]'",
+  "\\\\\\": "'\\\\\\\\\\\\'",
+  "a b": "'a b'",
+  "a\"b": "'a\"b'",
+  "a'b": "'a\\'b'",
+  "a,b": "'a,b'",
+  "a\\b": "'a\\b'",
+  "gpu-a100": "'gpu-a100'",
+  "inf": "'inf'",
+  "infinity": "'infinity'",
+  "it's \\\\'quoted\\' \\": "'it\\'s \\\\\\\\\\'quoted\\\\\\' \\\\'",
+  "k=v": "'k=v'",
+  "main": "'main'",
+  "nan": "'nan'",
+  "null": "'null'",
+  "nullx": "'nullx'",
+  "shard:1": "'shard:1'",
+  "true": "'true'",
+  "{a: 1}": "'{a: 1}'",
+  "~/work": "'~/work'",
+  "ünïcödé 東京": "'ünïcödé 東京'"
+ }
+}

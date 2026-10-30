@@ -393,6 +393,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
             "on_lanelet",
             "project_onto_lanelet",
             "project_onto_road",
+            "route_road_ids",
         )
     },
     # What a scenario imports of conditions beside the package's exports.

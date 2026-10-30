@@ -37,6 +37,7 @@ from .stop_line import (
 from .transform import (
     lanelet_length,
     lanelets_ahead,
+    route_road_ids,
     on_lanelet,
     project_onto_lanelet,
     project_onto_road,
@@ -67,6 +68,7 @@ __all__ = [
     "lanelet2_traffic_light_id_to_opendrive_controller_id",
     "lanelet_length",
     "lanelets_ahead",
+    "route_road_ids",
     "on_lanelet",
     "project_onto_lanelet",
     "project_onto_road",

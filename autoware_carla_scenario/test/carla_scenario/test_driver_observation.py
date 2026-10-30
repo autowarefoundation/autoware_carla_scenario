@@ -10,6 +10,8 @@ import math
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from typing import Optional
+
 import numpy as np
 import pytest
 
@@ -260,6 +262,121 @@ def test_route_stops_when_the_road_ends() -> None:
         carla_map, actor, to_local_pose(actor.get_transform())
     )
     assert route.shape == (1, 3)
+
+
+def _map_with_a_fork() -> MagicMock:
+    """Road 1 along +x; 4 m on, road 1 goes on and road 2 turns off along +y."""
+    carla_map = MagicMock()
+
+    def _waypoint(road: int, x: float, y: float) -> MagicMock:
+        waypoint = MagicMock()
+        waypoint.road_id = road
+        waypoint.is_junction = False
+        waypoint.transform.location = SimpleNamespace(x=x, y=y, z=0.0)
+        if road == 2:
+            waypoint.next.side_effect = lambda step: [_waypoint(2, x, y + step)]
+        elif x + 2.0 >= 4.0 and x < 4.0:
+            waypoint.next.side_effect = lambda step: [
+                _waypoint(1, x + step, 0.0),
+                _waypoint(2, x, step),
+            ]
+        else:
+            waypoint.next.side_effect = lambda step: [_waypoint(1, x + step, 0.0)]
+        return waypoint
+
+    carla_map.get_waypoint.return_value = _waypoint(1, 0.0, 0.0)
+    return carla_map
+
+
+@pytest.mark.parametrize(
+    "roads, turns",
+    [(None, False), ({"2"}, True), ({"7"}, False), ({"1"}, False)],
+    ids=["no route", "the route turns", "a route elsewhere", "the route goes on"],
+)
+def test_at_a_fork_the_route_takes_the_way_onto_its_roads(
+    roads: Optional[set[str]], turns: bool
+) -> None:
+    actor = _actor(_transform())
+    route = route_waypoints_in_rig(
+        _map_with_a_fork(),
+        actor,
+        to_local_pose(actor.get_transform()),
+        horizon_m=10.0,
+        resolution_m=2.0,
+        route_roads=roads,
+    )
+    # CARLA's +y is the local frame's -y.
+    last_x, last_y = route[-1, 0], route[-1, 1]
+    if turns:
+        assert last_x == pytest.approx(2.0) and last_y < -1.0
+    else:
+        assert last_x == pytest.approx(8.0) and last_y == pytest.approx(0.0)
+
+
+def _map_with_a_junction() -> MagicMock:
+    """Road 1 along +x into a junction 4 m on: its lane 3 goes straight on to
+    road 5, its lane 4 turns off along +y to road 6, each 4 m long."""
+    carla_map = MagicMock()
+
+    def _waypoint(road: int, x: float, y: float, walked: float = 0.0) -> MagicMock:
+        waypoint = MagicMock()
+        waypoint.road_id = road
+        waypoint.is_junction = road in (3, 4)
+        waypoint.transform.location = SimpleNamespace(x=x, y=y, z=0.0)
+        if road == 1 and x + 2.0 >= 4.0:
+            waypoint.next.side_effect = lambda step: [
+                _waypoint(3, x + step, 0.0, step),
+                _waypoint(4, x, step, step),
+            ]
+        elif road in (3, 4):
+            exit_road = 5 if road == 3 else 6
+            dx, dy = (1.0, 0.0) if road == 3 else (0.0, 1.0)
+
+            def ahead(step: float) -> list:
+                done = walked + step >= 4.0
+                return [
+                    _waypoint(
+                        exit_road if done else road,
+                        x + dx * step,
+                        y + dy * step,
+                        walked + step,
+                    )
+                ]
+
+            waypoint.next.side_effect = ahead
+        elif road == 6:
+            waypoint.next.side_effect = lambda step: [_waypoint(6, x, y + step)]
+        else:
+            waypoint.next.side_effect = lambda step: [_waypoint(road, x + step, y)]
+        return waypoint
+
+    carla_map.get_waypoint.return_value = _waypoint(1, 0.0, 0.0)
+    return carla_map
+
+
+@pytest.mark.parametrize(
+    "roads, turns",
+    [({"1", "6"}, True), ({"1", "5"}, False), ({"1"}, False)],
+    ids=["the route turns", "the route goes on", "the route ends at the junction"],
+)
+def test_into_a_junction_the_route_takes_the_lane_that_comes_out_on_its_roads(
+    roads: set[str], turns: bool
+) -> None:
+    actor = _actor(_transform())
+    route = route_waypoints_in_rig(
+        _map_with_a_junction(),
+        actor,
+        to_local_pose(actor.get_transform()),
+        horizon_m=12.0,
+        resolution_m=2.0,
+        route_roads=roads,
+    )
+    # CARLA's +y is the local frame's -y.
+    last_x, last_y = route[-1, 0], route[-1, 1]
+    if turns:
+        assert last_x == pytest.approx(2.0) and last_y < -1.0
+    else:
+        assert last_y == pytest.approx(0.0) and last_x > 4.0
 
 
 def test_off_road_ego_yields_an_empty_route(caplog: pytest.LogCaptureFixture) -> None:
