@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 232 of
-the package's 338 modules (69%; about 69,000 of 119,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 233 of
+the package's 339 modules (69%; about 69,100 of 119,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2432,7 +2432,10 @@ launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
 container with Docker (`autoware_stack.docker`, over a model of
-`autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
+`autoware_stack.devcontainer`, which reads JSON and YAML; its text
+parsers -- JSONC's comments and trailing commas, Compose's `${VAR}`
+interpolation and a `workspaceMount`'s target -- are checked:
+`autoware_stack.devcontainer_text`, #763), the Autoware
 bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
 (`adversity`, NADE and its avoidance included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
 unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
