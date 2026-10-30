@@ -133,6 +133,14 @@ root, so the two never collide and the copy Autoware provisioned always wins.
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
 
+One entry under `.repos/` holds one repository at one commit, and every map
+in that repository shares it. Its sparse checkout only grows: resolving
+`#autoware_maps/TownB` after `#autoware_maps/TownA` adds TownB beside TownA
+rather than replacing it, so a map resolved earlier -- held by the editor, a
+running case or a sweep over both -- keeps its files. The repository root (a
+source with no `#path`) checks the whole tree out. The entry's `meta.json`
+lists every directory checked out in it under `materialised`.
+
 One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single `git ls-remote` resolves it to the commit it
 points at right now, and everything after that runs as if the source had been
