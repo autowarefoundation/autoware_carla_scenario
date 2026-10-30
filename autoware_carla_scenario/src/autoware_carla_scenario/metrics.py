@@ -47,6 +47,7 @@ its safety monitor (``safety_monitor_triggered``) or a camera image
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -401,11 +402,16 @@ class _Cache:
 _CACHE = _Cache()
 
 
-def _frame(world: "carla.World") -> _Frame:
+def _hold(world: "carla.World") -> None:
+    """Make *world* the one the cache holds, dropping another's."""
     held = _CACHE.world
     if held is None or held is not world:
         _CACHE.world = world
         _CACHE.at, _CACHE.frame, _CACHE.carla_map = None, None, None
+
+
+def _frame(world: "carla.World") -> _Frame:
+    _hold(world)
     at: Optional[int] = None
     try:
         at = int(world.get_snapshot().frame)
@@ -583,21 +589,16 @@ class _Reversals:
     extreme: float
     low: float
     high: float
-    started: bool
 
     def __init__(self, gap: float) -> None:
         self.gap = gap
         self.count = 0
         self.heading = 0
         self.extreme = 0.0
-        self.low = 0.0
-        self.high = 0.0
-        self.started = False
+        self.low = math.inf
+        self.high = -math.inf
 
     def add(self, value: float) -> None:
-        if not self.started:
-            self.low = self.high = value
-            self.started = True
         if self.heading == 0:
             self.low = min(self.low, value)
             self.high = max(self.high, value)
@@ -627,7 +628,7 @@ class _Motion:
     lateral: float
     #: ``(elapsed, lateral)`` of the frames of the last
     #: :data:`_WOBBLE_WINDOW_S` seconds, oldest first.
-    window: list[tuple[float, float]]
+    window: deque[tuple[float, float]]
     lateral_reversals: _Reversals
     steering_reversals: _Reversals
     #: The indicators the ego showed last (``TurnIndicatorState.value``), -1
@@ -639,7 +640,7 @@ class _Motion:
         self.ego_id = -1
         self.at = None
         self.lateral = 0.0
-        self.window = []
+        self.window = deque()
         self.lateral_reversals = _Reversals(_LATERAL_REVERSAL_GAP_M)
         self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
         self.indicator = -1
@@ -675,8 +676,8 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     :data:`STEERING_REVERSALS` and :data:`TURN_INDICATOR_CHANGES` read.
 
     The runner calls it every tick; a frame at the time of the last one adds
-    nothing.  Off the driving lanes the ego has no lane to drift across, and
-    its drift holds until it is back on one.  Another ego starts the motion
+    nothing.  Off the driving lanes, and in a junction, the ego has no lane
+    to drift across, and its drift holds until it is back on one.  Another ego starts the motion
     anew.
     """
     try:
@@ -700,19 +701,29 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         pass
     _track_indicator(motion, ego)
     if last is not None:
-        frame = _frame(world)
+        # The ego's centre alone, not the frame :func:`_frame` reads: that
+        # reads every actor, and this runs every tick whether or not anything
+        # reads a metric.
+        _hold(world)
         try:
-            waypoint = _centre_waypoint(world, frame)
+            transform = ego.get_transform()
+            waypoint = _driving_waypoint(world, _centre(_box_of(ego, transform)))
         except Exception:
             waypoint = None
-        if waypoint is not None:
+        # A junction's lanes overlap, and the one read may be another's, at
+        # any angle to the ego's: its drift holds through the junction.
+        if waypoint is not None and not waypoint.is_junction:
             velocity = ego.get_velocity()
             yaw = math.radians(waypoint.transform.rotation.yaw)
+            # A lane the other way (overtaking on it) is crossed the ego's way.
+            if math.cos(yaw - math.radians(transform.rotation.yaw)) < 0.0:
+                yaw += math.pi
             across = -velocity.x * math.sin(yaw) + velocity.y * math.cos(yaw)
             motion.lateral += across * (elapsed - last)
     motion.lateral_reversals.add(motion.lateral)
     start = elapsed - _WOBBLE_WINDOW_S
-    motion.window = [p for p in motion.window if p[0] >= start]
+    while motion.window and motion.window[0][0] < start:
+        motion.window.popleft()
     motion.window.append((elapsed, motion.lateral))
 
 
@@ -736,9 +747,13 @@ def _track_indicator(motion: _Motion, ego: "carla.Actor") -> None:
 def _tracked(world: "carla.World") -> Optional[_Motion]:
     """The ego's motion, None without an ego or before its first frame."""
     motion = _MOTION[0]
-    if not _frame(world).has_ego or motion.at is None:
+    if motion.at is None:
         return None
-    return motion
+    try:
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        return None
+    return motion if ego is not None and ego.id == motion.ego_id else None
 
 
 def _lateral_reversals(world: "carla.World") -> Optional[float]:

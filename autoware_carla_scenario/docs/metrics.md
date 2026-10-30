@@ -81,6 +81,8 @@ line. Off the driving lanes the drift holds until the ego is back on one.
 (about 92% at 0.5 Hz); a lane
   change, slower, is mostly the course, and adds about a tenth of the lane's
   width while it lasts. It reads nothing before the third frame.
+- In a junction, whose lanes overlap, the drift holds, as it does off the
+  driving lanes; a lane the other way is crossed the ego's way.
 - `steering_reversals` counts the times the steering applied to the ego
   (`get_control().steer`, `1` the vehicle's full lock) turned back by more
   than 0.05, about 3.5 degrees at the wheels of a car that locks at 70. It sees
@@ -104,7 +106,7 @@ self.register_fail_condition(
     MetricCondition(LATERAL_REVERSALS, ComparisonRule.GREATER_THAN, 6, label="weaving")
 )
 self.register_fail_condition(
-    MetricCondition(LATERAL_WOBBLE_M, ComparisonRule.GREATER_THAN, 0.3, label="weaving")
+    MetricCondition(LATERAL_WOBBLE_M, ComparisonRule.GREATER_THAN, 0.5, label="weaving")
 )
 ```
 

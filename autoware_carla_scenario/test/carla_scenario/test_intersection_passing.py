@@ -4,6 +4,7 @@ the indicator it must show near the junction, and how often it may steer back.""
 from __future__ import annotations
 
 import unittest.mock
+from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import MagicMock
 
@@ -39,7 +40,11 @@ class _Turn:
     switched by hand."""
 
     def __init__(
-        self, monkeypatch: pytest.MonkeyPatch, junction: bool = False, **config: Any
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        junction: bool = False,
+        route: tuple[int, ...] = (411, 207),
+        **config: Any,
     ) -> None:
         self.near: Optional[_Switch] = None
         self.inside: Optional[_Switch] = None
@@ -62,9 +67,15 @@ class _Turn:
         monkeypatch.setattr(module, "EntityPositionDistanceCondition", near)
         monkeypatch.setattr(module, "EntityLanePositionCondition", inside)
         monkeypatch.setattr(module, "TurnIndicatorCondition", signalling)
-        monkeypatch.setattr(module, "_lanelet_road_id", lambda i: f"road{i}")
+
+        def in_junction(i: int) -> bool:
+            return junction and i == 411
+
+        monkeypatch.setattr(module, "_is_junction_lanelet", in_junction)
         monkeypatch.setattr(
-            module, "_is_junction_lanelet", lambda i: junction and i == 411
+            module,
+            "route_road_ids",
+            lambda ids: [f"road{i}" for i in ids if not in_junction(i)],
         )
         self.scenario = IntersectionPassingScenario(
             EgoConfig(
@@ -73,7 +84,7 @@ class _Turn:
             ),
             spawn_pose=Lanelet2Pose(lanelet_id=1, s=5.0),
             config=IntersectionPassingConfig(
-                expected_route_lanelet_ids=[411, 207], **config
+                expected_route_lanelet_ids=list(route), **config
             ),
         )
         self.scenario.set_client(MagicMock(), 8000)
@@ -120,6 +131,22 @@ def test_the_indicator_is_the_turn_s_and_measured_from_the_junction_mouth(
         30.0,
         "LESS_THAN_OR_EQUAL",
     )
+
+
+def test_a_route_from_the_approach_is_measured_from_its_junction_lanelet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = _Turn(
+        monkeypatch,
+        junction=True,
+        route=(100, 411, 207),
+        turn_direction="left",
+        turn_indicator_before_m=30.0,
+    )
+
+    assert turn.near is not None and turn.inside is not None
+    assert turn.near.args[1].lanelet_id == 411
+    assert turn.inside.args[1].lanelet_id == 411
 
 
 def test_far_from_the_junction_no_indicator_is_needed(
@@ -257,10 +284,24 @@ _ROADS = {100: "road100", 411: "road411", 207: "road207", 208: "road207"}
 def test_the_route_is_asserted_by_the_roads_outside_the_junction(
     monkeypatch: pytest.MonkeyPatch, route: list[int], roads: list[str]
 ) -> None:
-    monkeypatch.setattr(module, "_lanelet_road_id", _ROADS.__getitem__)
-    monkeypatch.setattr(module, "_is_junction_lanelet", lambda i: i == 411)
+    from autoware_carla_scenario.coordinate import transform
 
-    assert module._route_road_ids(route) == roads
+    layer = {
+        i: SimpleNamespace(attributes={"turn_direction": "left"} if i == 411 else {})
+        for i in _ROADS
+    }
+    mm = SimpleNamespace(lanelet_map=SimpleNamespace(laneletLayer=layer))
+    monkeypatch.setattr(
+        transform.MapManager, "get_instance", classmethod(lambda cls: mm)
+    )
+    monkeypatch.setattr(transform, "lanelet_length", lambda i: 20.0)
+    monkeypatch.setattr(
+        transform,
+        "to_opendrive",
+        lambda pose: SimpleNamespace(road_id=_ROADS[pose.lanelet_id]),
+    )
+
+    assert transform.route_road_ids(route) == roads
 
 
 @pytest.mark.parametrize(
@@ -280,6 +321,14 @@ def test_the_route_is_asserted_by_the_roads_outside_the_junction(
         ),
         ({"max_steering_reversals": 0}, "at least 1"),
         ({"max_turn_indicator_changes": 0}, "at least 1"),
+        (
+            {
+                "turn_direction": "left",
+                "turn_indicator_before_m": 30.0,
+                "max_turn_indicator_changes": 2,
+            },
+            "at least 3",
+        ),
     ],
 )
 def test_a_check_that_cannot_hold_is_refused(

@@ -1286,12 +1286,15 @@ def test_the_markers_carry_the_plan_timed_in_the_world() -> None:
 def _lane_routes(monkeypatch: pytest.MonkeyPatch) -> dict:
     """Lanelets 10 -> 11 -> 12 (the turn) -> 13, and 20 nowhere near them; each
     lanelet on the OpenDRIVE road ``r<id>``."""
-    import lanelet2.geometry
-
     import autoware_carla_scenario.coordinate as coordinate
     from autoware_carla_scenario.coordinate.map_manager import MapManager
+    from autoware_carla_scenario.odd import route_plan
 
-    layer = {i: SimpleNamespace(id=i) for i in (10, 11, 12, 13, 20)}
+    class _Layer(dict):
+        def exists(self, lanelet_id: int) -> bool:
+            return lanelet_id in self
+
+    layer = _Layer({i: SimpleNamespace(id=i) for i in (10, 11, 12, 13, 20)})
     chain = [10, 11, 12, 13]
 
     def shortest(a: SimpleNamespace, b: SimpleNamespace) -> Optional[list]:
@@ -1310,11 +1313,11 @@ def _lane_routes(monkeypatch: pytest.MonkeyPatch) -> dict:
         coordinate, "to_lanelet2", lambda pose: SimpleNamespace(lanelet_id=10)
     )
     monkeypatch.setattr(
-        coordinate,
-        "to_opendrive",
-        lambda pose: SimpleNamespace(road_id=f"r{pose.lanelet_id}"),
+        coordinate, "route_road_ids", lambda ids: [f"r{i}" for i in ids]
     )
-    monkeypatch.setattr(lanelet2.geometry, "length2d", lambda lanelet: 20.0)
+    monkeypatch.setattr(
+        route_plan, "_lengths", lambda lanelets: [20.0 for _ in lanelets]
+    )
     return layer
 
 
@@ -1363,7 +1366,7 @@ def test_a_goal_no_lane_reaches_leaves_the_first_way(
         entity.route_to(_world_with_route(), Lanelet2Pose(lanelet_id=20, s=0.0))
 
     assert entity._route_roads is None  # noqa: SLF001
-    assert "No lane route from lanelet 10 to lanelet 20" in caplog.text
+    assert "no route from lanelet 10 to lanelet 20" in caplog.text
 
 
 def test_without_a_goal_the_road_ahead_takes_the_first_way() -> None:

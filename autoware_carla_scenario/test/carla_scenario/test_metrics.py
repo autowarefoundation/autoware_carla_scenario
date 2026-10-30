@@ -22,6 +22,7 @@ from autoware_carla_scenario.authoring.registry import (
 from autoware_carla_scenario.conditions import ComparisonRule, MetricCondition
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.entity._spawn import SpawnPointIndex
+from autoware_carla_scenario import metrics
 from autoware_carla_scenario.metrics import (
     COLLISION_ANY,
     COLLISION_AT_FAULT,
@@ -104,10 +105,13 @@ class _Actor:
 class _Lane:
     """A straight driving lane along x, centred on *y*, heading *yaw*."""
 
-    def __init__(self, lane_id: int, y: float, yaw: float) -> None:
+    def __init__(
+        self, lane_id: int, y: float, yaw: float, junction: bool = False
+    ) -> None:
         self.lane_id = lane_id
         self.y = y
         self.yaw = yaw
+        self.junction = junction
 
 
 class _Waypoint:
@@ -118,6 +122,7 @@ class _Waypoint:
         self.lane_id = lane.lane_id
         self.lane_width = _LANE_WIDTH
         self.lane_type = int(carla.LaneType.Driving)
+        self.is_junction = lane.junction
         self.transform = SimpleNamespace(
             location=_v(x, lane.y), rotation=SimpleNamespace(yaw=lane.yaw)
         )
@@ -590,6 +595,21 @@ def test_a_lane_change_is_a_drift_not_a_reversal() -> None:
         assert wobble is not None
         worst = max(worst, wobble)
     assert worst < 0.1 * _LANE_WIDTH
+
+
+def test_a_junction_holds_the_drift() -> None:
+    _drive(lambda t: 1.0, 1.0, road=_Road([_Lane(-1, 0.0, 0.0, junction=True)]))
+
+    assert metrics._MOTION[0].lateral == 0.0  # noqa: SLF001
+    reset_ego_motion()
+
+
+def test_a_lane_the_other_way_is_crossed_the_ego_s_way() -> None:
+    _drive(lambda t: 1.0, 1.0, road=_Road([_Lane(1, 0.0, 180.0)]))
+
+    # To the ego's right, as on a lane its own way.
+    assert metrics._MOTION[0].lateral == pytest.approx(1.0, abs=0.1)  # noqa: SLF001
+    reset_ego_motion()
 
 
 def test_following_a_bend_is_not_a_drift() -> None:

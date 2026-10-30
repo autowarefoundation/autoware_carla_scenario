@@ -107,13 +107,23 @@ class IntersectionPassingConfig:
             )
         if self.turn_indicator_grace_seconds <= 0:
             raise ValueError("turn_indicator_grace_seconds must be positive")
-        if self.max_steering_reversals is not None and self.max_steering_reversals < 1:
-            raise ValueError("max_steering_reversals must be at least 1")
-        if (
-            self.max_turn_indicator_changes is not None
-            and self.max_turn_indicator_changes < 1
+        for name, limit in (
+            ("max_steering_reversals", self.max_steering_reversals),
+            ("max_turn_indicator_changes", self.max_turn_indicator_changes),
         ):
-            raise ValueError("max_turn_indicator_changes must be at least 1")
+            if limit is not None and limit < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if (
+            self.turn_indicator_before_m is not None
+            and self.max_turn_indicator_changes is not None
+            and self.max_turn_indicator_changes < 3
+        ):
+            # Its own on and off are two changes of a turn that signals.
+            raise ValueError(
+                "max_turn_indicator_changes must be at least 3 with "
+                "turn_indicator_before_m: the turn's own indicator on and off "
+                "are two changes"
+            )
 
 
 @dataclass

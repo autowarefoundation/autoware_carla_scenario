@@ -807,49 +807,35 @@ def _route_roads(
 ) -> Optional[Set[str]]:
     """The OpenDRIVE roads of the lane route from *start* through *stops*.
 
-    Each leg is the routing graph's shortest path to the next stop's lanelet; a
-    lanelet's roads are read at its start, middle and end, as one may be cut
-    across two.  ``None``, said once, when a stop is on no lane route from the
-    one before or the map cannot answer.
+    The lanelets are :func:`~autoware_carla_scenario.odd.route_plan.route_lanelets`'s,
+    the route the ODD plans for the scenario, and their roads
+    :func:`~autoware_carla_scenario.coordinate.route_road_ids`': those outside
+    the junctions, which say which way each is crossed.  ``None``, said once,
+    when a stop is on no lane route from the one before or the map cannot answer.
     """
-    from lanelet2.geometry import length2d  # noqa: PLC0415
-
-    from ..coordinate import Lanelet2Pose, to_lanelet2, to_opendrive  # noqa: PLC0415
+    from ..coordinate import route_road_ids, to_lanelet2  # noqa: PLC0415
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..odd.route_plan import PlannedRoute, RouteError, route_lanelets  # noqa: PLC0415
 
+    *via, goal = stops
     try:
         mm = MapManager.get_instance()
-        layer = mm.lanelet_map.laneletLayer
-        lanelets = [layer[int(to_lanelet2(start).lanelet_id)]]
-        for stop in stops:
-            target = layer[int(stop.lanelet_id)]
-            if target.id == lanelets[-1].id:
-                continue
-            path = mm.routing_graph.shortestPath(lanelets[-1], target)
-            if path is None:
-                logger.warning(
-                    "No lane route from lanelet %d to lanelet %d: the policy's road "
-                    "ahead takes the first way at a fork",
-                    lanelets[-1].id,
-                    target.id,
-                )
-                return None
-            lanelets.extend(list(path)[1:])
-        roads: Set[str] = set()
-        for lanelet in lanelets:
-            length = float(length2d(lanelet))
-            for s in (0.0, length / 2.0, length):
-                at = min(max(s, 0.1), max(length - 0.1, 0.0))
-                pose = Lanelet2Pose(lanelet_id=int(lanelet.id), s=at)
-                roads.add(str(to_opendrive(pose).road_id))
-        return roads
+        route = PlannedRoute(start=to_lanelet2(start), goal=goal, via=via)
+        lanelets = route_lanelets(route, mm.lanelet_map, mm.routing_graph)
+        return set(route_road_ids([int(lanelet.id) for lanelet in lanelets]))
+    except RouteError as error:
+        logger.warning(
+            "No lane route to the goal (%s): the policy's road ahead takes the "
+            "first way at a fork",
+            error,
+        )
     except Exception:
         logger.warning(
             "Could not route the policy's road ahead to the goal: it takes the "
             "first way at a fork",
             exc_info=True,
         )
-        return None
+    return None
 
 
 class _CarriedActor:

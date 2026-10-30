@@ -378,6 +378,30 @@ def encode_frame_jpeg(
     return buffer.tobytes()
 
 
+def _leads_onto(
+    way: "carla.Waypoint", roads: set[str], step: float, reach_m: float
+) -> bool:
+    """Whether *way* is on one of *roads*, or a junction's lane onto one.
+
+    A junction's roads overlap and are no route's own
+    (:func:`~autoware_carla_scenario.coordinate.route_road_ids`); the road a
+    lane through it comes out on says where it goes.
+    """
+    here = way
+    walked = 0.0
+    while walked <= reach_m:
+        if str(here.road_id) in roads:
+            return True
+        if not here.is_junction:
+            return False
+        ahead = here.next(step)
+        if not ahead:
+            return False
+        here = ahead[0]
+        walked += step
+    return False
+
+
 def route_waypoints_in_rig(
     carla_map: "carla.Map",
     actor: "carla.Actor",
@@ -390,8 +414,9 @@ def route_waypoints_in_rig(
 
     Walks CARLA's road graph forward from the ego's current waypoint.  At a fork it
     takes the continuation onto one of *route_roads* -- the OpenDRIVE roads of the
-    route the scenario sends the ego along -- and the first one when none is, or
-    without a route: a lane-following route without a global planner.
+    route the scenario sends the ego along, outside its junctions -- or, into a
+    junction, the lane through it that comes out on one; the first one when none
+    does, or without a route: a lane-following route without a global planner.
 
     Args:
         carla_map: The map to walk.  Pass a cached ``world.get_map()`` -- CARLA rebuilds
@@ -424,7 +449,7 @@ def route_waypoints_in_rig(
         current = following[0]
         if route_roads is not None and len(following) > 1:
             for way in following:
-                if str(way.road_id) in route_roads:
+                if _leads_onto(way, route_roads, step, horizon_m):
                     current = way
                     break
         travelled += step

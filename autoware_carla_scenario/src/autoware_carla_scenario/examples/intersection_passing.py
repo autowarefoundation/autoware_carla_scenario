@@ -72,8 +72,9 @@ from autoware_carla_scenario import (
     to_opendrive,
 )
 
-from autoware_carla_scenario.coordinate import MapManager, lanelet_length
+from autoware_carla_scenario.coordinate import MapManager, route_road_ids
 from autoware_carla_scenario.metrics import STEERING_REVERSALS, TURN_INDICATOR_CHANGES
+from autoware_carla_scenario.odd import lanelet_in_junction
 from .configs import IntersectionPassingConfig
 
 logger = logging.getLogger(__name__)
@@ -93,41 +94,12 @@ SCENARIO_TIMEOUT_SECONDS: float = 5.0
 MIN_SPEED_KMH: float = 5.0
 
 
-def _lanelet_road_id(lanelet_id: int) -> str:
-    """Return the OpenDRIVE road ID halfway along a lanelet's centerline.
-
-    Not at its start: a lanelet begins where the one before it ends, and the
-    point there reads as the road before -- the start of a junction's exit is
-    the end of the junction's own road, so a route asserted by its starts is
-    passed on entering the junction.
-    """
-    pose = Lanelet2Pose(lanelet_id=lanelet_id, s=lanelet_length(lanelet_id) / 2.0)
-    od = to_opendrive(pose)
-    return od.road_id
-
-
 def _is_junction_lanelet(lanelet_id: int) -> bool:
-    """Whether the lanelet is in a junction (tagged ``turn_direction``)."""
-    lanelet = MapManager.get_instance().lanelet_map.laneletLayer[lanelet_id]
-    return "turn_direction" in lanelet.attributes
-
-
-def _route_road_ids(lanelet_ids: list[int]) -> list[str]:
-    """The OpenDRIVE roads a route of lanelets runs on, each once, in order.
-
-    A junction's lanelets are left out: its roads overlap, and a point on one
-    reads as another -- a left turn's as the road straight on.  The roads
-    before and after it say which way it was crossed.  A route of junction
-    lanelets alone is read as it is.
-    """
-    plain = [i for i in lanelet_ids if not _is_junction_lanelet(i)] or lanelet_ids
-    roads: list[str] = []
-    for lanelet_id in plain:
-        road = _lanelet_road_id(lanelet_id)
-        logger.info("Lanelet %d -> OpenDRIVE road '%s'", lanelet_id, road)
-        if road not in roads:
-            roads.append(road)
-    return roads
+    """Whether the lanelet is in a junction, as the ODD reads it
+    (:func:`~autoware_carla_scenario.odd.probes.lanelet_in_junction`)."""
+    return lanelet_in_junction(
+        MapManager.get_instance().lanelet_map.laneletLayer[lanelet_id]
+    )
 
 
 _TURN_DIRECTION_MAP: dict[str, TurnDirection] = {
@@ -253,7 +225,7 @@ class IntersectionPassingScenario(BaseScenario):
             logger.info("Registered TurnAction: %s", cfg.turn_direction)
 
         # --- Build unique route road IDs from lanelet IDs ---
-        route_road_ids = _route_road_ids(list(cfg.expected_route_lanelet_ids))
+        road_ids = route_road_ids(list(cfg.expected_route_lanelet_ids))
 
         # --- Register sticky lane-position conditions ---
         sticky_conditions = [
@@ -264,7 +236,7 @@ class IntersectionPassingScenario(BaseScenario):
                     label=f"ego_on_road_{rid}",
                 )
             )
-            for rid in route_road_ids
+            for rid in road_ids
         ]
 
         if len(sticky_conditions) == 1:
@@ -295,13 +267,16 @@ class IntersectionPassingScenario(BaseScenario):
             )
 
         # --- Fail: no indicator for the turn, close to the junction ---
-        # From that close to the junction's mouth (the route's first lanelet
-        # starts at its stop line) until the ego is on that lanelet: the
+        # From that close to the junction's mouth (the start of the route's
+        # first junction lanelet, at its stop line; the route's first lanelet
+        # when none is tagged) until the ego is on that lanelet: the
         # approach.  Each is latched, as the distance grows again inside the
         # junction.  In it, a driver cancels the indicator as the turn
         # straightens out; one that flickers there is turn_indicator_changes'.
         if cfg.turn_indicator_before_m is not None and cfg.turn_direction:
-            mouth = Lanelet2Pose(lanelet_id=cfg.expected_route_lanelet_ids[0], s=0.0)
+            route = list(cfg.expected_route_lanelet_ids)
+            entry = next((i for i in route if _is_junction_lanelet(i)), route[0])
+            mouth = Lanelet2Pose(lanelet_id=entry, s=0.0)
             near_junction = StickyCondition(
                 EntityPositionDistanceCondition(
                     EGO_ROLE_NAME,
@@ -335,27 +310,21 @@ class IntersectionPassingScenario(BaseScenario):
                 )
             )
 
-        # --- Fail: the steering turned back too often ---
-        if cfg.max_steering_reversals is not None:
-            self.register_fail_condition(
-                MetricCondition(
-                    STEERING_REVERSALS,
-                    ComparisonRule.GREATER_THAN_OR_EQUAL,
-                    float(cfg.max_steering_reversals),
-                    label="steering_reversals",
+        # --- Fail: the steering turned back, or the indicators changed, too
+        # often (each counted apart from the other) ---
+        for metric, limit in (
+            (STEERING_REVERSALS, cfg.max_steering_reversals),
+            (TURN_INDICATOR_CHANGES, cfg.max_turn_indicator_changes),
+        ):
+            if limit is not None:
+                self.register_fail_condition(
+                    MetricCondition(
+                        metric,
+                        ComparisonRule.GREATER_THAN_OR_EQUAL,
+                        float(limit),
+                        label=metric,
+                    )
                 )
-            )
-
-        # --- Fail: the indicators changed too often (apart from the steering) ---
-        if cfg.max_turn_indicator_changes is not None:
-            self.register_fail_condition(
-                MetricCondition(
-                    TURN_INDICATOR_CHANGES,
-                    ComparisonRule.GREATER_THAN_OR_EQUAL,
-                    float(cfg.max_turn_indicator_changes),
-                    label="turn_indicator_changes",
-                )
-            )
 
         # --- Fail-safe timeout ---
         self.register_fail_condition(
