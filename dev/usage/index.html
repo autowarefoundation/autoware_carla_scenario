@@ -4939,6 +4939,7 @@ one YAML file:</p>
 <li>Reports lanelets where the ray does not hit any 3D surface</li>
 <li>Writes the detected IDs to the YAML configuration's <code>no_3d_model_lanelet_ids</code> field</li>
 </ol>
+<p>The IDs go into <code>no_3d_model_lanelet_ids</code> in the YAML's <code>map:</code> section when it has one, and at the top level otherwise (the same place <code>name</code>, <code>xodr_path</code> and <code>lanelet2_path</code> are read from). An existing value is replaced whatever its style (a block list, a flow list such as <code>[1, 2]</code>, an empty value, <code>null</code>); a missing key is added after the section's last entry. The file is edited as text, so comments, <code>${...}</code> interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. <code>map: {name: X}</code> -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.</p>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Basic detection using map config YAML</span>
 <a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
@@ -4972,7 +4973,7 @@ one YAML file:</p>
 <td>-</td>
 <td>Yes</td>
 <td>-</td>
-<td>Path to map configuration YAML (must contain <code>map.name</code>, <code>xodr_path</code>, <code>lanelet2_path</code>)</td>
+<td>Path to map configuration YAML (must contain <code>name</code>, <code>xodr_path</code>, <code>lanelet2_path</code>, at the top level or under <code>map:</code>)</td>
 </tr>
 <tr>
 <td><code>--host</code></td>
@@ -5024,6 +5025,7 @@ one YAML file:</p>
 <a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">  </span><span class="c1"># Path to OpenDRIVE file</span>
 <a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
 </code></pre></div>
+<p>These keys may also sit under a <code>map:</code> section (as in <code>conf/map/nishishinjuku.yaml</code>, a <code># @package _global_</code> config); <code>no_3d_model_lanelet_ids</code> is then written there too.</p>
 <h3 id="integration-with-scenario-runner">Integration with Scenario Runner<a class="headerlink" href="#integration-with-scenario-runner" title="Permanent link">&para;</a></h3>
 <p>The detected lanelet IDs are stored in the map config's <code>no_3d_model_lanelet_ids</code> field. The scenario runner's sweep feature uses this list to exclude problematic lanelets from automatic spawn point selection.</p>
 <hr />
@@ -5565,7 +5567,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 07:33:45 UTC"><span class="timeago" datetime="2026-10-30T07:33:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 07:33:45 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 19:59:52 UTC"><span class="timeago" datetime="2026-10-30T19:59:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 19:59:52 UTC">2026-10-30</span>
   </span>
 
     
