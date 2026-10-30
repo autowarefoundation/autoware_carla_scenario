@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS
+from ..seed import resolve_seed
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -74,8 +75,9 @@ class CarlaLidarSensorConfig:
     #: (:mod:`~autoware_carla_scenario.sensor.lidar_weather`): 0 none, as CARLA
     #: casts them; 1 the model as tuned; more exaggerates it.
     weather_noise: float = 1.0
-    #: Seed of the weather noise, so a run repeats its sweeps.
-    noise_seed: int = 0
+    #: Seed of the weather noise, so a run repeats its sweeps; ``None`` takes
+    #: the run's seed (:mod:`~autoware_carla_scenario.seed`) when it attaches.
+    noise_seed: Optional[int] = None
     #: The server's ``carla.Weather.FogDensityScale``, which the LiDAR's fog
     #: follows.  A scenario run sets it from ``server.fog_density_scale``;
     #: built by hand, match it to the server's.
@@ -94,7 +96,9 @@ class CarlaLidarSensorConfig:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
-        if self.weather_noise < 0.0 or self.noise_seed < 0:
+        if self.weather_noise < 0.0 or (
+            self.noise_seed is not None and self.noise_seed < 0
+        ):
             raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
         if self.fog_density_scale <= 0.0:
             raise ValueError("LiDAR fog_density_scale must be positive")
@@ -125,6 +129,8 @@ class CarlaLidarSensor:
     _world: Optional["carla.World"]
     #: The frame of the sweep the weather was last put on (in :attr:`_newest`).
     _weathered_frame: int
+    #: The weather noise's seed: the config's, or the run's when it attaches.
+    _noise_seed: int
 
     def __init__(
         self,
@@ -144,6 +150,7 @@ class CarlaLidarSensor:
         self._newest = None
         self._world = None
         self._weathered_frame = -1
+        self._noise_seed = resolve_seed(config.noise_seed)
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -167,6 +174,7 @@ class CarlaLidarSensor:
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         cfg = self._config
+        self._noise_seed = resolve_seed(cfg.noise_seed)
         blueprint = world.get_blueprint_library().find("sensor.lidar.ray_cast")
         blueprint.set_attribute("channels", str(cfg.channels))
         blueprint.set_attribute("range", str(cfg.range_m))
@@ -296,7 +304,7 @@ class CarlaLidarSensor:
                 sweep[1],
                 weather,
                 self._config.weather_noise,
-                self._config.noise_seed,
+                self._noise_seed,
                 sweep[0],
             ),
         )

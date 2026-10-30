@@ -45,6 +45,7 @@ from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
+from .seed import set_run_seed
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
@@ -1339,6 +1340,12 @@ class ScenarioRunner:
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
         npc_events: Optional["NpcCollisionMonitor"] = None
+        # The scenario's seed is the run's (autoware_carla_scenario.seed): what
+        # setup() builds with no seed of its own draws from it.  The one before
+        # comes back when the run ends.
+        seed = int(scenario.random_seed)
+        previous_seed = set_run_seed(seed)
+        logger.info("[%s] Seed: %d", scenario_name, seed)
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -1350,6 +1357,9 @@ class ScenarioRunner:
             # How far drivers see is what this run's weather leaves, not what
             # the last run's left in the same episode.
             forget_visibility()
+            # CARLA's pedestrian navigation (the AI walker controllers' choice
+            # of where to go) from the run's seed, before any walker is spawned.
+            world.set_pedestrians_seed(seed)
             backend.prepare(
                 TrafficContext(
                     client=self._client,
@@ -1798,6 +1808,7 @@ class ScenarioRunner:
             coverage.end(world, clock.simulated)
 
         finally:
+            set_run_seed(previous_seed)
             set_measured_scenario(None)
             set_importance_sampling_weight(None)
             reset_ego_motion()

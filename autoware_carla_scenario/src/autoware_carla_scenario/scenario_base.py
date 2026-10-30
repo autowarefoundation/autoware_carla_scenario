@@ -216,9 +216,13 @@ class BaseScenario(ABC):
             ground_projection: Ground-projection settings used when snapping
                 poses to the CARLA road surface.  Defaults to
                 :class:`GroundProjectionConfig` with default values.
-            random_seed: Seed for the CARLA TrafficManager random device.
-                Using a fixed seed ensures deterministic NPC behaviour across
-                runs.  Defaults to :attr:`DEFAULT_RANDOM_SEED` (``0``).
+            random_seed: The run's seed (:mod:`~autoware_carla_scenario.seed`):
+                the traffic backend's (CARLA's TrafficManager random device,
+                SUMO's ``--seed``), CARLA's pedestrian navigation, and that of
+                every action and condition :meth:`setup` builds with no seed
+                of its own.  A fixed seed makes the run's random draws the
+                same every run.  Defaults to :attr:`DEFAULT_RANDOM_SEED`
+                (``0``); ``scenario`` sets it from the config's ``seed``.
             ego_type: :class:`EgoVehicle` subclass to instantiate for the ego
                 actor.  Pass
                 :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`

@@ -92,7 +92,8 @@ class AdversarialAction(BaseAction):
         label: Human-readable identifier.
         once: If ``True`` (default) the action runs at most once.
         seed: Seeds the trigger's random draws (a jaywalker's
-            speed, a stopped crosser's wait).
+            speed, a stopped crosser's wait); ``None`` (default) takes the
+            run's seed (:mod:`~autoware_carla_scenario.seed`).
         thresholds: The triggers' numbers; TeraSim's by default.
         following_mode: How the path is driven: ``FOLLOW`` (the vehicle's own
             motion, default) or ``POSITION`` (placed on it, as TeraSim's
@@ -119,7 +120,7 @@ class AdversarialAction(BaseAction):
         *,
         label: str,
         once: bool = True,
-        seed: int = 0,
+        seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -494,7 +495,7 @@ class JaywalkAction(AdversarialAction):
         *,
         label: str = "jaywalk",
         once: bool = True,
-        seed: int = 0,
+        seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -567,7 +568,7 @@ class StopCrossingAction(AdversarialAction):
         *,
         label: str = "stop_crossing",
         once: bool = True,
-        seed: int = 0,
+        seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
