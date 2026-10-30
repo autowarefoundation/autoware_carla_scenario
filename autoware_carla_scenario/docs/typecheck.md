@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 224 of
-the package's 329 modules (68%; about 66,800 of 116,900 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 225 of
+the package's 330 modules (68%; about 67,000 of 117,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2406,7 +2406,11 @@ warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
 a subprocess on a thread (`ui.runner`, over a model of the pydantic
-`ui.models`),
+`ui.models`), what the viewer's SLURM run panel may set, the Hydra
+overrides it becomes and the `scenario` command line that submits the batch
+(`ui.slurm_options`, #742; not how it reads the panel's fields, values of any
+type, nor how it splits `VIEWER_SCENARIO_COMMAND`, which `ui.slurm_launch`
+keeps),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
