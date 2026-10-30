@@ -69,9 +69,13 @@ _STATUS_UNKNOWN, _STATUS_OFF, _STATUS_ON = 0, 1, 2
 #: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
 #: log's ``turn_indicators`` states.
 _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
-#: How far (m) a light's stop-line waypoint may be from the stop line of a
-#: lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
+#: How far (m) a light's stop-line waypoint may be past, or beside, the stop
+#: line of a lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
 _STOP_LINE_MATCH_M = 2.0
+#: How far (m) before that stop line it may be. CARLA puts its stop waypoints
+#: where its own junction starts, which is not where a Lanelet2 map draws the
+#: line: on Town10HD_Opt's carla-ue5-maps map, some 6 m before it.
+_STOP_POINT_BEFORE_M = 10.0
 
 _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
 _DTYPES = {
@@ -471,24 +475,27 @@ def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
     return governed
 
 
-def _distance_to(
-    segments: npt.NDArray[np.float64], point: npt.NDArray[np.float64]
-) -> float:
-    """The distance from *point* to the nearest of (S, 2, 2) *segments*."""
-    start, along = segments[:, 0], segments[:, 1] - segments[:, 0]
-    t = ((point - start) * along).sum(axis=1) / np.maximum(
-        (along**2).sum(axis=1), 1e-12
-    )
-    nearest = start + np.clip(t, 0.0, 1.0)[:, None] * along
-    return float(np.hypot(*(nearest - point).T).min())
+def _gap_before(line: _StopLine, point: npt.NDArray[np.float64]) -> Optional[float]:
+    """How far *point* is before *line* along its lanelet (negative: past it),
+    or ``None`` when it is beside the line rather than in its lane."""
+    ends = line.segments.reshape(-1, 2)
+    first, last = ends[0], ends[-1]
+    middle = (first + last) / 2
+    forward = np.array([math.cos(line.heading), math.sin(line.heading)])
+    across = np.array([-forward[1], forward[0]])
+    half_width = abs(float((last - first) @ across)) / 2
+    if abs(float((point - middle) @ across)) > half_width + _STOP_LINE_MATCH_M:
+        return None
+    return float((middle - point) @ forward)
 
 
 def _lane_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
     """The CARLA light (its id) governing each lanelet that has a traffic
     light: one switching an OpenDRIVE signal its regulatory element's
-    controller names, as ``TrafficSignalAction`` maps them; else, as its
-    fallback does, the nearest light with a stop-line waypoint on the
-    lanelet's stop line, facing the lanelet's way."""
+    controller names, as ``TrafficSignalAction`` maps them; else the light
+    with a stop-line waypoint nearest the lanelet's stop line, in its lane and
+    facing its way: on it, or before it as CARLA's often are
+    (``_STOP_POINT_BEFORE_M``)."""
     by_signal: dict[str, int] = {}
     for light in log.lights:
         if light.get("opendrive_id") is not None:
@@ -515,13 +522,15 @@ def _lane_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
             continue
         nearest = min(
             (
-                (_distance_to(line.segments, point), light_id)
+                (abs(gap), light_id)
                 for light_id, point, yaw in stops
                 if math.cos(yaw - line.heading) >= 0.5
+                and (gap := _gap_before(line, point)) is not None
+                and -_STOP_LINE_MATCH_M <= gap <= _STOP_POINT_BEFORE_M
             ),
             default=None,
         )
-        if nearest is not None and nearest[0] <= _STOP_LINE_MATCH_M:
+        if nearest is not None:
             governed[line.lanelet_id] = nearest[1]
     return governed
 

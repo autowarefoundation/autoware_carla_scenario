@@ -543,6 +543,45 @@ def test_a_light_colours_the_regulatory_element_of_the_lanelet_it_governs(
     np.testing.assert_array_equal(_numeric(lights.values.element_confidences), 1.0)
 
 
+@pytest.mark.parametrize(
+    ("before_m", "beside_m", "matched"),
+    [(6.0, 0.0, True), (-1.0, 0.0, True), (12.0, 0.0, False), (6.0, 6.0, False)],
+)
+def test_a_light_whose_stop_waypoint_is_before_the_line_colours_its_lanelet(
+    tmp_path: Path,
+    fixture_map: tuple[Any, tuple[float, float]],
+    before_m: float,
+    beside_m: float,
+    matched: bool,
+) -> None:
+    lanelet_map, (ox, oy) = fixture_map
+    line = _stop_lines(lanelet_map)[0]
+    forward = np.array([math.cos(line.heading), math.sin(line.heading)])
+    across = np.array([-forward[1], forward[0]])
+    # CARLA's stop waypoint, before the map's line in the lane (or beside it).
+    stop = line.segments[0].mean(axis=0) - before_m * forward + beside_m * across
+    x, y, yaw = stop[0] - ox, -(stop[1] - oy), -math.degrees(line.heading)
+    record = _map_record((ox, oy), 0.0)
+    # No OpenDRIVE: no controller ties the light to a lanelet.
+    record["lanelet2"] = {"path": str(OSM), "sha256": None, "bytes": 0}
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        {
+            "type": "traffic_light",
+            "id": 9,
+            "location": [x, y, 0.0],
+            "boxes": [],
+            "stops": [[x, y, 0.0, yaw]],
+        },
+        EGO,
+        _tick(100, _state(1, x, y), lights={"9": "Red"}),
+        map_record=record,
+    )
+    rows = _group_rows(trajectory_log_to_t4_scene(log).scene.traffic_lights)
+    element = _elements_of(lanelet_map, line.lanelet_id)[0]
+    assert (element in rows[0]) is matched
+
+
 def test_a_light_its_controller_switches_colours_the_lanelet_wherever_it_stands(
     tmp_path: Path, fixture_map: tuple[Any, tuple[float, float]]
 ) -> None:
