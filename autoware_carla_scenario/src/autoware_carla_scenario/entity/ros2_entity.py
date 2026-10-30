@@ -38,6 +38,7 @@ from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
 from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
+from ..ego_base_link import clear_ego_base_link, set_ego_base_link
 from ..ego_plan import PlanMarkers, ego_plan_markers
 from ..ros2.commands import (
     CommandArbiter,
@@ -210,6 +211,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._rear_axle_offset_m = rear_axle_offset(
             actor, self._config.rear_axle_offset_m
         )
+        # The odometry is published at this offset: the run's records put the
+        # ego's base_link there too.
+        set_ego_base_link(self._rear_axle_offset_m)
         self._follower.powertrain = ChaosPowertrain.from_physics_control(
             actor.get_physics_control()
         )
@@ -284,6 +288,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         The cameras are destroyed first.  A failure is logged rather than raised,
         so it cannot abort the rest of the scenario's cleanup.
         """
+        clear_ego_base_link()
         for sensor in self._cameras:
             try:
                 sensor.destroy()

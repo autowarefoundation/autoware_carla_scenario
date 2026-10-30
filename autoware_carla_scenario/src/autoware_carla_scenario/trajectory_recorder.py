@@ -121,12 +121,18 @@ RECORDED_KINDS = ("vehicle.", "walker.")
 
 def _rear_axle(actor: Any) -> Optional[float]:
     """Where the run takes an ego's rear axle to be, along its x axis from its
-    origin: the rig origin a driver entity offered, else from its wheels or
-    its box (``driver.observation.rear_axle_offset``, as the T4 dataset takes
-    it); ``None`` when neither can be read."""
+    origin: the ``base_link`` the running ego set (``ego_base_link``: a driver
+    entity's rig origin, a ROS 2 ego's odometry, a bridged stack's
+    ``base_link``), else the rig origin a driver entity offered, else from its
+    wheels or its box (``driver.observation.rear_axle_offset``, as the T4
+    dataset takes it); ``None`` when none can be read."""
     from .driver.observation import rear_axle_offset  # noqa: PLC0415
+    from .ego_base_link import ego_base_link  # noqa: PLC0415
     from .t4 import offered_rear_axle  # noqa: PLC0415
 
+    run_offset = ego_base_link()
+    if run_offset is not None:
+        return run_offset
     offered = offered_rear_axle()
     if offered is not None:
         return offered

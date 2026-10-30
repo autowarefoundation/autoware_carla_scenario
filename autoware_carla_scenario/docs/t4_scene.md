@@ -97,8 +97,9 @@ What the log does not hold is left out, never made up:
   scene and the map are registered at the identity (`global_origin`,
   `global_origin_3d`), so the devkit draws and scores one against the other.
 - The ego's `base_link` is its **rear axle**, as in T4 data: where the run
-  took it to be, which the log's `rear_axle` record says (the driver policy's
-  rig origin, else from the wheels), or `--rear-axle-offset` metres along its
+  took it to be, which the log's `rear_axle` record says (where the ego put
+  it: the driver policy's rig origin, the ROS 2 ego's odometry or the
+  Autoware ego's `base_link`; else from the wheels), or `--rear-axle-offset` metres along its
   x axis; in a log without that record, half its box behind its origin, where
   the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and

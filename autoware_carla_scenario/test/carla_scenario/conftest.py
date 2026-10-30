@@ -118,8 +118,12 @@ def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     id, which any later test in the same xdist worker that reads the entry
     speeds or the flag without going through a run would see (#697).
     """
+    from autoware_carla_scenario import ego_base_link
     from autoware_carla_scenario.entity import vehicle_entity
 
     yield
     vehicle_entity._set_warmup_done(False)
     vehicle_entity._clear_entry_speeds()
+    # As is where an ego that started its scenario outside a run (#739) has
+    # its base_link, which the trajectory log and the T4 dataset read.
+    ego_base_link.clear_ego_base_link()

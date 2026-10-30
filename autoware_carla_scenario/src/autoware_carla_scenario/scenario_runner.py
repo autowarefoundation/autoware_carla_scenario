@@ -43,6 +43,7 @@ from .metrics import (
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
+from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
@@ -1271,6 +1272,9 @@ class ScenarioRunner:
         clear_props()
         _set_warmup_done(False)
         _clear_entry_speeds()
+        # And where the last run's ego had its base_link: this run's ego says
+        # where its own is when its scenario starts.
+        clear_ego_base_link()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1811,6 +1815,10 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # The ego's base_link was this run's: the ego forgets it in its
+            # on_scenario_end, which may have failed before it did.  Right
+            # here, before any later step of the cleanup can raise past it.
+            clear_ego_base_link()
 
             # Stop and destroy the sensors the conditions started listening,
             # through their own handles, while the world is still the run's:
