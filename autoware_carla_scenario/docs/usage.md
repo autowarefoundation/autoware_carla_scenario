@@ -1146,8 +1146,9 @@ With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
 "time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
 "remote_cwd": "workspace/OnePlanner", "python": ".venv/bin/python",
 "setup": "source ~/env.sh", "env": {"NAME": "value"}}` (`setup`: a shell line
-per line, without `${...}` or backslashes; `env`: `NAME=value` lines, or a
-mapping).
+per line, without `${...}`; `env`: `NAME=value` lines, or a mapping, each value
+exported as written, so without `${...}` either -- an OmegaConf interpolation
+in the override the viewer passes on).
 
 **Progress SSE event format:**
 

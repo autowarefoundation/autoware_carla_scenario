@@ -95,7 +95,8 @@ def test_a_submit_host_with_other_paths_sets_the_node_s() -> None:
         ("remote_cwd", "~bob/work", "not a path"),
         ("python", "$(evil)", "not a path"),
         ("setup", "echo ${HOME}", "rather than"),
-        ("setup", "echo a\\b", "no backslash"),
+        ("env", "X=${HOME}", "no \\$\\{"),
+        ("env", "X=a${oc.env:HOME}", "exported as written"),
     ],
 )
 def test_options_sbatch_would_not_take_are_refused(
@@ -103,6 +104,122 @@ def test_options_sbatch_would_not_take_are_refused(
 ) -> None:
     with pytest.raises(ValueError, match=error):
         SlurmOptions.from_request({field: value})
+
+
+# Values Hydra must read back exactly: plain, its keywords and numbers,
+# backslashes anywhere (a run before a quote, at the end), quotes of both
+# kinds, and the characters its grammar gives a meaning.
+_ROUND_TRIP_VALUES = [
+    "",
+    "plain",
+    "/maps/town 10",
+    "a\\b",
+    "C:\\dir\\",
+    "C:\\dir\\\\",
+    "\\",
+    "\\\\\\",
+    "\\start",
+    "a'b",
+    "'",
+    "''",
+    "'quoted'",
+    'a"b',
+    '"',
+    "a\\'b",
+    "a\\\\'b",
+    "\\'",
+    "it's \\\\'quoted\\' \\",
+    'a\\"b\\',
+    "\"'\\\"\\'",
+    "ünïcödé 東京 🚗",
+    "a b  c ",
+    " leading",
+    "k=v",
+    "a=b=c",
+    "a,b",
+    "[1,2]",
+    "{a: 1}",
+    "(x)",
+    "x:y",
+    "$HOME/x",
+    "$",
+    "%d*?|@",
+    "a\tb\nc",
+    "line\n",
+    "#comment",
+    "null",
+    "NULL",
+    "true",
+    "False",
+    "inf",
+    "-inf",
+    "nan",
+    "1",
+    "-1",
+    "+1",
+    "01",
+    "1_000",
+    "1.5",
+    ".5",
+    "1.",
+    "1e3",
+    "1.5e-3",
+    "1.5.2",
+    "01:30:00",
+    "12G",
+    "shard:1",
+    "~/work",
+    "=",
+    "-",
+]
+
+
+@pytest.mark.parametrize("value", _ROUND_TRIP_VALUES)
+def test_an_env_value_reaches_the_config_as_written(value: str) -> None:
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+    from omegaconf import OmegaConf
+
+    (override,) = SlurmOptions(env={"NAME": value}).overrides()[1:]
+    (parsed,) = OverridesParser.create().parse_overrides([override])
+    assert parsed.key_or_group == "launcher.env.NAME"
+    assert parsed.value() == value
+    # What the launcher reads: the composed config, resolved.
+    resolved = OmegaConf.to_container(OmegaConf.create({"v": value}), resolve=True)
+    assert resolved == {"v": value}
+
+
+@pytest.mark.parametrize("value", _ROUND_TRIP_VALUES)
+def test_a_launcher_text_key_and_a_setup_line_reach_the_config_as_written(
+    value: str,
+) -> None:
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+
+    overrides = SlurmOptions(partition=value, setup=[value, "x"]).overrides()
+    parsed = OverridesParser.create().parse_overrides(overrides[1:])
+    assert [p.value() for p in parsed] == [value, [value, "x"]]
+
+
+@pytest.mark.parametrize("name", ["true", "null", "NAN", "_X1", "inf", "a"])
+def test_an_env_name_is_the_key_hydra_reads(name: str) -> None:
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+
+    (override,) = SlurmOptions.from_request({"env": {name: "v"}}).overrides()[1:]
+    (parsed,) = OverridesParser.create().parse_overrides([override])
+    assert parsed.key_or_group == f"launcher.env.{name}"
+    assert parsed.value() == "v"
+
+
+def test_a_backslash_is_not_doubled() -> None:
+    # #740: `a\b` (one backslash) was written `'a\\b'`, read as two.
+    assert SlurmOptions(env={"X": "a\\b"}).overrides()[-1] == "++launcher.env.X='a\\b'"
+    assert (
+        SlurmOptions(env={"X": "C:\\dir\\"}).overrides()[-1]
+        == "++launcher.env.X='C:\\dir\\\\'"
+    )
+    # A value Hydra would read as a number, a bool or null stays a string.
+    assert SlurmOptions(env={"X": "null"}).overrides()[-1] == "++launcher.env.X='null'"
+    # A setup line may hold a backslash now that it is escaped as Hydra reads it.
+    assert SlurmOptions.from_request({"setup": "echo a\\b"}).setup == ["echo a\\b"]
 
 
 def test_the_command_submits_and_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
