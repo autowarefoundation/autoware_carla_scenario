@@ -11,7 +11,8 @@ Lanelet2 map the run was on as a separate ``MapResource``.
 
 What the log does not hold is left out, not invented: the ego's acceleration,
 angular velocity and steering, a route and a goal; a vehicle's
-class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``).
+class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``);
+a light's bulbs beyond its one round lamp's colour.
 A tick the log does not have (it skips a tick without road users) is a row
 whose ego, objects and lights are unavailable, never an interpolated one.
 """
@@ -58,9 +59,13 @@ MAP_SUFFIX = ".t4scene.map.pb"
 #: The contract's object categories this module writes (``Annotations.labels``).
 _VEHICLE = 1
 _PEDESTRIAN = 7
-#: The contract's effective lane states (``TrafficLights.lane_states``); any
-#: other CARLA state (``Off``, ``Unknown``) is UNKNOWN, 0.
-_LANE_STATES = {"red": 1, "yellow": 2, "green": 3}
+#: The contract's bulb colours (``TrafficLights.element_colors``) of CARLA's
+#: light states; any other (``Off``, ``Unknown``) is UNKNOWN, 0.
+_COLORS = {"red": 1, "yellow": 2, "green": 3}
+#: ``TrafficLights.element_shapes``: CARLA's lamp is one round bulb.
+_CIRCLE = 1
+#: ``TrafficLights.element_statuses``.
+_STATUS_UNKNOWN, _STATUS_OFF, _STATUS_ON = 0, 1, 2
 #: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
 #: log's ``turn_indicators`` states.
 _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
@@ -634,55 +639,78 @@ def _fill_annotations(
     positions, dimensions, headings, velocities, labels, track_ids, orientations = (
         np.concatenate(column) for column in zip(*rows)
     )
-    values = scene.annotations.values
-    values.positions.CopyFrom(_array(positions, "f8"))
-    values.dimensions.CopyFrom(_array(dimensions, "f8"))
-    values.headings.CopyFrom(_array(headings, "f8"))
-    values.velocities.CopyFrom(_array(velocities, "f8"))
-    values.labels.CopyFrom(_array(labels, "i8"))
-    values.orientations.CopyFrom(_array(orientations, "f8"))
-    values.track_ids.values.extend(pb.OptionalString(value=str(i)) for i in track_ids)
+    # Every road user is a box (the contract's other groups, cylinders and
+    # polygons, are left absent).
+    boxes = scene.annotations.values.boxes
+    boxes.positions.CopyFrom(_array(positions, "f8"))
+    boxes.dimensions.CopyFrom(_array(dimensions, "f8"))
+    boxes.headings.CopyFrom(_array(headings, "f8"))
+    boxes.velocities.CopyFrom(_array(velocities, "f8"))
+    boxes.labels.CopyFrom(_array(labels, "i8"))
+    boxes.orientations.CopyFrom(_array(orientations, "f8"))
+    boxes.track_ids.values.extend(pb.OptionalString(value=str(i)) for i in track_ids)
     counts = [len(row[0]) for row in rows]
-    scene.annotations.offsets.CopyFrom(
+    scene.annotations.box_offsets.CopyFrom(
         _array(np.concatenate([[0], np.cumsum(counts)]), "i8")
     )
     scene.annotations.available.CopyFrom(_array(available, "?"))
 
 
-def _fill_lights(
-    scene: pb.T4Scene, log: _Log, frames: Sequence[int], lane_lights: Mapping[int, int]
-) -> None:
-    """Write the effective state of each governed lanelet on every row.
+def _group_lights(loaded: _Map, lane_lights: Mapping[int, int]) -> dict[int, int]:
+    """The CARLA light (its id) each traffic light regulatory element shows:
+    the one governing the lanelets it is on (:func:`_lane_lights`), the first
+    such lanelet's when they differ."""
+    groups: dict[int, int] = {}
+    for line in loaded.stop_lines:
+        light = lane_lights.get(line.lanelet_id)
+        if light is None:
+            continue
+        for element in line.traffic_lights:
+            groups.setdefault(element, light)
+    return groups
 
-    Only effective lane states: the log has CARLA's lights, not the map's
-    regulatory elements and their bulbs, so raw groups are not observed
-    (``group_available``), rather than observed empty.
+
+def _fill_lights(
+    scene: pb.T4Scene, log: _Log, frames: Sequence[int], group_lights: Mapping[int, int]
+) -> None:
+    """Write each traffic light regulatory element's lamp on every row.
+
+    A group is a regulatory element of the map, its one element the round lamp
+    of the CARLA light it shows (:func:`_group_lights`): its colour, on --
+    off for CARLA's ``Off`` -- and unknown otherwise. A consumer derives the
+    lanelets' states from the map's regulatory elements, as for any source.
     """
-    lanes = sorted(lane_lights)
+    groups = sorted(group_lights)
     available = np.array([f in log.rows for f in frames])
-    states = np.array(
-        [
-            [
-                _LANE_STATES.get(log.rows[f][1].get(lane_lights[lane], "").lower(), 0)
-                for lane in lanes
-            ]
-            for f in frames
-            if f in log.rows
-        ],
-        dtype=np.int64,
-    ).reshape(-1)
-    lights = scene.traffic_lights
-    lights.values.lane_ids.CopyFrom(_array(np.tile(lanes, int(available.sum())), "i8"))
-    lights.values.lane_states.CopyFrom(_array(states, "i8"))
-    # A CARLA light is one round lamp: no lane's state comes from an arrow.
-    lights.values.lane_is_arrow.CopyFrom(_array(np.zeros(len(states)), "?"))
-    lights.group_offsets.CopyFrom(_array(np.zeros(len(frames) + 1), "i8"))
-    lights.lane_offsets.CopyFrom(
-        _array(np.concatenate([[0], np.cumsum(available * len(lanes))]), "i8")
+    colors: list[int] = []
+    statuses: list[int] = []
+    for carla_frame in frames:
+        if carla_frame not in log.rows:
+            continue
+        lights = log.rows[carla_frame][1]
+        for group in groups:
+            state = lights.get(group_lights[group], "").lower()
+            colors.append(_COLORS.get(state, 0))
+            statuses.append(
+                _STATUS_ON
+                if state in _COLORS
+                else _STATUS_OFF
+                if state == "off"
+                else _STATUS_UNKNOWN
+            )
+    rows = int(available.sum())
+    values = scene.traffic_lights.values
+    values.group_ids.CopyFrom(_array(np.tile(groups, rows), "i8"))
+    # One element per group.
+    values.element_offsets.CopyFrom(_array(np.arange(len(colors) + 1), "i8"))
+    values.element_colors.CopyFrom(_array(colors, "i8"))
+    values.element_shapes.CopyFrom(_array(np.full(len(colors), _CIRCLE), "i8"))
+    values.element_statuses.CopyFrom(_array(statuses, "i8"))
+    values.element_confidences.CopyFrom(_array(np.ones(len(colors)), "f8"))
+    scene.traffic_lights.group_offsets.CopyFrom(
+        _array(np.concatenate([[0], np.cumsum(available * len(groups))]), "i8")
     )
-    lights.available.CopyFrom(_array(available, "?"))
-    lights.group_available.CopyFrom(_array(np.zeros(len(frames)), "?"))
-    lights.lane_available.CopyFrom(_array(available, "?"))
+    scene.traffic_lights.available.CopyFrom(_array(available, "?"))
 
 
 def trajectory_log_to_t4_scene(
@@ -778,7 +806,9 @@ def trajectory_log_to_t4_scene(
     reference.has_elevation = True
     reference.map_id = f"lanelet2-sha256:{loaded.digest}"
     _register_in_map_frame(reference)
-    _fill_lights(scene, log, frames, _lane_lights(log, loaded, frame))
+    _fill_lights(
+        scene, log, frames, _group_lights(loaded, _lane_lights(log, loaded, frame))
+    )
     return T4SceneExport(scene=scene, map_resource=loaded.resource)
 
 

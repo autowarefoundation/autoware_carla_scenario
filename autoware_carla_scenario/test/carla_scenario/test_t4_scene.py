@@ -268,7 +268,7 @@ def test_rows_are_a_uniform_grid_and_a_missing_tick_is_unavailable(
         True,
         True,
     ]
-    assert list(_numeric(scene.annotations.offsets)) == [0, 1, 2, 2, 3, 4]
+    assert list(_numeric(scene.annotations.box_offsets)) == [0, 1, 2, 2, 3, 4]
     assert scene.scene_metadata.scene_id == "Run"
     assert scene.scene_metadata.recording_id == "7"
 
@@ -324,7 +324,9 @@ def test_objects_are_boxes_in_the_map_frame(tmp_path: Path) -> None:
             _state(3, -4.0, 2.0),
         ),
     )
-    values = trajectory_log_to_t4_scene(log, with_map=False).scene.annotations.values
+    values = trajectory_log_to_t4_scene(
+        log, with_map=False
+    ).scene.annotations.values.boxes
     assert [track.value for track in values.track_ids.values] == ["2", "3"]
     assert list(_numeric(values.labels)) == [1, 7]
     # The car faces the map's -y: its box centre (0.2, 0.1) ahead/right in
@@ -351,11 +353,11 @@ def test_objects_beyond_the_distance_are_left_out(tmp_path: Path) -> None:
         _tick(100, _state(1, 0.0, 0.0), _state(2, 150.0, 0.0)),
     )
     near = trajectory_log_to_t4_scene(log, with_map=False).scene
-    assert list(_numeric(near.annotations.offsets)) == [0, 0]
+    assert list(_numeric(near.annotations.box_offsets)) == [0, 0]
     everyone = trajectory_log_to_t4_scene(
         log, with_map=False, max_distance_m=None
     ).scene
-    assert list(_numeric(everyone.annotations.offsets)) == [0, 1]
+    assert list(_numeric(everyone.annotations.box_offsets)) == [0, 1]
 
 
 def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
@@ -389,7 +391,7 @@ def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
     # Parked out of sight up to its spawn frame (102), gone from its despawn's.
-    assert list(np.diff(_numeric(scene.annotations.offsets))) == [0, 0, 1, 0]
+    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 0, 1, 0]
 
 
 def test_a_row_without_the_ego_has_no_objects_near_it(tmp_path: Path) -> None:
@@ -402,12 +404,12 @@ def test_a_row_without_the_ego_has_no_objects_near_it(tmp_path: Path) -> None:
     )
     near = trajectory_log_to_t4_scene(log, with_map=False).scene
     assert list(_numeric(near.annotations.available)) == [True, False]
-    assert list(_numeric(near.annotations.offsets)) == [0, 1, 1]
+    assert list(_numeric(near.annotations.box_offsets)) == [0, 1, 1]
     everyone = trajectory_log_to_t4_scene(
         log, with_map=False, max_distance_m=None
     ).scene
     assert list(_numeric(everyone.annotations.available)) == [True, True]
-    assert list(_numeric(everyone.annotations.offsets)) == [0, 1, 2]
+    assert list(_numeric(everyone.annotations.box_offsets)) == [0, 1, 2]
 
 
 def test_a_second_ego_role_actor_is_a_road_user(tmp_path: Path) -> None:
@@ -418,7 +420,9 @@ def test_a_second_ego_role_actor_is_a_road_user(tmp_path: Path) -> None:
         hero,
         _tick(100, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
     )
-    values = trajectory_log_to_t4_scene(log, with_map=False).scene.annotations.values
+    values = trajectory_log_to_t4_scene(
+        log, with_map=False
+    ).scene.annotations.values.boxes
     assert [track.value for track in values.track_ids.values] == ["2"]
 
 
@@ -494,28 +498,49 @@ def test_the_map_is_a_resource_the_scene_names(map_export: T4SceneExport) -> Non
         assert registered.global_origin_3d.translation == pb.Vector3()
 
 
-def test_a_light_colours_the_lanelet_it_governs(
-    map_log: tuple[Path, int], map_export: T4SceneExport
+def _group_rows(lights: Any) -> list[dict[int, tuple[int, int, int]]]:
+    """Each row's groups: regulatory element id -> its one lamp's (colour,
+    shape, status)."""
+    offsets = list(_numeric(lights.group_offsets))
+    groups = _numeric(lights.values.group_ids).tolist()
+    elements = list(_numeric(lights.values.element_offsets))
+    lamps = list(
+        zip(
+            _numeric(lights.values.element_colors).tolist(),
+            _numeric(lights.values.element_shapes).tolist(),
+            _numeric(lights.values.element_statuses).tolist(),
+        )
+    )
+    rows = []
+    for a, b in zip(offsets, offsets[1:]):
+        row = {}
+        for g in range(a, b):
+            assert elements[g + 1] - elements[g] == 1  # one round lamp
+            row[groups[g]] = lamps[elements[g]]
+        rows.append(row)
+    return rows
+
+
+def _elements_of(lanelet_map: Any, lanelet_id: int) -> tuple[int, ...]:
+    return next(
+        line.traffic_lights
+        for line in _stop_lines(lanelet_map)
+        if line.lanelet_id == lanelet_id
+    )
+
+
+def test_a_light_colours_the_regulatory_element_of_the_lanelet_it_governs(
+    map_log: tuple[Path, int],
+    map_export: T4SceneExport,
+    fixture_map: tuple[Any, tuple[float, float]],
 ) -> None:
-    lanelet_id = map_log[1]
+    element = _elements_of(fixture_map[0], map_log[1])[0]
     lights = map_export.scene.traffic_lights
-    offsets = list(_numeric(lights.lane_offsets))
-    lane_ids = _numeric(lights.values.lane_ids)
-    states = _numeric(lights.values.lane_states)
-    rows = [
-        dict(zip(lane_ids[a:b].tolist(), states[a:b].tolist()))
-        for a, b in zip(offsets, offsets[1:])
-    ]
-    # Red, carried over the tick without a change, then green.
-    assert [row[lanelet_id] for row in rows] == [1, 1, 3]
+    rows = _group_rows(lights)
+    # Red, carried over the tick without a change, then green: a round lamp, on.
+    assert [row[element] for row in rows] == [(1, 1, 2), (1, 1, 2), (3, 1, 2)]
     assert list(_numeric(lights.available)) == [True, True, True]
-    assert list(_numeric(lights.lane_available)) == [True, True, True]
-    # The map's regulatory elements and their bulbs are not observed: no raw
-    # groups, and said so, rather than an observed empty set of them.
-    assert not lights.values.HasField("group_ids")
-    assert not lights.values.HasField("element_offsets")
-    assert list(_numeric(lights.group_offsets)) == [0, 0, 0, 0]
-    assert list(_numeric(lights.group_available)) == [False, False, False]
+    np.testing.assert_array_equal(_numeric(lights.values.element_confidences), 1.0)
 
 
 def test_a_light_its_controller_switches_colours_the_lanelet_wherever_it_stands(
@@ -561,8 +586,8 @@ def test_a_light_its_controller_switches_colours_the_lanelet_wherever_it_stands(
         map_record=record,
     )
     lights = trajectory_log_to_t4_scene(log).scene.traffic_lights
-    lane_ids = list(_numeric(lights.values.lane_ids))
-    assert _numeric(lights.values.lane_states)[lane_ids.index(lanelet_id)] == 2
+    element = _elements_of(lanelet_map, lanelet_id)[0]
+    assert _group_rows(lights)[0][element] == (2, 1, 2)
 
 
 def test_the_resource_keeps_exact_local_coordinates(

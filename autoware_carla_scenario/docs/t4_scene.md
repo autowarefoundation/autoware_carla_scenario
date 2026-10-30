@@ -67,8 +67,8 @@ machine any more) has no `map` and no `traffic_lights`.
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
 | `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities`, `longitudinal_speeds`, `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
-| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego: its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
-| `traffic_lights` | Effective lane states: each lanelet a light governs, with its light's state (red 1, yellow 2, green 3, else unknown 0) |
+| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
+| `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |
 
 What the log does not hold is left out, never made up:
@@ -83,8 +83,7 @@ What the log does not hold is left out, never made up:
   the contract has them for the ego only.
 - **A vehicle's class** is `vehicle`: the log has its blueprint, not the
   `base_type` that says car, truck or bus.
-- **Raw signal groups** are not observed (`group_available` false): the log
-  has CARLA's lights, not the map's regulatory elements and their bulbs.
+- **A light's bulbs** beyond its one round lamp: CARLA's light has one state.
 - **No route and no goal.**
 - **An entity spawned hidden** is on the scene from its `spawn` record to its
   `despawn` record, not while it is parked out of sight.
