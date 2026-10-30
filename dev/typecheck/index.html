@@ -4598,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 228 of
-the package's 334 modules (68%; about 67,900 of 118,100 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 229 of
+the package's 335 modules (68%; about 68,400 of 118,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4680,7 +4680,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 115
+below). 117
 functions and methods of those modules are <code>UNCALLED</code> (28 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic

@@ -2329,6 +2329,14 @@ It is usually a fail condition:</p>
 metric to hold for a while (off the road for more than a second), <code>NotCondition</code>
 to pass only while it does not. In the <a href="../scenario_editor/">Scenario Editor</a> it
 is the <strong>Metric</strong> card, under World.</p>
+<p>A run a metric condition fails is a failure of what the metric reads
+(<a href="../usage/#output-files">Why a run failed</a>): a collision
+metric <code>collision</code>, <code>offroad</code> and <code>min_distance_to_lane_boundary_m</code>
+<code>lane_keeping</code>, <code>wrong_lane</code> <code>traffic_rule</code>, <code>min_distance_to_obstacle_m</code>
+<code>safety_margin</code>, and the weaving metrics and <code>turn_indicator_changes</code>
+<code>stability</code>. <code>offroad_or_collision</code> and its at-fault twin read two things and
+say neither, nor does the importance-sampling weight: register a condition on
+them with its <code>category</code>.</p>
 <p>To read a metric yourself -- in a probe, a test, a recorder --
 <code>read_metric(key, world)</code> returns its value in the frame, or <code>None</code>.</p>
 <h3 id="off-the-road-as-a-fail-condition">Off the road as a fail condition<a class="headerlink" href="#off-the-road-as-a-fail-condition" title="Permanent link">&para;</a></h3>
@@ -2386,7 +2394,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 05:11:25 UTC"><span class="timeago" datetime="2026-10-30T05:11:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 05:11:25 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 00:30:50 UTC"><span class="timeago" datetime="2026-10-30T00:30:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 00:30:50 UTC">2026-10-30</span>
   </span>
 
     
