@@ -1427,7 +1427,7 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
 
     def road_ahead_in_map(self: CarlaDriverEntity) -> Any:
         sent.append(self._road_ahead)  # noqa: SLF001
-        return "the road ahead"
+        return "the road ahead", "where the ego was"
 
     monkeypatch.setattr(CarlaDriverEntity, "_road_ahead_in_map", road_ahead_in_map)
     entity, client = _entity(
@@ -1454,6 +1454,7 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
         assert scene.current_index == ticks - 1
     # The road ahead the policy was sent this step, on the scene's lanelets.
     assert live.asked[-1]["road_ahead"] == "the road ahead"
+    assert live.asked[-1]["road_ahead_origin"] == "where the ego was"
     assert all(road is not None and len(road[1]) for road in sent)
     assert live.asked[-1]["goal_pose"] == (1.0, 2.0, 0.5)
     entity.on_scenario_end(world)
@@ -1487,3 +1488,26 @@ def test_the_road_aheads_far_end_heads_along_its_last_half_metre() -> None:
     assert (x, y) == (10.0, 10.1) and yaw == pytest.approx(math.pi / 2)
     assert _far_end(np.array([[0.0, 0.0], [0.1, 0.0]])) is None
     assert _far_end(None) is None
+
+
+def test_the_road_ahead_is_put_on_the_map_as_the_policy_was_told_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    mm = SimpleNamespace(mgrs_offset=(100.0, 200.0))
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    entity, _ = _entity()
+    pose = Pose.from_xyz_yaw(109.887769185, 0.810520982, 0.0, math.pi / 2)
+    entity._road_ahead = (pose, np.array([[1.4000001, 0.0, 0.0]]))  # noqa: SLF001
+    points, origin = entity._road_ahead_in_map()  # noqa: SLF001
+    # Single precision, as the egodriver observations carry them.
+    x32, y32 = float(np.float32(109.887769185)), float(np.float32(0.810520982))
+    np.testing.assert_allclose(origin, [x32 + 100.0, y32 + 200.0], rtol=0, atol=1e-9)
+    assert origin[0] != 109.887769185 + 100.0
+    np.testing.assert_allclose(
+        points,
+        [[x32 + 100.0, y32 + float(np.float32(1.4000001)) + 200.0]],
+        rtol=0,
+        atol=1e-6,
+    )

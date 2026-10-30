@@ -10,13 +10,12 @@ import numpy as np
 import pytest
 
 from autoware_carla_scenario.t4_scene._proto import t4_scene_pb2 as pb
-from autoware_carla_scenario.t4_scene.convert import _Lanes
 from autoware_carla_scenario.t4_scene.live import (
     EgoExtras,
     LiveT4Scene,
     _t4_points,
-    lanelets_along,
 )
+from autoware_carla_scenario.t4_scene.route import RouteGraph, _resample
 
 
 def _vec(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> SimpleNamespace:
@@ -198,53 +197,6 @@ def test_t4_points_scale_the_intensity_and_zero_the_fifth_column() -> None:
 # -- the road ahead on the lanelets ---------------------------------------------
 
 
-def _box(x0: float, x1: float, y0: float, y1: float) -> np.ndarray:
-    return np.array([[x0, y1], [x1, y1], [x1, y0], [x0, y0]], dtype=np.float64)
-
-
-def _fork() -> _Lanes:
-    """Lanelet 1 (x 0-10) on to 2 (10-20, straight on), or to 3 (10-20, which
-    overlaps 2's first metres and then bends away to y 3-6 beyond x 13)."""
-    outlines = {
-        1: _box(0.0, 10.0, -1.5, 1.5),
-        2: _box(10.0, 20.0, -1.5, 1.5),
-        3: np.array(
-            [
-                [10.0, 1.5],
-                [13.0, 6.0],
-                [20.0, 6.0],
-                [20.0, 3.0],
-                [14.0, 3.0],
-                [13.0, -1.5],
-                [10.0, -1.5],
-            ]
-        ),
-    }
-    ids = tuple(outlines)
-    return _Lanes(
-        ids=ids,
-        outlines=tuple(outlines[i] for i in ids),
-        boxes=np.array([[*o.min(axis=0), *o.max(axis=0)] for o in outlines.values()]),
-        lengths={1: 10.0, 2: 10.0, 3: 11.0},
-        elements={1: (), 2: (), 3: ()},
-        successors={1: (2, 3), 2: (), 3: ()},
-    )
-
-
-def test_the_road_ahead_takes_the_branch_it_keeps_to() -> None:
-    straight = np.array([[x, 0.0] for x in np.arange(1.0, 20.0, 2.0)])
-    assert lanelets_along(_fork(), straight) == [1, 2]
-    bending = np.array(
-        [[x, 0.0] for x in (1.0, 5.0, 9.0, 11.0)] + [[15.0, 4.5], [19.0, 4.5]]
-    )
-    assert lanelets_along(_fork(), bending) == [1, 3]
-
-
-def test_a_road_ahead_on_no_lanelet_is_the_pin_alone() -> None:
-    assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]]), pin=1) == [1]
-    assert lanelets_along(_fork(), np.array([[50.0, 50.0], [52.0, 50.0]])) == []
-
-
 def test_a_scene_keeps_the_poses_unrounded() -> None:
     # The log keeps millimetres; a scene keeps what the policy is told.
     world = _World()
@@ -256,3 +208,33 @@ def test_a_scene_keeps_the_poses_unrounded() -> None:
     assert scene is not None
     # Facing the map's -y, base_link is behind the origin along y, not x.
     assert _numeric(scene.ego.poses)[-1, 0] == pytest.approx(0.1234567, abs=1e-12)
+
+
+def _straight(*ids: int) -> RouteGraph:
+    """Lanelets *ids*, 10 m each along y = 0 from x = 0, one after another."""
+    centres = np.stack(
+        [
+            _resample(np.array([[10.0 * k, 0.0], [10.0 * k + 10.0, 0.0]]))
+            for k in range(len(ids))
+        ]
+    )
+    successors = {a: (b,) for a, b in zip(ids, ids[1:])}
+    return RouteGraph(ids, centres, successors, {})
+
+
+def test_the_route_keeps_the_lanelets_just_passed() -> None:
+    graph = _straight(1, 2, 3, 4, 5, 6, 7, 8)
+    live = LiveT4Scene(history_rows=1)
+    road = np.array([[x, 0.0] for x in np.arange(0.0, 80.0, 2.0)])
+    assert live._route_along(graph, road, np.array([1.0, 0.0])) == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+    ]  # noqa: SLF001
+    ahead = np.array([[x, 0.0] for x in np.arange(61.0, 80.0, 2.0)])
+    assert live._route_along(graph, ahead, np.array([61.0, 0.0])) == [3, 4, 5, 6, 7, 8]  # noqa: SLF001

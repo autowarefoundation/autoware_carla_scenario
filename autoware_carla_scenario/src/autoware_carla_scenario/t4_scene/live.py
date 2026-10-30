@@ -43,8 +43,6 @@ from ._proto import t4_scene_pb2 as pb
 from .convert import (
     _TICK_NS,
     _array,
-    _inside,
-    _Lanes,
     _Log,
     _load_map,
     _Map,
@@ -52,6 +50,7 @@ from .convert import (
     log_to_scene,
     map_of,
 )
+from .route import RouteGraph
 
 __all__ = ["EgoExtras", "LiveT4Scene"]
 
@@ -61,8 +60,8 @@ logger = logging.getLogger(__name__)
 #: loop's policies did (the route Autoware's planner is given starts behind
 #: the ego).
 _ROUTE_KEPT_BEHIND = 4
-#: Road-ahead points nothing explains before the walk picks the road up again.
-_REJOIN_AFTER_POINTS = 3
+#: How far the ego may be from a route lanelet's centreline and be on it.
+_ON_ROUTE_M = 3.0
 
 
 @dataclass(frozen=True)
@@ -242,6 +241,7 @@ class LiveT4Scene:
         lidar_age_ns: int = 0,
         route_lanelet_ids: Optional[Sequence[int]] = None,
         road_ahead: Optional[npt.NDArray[np.float64]] = None,
+        road_ahead_origin: Optional[npt.NDArray[np.float64]] = None,
         goal_pose: Optional[Sequence[float]] = None,
     ) -> Optional[pb.T4Scene]:
         """The scene of the rows so far, the current one last; ``None`` before
@@ -256,6 +256,9 @@ class LiveT4Scene:
             road_ahead: Instead, the road ahead as ``(N, 2)`` map-frame
                 points from the ego on: the route is the lanelets it runs
                 along, after the few the ego has just passed.
+            road_ahead_origin: Where the ego was, map frame, as the policy
+                was told when the road ahead was sent; by default the
+                current row's pose.
             goal_pose: ``(x, y, yaw)`` in the map frame.
         """
         frames = self.frames()
@@ -283,14 +286,16 @@ class LiveT4Scene:
             scene.lidar.rows.append(pb.LidarRow(value=sweep))
         if road_ahead is not None and route_lanelet_ids is None:
             loaded = self._loaded_map()
-            if loaded is not None:
+            if loaded is not None and loaded.route is not None:
                 poses = np.frombuffer(scene.ego.poses.data, dtype="<f8").reshape(
                     rows, 3
                 )
                 route_lanelet_ids = self._route_along(
-                    loaded.lanes,
+                    loaded.route,
                     np.asarray(road_ahead, dtype=np.float64),
-                    poses[-1, :2],
+                    poses[-1, :2]
+                    if road_ahead_origin is None
+                    else np.asarray(road_ahead_origin, dtype=np.float64),
                 )
         if route_lanelet_ids is not None:
             route = pb.RouteData(lane_ids=_array(list(route_lanelet_ids), "i8"))
@@ -304,28 +309,20 @@ class LiveT4Scene:
 
     def _route_along(
         self,
-        lanes: _Lanes,
+        graph: RouteGraph,
         points: npt.NDArray[np.float64],
         ego: npt.NDArray[np.float64],
     ) -> list[int]:
         """The road ahead's lanelets after the few of the last route the ego
         has passed; the walk starts from the one it is on when it can."""
-        here = next(
-            (
-                i
-                for i, lanelet_id in enumerate(self._route)
-                if _inside(ego, lanes.outlines[lanes.ids.index(lanelet_id)])
-            ),
-            None,
-        )
+        here = graph.nearest(self._route, ego, _ON_ROUTE_M)
         behind = (
             []
             if here is None
             else self._route[max(0, here - _ROUTE_KEPT_BEHIND) : here]
         )
         pin = None if here is None else self._route[here]
-        ahead = lanelets_along(lanes, points, pin)
-        self._route = behind + [i for i in ahead if not behind or i != behind[-1]]
+        self._route = behind + graph.match(points, pin)
         return self._route
 
     def _fill_ego_extras(self, scene: pb.T4Scene, frames: Sequence[int]) -> None:
@@ -375,94 +372,6 @@ class LiveT4Scene:
             ego.shape.wheel_base = float(self.wheel_base_m)
 
 
-def lanelets_along(
-    lanes: _Lanes, points: npt.NDArray[np.float64], pin: Optional[int] = None
-) -> list[int]:
-    """The lanelets a polyline of ``(N, 2)`` map-frame points runs along, in order.
-
-    Walked along the lanelet graph rather than matched point by point: a point
-    on the lanelet walked is passed, one off it steps to a successor holding it
-    (bridging one lanelet shorter than the points' spacing).  A junction's
-    lanelets overlap at its mouth, so every choice -- the first lanelet, a
-    branch -- goes to the one the most of the points ahead keep to; *pin*, the
-    lanelet the ego is on, wins a tie for the first.  After a run of points
-    nothing explains, the walk picks the road up again there.
-    """
-    index = {lanelet_id: i for i, lanelet_id in enumerate(lanes.ids)}
-    b = lanes.boxes
-
-    def on(lanelet_id: int, k: int) -> bool:
-        return _inside(points[k], lanes.outlines[index[lanelet_id]])
-
-    def holding(k: int) -> list[int]:
-        x, y = points[k]
-        near = np.flatnonzero(
-            (b[:, 0] <= x) & (x <= b[:, 2]) & (b[:, 1] <= y) & (y <= b[:, 3])
-        )
-        return [lanes.ids[i] for i in near if _inside(points[k], lanes.outlines[i])]
-
-    reached: dict[tuple[int, int, int], int] = {}
-
-    def reach(lanelet_id: int, k: int, depth: int = 6) -> int:
-        """How many points from the k-th on *lanelet_id* and the successors
-        that keep to them hold."""
-        key = (lanelet_id, k, depth)
-        if key not in reached:
-            n = 0
-            while k + n < len(points) and on(lanelet_id, k + n):
-                n += 1
-            more = 0
-            if n and k + n < len(points) and depth:
-                more = max(
-                    (
-                        reach(nxt, k + n, depth - 1)
-                        for nxt in lanes.successors.get(lanelet_id, ())
-                        if nxt in index
-                    ),
-                    default=0,
-                )
-            reached[key] = n + more
-        return reached[key]
-
-    order: list[int] = []
-    unexplained = 0
-    for k in range(len(points)):
-        candidates = holding(k)
-        if not candidates:
-            continue
-        if not order:
-            first = ([pin] if pin in candidates else []) + [
-                c for c in candidates if c != pin
-            ]
-            order.append(max(first, key=lambda c: reach(c, k)))
-            continue
-        if order[-1] in candidates:
-            unexplained = 0
-            continue
-        successors = [s for s in lanes.successors.get(order[-1], ()) if s in index]
-        direct = [s for s in successors if s in candidates]
-        if direct:
-            order.append(max(direct, key=lambda c: reach(c, k)))
-            unexplained = 0
-            continue
-        bridged: list[tuple[int, int]] = [
-            (s, t)
-            for s in successors
-            for t in lanes.successors.get(s, ())
-            if t in candidates
-        ]
-        if bridged:
-            reaches = [reach(end, k) for _, end in bridged]
-            order.extend(bridged[reaches.index(max(reaches))])
-            unexplained = 0
-            continue
-        unexplained += 1
-        if unexplained >= _REJOIN_AFTER_POINTS:
-            order.append(max(candidates, key=lambda c: reach(c, k)))
-            unexplained = 0
-    return order or ([pin] if pin is not None else [])
-
-
 def _local_map(log: _Log, lanelet2_path: Path) -> Optional[_Map]:
     """A Lanelet2 map in the run's local frame (``local_x``/``local_y``), on
     the scenes' ``map`` frame; ``None`` -- the run's own map then -- when that
@@ -496,7 +405,10 @@ def _manager_map() -> Optional[_Map]:
     except RuntimeError:
         network = None
     loaded = map_of(lanelet_map, "", network)
-    return loaded._replace(digest=loaded.resource.sha256)
+    # Its points left where they are: the manager's map is everyone's.
+    return loaded._replace(
+        digest=loaded.resource.sha256, route=RouteGraph.of(lanelet_map, owned=False)
+    )
 
 
 def _t4_points(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:

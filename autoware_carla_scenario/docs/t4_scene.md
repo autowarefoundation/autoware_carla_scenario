@@ -60,7 +60,11 @@ observations carry them (of `base_link`, the acceleration an estimate), body
 angular velocity, front tyres' angle and odometry times; the first LiDAR's
 current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
-the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets,
+the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets
+as OnePlanner's egodriver policy walked it (drivable lanelets' centrelines,
+within 2.5 m and heading the same way; successors and lane changes from a
+vehicle routing graph, junction bound ends within 0.3 m welded; the points and
+the ego's pose in single precision, as the egodriver observations carry them),
 after the few the ego has just passed -- and the goal (`t4_scene_goal`). A policy
 reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the `t4`
 format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene

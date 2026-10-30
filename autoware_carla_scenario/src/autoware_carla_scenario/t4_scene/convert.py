@@ -37,6 +37,7 @@ from ..constants import EGO_ROLES, FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
 from ._proto import t4_scene_pb2 as pb
 from .map_resource import map_resource
+from .route import RouteGraph
 
 __all__ = [
     "LOG_SUFFIX",
@@ -357,6 +358,9 @@ class _Map(NamedTuple):
     #: empty without an OpenDRIVE file or such controllers.
     signals: Mapping[int, tuple[str, ...]]
     lanes: _Lanes
+    #: The drivable lanelets' graph a live scene's route is walked on
+    #: (:meth:`RouteGraph.match`); ``None`` where the map was not read for one.
+    route: Optional[RouteGraph] = None
 
 
 @functools.lru_cache(maxsize=4)
@@ -377,7 +381,9 @@ def _read_map(
         from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
 
         network = open_road_network(xodr_path)
-    return map_of(lanelet_map, digest, network)
+    loaded = map_of(lanelet_map, digest, network)
+    # Last: the graph moves the map's points, which this map is read for alone.
+    return loaded._replace(route=RouteGraph.of(lanelet_map))
 
 
 def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:

@@ -835,12 +835,14 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             sweep = sweeps[0]
             points = np.frombuffer(sweep.points_xyzi, dtype="<f4").reshape(-1, 4)
             age_ns = (self._sim_time_us - int(sweep.timestamp_us)) * 1000
-        road_ahead = self._road_ahead_in_map()
+        sent = self._road_ahead_in_map()
+        road_ahead = None if sent is None else sent[0]
         scene = self._t4.scene(
             self._scene_id,
             lidar_points=points,
             lidar_age_ns=age_ns,
             road_ahead=road_ahead,
+            road_ahead_origin=None if sent is None else sent[1],
             goal_pose=(
                 _far_end(road_ahead)
                 if self._config.t4_scene_goal == "road_ahead"
@@ -850,19 +852,27 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         return b"" if scene is None else scene.SerializeToString()
 
     def _road_ahead_in_map(self) -> Any:
-        """The road ahead last sent, ``(N, 2)`` in Autoware's ``map`` frame;
-        ``None`` before one was."""
+        """The road ahead last sent and where the ego then was, ``(N, 2)`` and
+        ``(2,)`` in Autoware's ``map`` frame; ``None`` before one was.
+
+        Both as the egodriver observations carry them -- in single precision
+        -- which is what a policy reading those walked the lanelets with: two
+        lanelets meeting at a join are a micrometre apart there, and which the
+        walk takes turns on the rounding.
+        """
         if self._road_ahead is None or not len(self._road_ahead[1]):
             return None
+        import numpy as np  # noqa: PLC0415
+
         from ..coordinate.map_manager import MapManager  # noqa: PLC0415
 
         pose, waypoints = self._road_ahead
+        told = Pose.from_proto(pose.to_proto())
+        rig = np.asarray(waypoints, dtype=np.float32).astype(np.float64)
         # The local frame is CARLA's with y flipped; the map's adds its offset.
-        offset_x, offset_y = MapManager.get_instance().mgrs_offset
-        points = pose.transform_points(waypoints)[:, :2].copy()
-        points[:, 0] += offset_x
-        points[:, 1] += offset_y
-        return points
+        offset = np.asarray(MapManager.get_instance().mgrs_offset, dtype=np.float64)
+        points = told.transform_points(rig)[:, :2] + offset
+        return points, told.position[:2] + offset
 
     def _submit_camera_frames(self) -> None:
         """Encode and send the latest frame from each camera."""
