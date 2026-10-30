@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 230 of
-the package's 336 modules (68%; about 68,500 of 118,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 231 of
+the package's 337 modules (69%; about 68,800 of 118,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2446,7 +2446,10 @@ summary's case labels and whether the malloc arenas are already capped:
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
-`driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
+`driver.geometry`) with which traffic light governs the ego and where it
+stops for it (`driver.stop_lines`, #751; not the light's state as the
+protobuf enum, the payload, nor the `is_at_traffic_light()` fallback, which
+`driver.renderer` keeps), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
 below). 117
