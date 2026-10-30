@@ -2664,8 +2664,8 @@ itself: a run's trajectory log is what a run is seen from
 <td>What a probe's <code>on_lanelet</code> returns for a value only the run can tell.</td>
 </tr>
 <tr>
-<td><code>OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries)</code></td>
-<td>Draws concrete cases inside the ODD: <code>.sample(count)</code> gives <code>OddSample(index, overrides, buckets, values, situation)</code>. <code>strategy="coverage"</code> draws the least covered buckets and the uncovered situations first. See <a href="../odd/#sampling-scenarios-from-the-odd">Sampling scenarios from the ODD</a>.</td>
+<td><code>OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries, weights)</code></td>
+<td>Draws concrete cases inside the ODD: <code>.sample(count)</code> gives <code>OddSample(index, overrides, buckets, values, situation)</code>. <code>strategy="coverage"</code> draws the least covered buckets and the uncovered situations first; <code>weights={module: share}</code> (<code>strategy="weighted"</code>) puts that share of the cases in each module. See <a href="../odd/#sampling-scenarios-from-the-odd">Sampling scenarios from the ODD</a>.</td>
 </tr>
 <tr>
 <td><code>OddKnob(key, *, values, scale, offset, integer, range)</code>, <code>knobs_from_mapping(raw)</code>, <code>DEFAULT_KNOBS</code></td>
