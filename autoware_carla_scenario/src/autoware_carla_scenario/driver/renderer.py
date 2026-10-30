@@ -15,10 +15,13 @@ silently disables every rule that depends on the world outside the ego.
 The logic here is ported from ``carla_driver_interface``'s reference runtime
 (``runtime/carla_world.py`` at ``af1dcd3``, Apache-2.0) so that a policy tuned
 against that runtime sees the same numbers here.  The two subtleties worth
-keeping are documented at :meth:`RendererDataBuilder._governing_traffic_light`
-and :meth:`RendererDataBuilder._stop_line_points`; both were derived from
-measurements on ``Town10HD_Opt`` upstream, and re-deriving them by intuition
-produces a policy that brakes too late and stops too early.
+keeping are documented at
+:meth:`~autoware_carla_scenario.driver.stop_lines.StopLines.governing_light` and
+:meth:`~autoware_carla_scenario.driver.stop_lines.StopLines.stop_line_points`
+(:mod:`~autoware_carla_scenario.driver.stop_lines`, which the library check
+compiles); both were derived from measurements on ``Town10HD_Opt`` upstream, and
+re-deriving them by intuition produces a policy that brakes too late and stops
+too early.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
 from .base import DriverClientConfig
 from .geometry import Pose
 from .observation import to_local_pose, to_local_vector
+from .stop_lines import StopLines, stop_waypoints
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -44,16 +48,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["RendererDataBuilder"]
-
-#: How far past a stop waypoint to look for the junction it governs, in metres.
-_STOP_LINE_SEARCH_M: float = 8.0
-
-#: Step size for that walk, in metres.
-_STOP_LINE_STEP_M: float = 0.5
-
-#: Distance reported when no stop line applies to the ego.  The proto documents
-#: the field as negative in that case.
-_NO_STOP_LINE_M: float = -1.0
 
 #: CARLA reports posted speed limits in km/h.
 _KMH_TO_MPS: float = 1.0 / 3.6
@@ -110,8 +104,8 @@ class RendererDataBuilder:
         self._map = run_carla_map(world)
         self._map_id = map_id
         self._lights: Optional[List[Tuple[Any, str, List[Any]]]] = None
-        self._stop_lines: Optional[Dict[Tuple[int, int], List[Any]]] = None
-        self._stop_line_points: Dict[int, List[NDArray[np.float64]]] = {}
+        # The lane index and the stop points, cached there.
+        self._stop_lines = StopLines(world, ego_actor, self._map, config)
 
     # ------------------------------------------------------------------
     # Public API
@@ -180,35 +174,17 @@ class RendererDataBuilder:
     def _governing_traffic_light(self, ego_pose: Pose) -> Optional[Any]:
         """The light the ego must obey, found by looking down its own lane.
 
-        CARLA's ``is_at_traffic_light()`` answers a different question -- whether
-        the ego is *inside the light's trigger volume* -- and those volumes are
-        about a metre thick along the road.  A policy asking CARLA therefore
-        learns of a red light at the moment it arrives at it, when stopping from
-        any ordinary speed is already impossible, and the overrun that follows
-        says nothing about the policy.
-
-        So the lane graph is walked forward instead, and any light whose stop
-        line lies on one of those lanes governs us.  That is the question a
-        driver answers by looking.
-
-        Inside a junction nothing governs us: having crossed the line, the thing
-        to do is clear the box.  Reading a light there is an active hazard, since
-        a trigger volume reaches past its own line and a junction has four of
-        them -- a vehicle in the middle can stand in the volume of a light
-        governing traffic that crosses its path, and be told to stop where
-        stopping is worst.
+        The walk is :meth:`StopLines.governing_light
+        <autoware_carla_scenario.driver.stop_lines.StopLines.governing_light>`'s,
+        which says why: CARLA's trigger volumes tell a policy of a red light only
+        when it arrives at it, and inside a junction nothing governs us.
 
         Falls back to ``is_at_traffic_light()`` when the sight distance is zero,
         and, outside a junction, whenever the walk finds nothing.
         """
-        if self._config.traffic_light_sight_distance_m > 0.0:
-            waypoint = self._ego_waypoint()
-            if waypoint is not None and waypoint.is_junction:
-                return None
-            lanes = self._lanes_ahead(self._config.traffic_light_sight_distance_m)
-            light = self._nearest_light_ahead(lanes, ego_pose)
-            if light is not None:
-                return light
+        decided, light = self._stop_lines.governing_light(ego_pose)
+        if decided:
+            return light
         try:
             if self._ego.is_at_traffic_light():
                 return self._ego.get_traffic_light()
@@ -237,7 +213,7 @@ class RendererDataBuilder:
                                 to_local_pose(waypoint.transform).position
                             ),
                         )
-                        for waypoint in self._stop_waypoints(light)
+                        for waypoint in stop_waypoints(light)
                     ],
                 )
                 for light in self._world.get_actors().filter("traffic.traffic_light*")
@@ -251,99 +227,6 @@ class RendererDataBuilder:
             for light, opendrive_id, stops in self._lights
         ]
 
-    def _ego_waypoint(self) -> Optional[Any]:
-        """Where the ego sits on the lane graph, or ``None`` if nowhere."""
-        return self._map.get_waypoint(self._ego.get_location(), project_to_road=True)
-
-    def _lanes_ahead(self, distance_m: float) -> List[Tuple[int, int]]:
-        """``(road_id, lane_id)`` of the lanes up to the next junction.
-
-        Walked rather than guessed, because a stop line sits on the lane it
-        governs and the ego is often still on an earlier segment of road when it
-        needs to know.  The walk stops at the junction it reaches -- the lane at
-        the mouth may still carry the line, but nothing past it is ours to obey
-        yet -- and reports nothing once the ego is already inside one.
-        """
-        waypoint = self._ego_waypoint()
-        if waypoint is None or waypoint.is_junction:
-            return []
-
-        step = max(1.0, self._config.route_resolution_m)
-        lanes = [(waypoint.road_id, waypoint.lane_id)]
-        travelled = 0.0
-        while travelled < distance_m:
-            options = waypoint.next(step)
-            if not options:
-                break
-            waypoint = options[0]
-            travelled += step
-            lane = (waypoint.road_id, waypoint.lane_id)
-            if lane != lanes[-1]:
-                lanes.append(lane)
-            if waypoint.is_junction:
-                break
-        return lanes
-
-    def _nearest_light_ahead(
-        self, lanes: List[Tuple[int, int]], ego_pose: Pose
-    ) -> Optional[Any]:
-        """The nearest light on *lanes* whose stop line is still ahead of the ego.
-
-        :meth:`_lights_on_lanes` keys its index only by ``(road_id, lane_id)``, so
-        a light whose stop line sits behind the ego on the current lane -- or
-        beyond the sight distance -- lands in the same bucket as one genuinely
-        ahead, and a bucket holds its lights in CARLA's arbitrary actor order.
-        Ranking the candidates by longitudinal distance and dropping any already
-        passed or out of sight is what turns "a light on our lane" back into "the
-        light we are about to reach".
-        """
-        sight = self._config.traffic_light_sight_distance_m
-        nearest: Optional[Any] = None
-        nearest_distance = float("inf")
-        for light in self._lights_on_lanes(lanes):
-            distance = self._light_distance(light, ego_pose)
-            if distance < 0.0 or distance > sight:
-                continue
-            if distance < nearest_distance:
-                nearest, nearest_distance = light, distance
-        return nearest
-
-    def _lights_on_lanes(self, lanes: List[Tuple[int, int]]) -> List[Any]:
-        """Lights whose stop lines lie on *lanes*.
-
-        The index is keyed by ``(road_id, lane_id)`` alone, so a lane's bucket can
-        hold a light behind the ego or beyond the horizon, in CARLA's arbitrary
-        actor order.  :meth:`_nearest_light_ahead` is what filters and ranks these
-        candidates by their stop-line position relative to the ego.
-        """
-        if not lanes:
-            return []
-        index = self._stop_lines_by_lane()
-        found: List[Any] = []
-        for lane in lanes:
-            found.extend(index.get(lane, ()))
-        return found
-
-    def _stop_lines_by_lane(self) -> Dict[Tuple[int, int], List[Any]]:
-        """Which light governs which lane, built once -- lights do not move."""
-        if self._stop_lines is None:
-            index: Dict[Tuple[int, int], List[Any]] = {}
-            for light in self._world.get_actors().filter("traffic.traffic_light*"):
-                for waypoint in self._stop_waypoints(light):
-                    key = (waypoint.road_id, waypoint.lane_id)
-                    index.setdefault(key, []).append(light)
-            self._stop_lines = index
-        return self._stop_lines
-
-    @staticmethod
-    def _stop_waypoints(light: Any) -> List[Any]:
-        """Return a light's stop waypoints, tolerating CARLA API differences."""
-        try:
-            return list(light.get_stop_waypoints())
-        except (RuntimeError, AttributeError):
-            logger.debug("get_stop_waypoints() unavailable", exc_info=True)
-            return []
-
     def _light_state(
         self, light: Optional[Any]
     ) -> "carla_driver_pb2.TrafficLightState":
@@ -356,75 +239,13 @@ class RendererDataBuilder:
         )
 
     def _light_distance(self, light: Optional[Any], ego_pose: Pose) -> float:
-        """Distance the ego still has to travel before the stop line.
+        """Distance the ego still has to travel before *light*'s stop line.
 
-        Measured **along the ego's heading**, not as a straight line, and
-        negative once the line is behind.  The difference matters: a Euclidean
-        distance starts growing again the moment the ego crosses the line, so a
-        policy reading it cannot tell "1 m to go" from "1 m past", and a policy
-        that correctly stops just inside the trigger volume is told forever that
-        there is a line ahead which it has in fact already crossed.
+        Along the ego's heading, negative once the line is behind
+        (:meth:`StopLines.light_distance
+        <autoware_carla_scenario.driver.stop_lines.StopLines.light_distance>`).
         """
-        if light is None:
-            return _NO_STOP_LINE_M
-
-        points = self._stop_line_points_for(light)
-        if not points:
-            return _NO_STOP_LINE_M
-
-        # +x in the rig frame is straight ahead.
-        longitudinal = ego_pose.inverse().transform_points(np.stack(points))[:, 0]
-        ahead = longitudinal[longitudinal >= 0.0]
-        if len(ahead):
-            return float(ahead.min())
-        # All behind: report the nearest of those, so the value stays continuous
-        # as the ego crosses the line.
-        return float(longitudinal.max())
-
-    def _stop_line_points_for(self, light: Any) -> List[NDArray[np.float64]]:
-        """Where a vehicle should stop for *light*, in the local frame.
-
-        Not the stop waypoints themselves, which sit further back than the line a
-        driver aims at -- upstream measured them a median of 5.5 m upstream of
-        the junction they govern on ``Town10HD_Opt``.  A policy told to stop
-        there hesitates most of a car-and-a-half short of the mouth.  So each
-        stop waypoint is walked forward to the mouth of its junction and that is
-        the point reported.
-
-        Cached: lights and junctions do not move, and this walks the lane graph
-        half a metre at a time.
-        """
-        key = int(getattr(light, "id", 0))
-        cached = self._stop_line_points.get(key)
-        if cached is None:
-            cached = [
-                to_local_pose(self._junction_mouth(waypoint).transform).position
-                for waypoint in self._stop_waypoints(light)
-            ]
-            if not cached:
-                # No stop waypoints: the light's own position is the best
-                # available answer.
-                cached = [to_local_pose(light.get_transform()).position]
-            self._stop_line_points[key] = cached
-        return cached
-
-    @staticmethod
-    def _junction_mouth(stop: Any) -> Any:
-        """The first waypoint of the junction *stop* governs.
-
-        Falls back to the stop waypoint itself when the walk finds no junction --
-        a stop line on open road is unusual but not ours to second-guess.
-        """
-        waypoint, travelled = stop, 0.0
-        while travelled < _STOP_LINE_SEARCH_M:
-            options = waypoint.next(_STOP_LINE_STEP_M)
-            if not options:
-                return stop
-            waypoint = options[0]
-            travelled += _STOP_LINE_STEP_M
-            if waypoint.is_junction:
-                return waypoint
-        return stop
+        return self._stop_lines.light_distance(light, ego_pose)
 
     # ------------------------------------------------------------------
     # Ego and world state
