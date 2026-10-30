@@ -37,6 +37,7 @@ from .metrics import set_importance_sampling_weight
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
+from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
@@ -1224,6 +1225,9 @@ class ScenarioRunner:
         clear_props()
         _set_warmup_done(False)
         _clear_entry_speeds()
+        # And where the last run's ego had its base_link: this run's ego says
+        # where its own is when its scenario starts.
+        clear_ego_base_link()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1811,6 +1815,9 @@ class ScenarioRunner:
                     recording = converter.submit(trajectory.path, file_stem)
                     if result is not None:
                         result.rerun_recording = str(recording)
+            # The ego's base_link was this run's: the ego forgets it in its
+            # on_scenario_end, which may have failed before it did.
+            clear_ego_base_link()
 
             if TYPE_CHECKING:
                 # describe() and fidelity_census() are dicts of mixed value

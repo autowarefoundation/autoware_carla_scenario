@@ -43,7 +43,7 @@ the dataset stops, it never fails the scenario.
 | `driver.lidars`, `driver.cameras` | list | | The sensors and their mounts |
 | `driver.policy_timestep_s` | float | `0.1` | Seconds from one key frame to the next |
 | `driver.image_quality` | int | `90` | The JPEG quality of the camera frames |
-| `driver.rear_axle_offset_m` | float or null | `null` | Where the ego's `base_link` is (null: from the vehicle's wheels) |
+| `driver.rear_axle_offset_m` | float or null | `null` | Where the ego's `base_link` is (null: from the vehicle's wheels), unless the ego puts it elsewhere: a ROS 2 ego's `rear_axle_offset_m`, an Autoware ego's `base_link_offset_m` |
 
 A dataset needs at least one LiDAR or camera; without a LiDAR the first
 camera's frames are the key frames. A batch takes the first case's settings,

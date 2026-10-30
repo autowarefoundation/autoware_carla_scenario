@@ -164,6 +164,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.driver.control",
     "autoware_carla_scenario.driver.geometry",
     "autoware_carla_scenario.driver.observation",
+    "autoware_carla_scenario.ego_base_link",
     "autoware_carla_scenario.ego_plan",
     "autoware_carla_scenario.entity",
     "autoware_carla_scenario.entity._policy_warmup",

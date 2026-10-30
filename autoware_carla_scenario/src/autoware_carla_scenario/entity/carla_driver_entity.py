@@ -62,6 +62,7 @@ from ..driver.observation import (
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ..rerun_lidar import CameraMount, active_recorder
+from ..ego_base_link import clear_ego_base_link, set_ego_base_link
 from ..t4 import active_recording, offer_driver_sensors, withdraw_driver_sensors
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
@@ -296,6 +297,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         logger.info(
             "Rear-axle offset for the rig origin: %.2f m", self._rear_axle_offset_m
         )
+        set_ego_base_link(self._rear_axle_offset_m)
 
         self._attach_cameras(world, actor)
         self._world = world
@@ -423,6 +425,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         cannot abort the rest of the scenario cleanup.
         """
         withdraw_driver_sensors()
+        clear_ego_base_link()
         if self._warmup is not None:
             self._warmup.restore()
             self._warmup = None
