@@ -15,12 +15,19 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
 import yaml
+
+# Re-exported: the text parsers live in the checked devcontainer_text.
+from .devcontainer_text import (  # noqa: F401
+    _VARIABLE,
+    _interpolate,
+    _mount_target,
+    _strip_jsonc,
+)
 
 __all__ = ["DevContainer", "DevContainerError", "read_devcontainer"]
 
@@ -48,57 +55,6 @@ class DevContainer:
     image: str
     workspace_mount: str = DEFAULT_WORKSPACE_MOUNT
     environment: Mapping[str, str] = field(default_factory=dict)
-
-
-def _strip_jsonc(text: str) -> str:
-    """Drop ``//`` and ``/* */`` comments and trailing commas from JSONC."""
-    out: list[str] = []
-    i, n = 0, len(text)
-    in_string = False
-    while i < n:
-        c = text[i]
-        if in_string:
-            out.append(c)
-            if c == "\\" and i + 1 < n:
-                out.append(text[i + 1])
-                i += 2
-                continue
-            if c == '"':
-                in_string = False
-            i += 1
-        elif c == '"':
-            in_string = True
-            out.append(c)
-            i += 1
-        elif text.startswith("//", i):
-            end = text.find("\n", i)
-            i = n if end == -1 else end
-        elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            i = n if end == -1 else end + 2
-        else:
-            out.append(c)
-            i += 1
-    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
-
-
-_VARIABLE = re.compile(
-    r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?P<op>:?-)(?P<default>[^}]*))?\}"
-)
-
-
-def _interpolate(value: str, env: Mapping[str, str]) -> str:
-    """Resolve Compose's ``${VAR}``, ``${VAR:-default}`` and ``${VAR-default}``."""
-
-    def _replace(match: re.Match[str]) -> str:
-        name, op, default = match.group("name", "op", "default")
-        if op == ":-":
-            return env.get(name) or default
-        if op == "-":
-            return env[name] if name in env else default
-        return env.get(name, "")
-
-    return _VARIABLE.sub(_replace, value)
 
 
 def _environment(raw: Any, env: Mapping[str, str]) -> dict[str, str]:
@@ -221,10 +177,11 @@ def read_devcontainer(
     if folder is not None and "${" in str(folder):
         folder = None
     if config.get("image"):
+        mount_spec = config.get("workspaceMount")
         return DevContainer(
             image=_interpolate(str(config["image"]), env),
             workspace_mount=str(
-                _mount_target(config.get("workspaceMount"))
+                (_mount_target(str(mount_spec)) if mount_spec else None)
                 or folder
                 or DEFAULT_WORKSPACE_MOUNT
             ),
@@ -273,14 +230,3 @@ def read_devcontainer(
         workspace_mount=str(mount or folder or DEFAULT_WORKSPACE_MOUNT),
         environment=_environment(service.get("environment"), env),
     )
-
-
-def _mount_target(spec: Any) -> Optional[str]:
-    """``target`` of a devcontainer ``workspaceMount`` (``source=…,target=…``)."""
-    if not spec:
-        return None
-    for part in str(spec).split(","):
-        key, _, value = part.partition("=")
-        if key.strip() in ("target", "dst", "destination") and "${" not in value:
-            return value.strip()
-    return None
