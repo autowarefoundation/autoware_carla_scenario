@@ -129,23 +129,46 @@ def _include_patterns(path: str) -> tuple[str, ...]:
     return tuple(f"{prefix}{pattern}" for pattern in MAP_FILE_PATTERNS)
 
 
+def _is_within(root: Path, path: Path) -> bool:
+    """Whether *path*, with every symlink followed, is *root* or lies under it.
+
+    Both sides are resolved, so a link anywhere along *path* -- the file itself,
+    or a directory it sits in -- is judged by where it lands, and a ``..`` is
+    judged by what it climbs to.
+    """
+    try:
+        top = root.resolve()
+        real = path.resolve()
+    except OSError:
+        return False
+    return real == top or top in real.parents
+
+
 def _is_map_file(directory: Path, candidate: Path) -> bool:
     """Whether *candidate* is a real file belonging to the map in *directory*.
 
     A checkout's contents are the repository's, and git carries symlinks, so a
-    ``.osm`` in a map directory is not necessarily that map's geometry: it can
-    be a link to any readable file on the host.  ``is_file()`` follows one
-    without saying so, which made a repository able to name a file outside the
-    cache and have this framework read it -- and, through the editor's map
-    route, serve it.  Refused here rather than at each consumer, because this
-    is where every one of them arrives.
+    file in a map directory is not necessarily that map's: the ``.osm``, the
+    ``.xodr`` or ``map_projector_info.yaml`` can each be a link to any readable
+    file on the host.  ``is_file()`` follows one without saying so, which made a
+    repository able to name a file outside the cache and have this framework
+    read it -- through the editor's map route, serve it; through
+    ``map.overwrite_xodr``, copy it into the CARLA installation.  Every file the
+    resolver hands out passes through here, because this is where every
+    consumer arrives.  A link that stays inside *directory* is followed; one
+    that leaves it, dangles, or names a directory is not a map file.
     """
-    try:
-        root = directory.resolve()
-        real = candidate.resolve()
-    except OSError:
-        return False
-    return real.is_file() and (real == root or root in real.parents)
+    return _is_within(directory, candidate) and candidate.resolve().is_file()
+
+
+def _climbs_out(path: str) -> bool:
+    """Whether the repository-relative *path* has a ``..`` component.
+
+    A source's path is joined onto the checkout, onto the map root (a map
+    already unpacked there) and onto the derived directory -- the last one
+    written to -- so a ``..`` in it would reach outside all three.
+    """
+    return ".." in path.split("/")
 
 
 def _find_lanelet2(
@@ -210,11 +233,11 @@ def _find_xodr(directory: Path, derived: Path) -> tuple[Optional[Path], bool]:
     # Each through an annotated local: Codon types a tuple by its members, and
     # every return of the function is a tuple of an Optional[Path].
     for candidate in sorted(directory.glob("*.xodr")):
-        if candidate.is_file():
+        if _is_map_file(directory, candidate):
             shipped: Optional[Path] = candidate
             return shipped, False
     for candidate in sorted(derived.glob("*.xodr")):
-        if candidate.is_file():
+        if _is_map_file(derived, candidate):
             fetched: Optional[Path] = candidate
             return fetched, True
     return None, False
@@ -242,6 +265,10 @@ def resolve_map(
         MapResolutionError: If the repository holds no Lanelet2 map there.
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
+    if _climbs_out(parsed.directory):
+        raise MapResolutionError(
+            f"{parsed.uri} names a directory outside the repository ('..')."
+        )
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(parsed.directory)
@@ -272,6 +299,12 @@ def resolve_map(
     if not directory.is_dir():
         raise MapResolutionError(
             f"{parsed.uri} does not name a directory in the repository."
+        )
+    if not _is_within(repo.worktree, directory):
+        # A map directory that is a symlink out of the checkout would make
+        # every file check below pass against the link's target.
+        raise MapResolutionError(
+            f"{parsed.uri} names a link to a directory outside the repository."
         )
     return _describe(parsed, directory, derived, commit=repo.commit)
 
@@ -363,6 +396,8 @@ def cached_map(
         MapSourceError: If *source* is not a usable URI.
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
+    if _climbs_out(parsed.directory):
+        return None
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(parsed.directory)
@@ -380,6 +415,8 @@ def cached_map(
             return None
         commit = repo.commit
         directory = _in_worktree(repo, parsed.directory)
+        if not _is_within(repo.worktree, directory):
+            return None
     if not directory.is_dir():
         return None
 
@@ -475,7 +512,9 @@ def _describe(
         directory=directory,
         lanelet2_path=lanelet2_path,
         xodr_path=xodr_path,
-        projector_info_path=projector_info if projector_info.is_file() else None,
+        projector_info_path=(
+            projector_info if _is_map_file(directory, projector_info) else None
+        ),
         derived=derived,
         xodr_is_derived=xodr_is_derived,
         commit=commit,
