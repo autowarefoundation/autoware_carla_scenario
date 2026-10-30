@@ -16,6 +16,8 @@ generation time).
 from __future__ import annotations
 
 import argparse
+import ast
+import functools
 import keyword
 import re
 import sys
@@ -55,10 +57,58 @@ _FILE_MANIFEST: dict[str, str] = {
 #: The template of the scenario module in :data:`_FILE_MANIFEST`.
 _SCENARIO_TEMPLATE = "scenario.py.jinja"
 
+#: The template of the import package's ``__init__.py``.
+_PACKAGE_INIT_TEMPLATE = "package__init__.py.jinja"
+
 #: The prefix of every manifest entry inside the generated import package.
 _PACKAGE_DIR = "src/{package_name}/"
 
+#: Stand-in template variables, to render a template for its shape alone.
+_PLACEHOLDER_NAMES: dict[str, str] = {
+    "package_name": "placeholder_pkg",
+    "distribution_name": "placeholder-pkg",
+    "scenario_name": "placeholder",
+    "scenario_class": "PlaceholderScenario",
+    "config_class": "PlaceholderConfig",
+    "requires_python": ">=3.10",
+    "description": "Placeholder",
+}
 
+
+def _package_init_globals() -> set[str]:
+    """Return the names the generated ``__init__.py`` binds at module level.
+
+    Importing the scenario module (``register()`` does) binds it as an
+    attribute of the package, that is, as a global of ``__init__.py``: a
+    scenario called ``register_scenario`` replaced the function ``register()``
+    calls next with a module.  ``__future__`` imports are compiler directives
+    whose binding nothing reads, so they are left out.
+    """
+    source = (
+        code_environment(TEMPLATES_DIR)
+        .get_template(_PACKAGE_INIT_TEMPLATE)
+        .render(**_PLACEHOLDER_NAMES)
+    )
+    names: set[str] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(
+                (alias.asname or alias.name).split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                names.update(
+                    sub.id for sub in ast.walk(target) if isinstance(sub, ast.Name)
+                )
+    return names
+
+
+@functools.cache
 def _reserved_scenario_names() -> frozenset[str]:
     """Return the names the scenario module may not take.
 
@@ -67,7 +117,10 @@ def _reserved_scenario_names() -> frozenset[str]:
     ``__init__.py`` claims ``__init__`` and ``conf/...`` claims ``conf``.  A
     scenario of that name would make two templates render to the same path
     (one silently overwriting the other) or put a module beside a directory
-    of the same name.  Derived from the manifest so it follows the templates.
+    of the same name.  The globals of the generated ``__init__.py``
+    (``register``, ``register_scenario``, ...) are claimed too, see
+    :func:`_package_init_globals`.  Derived from the templates so it follows
+    them.
     """
     reserved: set[str] = set()
     for template_name, out_template in _FILE_MANIFEST.items():
@@ -80,7 +133,10 @@ def _reserved_scenario_names() -> frozenset[str]:
             # Named after the scenario itself, so it cannot collide.
             continue
         reserved.add(top.removesuffix(".py"))
-    return frozenset(reserved)
+    reserved |= _package_init_globals()
+    # A scenario name is lower case once normalised (``CONF_DIR`` and the
+    # config class cannot clash), so only lower-case names are listed.
+    return frozenset(name for name in reserved if name == name.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +206,8 @@ def resolve_names(
     if scenario in reserved:
         msg = (
             f"scenario name {scenario!r} is reserved: the generated package "
-            f"already has a {scenario!r} module or directory (reserved names: "
+            f"already has a {scenario!r} module, directory or global (reserved "
+            f"names: "
             f"{', '.join(sorted(reserved))}). Pass a different --scenario."
         )
         raise ValueError(msg)

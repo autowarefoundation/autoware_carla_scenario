@@ -72,9 +72,20 @@ class TestReservedScenarioNames:
             _reserved_scenario_names,
         )
 
-        assert _reserved_scenario_names() == {"__init__", "configs", "conf"}
+        assert _reserved_scenario_names() == {
+            "__init__",
+            "__all__",
+            "configs",
+            "conf",
+            "register",
+            "register_conf_dir",
+            "register_scenario",
+        }
 
-    @pytest.mark.parametrize("scenario", ["configs", "conf", "Configs", "configs-"])
+    @pytest.mark.parametrize(
+        "scenario",
+        ["configs", "conf", "Configs", "configs-", "register", "RegisterScenario"],
+    )
     def test_explicit_reserved_scenario_name_raises(self, scenario: str) -> None:
         with pytest.raises(ValueError, match="is reserved"):
             resolve_names("my_pkg", scenario_name=scenario)
@@ -106,7 +117,9 @@ class TestReservedScenarioNames:
         assert "Traceback" not in err
         assert list(tmp_path.iterdir()) == []
 
-    @pytest.mark.parametrize("scenario", ["config", "configs_check", "my_configs"])
+    @pytest.mark.parametrize(
+        "scenario", ["config", "configs_check", "my_configs", "registered", "path"]
+    )
     def test_near_misses_still_work(self, tmp_path: Path, scenario: str) -> None:
         result = create_scenario_package(
             "my_pkg", output_dir=tmp_path, scenario_name=scenario
