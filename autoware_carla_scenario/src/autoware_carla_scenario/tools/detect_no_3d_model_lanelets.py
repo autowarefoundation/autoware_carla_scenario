@@ -8,7 +8,9 @@ For each lanelet in the Lanelet2 map, this script:
 4. Records the lanelet ID if no ground hit is detected.
 
 The detected lanelet IDs are written to the map configuration YAML file
-under ``no_3d_model_lanelet_ids``.
+under ``no_3d_model_lanelet_ids`` -- in its ``map:`` section when it has one,
+at the top level otherwise.  The file is edited as text, so comments and
+layout survive; when that cannot be done safely the file is left untouched.
 
 The map configuration YAML (e.g. ``nishishinjuku.yaml``) already contains
 ``xodr_path`` and ``lanelet2_path``; they are resolved via OmegaConf so
@@ -40,11 +42,16 @@ import logging
 import sys
 from pathlib import Path
 
+import copy
 import os
 import shutil
+import tempfile
+from collections.abc import Sequence
+from typing import Any
 
 import typesafe_carla.carla as carla
 import lanelet2.geometry
+import yaml
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
@@ -187,62 +194,204 @@ def detect_no_3d_model_lanelets(
 # YAML update
 # ---------------------------------------------------------------------------
 
+#: The key the detected lanelet IDs are written to.
+NO_3D_MODEL_KEY = "no_3d_model_lanelet_ids"
+
+
+class YamlUpdateError(ValueError):
+    """The map configuration YAML cannot be updated safely as text."""
+
+
+def _scalar_key(node: yaml.Node) -> str | None:
+    """Return the string value of a plain or quoted string key, else ``None``."""
+    if isinstance(node, yaml.ScalarNode) and node.tag == "tag:yaml.org,2002:str":
+        return str(node.value)
+    return None
+
+
+def _find_key(
+    mapping: yaml.MappingNode, key: str
+) -> tuple[yaml.Node, yaml.Node] | None:
+    """Return the ``(key, value)`` node pair for *key* in *mapping*, if any."""
+    matches = [(k, v) for k, v in mapping.value if _scalar_key(k) == key]
+    if len(matches) > 1:
+        raise YamlUpdateError(f"duplicate key {key!r}")
+    return matches[0] if matches else None
+
+
+def _content_end(node: yaml.Node) -> int:
+    """Return the index just past the last character of *node*'s own text.
+
+    A block collection's ``end_mark`` lies at the next token, past any blank
+    lines and comments that follow it, so for those the end of the last
+    child is used instead.
+    """
+    if isinstance(node, yaml.CollectionNode) and not node.flow_style and node.value:
+        last = node.value[-1]
+        return _content_end(last[1] if isinstance(node, yaml.MappingNode) else last)
+    return int(node.end_mark.index)
+
+
+def _format_value(
+    lanelet_ids: Sequence[int], indent: str, newline: str, *, flow: bool
+) -> str:
+    """Render ``no_3d_model_lanelet_ids: <ids>`` starting at the key."""
+    if not lanelet_ids or flow:
+        items = ", ".join(str(int(lid)) for lid in lanelet_ids)
+        return f"{NO_3D_MODEL_KEY}: [{items}]"
+    lines = [f"{NO_3D_MODEL_KEY}:"]
+    lines.extend(f"{indent}  - {int(lid)}" for lid in lanelet_ids)
+    return newline.join(lines)
+
+
+def _target_path(data: dict[Any, Any]) -> tuple[str, ...]:
+    """Return where the key lives: under ``map:`` if present, else top level.
+
+    This mirrors ``_resolve_map_config``, which reads the map settings from
+    ``raw.get("map", raw)``.
+    """
+    return ("map",) if "map" in data else ()
+
+
+def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -> str:
+    """Return *text* with ``no_3d_model_lanelet_ids`` set to *lanelet_ids*.
+
+    The key is set in the ``map:`` section when the document has one and at
+    the top level otherwise -- the same place ``_resolve_map_config`` reads
+    the map settings from.  The edit is textual, so comments, ``${...}``
+    interpolations, layout and line endings (LF or CRLF) survive:
+
+    * an existing value in any style (a block list, indented or not, a flow
+      list, an empty value, ``null``, a scalar) is replaced -- a non-empty
+      flow list stays a flow list, anything else becomes a block list
+      (``[]`` when *lanelet_ids* is empty);
+    * a missing key is added after the last entry of its section.
+
+    The result is parsed again and must equal the original document with
+    only that one value changed.
+
+    Raises
+    ------
+    YamlUpdateError
+        If *text* is not a YAML mapping, the section to edit is not a block
+        mapping (e.g. ``map: {name: X}``), the key is duplicated, or the edit
+        would change anything else in the document.
+    """
+    ids = [int(lid) for lid in lanelet_ids]
+    newline = "\r\n" if "\r\n" in text else "\n"
+
+    try:
+        original = yaml.safe_load(text)
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise YamlUpdateError(f"not valid YAML: {exc}") from exc
+    if not isinstance(original, dict) or not isinstance(root, yaml.MappingNode):
+        raise YamlUpdateError("expected a YAML mapping at the top level")
+
+    path = _target_path(original)
+    label = ".".join((*path, NO_3D_MODEL_KEY))
+    section: yaml.Node = root
+    for name in path:
+        found = (
+            _find_key(section, name) if isinstance(section, yaml.MappingNode) else None
+        )
+        if found is None:  # safe_load found it, so the composer does too
+            raise YamlUpdateError(f"cannot set {label}: {name!r} not found")
+        section = found[1]
+    if not isinstance(section, yaml.MappingNode):
+        raise YamlUpdateError(
+            f"cannot set {label}: {'.'.join(path)!r} is not a mapping"
+        )
+    if section.flow_style:
+        where = repr(".".join(path)) if path else "the top level"
+        raise YamlUpdateError(
+            f"cannot set {label}: {where} is a flow mapping ({{...}}), which "
+            "cannot be edited as text; rewrite it as a block mapping"
+        )
+
+    first_key = section.value[0][0]
+    indent = " " * int(first_key.start_mark.column)
+    existing = _find_key(section, NO_3D_MODEL_KEY)
+    if existing is not None:
+        key_node, value_node = existing
+        start = int(key_node.start_mark.index)
+        if value_node.start_mark.index < key_node.end_mark.index:
+            # The composer hands back the anchored node for an alias.
+            raise YamlUpdateError(
+                f"cannot set {label}: its value is an alias (*name); "
+                "replace it with a list"
+            )
+        end = max(_content_end(value_node), int(key_node.end_mark.index))
+        # A non-empty flow list stays one; ``[]`` is only a placeholder.
+        flow = bool(
+            isinstance(value_node, yaml.SequenceNode)
+            and value_node.flow_style
+            and value_node.value
+        )
+        replacement = _format_value(ids, indent, newline, flow=flow)
+        result = text[:start] + replacement + text[end:]
+    else:
+        # After the line holding the section's last value.
+        last_end = _content_end(section.value[-1][1])
+        line_end = text.find("\n", last_end)
+        entry = indent + _format_value(ids, indent, newline, flow=False) + newline
+        if line_end == -1:
+            prefix = text if text.endswith(("\n", "\r")) else text + newline
+            result = prefix + entry
+        else:
+            result = text[: line_end + 1] + entry + text[line_end + 1 :]
+
+    expected = copy.deepcopy(original)
+    target = expected
+    for name in path:
+        target = target[name]
+    target[NO_3D_MODEL_KEY] = ids
+    try:
+        reparsed = yaml.safe_load(result)
+    except yaml.YAMLError as exc:
+        raise YamlUpdateError(
+            f"setting {label} as text would produce invalid YAML: {exc}"
+        ) from exc
+    if reparsed != expected:
+        raise YamlUpdateError(
+            f"setting {label} as text would change more than that value"
+        )
+    return result
+
 
 def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
-    """Update ``no_3d_model_lanelet_ids`` in the map configuration YAML.
+    """Set ``no_3d_model_lanelet_ids`` in the map configuration YAML.
 
-    Uses line-level manipulation to preserve comments, Hydra interpolation
-    strings (``${...}``), and other formatting.
+    The file is edited as text (see :func:`update_no_3d_model_lanelet_ids_text`)
+    and replaced atomically; when the edit cannot be made safely,
+    :class:`YamlUpdateError` is raised and the file is left untouched.
     """
-    content = yaml_path.read_text(encoding="utf-8")
-    lines = content.splitlines(keepends=True)
+    raw = yaml_path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise YamlUpdateError(f"{yaml_path}: not UTF-8: {exc}") from exc
+    try:
+        updated = update_no_3d_model_lanelet_ids_text(text, lanelet_ids)
+    except YamlUpdateError as exc:
+        raise YamlUpdateError(f"{yaml_path}: {exc}") from exc
+    if updated == text:
+        return
 
-    output: list[str] = []
-    i = 0
-    found = False
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.lstrip()
-
-        if stripped.startswith("no_3d_model_lanelet_ids:"):
-            found = True
-            indent = line[: len(line) - len(stripped)]
-
-            if lanelet_ids:
-                output.append(f"{indent}no_3d_model_lanelet_ids:\n")
-                for lid in lanelet_ids:
-                    output.append(f"{indent}  - {lid}\n")
-            else:
-                output.append(f"{indent}no_3d_model_lanelet_ids: []\n")
-
-            # Skip any existing block-list items on subsequent lines
-            i += 1
-            child_indent = indent + "  "
-            while i < len(lines):
-                next_stripped = lines[i].lstrip()
-                if next_stripped.startswith("- ") and lines[i].startswith(child_indent):
-                    i += 1
-                else:
-                    break
-            continue
-
-        output.append(line)
-        i += 1
-
-    if not found:
-        logger.warning(
-            "no_3d_model_lanelet_ids key not found in %s; appending under map:",
-            yaml_path,
-        )
-        if lanelet_ids:
-            output.append("  no_3d_model_lanelet_ids:\n")
-            for lid in lanelet_ids:
-                output.append(f"    - {lid}\n")
-        else:
-            output.append("  no_3d_model_lanelet_ids: []\n")
-
-    yaml_path.write_text("".join(output), encoding="utf-8")
+    fd, tmp_name = tempfile.mkstemp(
+        dir=yaml_path.parent, prefix=f".{yaml_path.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(updated.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        shutil.copymode(yaml_path, tmp_path)
+        os.replace(tmp_path, yaml_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +605,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Update YAML config
     # ------------------------------------------------------------------
-    _update_yaml(args.yaml_path, no_model_ids)
+    try:
+        _update_yaml(args.yaml_path, no_model_ids)
+    except YamlUpdateError as exc:
+        logger.error("%s; the file was not changed", exc)
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, no_model_ids)
+        sys.exit(1)
     logger.info("Updated %s with %d lanelet IDs", args.yaml_path, len(no_model_ids))
 
 
