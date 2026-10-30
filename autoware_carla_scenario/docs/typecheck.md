@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 231 of
-the package's 337 modules (69%; about 68,800 of 118,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 232 of
+the package's 338 modules (69%; about 69,000 of 119,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2375,7 +2375,11 @@ map (`sweeper.map_loader`), with the projection and origin both read a map
 with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
 whose YAML values are of any type, nor how it moves a `Local` map's points to
 their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
-world coordinates (`trajectory.resolve`),
+world coordinates (`trajectory.resolve`), what a scenario document's
+trajectory does with the editor's text and with parsed rows (the rows and
+numbers of the text, a route vertex's `kind key=value` pairs, the vertex count
+rule and the inspector's summaries: `trajectory.vertex_text`, #774; not the
+document values of any type, which `trajectory.authoring` keeps),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`), how the Hydra sweeper runs each
 case in a forked child of its own process group, stops it and waits for the
