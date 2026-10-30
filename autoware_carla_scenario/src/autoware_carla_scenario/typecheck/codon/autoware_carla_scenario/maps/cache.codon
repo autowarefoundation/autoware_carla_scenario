@@ -52,7 +52,9 @@ class CachedRepo:
     root: Path
     worktree: Path
     commit: str = ""
-    materialised: Optional[str] = None
+    # tuple[str, ...] in Python: a List here, as a variadic tuple field is
+    # checked (docs/typecheck.md).
+    materialised: List[str] = List[str]()
 
 
 class GitMapCache:
