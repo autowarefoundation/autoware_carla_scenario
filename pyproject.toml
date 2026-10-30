@@ -122,4 +122,5 @@ addopts = "-n auto"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring a running CARLA server",
+    "codon: marks tests that compile with Codon (CI runs them in one leg per architecture)",
 ]

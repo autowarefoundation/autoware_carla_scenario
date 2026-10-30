@@ -28,6 +28,8 @@ from autoware_carla_scenario.typecheck.library import package_modules
 _PACKAGE = "autoware_carla_scenario"
 _FAKE = f"{_PACKAGE}.zz_threading_check_case"
 
+pytestmark = pytest.mark.codon
+
 needs_codon = pytest.mark.skipif(
     available_toolchain() is None, reason="no Codon compiler"
 )

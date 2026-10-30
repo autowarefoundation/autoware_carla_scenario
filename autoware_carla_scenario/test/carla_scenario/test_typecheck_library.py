@@ -49,6 +49,8 @@ from autoware_carla_scenario.typecheck.transform import redirect_imports
 
 _PACKAGE = "autoware_carla_scenario"
 
+pytestmark = pytest.mark.codon
+
 needs_codon = pytest.mark.skipif(
     available_toolchain() is None, reason="no Codon compiler"
 )

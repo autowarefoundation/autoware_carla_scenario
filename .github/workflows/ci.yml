@@ -1,26 +1,30 @@
 name: CI
 
 on:
-  push:
-    branches: [ master, main, develop ]
   pull_request:
     branches: [ master, main, develop ]
+  # Master once ran the test matrices on every merge, about 500 runner-minutes
+  # each, to repeat verdicts its pull request already had (#457). They run once
+  # a night instead, and on demand.
+  schedule:
+    - cron: '0 17 * * *'
+  workflow_dispatch:
 
 # A new push to a pull request makes its running CI moot: cancel it rather than
 # let it hold runners that the organisation's other runs are queued behind.
-# Pushes to a branch share one group per branch and are not cancelled: the run
-# in progress finishes, and of the pushes queued behind it only the latest
-# runs -- a burst of merges does not run once per commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# A push to master is a merge whose pull request already ran this suite, so it
-# does not repeat those verdicts. It runs only the fast test matrices, whose
-# Codon check verdicts the next pull requests restore, and on every interpreter
-# of the range where a pull request runs only the floor and the ceiling -- and
-# none at all for the release workflow's "chore: bump version to X" commit,
-# which changes nothing but the version.
+# The nightly run on master runs only the fast test matrices, on every
+# interpreter of the range where a pull request runs only the floor and the
+# ceiling, and the Codon checks on each of them. Its Codon check verdicts are
+# the cache the next pull requests restore. The other jobs run on pull requests
+# only: on master they would repeat the pull request's verdict.
+#
+# The Codon checks (`-m codon`) are nine tenths of the fast suite. A pull
+# request runs them in one leg per architecture (`codon: true`): 3.10 on
+# x86_64, 3.14 on aarch64. Its other legs run the rest of the suite.
 
 jobs:
   test:
@@ -30,9 +34,6 @@ jobs:
     # between them; master catches what only those break.
     name: test (${{ matrix.python-version }})
     runs-on: ubuntu-24.04
-    if: >-
-      github.event_name != 'push' ||
-      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +41,11 @@ jobs:
         # TESTED_PYTHONS and `requires-python`.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python-version":"3.11"}, {"python-version":"3.12"}, {"python-version":"3.13"}]' || '[]') }}
+        include:
+          - python-version: "3.10"
+            codon: true
+    env:
+      CODON: ${{ matrix.codon || github.event_name != 'pull_request' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -59,6 +65,7 @@ jobs:
     # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
     # compiles only what changed. Pull requests restore master's.
     - name: Restore the Codon check verdicts
+      if: env.CODON == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/typecheck-cache
@@ -72,13 +79,15 @@ jobs:
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
+        MARKERS: ${{ env.CODON == 'true' && 'not slow' || 'not slow and not codon' }}
       run: |
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
+        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache.
     - name: Prune the Codon check verdicts this run did not use
+      if: env.CODON == 'true'
       run: |
         find "${RUNNER_TEMP}/typecheck-cache" -type f \
           ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
@@ -119,13 +128,15 @@ jobs:
     # stand in for the interpreters between them.
     name: test (${{ matrix.python-version }}, arm64)
     runs-on: ubuntu-24.04-arm
-    if: >-
-      github.event_name != 'push' ||
-      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.14"]
+        include:
+          - python-version: "3.14"
+            codon: true
+    env:
+      CODON: ${{ matrix.codon || github.event_name != 'pull_request' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -142,6 +153,7 @@ jobs:
     # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
     # compiles only what changed. Pull requests restore master's.
     - name: Restore the Codon check verdicts
+      if: env.CODON == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/typecheck-cache
@@ -151,13 +163,15 @@ jobs:
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
+        MARKERS: ${{ env.CODON == 'true' && 'not slow' || 'not slow and not codon' }}
       run: |
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
+        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache.
     - name: Prune the Codon check verdicts this run did not use
+      if: env.CODON == 'true'
       run: |
         find "${RUNNER_TEMP}/typecheck-cache" -type f \
           ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
