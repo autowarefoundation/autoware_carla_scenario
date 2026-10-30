@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import IO
 
 __all__ = [
+    "KILL_WAIT_S",
     "PORT_SLOT_WIDTH",
     "CarlaWatchdog",
     "PortSlot",
@@ -202,7 +203,11 @@ def acquire_slot(
 
 
 def carla_processes_on_port(port: int) -> list[int]:
-    """The pids of the CARLA processes started for RPC port *port*."""
+    """The pids of the CARLA processes started for RPC port *port*.
+
+    A process that has exited counts no more, reaped or not: a zombie's
+    ``cmdline`` is empty, so it never carries the port's marker.
+    """
     marker = f"-carla-rpc-port={port}".encode()
     pids: list[int] = []
     for entry in Path("/proc").iterdir():
@@ -217,27 +222,48 @@ def carla_processes_on_port(port: int) -> list[int]:
     return pids
 
 
-def kill_carla_on_port(port: int, *, grace_s: float = 5.0) -> list[int]:
-    """Stop whatever CARLA still runs for *port* (TERM, then KILL); its pids.
+#: How long :func:`kill_carla_on_port` waits for a ``SIGKILL`` to take effect.
+KILL_WAIT_S = 2.0
 
-    Only processes of this user can be signalled; the port is the task's own
-    slot, so nothing else is started with it.
+
+def _wait_until_gone(port: int, timeout_s: float) -> list[int]:
+    """Poll :func:`carla_processes_on_port` until it is empty or *timeout_s*
+    has passed; what is left then."""
+    deadline = time.monotonic() + timeout_s
+    pids = carla_processes_on_port(port)
+    while pids and time.monotonic() < deadline:
+        time.sleep(0.05)
+        pids = carla_processes_on_port(port)
+    return pids
+
+
+def kill_carla_on_port(
+    port: int, *, grace_s: float = 5.0, kill_wait_s: float = KILL_WAIT_S
+) -> list[int]:
+    """Stop whatever CARLA still runs for *port* (TERM, then KILL); the pids
+    still running afterwards, empty when it is gone.
+
+    A process ignoring ``SIGTERM`` for *grace_s* gets ``SIGKILL``, which then
+    has *kill_wait_s* to take effect.  Only processes of this user can be
+    signalled; the port is the task's own slot, so nothing else is started
+    with it.
     """
     pids = carla_processes_on_port(port)
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        alive = []
+    for sig, wait_s in ((signal.SIGTERM, grace_s), (signal.SIGKILL, kill_wait_s)):
+        if not pids:
+            break
+        sent = False
         for pid in pids:
             try:
                 os.kill(pid, sig)
-                alive.append(pid)
+                sent = True
             except (ProcessLookupError, PermissionError):
                 pass
-        if not alive or sig == signal.SIGKILL:
-            break
-        deadline = time.monotonic() + grace_s
-        while time.monotonic() < deadline and carla_processes_on_port(port):
-            time.sleep(0.2)
-        pids = carla_processes_on_port(port)
+        if not sent:
+            # Nothing to wait for: what exited meanwhile is gone, and another
+            # user's process outlives any wait.
+            return carla_processes_on_port(port)
+        pids = _wait_until_gone(port, wait_s)
     return pids
 
 
