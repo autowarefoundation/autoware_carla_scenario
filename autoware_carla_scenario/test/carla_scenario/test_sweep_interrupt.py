@@ -31,8 +31,8 @@ import subprocess
 import sys
 import textwrap
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable, Iterator
 
 import pytest
 
@@ -241,6 +241,12 @@ class _Sweeper:
 
     Its output goes to a file, not a pipe: the case it forks inherits the
     descriptor, and a pipe would tie reading the output to the case exiting.
+
+    The sweeper is reaped only by :meth:`kill`, once its session is empty:
+    until then its pid -- the id of its session and of its process group --
+    cannot be reused, so signalling that group, or every process of that
+    session, reaches only what this test started, never another xdist
+    worker's sweep or the user's processes.
     """
 
     def __init__(self, app: str, tmp_path: Path, *args: str) -> None:
@@ -262,6 +268,27 @@ class _Sweeper:
         self.pid = self.proc.pid
         #: The case's pid, once it wrote it.
         self.job: int | None = None
+        #: The sweeper's exit status once it exited (as Popen's returncode),
+        #: read without reaping it (:meth:`poll`).
+        self.returncode: int | None = None
+        #: What :meth:`kill` could not kill, once it has run.
+        self._left: list[int] | None = None
+
+    def poll(self) -> int | None:
+        """The sweeper's exit status once it has exited, ``None`` while it runs.
+
+        ``WNOWAIT`` leaves it a zombie: its pid stays reserved (the class
+        docstring).
+        """
+        if self.returncode is None and self._left is None:
+            result = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if result is not None:
+                self.returncode = (
+                    result.si_status
+                    if result.si_code == os.CLD_EXITED
+                    else -result.si_status
+                )
+        return self.returncode
 
     def output(self) -> str:
         try:
@@ -301,10 +328,9 @@ class _Sweeper:
                 if text:
                     self.job = int(text)
                     return self.job
-            if self.proc.poll() is not None:
+            if self.poll() is not None:
                 raise self.fail(
-                    f"the sweeper exited ({self.proc.returncode}) before {path} "
-                    "was written"
+                    f"the sweeper exited ({self.returncode}) before {path} was written"
                 )
             if time.monotonic() >= deadline:
                 raise self.fail(f"{path} was not written in {_START_TIMEOUT:g}s")
@@ -312,12 +338,13 @@ class _Sweeper:
 
     def wait(self, since: str = "it was stopped") -> str:
         """Wait for the sweeper to exit, and return its output."""
-        try:
-            self.proc.wait(timeout=_EXIT_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            raise self.fail(
-                f"the sweeper still runs {_EXIT_TIMEOUT:g}s after {since}"
-            ) from None
+        deadline = time.monotonic() + _EXIT_TIMEOUT
+        while self.poll() is None:
+            if time.monotonic() >= deadline:
+                raise self.fail(
+                    f"the sweeper still runs {_EXIT_TIMEOUT:g}s after {since}"
+                )
+            time.sleep(0.05)
         return self.output()
 
     def wait_gone(self, job: int) -> None:
@@ -327,7 +354,7 @@ class _Sweeper:
             if time.monotonic() >= deadline:
                 raise self.fail(
                     f"job {job} still runs {_GONE_TIMEOUT:g}s after its sweeper "
-                    f"died ({self.proc.returncode})"
+                    f"died ({self.returncode})"
                 )
             time.sleep(0.05)
 
@@ -336,32 +363,40 @@ class _Sweeper:
         if _alive(job):
             raise self.fail(f"job {job} still runs after the sweep got {sig.name}")
 
-    def kill(self) -> None:
-        """``SIGKILL`` everything the test started, and reap the sweeper.
+    def kill(self) -> list[int]:
+        """``SIGKILL`` everything the test started, then reap the sweeper.
 
-        The sweeper first, so it forks nothing more; then, once it is dead,
-        every process of its session, until none is left: a case that ignores
-        ``SIGTERM`` would otherwise sleep out :data:`_JOB_SECONDS`.
+        The sweeper's group first (the sweeper alone: each case has a group
+        of its own), so it forks nothing more; then every process of its
+        session, until none is left: a case that ignores ``SIGTERM`` would
+        otherwise sleep out :data:`_JOB_SECONDS`.  The cases never leave the
+        session (``os.setpgrp``, not ``os.setsid``).  Only then is the
+        sweeper reaped, so its pid stayed reserved throughout.
+
+        Returns:
+            The processes of the session that were still alive after 60 s
+            (empty unless something would not die).  A second call signals
+            nothing and returns the first call's.
         """
+        if self._left is not None:
+            return self._left
         _killpg(self.pid)
         deadline = time.monotonic() + 60.0
-        while _alive(self.pid) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        if self.job is not None:
-            _killpg(self.job)
-        while time.monotonic() < deadline:
-            left = _session(self.pid)
-            if self.job is not None and _alive(self.job):
-                left.append(self.job)
-            if not left:
-                break
+        left = _session(self.pid)
+        while left and time.monotonic() < deadline:
             for pid in left:
                 _kill(pid)
             time.sleep(0.01)
+            left = _session(self.pid)
+        self.poll()
+        self._left = left
         try:
             self.proc.wait(timeout=max(1.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            pass
+            pass  # in `left`: still a live process of the session
+        if self.returncode is None:
+            self.returncode = self.proc.returncode
+        return left
 
 
 def _kill(pid: int) -> None:
@@ -393,9 +428,11 @@ def start(tmp_path: Path) -> Iterator[Callable[..., _Sweeper]]:
         return sweeper
 
     yield _start
+    left = {}
     for sweeper in sweepers:
-        sweeper.kill()
-    left = {s.pid: _session(s.pid) for s in sweepers if _session(s.pid)}
+        still = sweeper.kill()
+        if still:
+            left[sweeper.pid] = still
     assert not left, f"processes outlived the test: {left}"
 
 
@@ -485,7 +522,7 @@ def test_an_interrupted_sweep_stops_its_case_and_exits_128_plus_the_signal(
     job = sweeper.wait_for(tmp_path / "job1.pid")
     os.killpg(sweeper.pid, sig)
     output = sweeper.wait()
-    assert sweeper.proc.returncode == returncode, output
+    assert sweeper.returncode == returncode, output
     sweeper.assert_job_gone(job, sig)
     # Stopped by the sweep, not only by the kernel once the sweep was gone.
     assert "Stopping the running job" in output, output
@@ -511,7 +548,7 @@ def test_a_stop_signal_held_off_across_the_fork_reaches_the_job(
     sweeper = start(_FORK_APP, str(tmp_path))
     # Not a stop: the case stops itself; the bound only guards a hang.
     output = sweeper.wait("it started")
-    assert sweeper.proc.returncode == 0, output
+    assert sweeper.returncode == 0, output
     result = json.loads(output.strip().splitlines()[-1])
     assert (result["ok"], result["code"]) == (False, 128 + signal.SIGTERM), output
     assert not (tmp_path / "ran").exists(), output
