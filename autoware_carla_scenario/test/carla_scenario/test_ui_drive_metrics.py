@@ -258,6 +258,28 @@ _LOGS: dict[str, list[Any]] = {
         _tick(0.6, _state(1, 1e300, -1e300, 0.0, 1.0), _state(2, 5.0, 0.0)),
         _tick(1.2, _state(1, 0.0, 0.0, 0.0, float("nan")), _state(2, 5.0, 0.0)),
     ],
+    "two_actors_with_the_ego_role": [
+        _WORLD,
+        _EGO,
+        _actor(2, "ego", [1.0, 0.5, 0.7]),
+        _tick(0.0, _state(1, 0.0, 0.0, 0.0, 2.0), _state(2, 5.0, 0.0, 0.0, 8.0)),
+        _tick(0.5, _state(1, 1.0, 0.0, 0.0, 2.0), _state(2, 9.0, 0.0, 0.0, 7.0)),
+    ],
+    "ticks_before_the_actor_records": [
+        _WORLD,
+        _tick(
+            0.0, _state(1, 0.0, 0.0, 0.0, 6.0), _state(2, 8.0, 0.0), control={"1": []}
+        ),
+        _EGO,
+        _NPC,
+        _tick(0.5, _state(1, 3.0, 0.0, 0.0, 6.0), _state(2, 8.0, 0.0)),
+    ],
+    "velocities_given_as_text": [
+        _WORLD,
+        _EGO,
+        _tick(0.0, _state(1, 0.0, 0.0, 0.0, "3.0", "-4")),
+        _tick(0.5, _state(1, 1.5, -2.0, 0.0, "0.1", "0")),
+    ],
     "an_approach_3m_short": _approach(3.0),
     "an_approach_0m_short": _approach(0.0),
     "a_seeded_drive": _drive(7, 400, 3),

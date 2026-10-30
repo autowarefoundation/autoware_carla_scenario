@@ -25,8 +25,11 @@
  "separated_boxes": "{\"distance_m\": 5.01, \"max_speed_kmh\": 18.0, \"final_speed_kmh\": 17.65, \"max_decel_ms2\": 0.19, \"min_gap_m\": 0.998}",
  "stop_then_go_again": "{\"distance_m\": 4.5, \"max_speed_kmh\": 14.4, \"final_speed_kmh\": 0.04, \"max_decel_ms2\": 7.98, \"stop_time_s\": 0.5}",
  "the_ego_from_its_control_and_missing_extents": "{\"distance_m\": 3.0, \"max_speed_kmh\": 21.6, \"final_speed_kmh\": 21.6, \"max_decel_ms2\": 0.0, \"min_gap_m\": 0.0}",
+ "ticks_before_the_actor_records": "{\"distance_m\": 3.0, \"max_speed_kmh\": 21.6, \"final_speed_kmh\": 21.6, \"max_decel_ms2\": 0.0, \"min_gap_m\": 1.0}",
  "ticks_without_an_ego": "{}",
  "time_running_backwards": "{\"distance_m\": 9.0, \"max_speed_kmh\": 36.0, \"final_speed_kmh\": 21.6, \"max_decel_ms2\": 1.0, \"stop_time_s\": 3.0}",
  "touching_boxes": "{\"distance_m\": 0.0, \"max_speed_kmh\": 0.0, \"final_speed_kmh\": 0.0, \"max_decel_ms2\": 0.0, \"min_gap_m\": 0.0}",
+ "two_actors_with_the_ego_role": "{\"distance_m\": 4.0, \"max_speed_kmh\": 28.8, \"final_speed_kmh\": 25.2, \"max_decel_ms2\": 2.0, \"min_gap_m\": 2.0}",
+ "velocities_given_as_text": "{\"distance_m\": 2.5, \"max_speed_kmh\": 18.0, \"final_speed_kmh\": 0.36, \"max_decel_ms2\": 9.8, \"stop_time_s\": 0.5}",
  "world_only": "{}"
 }
