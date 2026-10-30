@@ -49,6 +49,7 @@ from ..autoware_bridge.base import AutowareBridgeConfig
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.transform import to_map_frame
+from ..ego_base_link import clear_ego_base_link, set_ego_base_link
 from ..utils.turn_indicator import show_autoware_command
 from .externally_driven import ExternallyDrivenEgo
 
@@ -99,6 +100,7 @@ class BridgeHandshake:
     _ready: bool
     _failed: bool
     _ready_ticks: int
+    _base_link_offset_m: float
 
     def __init__(
         self,
@@ -124,6 +126,7 @@ class BridgeHandshake:
         self._ready: bool = False
         self._failed: bool = False
         self._ready_ticks: int = 0
+        self._base_link_offset_m: float = 0.0
 
     # ------------------------------------------------------------------
     # Properties
@@ -138,6 +141,12 @@ class BridgeHandshake:
     def bridge(self) -> "AutowareBridge":
         """Return the bridge used to communicate with the interface node."""
         return self._bridge
+
+    @property
+    def base_link_offset_m(self) -> float:
+        """Metres along the ego from its actor's origin to the stack's
+        ``base_link``, as :meth:`start` took it (0.0 before it has)."""
+        return self._base_link_offset_m
 
     @property
     def launcher(self) -> Optional["AutowareLauncher"]:
@@ -317,6 +326,7 @@ class BridgeHandshake:
         # settles metres off: the ego then steers for the lane it thinks it has
         # left.  The goal moves with it, so the actor still stops at the goal.
         offset = self._base_link_offset(actor)
+        self._base_link_offset_m = offset
         initial_pose = self._resolve_initial_pose(actor).moved_forward(offset)
         goal_pose = self._goal_pose.moved_forward(offset)
         waypoint_poses = [pose.moved_forward(offset) for pose in self._waypoint_poses]
@@ -648,6 +658,9 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         actor: "carla.Actor" = self.actor
         self._reset_termination()
         self._handshake.start(actor, type(self).__name__)
+        # The stack localizes and plans for its base_link there: the run's
+        # records put the ego's base_link there too.
+        set_ego_base_link(self._handshake.base_link_offset_m)
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Poll the stack's readiness and turn indicators; end the run if it fails."""
@@ -687,4 +700,5 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Stop this scenario's stack, then close the bridge.  Never raises."""
+        clear_ego_base_link()
         self._handshake.close(type(self).__name__)
