@@ -280,12 +280,12 @@
   }
  },
  "local-manifest-of-null-values": {
-  "collect_command": "AttributeError: 'NoneType' object has no attribute 'startswith'",
-  "collect_command_with_script": "AttributeError: 'NoneType' object has no attribute 'startswith'",
-  "collect_script": "AttributeError: 'NoneType' object has no attribute 'startswith'",
+  "collect_command": "AttributeError",
+  "collect_command_with_script": "AttributeError",
+  "collect_script": "AttributeError",
   "job_script": {
-   "0": "AttributeError: 'NoneType' object has no attribute 'startswith'",
-   "3": "AttributeError: 'NoneType' object has no attribute 'startswith'"
+   "0": "AttributeError",
+   "3": "AttributeError"
   },
   "sbatch_command": {
    "1": [
@@ -311,12 +311,12 @@
   }
  },
  "local-manifest-of-other-types": {
-  "collect_command": "TypeError: expected string or bytes-like object, got 'int'",
-  "collect_command_with_script": "TypeError: expected string or bytes-like object, got 'int'",
+  "collect_command": "TypeError",
+  "collect_command_with_script": "TypeError",
   "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
   "job_script": {
-   "0": "TypeError: expected string or bytes-like object, got 'int'",
-   "3": "TypeError: expected string or bytes-like object, got 'int'"
+   "0": "TypeError",
+   "3": "TypeError"
   },
   "sbatch_command": {
    "1": [
@@ -624,8 +624,8 @@
   ],
   "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: 5 under launcher.remote_cwd w\nset -u\n\n# launcher.remote_cwd: the submit host sees this file system at other\n# paths, so every path here is the node's.  The job user's home on\n# this node, from its passwd database: --export may have handed over\n# the submit host's $HOME.\nnode_home=$(getent passwd \"$(id -u)\" 2>/dev/null | cut -d: -f6)\nif [ -n \"$node_home\" ]; then export HOME=\"$node_home\"; fi\ncd \"$HOME\"/w || { echo \"launcher.remote_cwd: no directory \"\"$HOME\"/w >&2; exit 1; }\nWORKDIR=$PWD\nBATCH_DIR=\"$WORKDIR\"/5\n# The job's output from here on: the batch's logs.\nexec >>\"$BATCH_DIR\"/slurm/logs/\"collect-${SLURM_JOB_ID}.out\" 2>&1\n\ncd \"$WORKDIR\" || exit 1\nexec py -m autoware_carla_scenario.slurm.cli collect \"$BATCH_DIR\"\n",
   "job_script": {
-   "0": "AttributeError: 'NoneType' object has no attribute 'items'",
-   "3": "AttributeError: 'NoneType' object has no attribute 'items'"
+   "0": "AttributeError",
+   "3": "AttributeError"
   },
   "sbatch_command": {
    "1": [

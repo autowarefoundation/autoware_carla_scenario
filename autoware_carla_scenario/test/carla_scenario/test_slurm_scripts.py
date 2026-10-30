@@ -243,8 +243,12 @@ _SQUEUE = [
 def _outcome(build: Any) -> Any:
     try:
         return build()
-    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+    except (ValueError, KeyError) as exc:
         return f"{type(exc).__name__}: {exc}"
+    except (TypeError, AttributeError) as exc:
+        # Raised by CPython itself, whose wording changes between versions
+        # (3.12 adds "got 'int'"): the type is what has to stay the same.
+        return type(exc).__name__
 
 
 def _squeue(
