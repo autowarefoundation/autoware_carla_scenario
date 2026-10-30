@@ -25,6 +25,7 @@ from autoware_carla_scenario.odd import (
     default_odd,
     illumination,
     knobs_from_mapping,
+    module_holds,
     rain,
 )
 from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M
@@ -315,6 +316,96 @@ def test_coverage_is_read_from_earlier_runs_coverage_files(tmp_path: Path) -> No
     assert count == 1
     assert load_and_merge([tmp_path]).runs == 1
     assert sampler.sample(1)[0].buckets["environment.rain"] == "heavy"
+
+
+def _regions_odd() -> OddDefinition:
+    """The weather ODD with no heavy rain at night, and modules that only
+    name parts of it: rain of any strength, the dark, and both."""
+    base = _weather_odd()
+    rain_attr, light = base.attributes
+    dark = light.is_in(["twilight", "night"])
+    return OddDefinition(
+        "weather",
+        list(base.attributes),
+        [
+            OddModule(
+                "bound",
+                exclude_and=[rain_attr.is_in(["heavy"]), light.is_in(["night"])],
+            ),
+            OddModule(
+                "rainy", include_and=[rain_attr.is_in(["light", "moderate", "heavy"])]
+            ),
+            OddModule("dark", include_and=[dark]),
+            OddModule(
+                "rainy_dark", include_and=[module_holds("rainy"), module_holds("dark")]
+            ),
+        ],
+        roots=["bound"],
+    )
+
+
+def _rainy(case: Any) -> bool:
+    return case.buckets["environment.rain"] in ("light", "moderate", "heavy")
+
+
+def _dark(case: Any) -> bool:
+    return case.buckets["environment.illumination"] in ("twilight", "night")
+
+
+def test_weights_give_each_module_its_share_of_the_cases() -> None:
+    sampler, count = sampler_from_config(
+        {"count": 40, "seed": 2, "weights": {"rainy": 0.25, "dark": 0.5}},
+        odd=_regions_odd(),
+    )
+    assert sampler.strategy == "weighted"
+    cases = sampler.sample(count or 0)
+    assert sum(_rainy(c) for c in cases) == 10
+    assert sum(_dark(c) for c in cases) == pytest.approx(20, abs=1)
+    assert not any(
+        c.buckets["environment.rain"] == "heavy"
+        and c.buckets["environment.illumination"] == "night"
+        for c in cases
+    )
+
+
+def test_weights_of_one_module_of_several_conditions_from_a_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "shares.yaml").write_text("rainy_dark: 0.5\n")
+    sampler, _ = sampler_from_config(
+        {"weights": "shares.yaml"}, odd=_regions_odd(), base_dir=tmp_path
+    )
+    cases = sampler.sample(10)
+    assert sum(_rainy(c) and _dark(c) for c in cases) == 5
+
+
+def test_weights_in_a_hydra_sweep_config() -> None:
+    raw = OmegaConf.create({"strategy": "weighted", "weights": {"rainy": 1.0}})
+    sampler, _ = sampler_from_config(raw, odd=_regions_odd())
+    assert all(_rainy(c) for c in sampler.sample(5))
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        ({"wet": 0.5}, "no module wet"),
+        ({"bound": 0.5}, "root"),
+        ({"rainy": "half"}, "must be a number"),
+        ({"rainy": 2.0}, r"\[0, 1\]"),
+        (["rainy"], "expected module -> share"),
+        ("missing.yaml", "cannot read"),
+    ],
+)
+def test_bad_weights_are_refused(weights: Any, message: str, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=message):
+        sampler_from_config({"weights": weights}, odd=_regions_odd(), base_dir=tmp_path)
+
+
+def test_weights_need_the_weighted_strategy() -> None:
+    with pytest.raises(ValueError, match="'weighted'"):
+        sampler_from_config(
+            {"strategy": "coverage", "weights": {"rainy": 0.5}}, odd=_regions_odd()
+        )
 
 
 # ---------------------------------------------------------------------------

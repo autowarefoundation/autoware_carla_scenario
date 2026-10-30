@@ -754,8 +754,9 @@ sweep:
   odd_sample:
     count: 20              # cases; one per lanelet case when left out
     seed: 0                # same seed, ODD, knobs and coverage: same cases
-    strategy: coverage     # uniform | coverage
+    strategy: coverage     # uniform | coverage | weighted (weighted when `weights` is given)
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
+    weights: null          # module -> share of the cases, or a YAML file of them; see "Sampling by shares of the ODD"
     odd: null              # the ODD to draw from; the run's (`odd`) by default
     knobs: {}              # by ODD attribute, replacing the scenario's controls; see below
     flaky: null            # look for flaky cases; see "Finding flaky cases" below
@@ -1238,6 +1239,69 @@ draws = OddDraws()
 draws.add(sampler.odd, sampler.sample(20))
 later = OddSampler(sampler.odd, seed=0, strategy="coverage", drawn=draws.of(sampler.odd))
 ```
+
+### Sampling by shares of the ODD
+
+`weights` gives chosen parts of the ODD a share of the cases, and draws the
+rest as `strategy: uniform` would (it implies `strategy: weighted`). The
+parts are the ODD's **modules**, named in its OpenODD files, of one condition
+or of several -- so the sweep names no attribute of the taxonomy, and a module
+redefined in the ODD needs no change to the sweep:
+
+```yaml
+# regions.yaml: parts of the ODD, in plain OpenODD
+IMPORT: [urban.yaml]
+MODULES:
+  heavy_rain:
+    INCLUDE_AND:
+      environment.rain: heavy
+  rainy_night_merge:
+    INCLUDE_AND:
+      environment.rain: heavy
+      environment.illumination: night
+      scenery.road_type: merge
+```
+
+```yaml
+# shares/rainy.yaml
+heavy_rain: 0.3            # 30% of the cases in heavy rain
+rainy_night_merge: 0.1     # 10% in heavy rain at night in a merge
+```
+
+```bash
+uv run scenario --multirun 'scenario=cut_in/*' odd=path/to/urban.binding.yaml \
+  +sweep.odd_sample.count=50 +sweep.odd_sample.weights=shares/rainy.yaml
+# or inline, for one module
+  '+sweep.odd_sample.weights={heavy_rain: 0.5}'
+```
+
+The binding file names the regions file with the ODD's
+(`openodd: [urban.yaml, regions.yaml]`), and the ODD names its roots under
+`ODD:`: a module that is a root -- a document with no `ODD:` section takes
+every module that is not a situation as one -- would bound the ODD, and is
+refused a share (every case is in it). A file of shares is relative to the
+directory the sweep is started from.
+
+Each module holds its share of the cases, however the modules overlap: with
+`heavy_rain: 0.3` and `night: 0.3`, 30% of the cases are in heavy rain and
+30% at night, those in both counting for both. A share is a fraction in
+`[0, 1]`, not a weight relative to the others. Inside and outside the modules
+the cases are drawn as the uniform strategy draws them (of all the ways to
+hold the shares, the one closest to it), rounded to whole cases counting the
+cases drawn before -- by the earlier scenarios on the ODD in a glob batch too,
+so ten scenarios drawing 1 case each with `heavy_rain: 0.3` draw 3 in heavy
+rain between them.
+
+Refused: a name that is no module, a root, a share outside `[0, 1]`,
+`weights` with another strategy; a module whose truth the knobs do not
+decide (it tests an attribute nothing draws, such as the ego's speed); shares
+that cannot hold together inside the ODD (`a: 0.7` and `b: 0.6` for modules
+that never overlap). With `flaky`, the part of each batch the search does not
+explore holds the shares. A sweep with `constraints` whose map decides some
+attributes keeps, of more cases drawn, those on a lanelet of the sweep, so
+its cases hold the shares only roughly. The shares are the sampler's, not OpenODD's, which
+has no construct for a distribution (openodd's
+[weighted sampling](https://github.com/hakuturu583/openodd_py/blob/main/docs/weighted_sampling.md)).
 
 ### Finding flaky cases
 
