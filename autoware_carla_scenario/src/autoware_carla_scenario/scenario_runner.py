@@ -208,15 +208,21 @@ def _log_ego_opendrive_position(
         )
 
 
+def _status_label(role: str, index: int, cond: BaseCondition) -> str:
+    """A condition's label in the run's statuses: ``fail[2](late)``."""
+    return f"{role}[{index}]({cond.label})"
+
+
 def _failure(
     condition: str,
     category: FailureCategory,
-    check: ScenarioResult,
+    at: float,
+    message: str,
     statuses: list[ConditionStatus],
 ) -> Failure:
-    """Why a run failed: by *condition* (its status label, ``""`` for none),
-    of *category*, as *check* says; the other fail conditions that held, from
-    *statuses*.  A run out of time says how the ego ended it
+    """Why a run failed: by *condition* (its :func:`_status_label`, ``""``
+    for none), of *category*, at *at* seconds, with *message*; the other fail
+    conditions that held, from *statuses*.  A run out of time says how the ego ended it
     (:func:`~autoware_carla_scenario.failure.progress_detail`)."""
     detail: Optional[str] = None
     if category == FailureCategory.PROGRESS:
@@ -231,8 +237,8 @@ def _failure(
     return Failure(
         condition=condition,
         category=category,
-        at=check.elapsed_seconds,
-        message=check.message,
+        at=at,
+        message=message,
         detail=detail,
         also_triggered=also,
     )
@@ -266,7 +272,7 @@ def _build_condition_status(
         message = "not yet satisfied" if role == "pass" else "not triggered"
 
     return ConditionStatus(
-        label=f"{role}[{index}]({cond.label})",
+        label=_status_label(role, index, cond),
         satisfied=satisfied,
         message=message,
         condition_type=cond_type,
@@ -1734,9 +1740,10 @@ class ScenarioRunner:
                             elapsed_seconds=check.elapsed_seconds,
                             condition_statuses=statuses,
                             failure=_failure(
-                                f"fail[{i}]({condition.label})",
+                                _status_label("fail", i, condition),
                                 scenario.fail_category(i),
-                                check,
+                                check.elapsed_seconds,
+                                check.message,
                                 statuses,
                             ),
                         )
@@ -1769,12 +1776,7 @@ class ScenarioRunner:
                         elapsed_seconds=elapsed,
                         condition_statuses=statuses,
                         failure=_failure(
-                            "",
-                            FailureCategory.DRIVER,
-                            ScenarioResult(
-                                passed=False, message=message, elapsed_seconds=elapsed
-                            ),
-                            statuses,
+                            "", FailureCategory.DRIVER, elapsed, message, statuses
                         ),
                     )
                     break

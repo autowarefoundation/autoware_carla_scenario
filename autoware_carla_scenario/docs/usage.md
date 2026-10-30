@@ -823,7 +823,7 @@ condition says what it wraps. A combination of conditions (AND, OR, NOT) says
 nothing, and the run's failure is `other`: give it a category.
 
 `detail` tells a `progress` failure apart by how the ego ended the run:
-`never_moved` (it never went faster than 0.5 m/s), `stalled` (it had stood
+`never_moved` (it never drove 1 m), `stalled` (it had stood
 still for 3 s or more: waiting for something that never cleared) or `moving`
 (it was driving, but not where the scenario's pass condition asked). The other
 fail conditions that held when the run ended are in `also_triggered`. The

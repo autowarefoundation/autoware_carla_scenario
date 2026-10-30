@@ -142,13 +142,15 @@ class TestProgressDetail:
 
     def test_the_motion_notes_a_move_and_since_when_the_ego_stands(self) -> None:
         motion = _Motion()
-        _track_progress(motion, 0.4, 1.0)  # creeping: not moved, not still
+        _track_progress(motion, 0.4, 1.0, 1.0)  # creeping: not still
         assert (motion.moved, motion.still_since) == (False, None)
-        _track_progress(motion, 5.0, 2.0)
-        _track_progress(motion, 0.1, 3.0)
-        _track_progress(motion, 0.0, 4.0)
-        assert (motion.moved, motion.still_since) == (True, 3.0)
-        _track_progress(motion, 1.0, 5.0)
+        _track_progress(motion, 0.4, 2.0, 1.0)  # a creep of 0.8 m, then 1.2 m
+        _track_progress(motion, 0.4, 3.0, 1.0)
+        assert motion.moved
+        _track_progress(motion, 0.1, 4.0, 1.0)
+        _track_progress(motion, 0.0, 5.0, 1.0)
+        assert motion.still_since == 4.0
+        _track_progress(motion, 1.0, 6.0, 1.0)
         assert motion.still_since is None
 
 
@@ -173,8 +175,9 @@ class TestTheFailureARunRecords:
             self._status(1, "left", True),
             self._status(2, "late", False),
         ]
-        check = ScenarioResult(passed=False, message="crash", elapsed_seconds=4.5)
-        failure = _failure("fail[0](hit)", FailureCategory.COLLISION, check, statuses)
+        failure = _failure(
+            "fail[0](hit)", FailureCategory.COLLISION, 4.5, "crash", statuses
+        )
         assert failure.to_dict() == {
             "condition": "fail[0](hit)",
             "category": "collision",
@@ -196,11 +199,24 @@ class TestTheFailureARunRecords:
         from autoware_carla_scenario import scenario_runner
 
         monkeypatch.setattr(scenario_runner, "ego_progress", lambda: progress)
-        check = ScenarioResult(passed=False, message="late", elapsed_seconds=30.0)
         failure = scenario_runner._failure(
-            "fail[1](late)", FailureCategory.PROGRESS, check, []
+            "fail[1](late)", FailureCategory.PROGRESS, 30.0, "late", []
         )
         assert failure.detail == detail
+
+    def test_a_failure_of_another_version_reads_back(self) -> None:
+        failure = Failure.from_dict({"category": "something_new", "message": "?"})
+        assert (failure.category, failure.condition, failure.at) == (
+            FailureCategory.OTHER,
+            "",
+            0.0,
+        )
+
+    def test_a_fail_condition_added_past_registration_is_inferred(self) -> None:
+        scenario = _scenario()
+        scenario._fail_conditions.append(TimeoutCondition(1.0, label="late"))
+        last = len(scenario._fail_conditions) - 1
+        assert scenario.fail_category(last) == FailureCategory.PROGRESS
 
     def test_the_result_writes_it_only_when_there_is_one(self) -> None:
         failure = Failure("fail[0](hit)", FailureCategory.COLLISION, 1.0, "crash")

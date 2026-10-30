@@ -637,8 +637,10 @@ class _Motion:
     #: before the first frame, and how many times they changed since.
     indicator: int
     indicator_changes: int
-    #: Whether the ego has moved (:data:`_MOVED_MPS`), and since when it has
-    #: stood still (:data:`_STILL_MPS`), ``None`` while it moves.
+    #: How far the ego has driven (m); whether that is :data:`_MOVED_M`, and
+    #: since when it has stood still (:data:`_STILL_MPS`), ``None`` while it
+    #: moves.
+    travelled_m: float
     moved: bool
     still_since: Optional[float]
 
@@ -651,6 +653,7 @@ class _Motion:
         self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
         self.indicator = -1
         self.indicator_changes = 0
+        self.travelled_m = 0.0
         self.moved = False
         self.still_since = None
 
@@ -708,8 +711,16 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     except Exception:
         pass
     _track_indicator(motion, ego)
-    velocity = ego.get_velocity()
-    _track_progress(motion, math.hypot(velocity.x, velocity.y), elapsed)
+    try:
+        velocity = ego.get_velocity()
+    except Exception:
+        return
+    _track_progress(
+        motion,
+        math.hypot(velocity.x, velocity.y),
+        elapsed,
+        0.0 if last is None else elapsed - last,
+    )
     if last is not None:
         # The ego's centre alone, not the frame :func:`_frame` reads: that
         # reads every actor, and this runs every tick whether or not anything
@@ -736,16 +747,18 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     motion.window.append((elapsed, motion.lateral))
 
 
-#: The ego has moved once it has gone faster than this (m/s).
-_MOVED_MPS = 0.5
+#: The ego has moved once it has driven this far (m): a creep counts, a
+#: roll on the spot does not.
+_MOVED_M = 1.0
 #: It stands still while it goes slower than this (m/s).
 _STILL_MPS = 0.3
 
 
-def _track_progress(motion: _Motion, speed: float, elapsed: float) -> None:
-    """Note whether the ego, going at *speed* (m/s), has moved and since when
-    it has stood still."""
-    if speed > _MOVED_MPS:
+def _track_progress(motion: _Motion, speed: float, elapsed: float, dt: float) -> None:
+    """Note how far the ego, going at *speed* (m/s) for the *dt* s up to
+    *elapsed*, has driven, and since when it has stood still."""
+    motion.travelled_m += speed * dt
+    if motion.travelled_m >= _MOVED_M:
         motion.moved = True
     if speed >= _STILL_MPS:
         motion.still_since = None

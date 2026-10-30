@@ -84,7 +84,8 @@ def _category(result: _Result) -> str | None:
     (:mod:`autoware_carla_scenario.failure`), if it says."""
     try:
         failure = result.failure
-    except AttributeError:
+    except (AttributeError, TypeError, ValueError):
+        # A result without one, or with one this version cannot read.
         return None
     if failure is None:
         return None

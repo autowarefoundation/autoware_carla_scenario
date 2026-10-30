@@ -866,7 +866,10 @@ class BaseScenario(ABC):
         """The category of a run that fail condition *index* ends: the one it
         was registered with, else what it says, else
         :attr:`~FailureCategory.OTHER`."""
-        category = self._fail_categories[index]
+        # The categories run beside the conditions register_fail_condition()
+        # adds; one added past it has none of its own.
+        categories = self._fail_categories
+        category = categories[index] if index < len(categories) else None
         if category is None:
             category = self._fail_conditions[index].failure_category()
         return FailureCategory.OTHER if category is None else category

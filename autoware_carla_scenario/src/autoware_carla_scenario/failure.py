@@ -140,13 +140,22 @@ class Failure:
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> Failure:
-        """The failure :meth:`to_dict` wrote (a result read back from JSON)."""
+        """The failure :meth:`to_dict` wrote (a result read back from JSON).
+
+        Lenient, as results of other versions are read back together: a
+        category this version does not know is :attr:`~FailureCategory.OTHER`,
+        and a missing field empty.
+        """
         detail = data.get("detail")
+        try:
+            category = FailureCategory[str(data.get("category", "")).upper()]
+        except KeyError:
+            category = FailureCategory.OTHER
         return Failure(
-            condition=str(data["condition"]),
-            category=FailureCategory[str(data["category"]).upper()],
-            at=float(data["at"]),
-            message=str(data["message"]),
+            condition=str(data.get("condition", "")),
+            category=category,
+            at=float(data.get("at") or 0.0),
+            message=str(data.get("message", "")),
             detail=None if detail is None else str(detail),
             also_triggered=[str(label) for label in data.get("also_triggered") or []],
         )
