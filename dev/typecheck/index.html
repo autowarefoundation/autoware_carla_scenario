@@ -4598,8 +4598,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 224 of
-the package's 330 modules (68%; about 66,800 of 116,950 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 225 of
+the package's 331 modules (68%; about 67,100 of 117,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4641,7 +4641,11 @@ warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (<code>scenario_runner</code>, <code>scenario_queue</code>), the UI's runner, which runs them in
 a subprocess on a thread (<code>ui.runner</code>, over a model of the pydantic
-<code>ui.models</code>),
+<code>ui.models</code>), what the viewer's SLURM run panel may set, the Hydra
+overrides it becomes and the <code>scenario</code> command line that submits the batch
+(<code>ui.slurm_options</code>, #742; not how it reads the panel's fields, values of any
+type, nor how it splits <code>VIEWER_SCENARIO_COMMAND</code>, which <code>ui.slurm_launch</code>
+keeps),
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
@@ -4733,8 +4737,8 @@ for), so each is counted once, in the first group that fits it:</p>
   transport and its message types), or
   a standard module Codon lacks (<code>socket</code>, <code>inspect</code>, <code>concurrent.futures</code>,
   <code>importlib</code>
-  beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
-  <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>, <code>importlib.metadata</code>
+  beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shlex</code>, <code>shutil</code>,
+  <code>signal</code>, <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>, <code>importlib.metadata</code>
   or <code>urllib.parse</code> than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI and the command line they
   share (<code>serve_cli</code>), authoring, the sweeper's
@@ -6586,7 +6590,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 01:54:04 UTC"><span class="timeago" datetime="2026-10-30T01:54:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 01:54:04 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 08:30:02 UTC"><span class="timeago" datetime="2026-10-30T08:30:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 08:30:02 UTC">2026-10-30</span>
   </span>
 
     
