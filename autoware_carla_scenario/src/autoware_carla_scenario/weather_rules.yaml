@@ -1,0 +1,115 @@
+# The rules the weather's effects follow: fuzzy rule bases, inferred with
+# simpful (Sugeno, zero order), that turn the weather into the range of a
+# quantity a run sets (docs/odd.md, "Weather rules").
+#
+# Each quantity is one or more rule bases; each rule base reads some of the
+# weather's fields (its `inputs`), sorts each into fuzzy terms, and its rules
+# say, per combination of terms, the `low` and `high` ends of the quantity's
+# range.  A rule base's range is its rules' ends, averaged by how strongly each
+# rule fires.  With more than one rule base, `combine` (`min` or `max`) joins
+# their ranges end by end.
+#
+# The inputs a rule base may read: the weather's `cloudiness`,
+# `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity`,
+# `fog_density`, `fog_distance`, `sun_altitude_angle` and `sun_azimuth_angle`,
+# and `water`, the larger of `wetness` and `precipitation_deposits`.  A value
+# outside an input's universe is clamped to it.  An input may give a
+# `default`, which it reads when the caller gives no value for it.
+#
+# Terms are `triangle: [a, b, c]`, `trapezoid: [a, b, c, d]` or
+# `gaussian: [mean, sigma]`.  Triangles that peak where their neighbours end
+# split each value between two terms, so a rule base whose rules each name one
+# term reads its ranges linearly between the peaks: a table, written as rules.
+#
+# A run reads another file with `environment.rules` in its config; its
+# quantities replace these, quantity by quantity.
+version: 1
+quantities:
+  # The grip a tyre keeps on the road, as a share of CARLA's dry road's, by
+  # how wet the road is.  Measured tyre-road friction coefficients are about
+  # 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water film
+  # (what heavy rain leaves): a wet road keeps about three quarters of the dry
+  # grip, a flooded one about half.  Each range spans what tyres, their wear
+  # and the asphalt make of the same water; a dry road's is centred on CARLA's
+  # own grip, so a dry run at the middle of its range drives as it did before.
+  tire_friction:
+    rule_bases:
+      water:
+        inputs:
+          water:
+            universe: [0, 100]
+            terms:
+              dry: {trapezoid: [0, 0, 0, 50]}
+              wet: {triangle: [0, 50, 100]}
+              flooded: {trapezoid: [50, 100, 100, 100]}
+        rules:
+          - if: (water IS dry)
+            then: {low: 0.90, high: 1.10}
+          - if: (water IS wet)
+            then: {low: 0.65, high: 0.85}
+          - if: (water IS flooded)
+            then: {low: 0.45, high: 0.65}
+
+  # How far a driver sees, metres.  The fog, the rain and the light each bound
+  # it, and the shortest bound holds: fog at night is seen through no further
+  # than either.  Each range spans what eyes, windscreens, headlights and the
+  # road's own lighting make of the same weather.
+  visibility:
+    combine: min
+    rule_bases:
+      # A clear day's is what a driver looks ahead on an open road; dense
+      # fog's is meteorology's dense fog (under 50 m).
+      fog:
+        inputs:
+          fog_density:
+            universe: [0, 100]
+            terms:
+              clear: {trapezoid: [0, 0, 0, 30]}
+              mist: {triangle: [0, 30, 70]}
+              fog: {triangle: [30, 70, 100]}
+              dense: {trapezoid: [70, 100, 100, 100]}
+        rules:
+          - if: (fog_density IS clear)
+            then: {low: 250, high: 400}
+          - if: (fog_density IS mist)
+            then: {low: 120, high: 250}
+          - if: (fog_density IS fog)
+            then: {low: 40, high: 100}
+          - if: (fog_density IS dense)
+            then: {low: 15, high: 40}
+      # Falling rain and the spray the traffic throws up shorten the view less
+      # than fog does.
+      rain:
+        inputs:
+          precipitation:
+            universe: [0, 100]
+            terms:
+              dry: {trapezoid: [0, 0, 0, 30]}
+              light: {triangle: [0, 30, 70]}
+              heavy: {triangle: [30, 70, 100]}
+              torrential: {trapezoid: [70, 100, 100, 100]}
+        rules:
+          - if: (precipitation IS dry)
+            then: {low: 250, high: 400}
+          - if: (precipitation IS light)
+            then: {low: 180, high: 320}
+          - if: (precipitation IS heavy)
+            then: {low: 100, high: 220}
+          - if: (precipitation IS torrential)
+            then: {low: 60, high: 150}
+      # By the sun's altitude, degrees: from sunset to the end of civil
+      # twilight (6 degrees below the horizon, the ODD's `night`) down to what
+      # headlights light, from a dipped beam's 50 m to a main beam's or a lit
+      # street's 150 m.
+      light:
+        inputs:
+          sun_altitude_angle:
+            universe: [-90, 90]
+            terms:
+              night: {trapezoid: [-90, -90, -6, 0]}
+              day: {trapezoid: [-6, 0, 90, 90]}
+        rules:
+          - if: (sun_altitude_angle IS night)
+            then: {low: 50, high: 150}
+          - if: (sun_altitude_angle IS day)
+            then: {low: 250, high: 400}

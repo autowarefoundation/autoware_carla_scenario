@@ -975,8 +975,8 @@ it grips a dry one. So an `EnvironmentAction` that sets the road's water --
 `rain`, `wetness` or `precipitation_deposits` -- also scales every vehicle's
 wheel friction (`friction_force_multiplier`) to a share of the dry road's
 grip, within the range the resulting weather leaves
-(`tire_friction_range`), by the larger of `wetness` and
-`precipitation_deposits`:
+(`tire_friction_range`). The default [weather rules](#weather-rules) give it
+by the larger of `wetness` and `precipitation_deposits`:
 
 | Road water | Grip, share of the dry road's | What `rain` gives it |
 |---|---|---|
@@ -984,7 +984,8 @@ grip, within the range the resulting weather leaves
 | 50 (wet) | 0.65-0.85 | `rain=30` (standing water 50) |
 | 100 (flooded) | 0.45-0.65 | `rain=100` |
 
-Between the rows the bounds are interpolated. Measured tire-road friction
+Between the rows the bounds are interpolated (the rules' terms overlap so
+that they read as this table). Measured tire-road friction
 is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
 film; each range spans what tires, their wear and the asphalt make of the
 same water, and a dry road's is centred on CARLA's own grip, so a dry run
@@ -1044,8 +1045,9 @@ CARLA draws the weather but its traffic never looks through it: the
 TrafficManager's vehicles know where every actor is, fog or not. A driver
 does not, and drives so as to stop within the road they see. So how far
 drivers see is a quantity of the run, in metres, which the weather bounds
-(`visibility_range`, in `autoware_carla_scenario.visibility`): each of the
-fog, the rain and the light gives a range, and the shortest holds.
+(`visibility_range`, in `autoware_carla_scenario.visibility`). By the default
+[weather rules](#weather-rules), each of the fog, the rain and the light
+gives a range, and the shortest holds.
 
 | Weather | Visibility, m |
 |---|---|
@@ -1077,6 +1079,70 @@ backend holds every vehicle it drives to it with `follow_visibility: true`,
 under its road's speed limit
 ([Weather and the TrafficManager](traffic_backends.md#weather-and-the-trafficmanager)),
 and otherwise only logs the speed it would hold traffic to.
+
+### Weather rules
+
+The ranges of the grip and of the visibility are fuzzy rules, not code:
+`weather_rules.yaml` in the package (`autoware_carla_scenario.weather_rules`),
+inferred with [simpful](https://github.com/aresio/simpful) (Sugeno, zero
+order). A **quantity** (`tire_friction`, `visibility`) is one or more **rule
+bases**; each reads some of the weather's fields, sorts each into fuzzy terms,
+and its rules give the `low` and `high` ends of the range per combination of
+terms:
+
+```yaml
+version: 1
+quantities:
+  tire_friction:
+    rule_bases:
+      water:
+        inputs:
+          water:
+            universe: [0, 100]
+            terms:
+              dry: {trapezoid: [0, 0, 0, 50]}
+              wet: {triangle: [0, 50, 100]}
+              flooded: {trapezoid: [50, 100, 100, 100]}
+        rules:
+          - if: (water IS dry)
+            then: {low: 0.90, high: 1.10}
+          - if: (water IS wet)
+            then: {low: 0.65, high: 0.85}
+          - if: (water IS flooded)
+            then: {low: 0.45, high: 0.65}
+```
+
+- A rule base's range is its rules' ends, averaged by how strongly each rule
+  fires. Triangles that peak where their neighbours end split every value
+  between two terms, so one-term rules read linearly between the peaks: the
+  default rules give exactly the tables above.
+- An antecedent is simpful's: clauses `(input IS term)` joined by `AND`,
+  `OR` and `NOT`, so a rule may read more than one input --
+  `(water IS wet) AND (sun_altitude_angle IS night)`.
+- The inputs a rule base may read are the weather's `cloudiness`,
+  `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity`,
+  `fog_density`, `fog_distance`, `sun_altitude_angle` and
+  `sun_azimuth_angle`, and `water`, the larger of `wetness` and
+  `precipitation_deposits`. A value outside an input's `universe` is clamped
+  to it. An `EnvironmentAction` hands the rules every field of the weather it
+  leaves; `tire_friction_range()` and `visibility_range()` hand only their
+  own arguments, so an input they do not take needs a `default`.
+- Terms are `triangle: [a, b, c]`, `trapezoid: [a, b, c, d]` or
+  `gaussian: [mean, sigma]`.
+- With more than one rule base, `combine` (`min`, the default, or `max`)
+  joins their ranges end by end: the visibility's fog, rain and light are
+  three rule bases, and the shortest bound holds.
+
+The file is checked when it is read: every term and rule well formed, every
+input's universe covered by its terms, and some rule firing everywhere on a
+grid over the inputs' universes (`WeatherRulesError` says where).
+
+`environment.rules` in a run's config names another file (absolute, or
+relative to the directory the run starts in); its quantities replace the
+default file's, quantity by quantity, so a file that tunes the grip to a real
+vehicle's measurements leaves the visibility alone. A sweep sets it like any
+other key (`environment.rules=/data/grip_measured.yaml`); every run sets the
+rules it names, or the default ones, so one run's do not reach the next.
 
 ### Traffic parameters from the ODD
 

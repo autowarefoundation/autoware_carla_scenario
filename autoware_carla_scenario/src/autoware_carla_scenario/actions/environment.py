@@ -4,8 +4,9 @@ and how far drivers see.
 A wet road holds a tyre less well than a dry one, and CARLA does not know it:
 its weather is drawn, never driven on.  So the action scales every vehicle's
 wheel friction (``friction_force_multiplier``) to the grip the road's water
-leaves it (:func:`tire_friction_range`), and :func:`follow_tire_friction`
-gives a vehicle spawned later the same.
+leaves it (:func:`tire_friction_range`, by the weather rules of
+:mod:`autoware_carla_scenario.weather_rules`), and
+:func:`follow_tire_friction` gives a vehicle spawned later the same.
 
 Nor is CARLA's weather ever seen through: the action records how far drivers
 see in the weather it leaves (:mod:`autoware_carla_scenario.visibility`), for
@@ -19,12 +20,8 @@ from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
 from ..utils.vehicles import as_vehicle
-from ..visibility import (
-    at_quantile,
-    interpolate_range,
-    set_world_visibility,
-    visibility,
-)
+from ..visibility import at_quantile, set_world_visibility
+from ..weather_rules import weather_range
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -34,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "EnvironmentAction",
-    "TIRE_FRICTION_RANGES",
     "apply_tire_friction",
     "follow_tire_friction",
     "rain_weather",
@@ -76,33 +72,27 @@ def rain_weather(rain: float) -> dict[str, float]:
     raise AssertionError("unreachable: the presets end at 100")
 
 
-#: The grip a tyre keeps on the road, as a share of CARLA's dry road's, by how
-#: wet the road is (the larger of ``wetness`` and ``precipitation_deposits``,
-#: 0-100): ``(water, low, high)``, interpolated linearly between the rows.
-#: Measured tyre-road friction coefficients are about 0.8-1.0 on dry asphalt,
-#: 0.5-0.7 on wet and 0.3-0.5 under a water film (what heavy rain leaves):
-#: a wet road keeps about three quarters of the dry grip, a flooded one about
-#: half.  Each row spans what tyres, their wear and the asphalt make of the
-#: same water; a dry road's is centred on CARLA's own grip, so a dry run at
-#: the middle of its range drives as it did before.
-TIRE_FRICTION_RANGES: tuple[tuple[float, float, float], ...] = (
-    (0.0, 0.90, 1.10),
-    (50.0, 0.65, 0.85),
-    (100.0, 0.45, 0.65),
-)
-
-
 def tire_friction_range(
     wetness: float, precipitation_deposits: float = 0.0
 ) -> tuple[float, float]:
     """The ``(low, high)`` share of the dry road's grip a road this wet leaves.
 
+    The weather rules' ``tire_friction``
+    (:mod:`autoware_carla_scenario.weather_rules`): by default, by how wet the
+    road is -- the larger of the two, ``water`` -- a dry road's around its own
+    grip, a wet one's about three quarters of it, a flooded one's about half.
+
     Args:
         wetness: The weather's ``wetness``, 0-100.
         precipitation_deposits: Its standing water, 0-100.
     """
-    water = max(float(wetness), float(precipitation_deposits))
-    return interpolate_range(TIRE_FRICTION_RANGES, water)
+    return weather_range(
+        "tire_friction",
+        {
+            "wetness": float(wetness),
+            "precipitation_deposits": float(precipitation_deposits),
+        },
+    )
 
 
 def tire_friction(
@@ -270,6 +260,21 @@ def _set_weather_field(
         weather.sun_azimuth_angle = value
     else:
         raise KeyError(name)
+
+
+def _weather_inputs(weather: "carla.WeatherParameters") -> dict[str, float]:
+    """What the weather rules read of *weather*: every field a setting sets."""
+    return {
+        "cloudiness": float(weather.cloudiness),
+        "precipitation": float(weather.precipitation),
+        "precipitation_deposits": float(weather.precipitation_deposits),
+        "wetness": float(weather.wetness),
+        "wind_intensity": float(weather.wind_intensity),
+        "fog_density": float(weather.fog_density),
+        "fog_distance": float(weather.fog_distance),
+        "sun_altitude_angle": float(weather.sun_altitude_angle),
+        "sun_azimuth_angle": float(weather.sun_azimuth_angle),
+    }
 
 
 class EnvironmentAction(BaseAction):
@@ -462,23 +467,16 @@ class EnvironmentAction(BaseAction):
         if self._visibility_m is not None:
             return self._visibility_m
         quantile = self._visibility_quantile
-        return visibility(
-            float(weather.fog_density),
-            float(weather.precipitation),
-            float(weather.sun_altitude_angle),
-            0.5 if quantile is None else quantile,
-        )
+        low, high = weather_range("visibility", _weather_inputs(weather))
+        return at_quantile(low, high, 0.5 if quantile is None else quantile)
 
     def _tire_factor(self, weather: "carla.WeatherParameters") -> float:
         """The grip share for *weather*, the weather the action leaves."""
         if self._tire_friction is not None:
             return self._tire_friction
         quantile = self._tire_friction_quantile
-        return tire_friction(
-            float(weather.wetness),
-            float(weather.precipitation_deposits),
-            0.5 if quantile is None else quantile,
-        )
+        low, high = weather_range("tire_friction", _weather_inputs(weather))
+        return at_quantile(low, high, 0.5 if quantile is None else quantile)
 
     def execute(self, world: "carla.World") -> None:
         """Apply the settings on top of the world's current weather."""

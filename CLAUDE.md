@@ -258,6 +258,11 @@ If pre-commit hooks fail:
   knobs the sampler sets, where the ego is); the `odd/` and `coverage/`
   modules re-export openodd. OpenODD and coverage semantics belong in
   openodd_py, not here.
+- **simpful** (>=2.12) - Fuzzy inference for the weather rules: the
+  ranges of the road's grip and of the drivers' visibility are Sugeno rule
+  bases in `weather_rules.yaml` (`weather_rules.py`, docs/odd.md "Weather
+  rules"), which a run replaces with `environment.rules`. Tune them there,
+  not in code.
 - Python 3.10 through 3.14. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.15"` -- the comment on that line is the
   canonical explanation. CI runs the suite on 3.10, 3.11, 3.12, 3.13 and 3.14

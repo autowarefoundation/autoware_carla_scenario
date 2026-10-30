@@ -1524,14 +1524,29 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     registered before the scenario's own ``setup()`` runs, so a scenario that
     sets the weather itself has the last word.  Nothing is registered when
     every field is ``null`` (the default).
+
+    ``environment.rules`` names the weather rules the run follows (a YAML
+    file, relative to the directory the run was started in): the grip and the
+    visibility its weather leaves (:mod:`autoware_carla_scenario.weather_rules`).
+    The default rules when ``null``; set for every run, so one run's do not
+    reach the next.
     """
+    from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
+        use_weather_rules,
+    )
+
     env_cfg = cfg.get("environment")
-    if env_cfg is None:
-        return
+    raw = {} if env_cfg is None else _to_dict(env_cfg)
+    rules_path = raw.pop("rules", None)
+    if rules_path is None:
+        use_weather_rules(None)
+    else:
+        from hydra.utils import to_absolute_path  # noqa: PLC0415
+
+        rules = use_weather_rules(to_absolute_path(str(rules_path)))
+        logger.info("Following the weather rules of %s", rules.path)
     settings: dict[str, Any] = {
-        str(key): float(value)
-        for key, value in _to_dict(env_cfg).items()
-        if value is not None
+        str(key): float(value) for key, value in raw.items() if value is not None
     }
     if not settings:
         return

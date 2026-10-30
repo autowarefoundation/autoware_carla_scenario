@@ -86,6 +86,10 @@ dependencies = [
     # Rust JSON encoder, several times faster than the stdlib's, writing the
     # same floats byte for byte.
     "orjson>=3.13.0",
+    # The weather rules (weather_rules.py): the fuzzy rule bases the road's
+    # grip and the drivers' visibility follow. Pure Python on numpy and scipy,
+    # which the package already pulls in.
+    "simpful>=2.12",
 ]
 
 [project.urls]

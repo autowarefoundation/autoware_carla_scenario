@@ -1,0 +1,7 @@
+# Model of autoware_carla_scenario.weather_rules (docs/typecheck.md), which
+# imports simpful and yaml: what the checked visibility and
+# actions.environment use of it, with the signature of the Python module.
+
+
+def weather_range(quantity: str, inputs: Dict[str, float]) -> Tuple[float, float]:
+    raise NotImplementedError()

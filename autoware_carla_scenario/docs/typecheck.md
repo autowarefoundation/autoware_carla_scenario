@@ -2899,7 +2899,9 @@ stands in for it in the check's workspace:
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
   for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
-  returns). A module with no
+  returns; `weather_rules.codon`, for `visibility` and
+  `actions.environment`, the `weather_range()` they read the weather rules
+  through). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 
