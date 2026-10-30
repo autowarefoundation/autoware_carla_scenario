@@ -186,7 +186,10 @@ class LiveT4Scene:
             return
         if extras is not None:
             self._extras[log.last_frame] = extras
-        oldest = log.last_frame - (self.history_rows - 1) * log.step_frames
+        # From the row a scene now ends on (frames()), on the grid: a tick
+        # between grid rows must not take the oldest row a scene still shows.
+        current = log.last_frame - (log.last_frame - log.first_frame) % log.step_frames
+        oldest = current - (self.history_rows - 1) * log.step_frames
         log.forget_before(oldest)
         for frame in [f for f in self._extras if f < oldest]:
             del self._extras[frame]

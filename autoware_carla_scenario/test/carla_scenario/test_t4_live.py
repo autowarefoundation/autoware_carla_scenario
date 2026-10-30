@@ -131,6 +131,14 @@ def test_the_scene_is_the_last_rows_on_the_grid_the_current_one_last() -> None:
     assert list(_numeric(scene.ego.available)) == [True, True, True]
 
 
+def test_a_tick_between_grid_rows_keeps_the_oldest_row_a_scene_shows() -> None:
+    live = _run(ticks=10)  # frames 100..109; the last on the grid is 108
+    assert live.frames() == [104, 106, 108]
+    scene = live.scene("run")
+    assert scene is not None
+    assert list(_numeric(scene.ego.available)) == [True, True, True]
+
+
 def test_a_short_run_has_the_rows_it_has() -> None:
     assert _run(ticks=1).frames() == [100]
     assert _run(ticks=4).frames() == [100, 102]

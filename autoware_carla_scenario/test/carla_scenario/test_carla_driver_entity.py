@@ -1461,7 +1461,7 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
     assert entity._t4 is None  # noqa: SLF001
 
 
-def test_route_to_keeps_the_routes_lanelets_and_the_goal_for_the_scenes(
+def test_route_to_keeps_the_routes_roads_and_the_goal_for_the_scenes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from autoware_carla_scenario.coordinate import Lanelet2Pose
@@ -1473,7 +1473,6 @@ def test_route_to_keeps_the_routes_lanelets_and_the_goal_for_the_scenes(
     entity, _ = _entity()
     entity.route_to(_world_with_route(), Lanelet2Pose(lanelet_id=12, s=0.0))
 
-    assert entity._route_lanelet_ids == [10, 11, 12]  # noqa: SLF001
     assert entity._route_roads == {"r10", "r11", "r12"}  # noqa: SLF001
     assert entity._goal_in_map == (5.0, 6.0, 0.25)  # noqa: SLF001
 

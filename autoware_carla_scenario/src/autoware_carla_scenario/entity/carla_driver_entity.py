@@ -200,11 +200,10 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The OpenDRIVE roads of the route to the scenario's goal, which pick the
         #: way the policy's road ahead takes at a fork; ``None`` without a goal.
         self._route_roads: Optional[Set[str]] = None
-        #: That route's lanelets, in order, and the goal as ``(x, y, yaw)`` in
-        #: Autoware's ``map`` frame: what a T4Scene carries of them.
-        self._route_lanelet_ids: Optional[List[int]] = None
         #: The road ahead last sent: the ego's pose then and the rig-frame points.
         self._road_ahead: Optional[Tuple[Pose, Any]] = None
+        #: The goal as ``(x, y, yaw)`` in Autoware's ``map`` frame, a T4Scene's
+        #: (``t4_scene_goal: scenario``).
         self._goal_in_map: Optional[Tuple[float, float, float]] = None
         #: The run so far as T4Scenes (``driver.t4_scene``), while one runs.
         self._t4: Optional["LiveT4Scene"] = None
@@ -264,12 +263,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
             start = CarlaWorldPose.from_carla_transform(self.actor.get_transform())
         if start is not None:
-            self._route_lanelet_ids = _route_lanelets(start, [*waypoints, goal])
-            self._route_roads = (
-                None
-                if self._route_lanelet_ids is None
-                else _roads_of(self._route_lanelet_ids)
-            )
+            lanelet_ids = _route_lanelets(start, [*waypoints, goal])
+            self._route_roads = None if lanelet_ids is None else _roads_of(lanelet_ids)
         self._goal_in_map = _in_map_frame(goal)
         if self._handshake is not None:
             self._handshake.route_to(
