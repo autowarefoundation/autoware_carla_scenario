@@ -30,7 +30,9 @@ from autoware_carla_scenario.slurm.manifest import BatchLayout, sequential_stems
 from autoware_carla_scenario.slurm.ports import (
     PORT_SLOT_WIDTH,
     acquire_slot,
+    carla_processes_on_port,
     first_slot,
+    kill_carla_on_port,
 )
 from autoware_carla_scenario.slurm.settings import (
     SlurmSettings,
@@ -833,6 +835,92 @@ def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
     slot.release(keep_lock=True)
     watchdog.finish()
     assert port_file.exists()
+
+
+#: A stand-in CARLA: says ``ready`` once its SIGTERM handling is set, then waits.
+_STAND_IN = (
+    "import signal, sys, time\n"
+    "if sys.argv[1] == 'ignore':\n"
+    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "print(None, flush=True)\n"
+    "time.sleep(120)\n"
+)
+#: Starts the stand-in in a session of its own, as CarlaServerManager starts
+#: CARLA, prints its pid and exits: the stand-in is not the test's child.
+_ORPHANING = (
+    "import subprocess, sys\n"
+    "child = subprocess.Popen([sys.executable, '-c', sys.argv[1], *sys.argv[2:]],\n"
+    "                         stdout=subprocess.PIPE, start_new_session=True)\n"
+    "assert child.stdout is not None\n"
+    "child.stdout.readline()\n"
+    "print(child.pid, flush=True)\n"
+)
+
+
+class _StandIns:
+    """Starts stand-in CARLAs on a port of the test's own range."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.children: list[subprocess.Popen[str]] = []
+
+    def start(self, on_term: str, *, child: bool) -> int:
+        """Start one and wait until it is ready; its pid."""
+        args = [on_term, f"-carla-rpc-port={self.port}"]
+        if not child:
+            output = subprocess.run(
+                [sys.executable, "-c", _ORPHANING, _STAND_IN, *args],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout
+            return int(output.strip())
+        process = subprocess.Popen(
+            [sys.executable, "-c", _STAND_IN, *args], stdout=subprocess.PIPE, text=True
+        )
+        self.children.append(process)
+        assert process.stdout is not None
+        process.stdout.readline()
+        return process.pid
+
+
+@pytest.fixture
+def stand_ins(port_base: int) -> Iterator[_StandIns]:
+    """Stand-in CARLAs on a spare port of the test's first slot, all killed
+    and reaped after the test."""
+    stand_ins = _StandIns(port_base + 7)
+    try:
+        yield stand_ins
+    finally:
+        for pid in carla_processes_on_port(stand_ins.port):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        for process in stand_ins.children:
+            process.kill()
+            process.wait(timeout=10)
+            if process.stdout is not None:
+                process.stdout.close()
+
+
+@pytest.mark.parametrize("child", [True, False], ids=["child", "not-a-child"])
+@pytest.mark.parametrize("on_term", ["ignore", "exit"])
+def test_kill_carla_on_port_returns_only_what_still_runs(
+    stand_ins: _StandIns, on_term: str, child: bool
+) -> None:
+    """A CARLA that ignores SIGTERM and is SIGKILLed is not reported as still
+    running (#771), nor one that ends on SIGTERM, whether or not it is the
+    caller's child (a child stays a zombie until it is reaped)."""
+    pid = stand_ins.start(on_term, child=child)
+    assert carla_processes_on_port(stand_ins.port) == [pid]
+    assert kill_carla_on_port(stand_ins.port, grace_s=0.5) == []
+    assert carla_processes_on_port(stand_ins.port) == []
+
+
+def test_kill_carla_on_port_with_nothing_running(stand_ins: _StandIns) -> None:
+    assert kill_carla_on_port(stand_ins.port, grace_s=0.5) == []
 
 
 def test_first_slot_differs_by_task() -> None:
