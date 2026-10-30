@@ -64,6 +64,29 @@ class IntersectionPassingConfig:
     #: ``None`` for straight-through).
     turn_direction: str | None = None
 
+    #: From this many metres before the junction (the start of the route's
+    #: first lanelet, where its stop line is) until it is on that lanelet,
+    #: the ego must show the turn indicator of ``turn_direction``; the run
+    #: fails once it has not for ``turn_indicator_grace_seconds``.  In the
+    #: junction the indicator is ``max_turn_indicator_changes``' to judge.
+    #: ``None`` checks nothing.  Needs a ``"left"`` or ``"right"`` turn.
+    turn_indicator_before_m: float | None = None
+
+    #: How long the indicator may be wrong before the run fails, in seconds:
+    #: a blink of the command, not a turn without one.
+    turn_indicator_grace_seconds: float = 0.5
+
+    #: The run fails once the steering applied to the ego has turned back
+    #: this many times (the ``steering_reversals`` metric, docs/metrics.md),
+    #: counted from the start until the run passes.  ``None`` checks nothing.
+    max_steering_reversals: int | None = None
+
+    #: The run fails once the ego's turn indicators have changed this many
+    #: times (the ``turn_indicator_changes`` metric), counted apart from the
+    #: steering, from the start until the run passes.  ``None`` checks
+    #: nothing.
+    max_turn_indicator_changes: int | None = None
+
     #: Optional list of NPC vehicles to spawn in the scenario.
     #: Empty by default for backwards compatibility with existing YAML configs.
     npc_vehicles: list[NpcVehicleConfig] = field(default_factory=list)
@@ -74,6 +97,33 @@ class IntersectionPassingConfig:
             NpcVehicleConfig(**v) if isinstance(v, dict) else v
             for v in self.npc_vehicles
         ]
+        if self.turn_indicator_before_m is not None and self.turn_direction not in (
+            "left",
+            "right",
+        ):
+            raise ValueError(
+                "turn_indicator_before_m needs turn_direction left or right, "
+                f"not {self.turn_direction!r}"
+            )
+        if self.turn_indicator_grace_seconds <= 0:
+            raise ValueError("turn_indicator_grace_seconds must be positive")
+        for name, limit in (
+            ("max_steering_reversals", self.max_steering_reversals),
+            ("max_turn_indicator_changes", self.max_turn_indicator_changes),
+        ):
+            if limit is not None and limit < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if (
+            self.turn_indicator_before_m is not None
+            and self.max_turn_indicator_changes is not None
+            and self.max_turn_indicator_changes < 3
+        ):
+            # Its own on and off are two changes of a turn that signals.
+            raise ValueError(
+                "max_turn_indicator_changes must be at least 3 with "
+                "turn_indicator_before_m: the turn's own indicator on and off "
+                "are two changes"
+            )
 
 
 @dataclass
