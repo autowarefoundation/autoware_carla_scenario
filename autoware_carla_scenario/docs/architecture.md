@@ -194,7 +194,7 @@ sequenceDiagram
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
-            SR->>W: reload_world()
+            SR->>W: reset_world() (map reload, or soft reset)
         end
 
         SR-->>SQ: ScenarioResult
@@ -320,9 +320,12 @@ graph LR
 Key features:
 
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
-- **Retry**: Failed scenarios are retried up to `cooldown_max_retries` times before raising an error.
+- **Retry**: A scenario whose run raises is retried up to `cooldown_max_retries` times before raising an error; one that runs and fails is not. The lanelet sweeper follows the same rule for its forked cases.
+  A retry runs the same scenario object again, and so does a second `run_all()`: before each `setup()` the runner resets what an earlier attempt registered (`BaseScenario._reset_registrations()`) -- its conditions, actions, callbacks, entities, coverage and measures -- back to what the scenario's `__init__` registered, so a condition that latched in a failed attempt cannot decide the retry.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), the world is reloaded, and the queue goes on with the next one.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
+  A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.
+- **Server lifetime**: A CARLA that `CarlaServerManager` launched does not outlive the process that launched it. `stop()` (or `with`, or `atexit`) stops it on a normal exit; a SIGTERM to `scenario` raises `KeyboardInterrupt`, so the `with` blocks unwind as on Ctrl-C, and it exits 143; and CARLA is launched under a small watchdog that leads its process group and, once that process is gone (killed with SIGKILL, say, as the lanelet sweeper does a job past `sweep.job_timeout_seconds`), sends the group SIGTERM and, 10 s later, SIGKILL; the sweeper then waits until that CARLA has exited before its next attempt. The watchdog polls its parent process rather than using `PR_SET_PDEATHSIG`, which follows the thread that started it. A server that was already running and was reused is never stopped.
 - **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.
 
 ### Recordings of a run
@@ -383,6 +386,7 @@ classDiagram
         +message: str
         +elapsed_seconds: float
         +condition_statuses: list
+        +failure: Failure
     }
 
     class TimeoutCondition
@@ -390,6 +394,7 @@ classDiagram
     class CollisionCondition
     class EntityExistenceCondition
     class OffRoadFractionCondition
+    class PlaceClearCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
 
@@ -417,6 +422,7 @@ classDiagram
     BaseCondition <|-- CollisionCondition
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- OffRoadFractionCondition
+    BaseCondition <|-- PlaceClearCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
@@ -445,9 +451,9 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, and leaving the driving lanes by more than a tolerance |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
-| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, following headway and speed difference |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
@@ -534,7 +540,6 @@ classDiagram
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
-    class FollowTrajectoryAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TrafficSignalControllerAction
@@ -544,7 +549,6 @@ classDiagram
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
-    BaseAction <|-- FollowTrajectoryAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
@@ -785,11 +789,12 @@ graph TB
 | **`app.py`** | `ui/app.py` | FastAPI routes, template rendering, SSE streaming |
 | **`scanner.py`** | `ui/scanner.py` | Scan `outputs/` and `multirun/` directories for result JSON files. Build session lists and condition trees. |
 | **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread. Track progress with thread-safe global state. |
-| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Resolve sweep constraints into concrete override lists without launching CARLA. Lightweight Hydra Compose API usage. |
+| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Expand a scenario's sweep into concrete per-job override lists without launching CARLA, through the CLI's `sweeper.expand.expand_config` (constraints, route searches, ODD draws); a failure is reported to the Run panel. The jobs run with the Run panel's extra overrides. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
-| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404). |
 | **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
 | **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
+| **`slurm_options.py`** | `ui/slurm_options.py` | The `launcher.*` keys the run panel sets: what each may hold, the Hydra overrides they become (quoted as Hydra reads them back) and the `scenario ... --no-wait` command line. Checked by the library check (`docs/typecheck.md`). |
 | **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
 
 ### Data Models
@@ -904,13 +909,21 @@ sequenceDiagram
 
     alt With sweeper
         A->>A: sweep_resolver.resolve_sweep()
-        Note over A: Expand constraints into<br/>concrete override lists
+        Note over A: expand_config, as the CLI: constraints,<br/>route searches, ODD draws
+        opt A scenario fails to expand
+            A-->>B: {"status": "error", "message": ...}
+        end
     else Without sweeper
         A->>A: Expand glob to scenario names
     end
 
-    A->>R: start_run(overrides_list)
-    A-->>B: {"status": "started"}
+    A->>R: start_run(overrides_list, extra_overrides)
+    Note over R: Marks the run as running and resets<br/>its progress under one lock
+    alt Another run in progress
+        A-->>B: 409 {"status": "busy"}
+    else Started
+        A-->>B: {"status": "started"}
+    end
 
     B->>A: GET /api/run/progress (SSE)
 
@@ -940,7 +953,7 @@ sequenceDiagram
 **Key design decisions:**
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
-- **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state.
+- **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
 - **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories.
 
@@ -1121,11 +1134,19 @@ itself, and an entity's manoeuvre intents (`change_lane`, `turn_at_junction`,
 vehicle the backend drives, the ego or an NPC, becomes one of them:
 `BackendDriven.route_to` hands the backend the route from where the vehicle is,
 through any waypoints, to it. A pedestrian given one lays its walk out on the
-walkable lanelets (`PedestrianEntity.route_to`: a straight line for a leg they
-do not join up, as across a road whose crosswalks only overlap its walkways),
-and the `RoutingAction` walks it a tick at a time (`PedestrianEntity.walk_on`,
-steered as `FollowTrajectoryAction` steers a walker in `FOLLOW` mode) -- so on
-a pedestrian the action needs the tick loop (`BaseAction.needs_tick_loop`).
+walkable lanelets (`PedestrianEntity.route_to`), and the `RoutingAction` walks
+it a tick at a time (`PedestrianEntity.walk_on`, steered as a `RoutingAction`
+steers a walker in `follow` mode) -- so on a pedestrian the action needs the
+tick loop (`BaseAction.needs_tick_loop`). The walk is searched on
+`coordinate.walk_graph.WalkGraph`, not on Lanelet2's routing graph: a crosswalk
+is usually drawn across the walkways it joins, reaching onto them without
+sharing a point, so Lanelet2 joins nothing across a road. The walk graph joins a
+walkable lanelet's end to any walkable lanelet it lies on (or within 0.5 m of),
+at that point along it, joins two walkable lanelets where their centrelines
+cross (a crosswalk drawn right across a walkway), and walks every walkway both
+ways whatever its `one_way` tag. A leg it has no walk for (a map with no
+walkways, as most Autoware maps, or a waypoint off them) is a straight line,
+with a warning.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
@@ -1218,7 +1239,7 @@ graph LR
 |------|---------|-----------|----------|----------------|-------------|
 | **2000** | 2000 | CARLA RPC Server | TCP | `server.port` (Hydra), `--port` CLI arg | Main communication channel between `carla.Client` and the CARLA simulator. Used for world control, actor spawning, recording, etc. |
 | **8100** | 8100 | CARLA TrafficManager | TCP | `traffic_manager.port` (Hydra), `tm_port` constructor arg | RPC port for the TrafficManager, which controls NPC vehicle autopilot behavior. The CARLA default is 8000, but this project uses 8100 to avoid conflicts with other services (e.g., VS Code). |
-| **9000** | 9000 | Viewer Web Server | HTTP | `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
+| **9000** | 9000 | Viewer Web Server | HTTP | `viewer --port`, `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
 
 !!! note
     The CARLA RPC port and TrafficManager port are used within the **scenario subprocess**, not the viewer process. The viewer communicates with CARLA only indirectly through `subprocess.run(["uv", "run", "scenario", ...])`.
@@ -1232,9 +1253,9 @@ graph LR
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
 | **`NISHISHINJUKU_LANELET2_PATH`** | No | `data/nishishinjuku.osm` | Map config YAML (`${oc.env:...}`) | Path to the Lanelet2 `.osm` file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation. |
-| **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. |
-| **`VIEWER_HOST`** | No | `0.0.0.0` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. |
-| **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. |
+| **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. `viewer --base-path` wins over it. |
+| **`VIEWER_HOST`** | No | `127.0.0.1` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. `viewer --host` wins over it; `0.0.0.0` serves every interface, with no authentication. |
+| **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. `viewer --port` wins over it. |
 | **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed). A glob batch reads the flag directly instead. |
 
 #### Dynamic Map Path Variables
@@ -1282,7 +1303,7 @@ Complex pass/fail criteria are built by composing atomic conditions:
 # Example: pass when ego visits all three road segments
 pass_condition = AndCondition(
     label="all_roads_visited",
-    children=[
+    conditions=[
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "5", ...)),
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "12", ...)),
         StickyCondition(EntityLanePositionCondition.anywhere_on_road("ego", "8", ...)),
@@ -1290,8 +1311,8 @@ pass_condition = AndCondition(
 )
 ```
 
-`StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously.
+`StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously. It checks every child on every tick, so each sticky child latches when its own road is reached and the roads may be visited in any order; to require an order, latch the later one on the earlier: `StickyCondition(AndCondition([StickyCondition(on_5), on_12]))`.
 
-### World Reload for Clean State
+### World Reset for Clean State
 
-After each scenario, `ScenarioRunner` calls `client.reload_world()` instead of manually destroying actors. This guarantees a completely clean state (actors, sensors, physics, Traffic Manager internal maps) and avoids "failed to destroy actor" errors from the CARLA server.
+After each scenario but the last, `ScenarioRunner.reset_world()` resets the world. By default (`server.world_reset: reload`) it loads the batch's map again by name (`client.reload_world()` fails on CARLA UE5): a new episode, with the run's actors destroyed first so their sensor streams are released. `server.world_reset: soft` keeps the episode and puts back what a run changes -- destroying every actor the freshly loaded world did not have and restoring the settings, weather, traffic lights and spectator read right after the load (`world_reset.py`) -- and falls back to a reload when the world is another episode or anything is left over. See [Resetting the world between cases](usage.md#resetting-the-world-between-cases) for what a soft reset does and does not reset.

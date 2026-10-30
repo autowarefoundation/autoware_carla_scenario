@@ -9,15 +9,18 @@ from typing import TYPE_CHECKING, Callable, Generator, List, Optional, Union
 
 from .scenario_runner import ScenarioRunner
 from .conditions import ScenarioResult
+from .failure import Failure, FailureCategory
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .t4 import T4Recorder
+from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
+from .world_reset import RESET_RELOAD, check_world_reset
 
 if TYPE_CHECKING:
     from .autoware_stack.launcher import AutowareLauncher
@@ -80,6 +83,9 @@ class ScenarioQueue:
     _map_source: Optional[str]
     _rerun: Optional[RerunConverter]
     _t4: Optional[T4Recorder]
+    _t4scene: Optional[T4SceneExporter]
+    _world_reset: str
+    _reload_every: int
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
@@ -122,6 +128,9 @@ class ScenarioQueue:
         map_source: Optional[str] = None,
         rerun: Optional[RerunConverter] = None,
         t4: Optional[T4Recorder] = None,
+        world_reset: str = RESET_RELOAD,
+        reload_every: int = 0,
+        t4scene: Optional[T4SceneExporter] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -197,6 +206,20 @@ class ScenarioQueue:
                 (:meth:`RerunConverter.wait`) once the runs are done.
             t4: What writes each run as a T4 dataset, with sensors of its own
                 on the ego (``t4.enabled``); *None* writes none.
+            world_reset: How the world is reset between the scenarios:
+                ``"reload"`` (the default) loads the map again, ``"soft"``
+                puts the loaded map back as it was without a load, and loads
+                it when that cannot be done (:class:`ScenarioRunner`,
+                docs/usage.md "Resetting the world between cases").
+            reload_every: With ``world_reset="soft"``, load the map instead on
+                every *reload_every*-th reset; 0 (the default) only when a
+                soft reset cannot be done.
+            t4scene: What writes each run's trajectory log as a T4Scene as the
+                run ends (``t4scene.enabled``); *None* writes none.
+
+        Raises:
+            ValueError: *cooldown_max_retries* or *reload_every* is negative,
+                or *world_reset* is neither ``"reload"`` nor ``"soft"``.
         """
         if server is not None:
             self._server = server
@@ -228,6 +251,10 @@ class ScenarioQueue:
                 f"got {cooldown_max_retries}."
             )
         self._cooldown_max_retries = cooldown_max_retries
+        # Refused now, before CARLA starts, rather than when the runner is made.
+        check_world_reset(world_reset, reload_every)
+        self._world_reset = world_reset
+        self._reload_every = reload_every
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
         self._traffic_backend = traffic_backend
@@ -237,6 +264,7 @@ class ScenarioQueue:
         self._map_source = map_source
         self._rerun = rerun
         self._t4 = t4
+        self._t4scene = t4scene
 
         self._scenarios = []
         self._timeouts = {}
@@ -371,9 +399,9 @@ class ScenarioQueue:
                             if attempt == 0
                             else "CARLA cooldown (retry)",
                         )
-                    # The map is reloaded for the next scenario; after the
-                    # last there is none, and a later run_all() or a new
-                    # queue loads it first.
+                    # The world is reset (reloaded, or soft-reset) for the
+                    # next scenario; after the last there is none, and a
+                    # later run_all() resets it or a new queue loads it first.
                     reset_world = i < total - 1
                     if file_stem is None:
                         result = self._runner.run_scenario(
@@ -430,10 +458,17 @@ class ScenarioQueue:
                     ) from last_error
                 # All attempts exhausted: the case is recorded as errored and
                 # the run goes on.
+                message = f"Errored after {max_attempts} attempt(s): {last_message}"
                 result = ScenarioResult(
                     passed=False,
-                    message=f"Errored after {max_attempts} attempt(s): {last_message}",
+                    message=message,
                     elapsed_seconds=0.0,
+                    failure=Failure(
+                        condition="",
+                        category=FailureCategory.INFRASTRUCTURE,
+                        at=0.0,
+                        message=message,
+                    ),
                 )
                 logger.error(
                     "[%d/%d] Scenario %s errored after %d attempt(s), "
@@ -496,7 +531,24 @@ class ScenarioQueue:
         default) the call is effectively a no-op — it just records that the
         server was reused and returns immediately.  Only the queue that
         *owns* its server will stop it in :meth:`stop`.
+
+        If it fails (the runner cannot connect, the map name is unknown, the
+        Lanelet2 map does not load, Ctrl-C), it calls :meth:`stop` before the
+        error propagates: the server it owns is stopped and the Autoware
+        launcher closed, since a failed ``__enter__`` skips ``__exit__``.  An
+        error in that clean-up is logged; the one from the start propagates.
         """
+        try:
+            self._start()
+        except BaseException:
+            try:
+                self.stop()
+            except Exception:
+                logger.exception("Stopping the queue after its failed start failed")
+            raise
+
+    def _start(self) -> None:
+        """:meth:`start`, without the clean-up when it fails."""
         if self._autoware_launcher is not None:
             # First: a workspace that has to be built takes far longer than
             # CARLA to start, and one that cannot run a scenario at all is
@@ -514,6 +566,8 @@ class ScenarioQueue:
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
             odd=self._odd,
+            world_reset=self._world_reset,
+            reload_every=self._reload_every,
         )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:
@@ -541,6 +595,7 @@ class ScenarioQueue:
         self._runner.map_source = self._map_source
         self._runner.rerun = self._rerun
         self._runner.t4 = self._t4
+        self._runner.t4scene = self._t4scene
         self._runner.lanelet2_path = self._lanelet2_path
         self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),
@@ -584,10 +639,13 @@ class ScenarioQueue:
         # The map loaded for this queue's runs is not the next queue's: one
         # that loads no lanelet map would read this one's (run_carla_map).
         MapManager.reset()
-        if self._autoware_launcher is not None:
-            self._autoware_launcher.close()
-        if self._owns_server:
-            self._server.stop()
+        try:
+            if self._autoware_launcher is not None:
+                self._autoware_launcher.close()
+        finally:
+            # Even when the launcher's close() raises, against its contract.
+            if self._owns_server:
+                self._server.stop()
 
     # ------------------------------------------------------------------
     # pytest fixture factory

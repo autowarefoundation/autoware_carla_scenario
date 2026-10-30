@@ -20,7 +20,7 @@ service; here it is filled the way Autoware fills it behind an end-to-end planne
 
 ``ControlConfig.longitudinal_controller = "time_indexed"`` keeps the tracker this module
 had before: the plan read on its own clock (where the plan has the vehicle *now*), which
-:class:`~..actions.follow_trajectory.FollowTrajectoryAction` drives OpenSCENARIO's timed
+:class:`~..actions.routing.RoutingAction` (``follow`` mode) drives OpenSCENARIO's timed
 trajectories with.
 
 All geometry in this module is in the **rig frame**: x forward, y left, z up,
@@ -180,7 +180,7 @@ class ControlConfig:
     plan read on its own clock, a PI on the speed it has the vehicle at *now* plus a
     pull towards where it has the vehicle now (the ``speed_*``, ``position_*`` and
     ``stop_distance_m`` fields); what
-    :class:`~..actions.follow_trajectory.FollowTrajectoryAction` drives timed
+    :class:`~..actions.routing.RoutingAction` (``follow`` mode) drives timed
     trajectories with."""
 
     # -- Longitudinal "pid": the speeds put on the plan -----------------------------
@@ -432,7 +432,7 @@ class ControlConfig:
     never moves, so neither does the plan.  A real car creeps at any throttle, so a
     plan asking to move does move, a plan asking to move on a red light included.
     The ``time_indexed`` controller takes 0.25
-    (:class:`~..actions.follow_trajectory.FollowTrajectoryAction` sets it).
+    (:class:`~..actions.routing.RoutingAction` (``follow`` mode) sets it).
     """
 
     standstill_speed_mps: float = 0.5

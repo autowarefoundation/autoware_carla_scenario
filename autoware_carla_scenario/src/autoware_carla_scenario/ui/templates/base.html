@@ -394,6 +394,7 @@
     // Connect to SSE progress stream, show progress bar, and call onComplete when done.
     let activeEvtSource = null;
     function connectProgressStream(onComplete) {
+      cancelRunErrorTimer();
       if (activeEvtSource) { activeEvtSource.close(); }
       const progressBar = document.getElementById('progress-bar');
       progressBar.classList.remove('hidden');
@@ -419,15 +420,47 @@
     }
 
     // Shared helper: POST to /api/run, show progress bar, stream SSE updates,
-    // then call onComplete when done.
+    // then call onComplete when done.  A run the server did not start (409
+    // while another run is in progress, or an error) is reported in the
+    // progress bar instead of following the stream of a run that is not it.
     function executeRunWithProgress(body, onComplete) {
       fetch('/api/run', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
-      }).then(() => {
+      }).then(r => r.json().catch(() => ({})).then(data => {
+        if (!r.ok || data.status !== 'started') {
+          showRunError(data.message || `The run was not started (${r.status})`);
+          return;
+        }
         connectProgressStream(onComplete);
-      });
+      })).catch(e => showRunError(`The run was not started: ${e}`));
+    }
+
+    // The timer that hides a run error; whatever takes the bar over first
+    // cancels it, so it never hides a later run's or submission's bar.
+    let runErrorTimer = null;
+    function cancelRunErrorTimer() {
+      if (runErrorTimer !== null) { clearTimeout(runErrorTimer); runErrorTimer = null; }
+    }
+
+    // Show why a local run was not started, then hide the bar again.
+    function showRunError(message) {
+      cancelRunErrorTimer();
+      const bar = document.getElementById('progress-bar');
+      const text = document.getElementById('progress-text');
+      const count = document.getElementById('progress-count');
+      const fill = document.getElementById('progress-fill');
+      bar.classList.remove('hidden');
+      text.textContent = message;
+      count.textContent = '';
+      fill.className = 'bg-red-500 h-2 rounded-full transition-all duration-300';
+      fill.style.width = '100%';
+      runErrorTimer = setTimeout(() => {
+        runErrorTimer = null;
+        // Unless another run's stream had the bar already.
+        if (!activeEvtSource) bar.classList.add('hidden');
+      }, 5000);
     }
 
     // Run scenarios using options from the panel
@@ -449,6 +482,7 @@
 
     // Submit through SLURM, then go to the batch's page, which follows it.
     function submitSlurm(body) {
+      cancelRunErrorTimer();
       const bar = document.getElementById('progress-bar');
       const text = document.getElementById('progress-text');
       const fill = document.getElementById('progress-fill');

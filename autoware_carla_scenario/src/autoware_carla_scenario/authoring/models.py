@@ -47,10 +47,13 @@ __all__ = [
     "ConstraintNode",
     "CountRange",
     "EgoDriver",
+    "AUTO_MODEL",
     "Entity",
+    "EntitySize",
     "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
+    "JunctionPath",
     "JunctionSegment",
     "LaneSegment",
     "LaneletChoice",
@@ -357,7 +360,7 @@ class SpawnSpec(LaneletChoice):
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
     #: Spawn out of the world -- under the map, physics off -- and let an
-    #: action bring the entity in: a *Follow Trajectory* card that keeps it out
+    #: action bring the entity in: a *Set Goal* card that keeps it out
     #: until its first vertex.  What a road user a recording picks up late
     #: needs: placed where it first appears, it could collide at spawn with
     #: whatever stood there when the run began.
@@ -393,6 +396,19 @@ class GoalSpec(LaneletChoice):
     s: float = 0.0
 
 
+#: An entity's ``vehicle_type`` that names no blueprint: the vehicle of the
+#: running CARLA nearest the entity's :attr:`Entity.size`, chosen when it is
+#: spawned (:mod:`autoware_carla_scenario.entity.fit`).
+AUTO_MODEL = "auto"
+
+
+class EntitySize(_Node):
+    """The size of the box an entity is to fill, in metres."""
+
+    length: float = Field(gt=0.0)
+    width: float = Field(gt=0.0)
+
+
 class Entity(_Node):
     """A vehicle taking part in the scenario.
 
@@ -409,12 +425,19 @@ class Entity(_Node):
     thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
     kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
     are the ones whose spec names its kind.
+
+    A vehicle other than the ego may have ``vehicle_type: auto`` and a
+    :attr:`size`: it is then the vehicle of the running CARLA whose bounding
+    box is nearest that size, chosen when it is spawned -- whatever the
+    server's version and assets -- and the kind's default where there is none.
     """
 
     id: str
     kind: EntityKind = "vehicle"
     title: str = ""
     vehicle_type: str = "vehicle.mini.cooper"
+    #: The box a ``vehicle_type: auto`` vehicle is to fill (a recorded one).
+    size: Optional[EntitySize] = None
     initial_speed_kmh: float = 0.0
     spawn: SpawnSpec = Field(default_factory=SpawnSpec)
     #: Which stack drives the ego.  Only the ego is driven by anything the
@@ -582,7 +605,7 @@ class VertexCondition(_Node):
 
     Attached to an action whose spec takes them
     (:attr:`~autoware_carla_scenario.authoring.registry.ActionSpec.vertex_conditions`,
-    the *Follow Trajectory* card): the entity departs vertex :attr:`vertex` of
+    the *Set Goal* card): the entity departs vertex :attr:`vertex` of
     its trajectory when :attr:`condition` holds -- the runtime's
     :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  A vertex
     has one: its time (a ``trajectory_time`` condition) or any other
@@ -1015,6 +1038,19 @@ class LaneSegment(_Node):
         return ", ".join(parts)
 
 
+class JunctionPath(_Node):
+    """Another path through the ego's junction a match must have.
+
+    See :class:`autoware_carla_scenario.route.model.JunctionPathSpec`.
+    """
+
+    approach: Literal["same", "left", "right", "opposite"]
+    turn: Literal["left", "right", "straight"]
+    before: LengthRange = Field(default_factory=LengthRange)
+    after: LengthRange = Field(default_factory=LengthRange)
+    path: Optional[int] = Field(default=None, ge=1)
+
+
 class JunctionSegment(_Node):
     """The ego's way through a junction, by its properties.
 
@@ -1029,6 +1065,8 @@ class JunctionSegment(_Node):
     crossing_from_opposite: Tristate = "any"
     crosswalk_entry: Tristate = "any"
     crosswalk_exit: Tristate = "any"
+    paths: list[JunctionPath] = Field(default_factory=list)
+    length: LengthRange = Field(default_factory=LengthRange)
 
     _yes_no = field_validator(
         "traffic_light",
@@ -1043,6 +1081,8 @@ class JunctionSegment(_Node):
     def summary(self) -> str:
         """One line for the editor: what this segment asks for."""
         parts = [f"junction, turn {self.turn}"]
+        if self.length.min is not None or self.length.max is not None:
+            parts.append(f"length {_range_text(self.length, 'm')}")
         for name, label in (
             ("traffic_light", "traffic light"),
             ("crossing_from_left", "crossing from left"),
@@ -1054,6 +1094,15 @@ class JunctionSegment(_Node):
             value = getattr(self, name)
             if value != "any":
                 parts.append(f"{label}: {value}")
+        for path in self.paths:
+            text = f"path from {path.approach} turning {path.turn}"
+            if path.path is not None:
+                text += f" (path {path.path} from the left)"
+            for name in ("before", "after"):
+                reach = _range_text(getattr(path, name), "m")
+                if reach != "any":
+                    text += f" ({name} {reach})"
+            parts.append(text)
         return ", ".join(parts)
 
 
@@ -1115,8 +1164,22 @@ class RouteSearch(_Node):
         return sum(1 for s in self.segments if s.kind == "junction")
 
     def to_sweep_dict(self) -> dict[str, Any]:
-        """This search as the ``sweep.route`` mapping the route search reads."""
-        return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+        """This search as the ``sweep.route`` mapping the route search reads.
+
+        A junction segment that asks for no other path says nothing about
+        ``paths``, as it did before they existed.
+        """
+        out = cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+        for segment in out.get("segments", []):
+            if segment.get("paths") == []:
+                del segment["paths"]
+            if segment.get("kind") == "junction" and segment.get("length") == {}:
+                del segment["length"]
+            for path in segment.get("paths", []):
+                for name in ("before", "after"):
+                    if path.get(name) == {}:
+                        del path[name]
+        return out
 
 
 # ---------------------------------------------------------------------------

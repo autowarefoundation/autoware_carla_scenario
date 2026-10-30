@@ -33,11 +33,13 @@ import threading
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
-from ..debug_markers import DebugMarkers, plan_markers
+from ..debug_markers import DebugMarkers
 from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
 from ..driver.geometry import Trajectory
 from ..driver.observation import ego_observation, rear_axle_offset
+from ..ego_base_link import clear_ego_base_link, set_ego_base_link
+from ..ego_plan import PlanMarkers, ego_plan_markers
 from ..ros2.commands import (
     CommandArbiter,
     ControlCommand,
@@ -142,7 +144,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     #: close the transport under a sensor thread.
     _publishing: threading.Lock
     #: The trajectory command last tracked, its timed plan and its markers.
-    _planned: Optional[Tuple[TrajectoryCommand, Trajectory, DebugMarkers]]
+    _planned: Optional[Tuple[TrajectoryCommand, Trajectory, PlanMarkers]]
+    #: How many trajectory commands this session has tracked: the plans' steps.
+    _plan_steps: int
     #: Whether the last tick tracked that plan, rather than another command.
     _tracking: bool
 
@@ -166,6 +170,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._cameras = []
         self._publishing = threading.Lock()
         self._planned = None
+        self._plan_steps = 0
         self._tracking = False
 
     # ------------------------------------------------------------------
@@ -206,6 +211,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._rear_axle_offset_m = rear_axle_offset(
             actor, self._config.rear_axle_offset_m
         )
+        # The odometry is published at this offset: the run's records put the
+        # ego's base_link there too.
+        set_ego_base_link(self._rear_axle_offset_m)
         self._follower.powertrain = ChaosPowertrain.from_physics_control(
             actor.get_physics_control()
         )
@@ -214,6 +222,15 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._transport.open()
         self._open = True
         self._turn_command = None
+        # A retried scenario runs this entity again: nothing the previous
+        # attempt received or tracked drives this one.
+        self._arbiter = CommandArbiter(self._config.sources)
+        self._follower.reset()
+        self._active = None
+        self._active_fresh = False
+        self._planned = None
+        self._plan_steps = 0
+        self._tracking = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
         mount: "carla.Actor" = actor
@@ -271,6 +288,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         The cameras are destroyed first.  A failure is logged rather than raised,
         so it cannot abort the rest of the scenario's cleanup.
         """
+        clear_ego_base_link()
         for sensor in self._cameras:
             try:
                 sensor.destroy()
@@ -470,7 +488,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 truncate=self._follower.config.longitudinal_controller
                 == "time_indexed",
             )
-            self._planned = (command, plan, plan_markers(plan))
+            self._plan_steps += 1
+            self._planned = (
+                command,
+                plan,
+                ego_plan_markers(plan, anchor_us, self._plan_steps),
+            )
         return self._planned[1]
 
 

@@ -36,6 +36,7 @@ dev = [
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", specifier = ">=1.23" },
     { name = "grpcio-tools", marker = "python_full_version < '3.13'", specifier = ">=1.60,<1.63" },
+    { name = "hilspy", specifier = ">=0.16,<0.17" },
     { name = "httpx2", specifier = ">=2.12.0" },
     { name = "hypothesis", specifier = ">=6.100" },
     { name = "jsonschema", specifier = ">=4.18" },
@@ -52,7 +53,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "roadgen", specifier = ">=0.41.1" },
+    { name = "roadgen", specifier = ">=0.41.2" },
     { name = "sumolib", specifier = ">=1.23" },
     { name = "t4-devkit", marker = "python_full_version < '3.13'", git = "https://github.com/tier4/t4-devkit?tag=v0.8.0" },
     { name = "traci", specifier = ">=1.23" },
@@ -172,7 +173,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "18.11.19"
+version = "19.17.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -205,6 +206,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+hils = [
+    { name = "hilspy" },
+]
 map = [
     { name = "roadgen" },
 ]
@@ -243,6 +247,7 @@ requires-dist = [
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "grpcio", specifier = ">=1.60" },
+    { name = "hilspy", marker = "extra == 'hils'", specifier = ">=0.16,<0.17" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "libsumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
@@ -261,8 +266,8 @@ requires-dist = [
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rerun-sdk", marker = "extra == 'rerun-lidar'", specifier = ">=0.38.1,<0.39" },
-    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.41.1" },
-    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.41.1" },
+    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.41.2" },
+    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.41.2" },
     { name = "simple-lanelet2", specifier = ">=1.2.3" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
@@ -271,7 +276,7 @@ requires-dist = [
     { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.8.1,<0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "viewer"]
+provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "hils", "viewer"]
 
 [[package]]
 name = "autoware-carla-scenario-rerun"
@@ -1409,6 +1414,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "hilspy"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/0c/2302cf563af6f4975b9204d5ecb5c822aca40ef361e3fef783d0502761c8/hilspy-0.16.0.tar.gz", hash = "sha256:bdb3b2efc8f175733cfe936e1eef499322a94be46ae80f10a41d3ff824611752", size = 270994, upload-time = "2026-10-27T02:23:49.701Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/85/fc488dc81aea462f6aad5eead447fb0676b847fec96117532e0f0fcd2fb9/hilspy-0.16.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7820dafb9fd046ac61355a6282a80b1ef1d8c689e0f0dccda076540950bc657f", size = 3482105, upload-time = "2026-10-27T02:23:41.4Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/27/62b73e79491fadc9a0c2ef264087b16a3ae1694a36872864b5bcf248c412/hilspy-0.16.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:5e5460d0b11789ac58ccc67d5b62e143e15d8662f54bcec3be1380bc9e720404", size = 3312699, upload-time = "2026-10-27T02:23:43.109Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/08/7e7aa0c3278fb4b90da324b226d437d304e01ade1930edb9059d52488418/hilspy-0.16.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:dd81f5e58373910df5781f47db4b14bfd5807411ce060ec1896f32bd02f5953a", size = 3529915, upload-time = "2026-10-27T02:23:44.718Z" },
+    { url = "https://files.pythonhosted.org/packages/32/16/5eed7a319853239b21b2e1a5f5442c25fc507fe87808446a7cfd3981cbba/hilspy-0.16.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:21dd1b8b6b5688b633704399c1d882044e36f5b7b41874cf392ce10af2467d23", size = 3635927, upload-time = "2026-10-27T02:23:46.276Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/50/33b71ac11d7edcca00bc036e86af6b192226be778485e08e96460c2b4c57/hilspy-0.16.0-cp310-abi3-win_amd64.whl", hash = "sha256:17a6df5136ebeeed510f13d66cde257d058366fb99ec4d847b5235fb58b96065", size = 3577149, upload-time = "2026-10-27T02:23:48.255Z" },
 ]
 
 [[package]]
@@ -3948,12 +3966,12 @@ wheels = [
 
 [[package]]
 name = "roadgen"
-version = "0.41.1"
+version = "0.41.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c1/dd/f43a817d6cbf7b1bc2a54cbcc10c4d3b589a41dc7d88478f019e8df972e4/roadgen-0.41.1.tar.gz", hash = "sha256:6b14a862646574a8d536ff679b17711f4c0b89457fe258e5f35354d637df00bc", size = 1033666, upload-time = "2026-10-22T20:49:53.182Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/f2/1da6f3191ab8c42419c80951df0b717378f692e3bdfafd41cbff9c279451/roadgen-0.41.2.tar.gz", hash = "sha256:53de19e6f64aba9dc5a56e7b856e6d9809bfa38d11b2886f2e008026ceff321a", size = 1034257, upload-time = "2026-10-24T02:43:09.852Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/ce/ff6eeb850201b58c50534f53d3bf84e17f5c1559630bbc16efe29ed42ae5/roadgen-0.41.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b94caec1a3d930e83183ba47eeb674fdc0063f526252c6b82e7877a57c5acc96", size = 5509663, upload-time = "2026-10-22T20:49:49.679Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/11/536aa09ca02c9e59ed910715605c4732d74c6c9502c8ed0fbeea223b2db5/roadgen-0.41.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7206f744dcbe74508ca35e79cd1fbe7bf5613df864a8243a753611b7393cacb1", size = 6025667, upload-time = "2026-10-22T20:49:51.706Z" },
+    { url = "https://files.pythonhosted.org/packages/56/a3/b33237e666cc2d612ef2983c6fcb08f748b9bf8af8f67fef62594399d345/roadgen-0.41.2-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2e71974728c5c70a7a9d55c0e1fe21e4f609aaf0cedc6a89a07ebcc6c3ef6f9d", size = 5509003, upload-time = "2026-10-24T02:43:05.893Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/c6/b616a1afe12bcdefab5e4ae7eb4bd80f0879b4b5372116b3423a2c09df4b/roadgen-0.41.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a570a4b5ac99c9c21fd98243d24c1364dc570dadc8a9966db863f5217b42dcad", size = 6026278, upload-time = "2026-10-24T02:43:07.965Z" },
 ]
 
 [[package]]

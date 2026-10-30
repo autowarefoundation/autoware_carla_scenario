@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..entity_role import EntityRole, _role_name
+from ..failure import Failure, FailureCategory
 
 # Re-exported: it lives in entity_role, below this package, so a module that
 # finds an actor by role need not import the conditions (and CARLA) for it.
@@ -120,6 +121,9 @@ class ScenarioResult:
     #: The Rerun recording made of the run's trajectory log
     #: (``rerun.enabled``, docs/usage.md), or ``None`` when none is made.
     rerun_recording: Optional[str] = None
+    #: Why the run failed (:mod:`autoware_carla_scenario.failure`): ``None``
+    #: when it passed, and in a condition's own result.
+    failure: Optional[Failure] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable nested dict of the full result."""
@@ -131,6 +135,8 @@ class ScenarioResult:
         }
         if self.rerun_recording is not None:
             data["rerun_recording"] = self.rerun_recording
+        if self.failure is not None:
+            data["failure"] = self.failure.to_dict()
         return data
 
     def to_json(self, **kwargs: Any) -> str:
@@ -140,8 +146,9 @@ class ScenarioResult:
             **kwargs: Forwarded to :func:`json.dumps`
                 (e.g. ``indent=2``, ``ensure_ascii=False``).
         """
-        # Imported here: Codon has no json, and the library check leaves this
-        # method out (typecheck/library.py), so it never compiles the import.
+        # The library check leaves this method out (typecheck/library.py):
+        # to_dict() is a dict of mixed value types and **kwargs is Any, which
+        # Codon cannot express (json itself has a Codon shim).
         import json  # noqa: PLC0415
 
         kwargs.setdefault("ensure_ascii", False)
@@ -216,6 +223,19 @@ class BaseCondition(ABC):
         closes its children.  Nothing by default; a closed condition is not
         checked again, and closing one twice does nothing.
         """
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """What a run this condition fails is a failure of
+        (:mod:`autoware_carla_scenario.failure`), when a scenario registers it
+        without saying.
+
+        ``None`` by default: the run's failure is then
+        :attr:`~FailureCategory.OTHER`.  A condition that watches one thing
+        says what (a collision condition says
+        :attr:`~FailureCategory.COLLISION`), and a wrapper of one condition
+        says what its child does.
+        """
+        return None
 
     def get_details(self) -> dict[str, Any]:
         """Return structured details about this condition's configuration.

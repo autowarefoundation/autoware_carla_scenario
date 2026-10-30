@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import ClassVar, List, Optional
@@ -30,6 +31,87 @@ def fog_density_scale_args(scale: float) -> List[str]:
     return [f"-ExecCmds=carla.Weather.FogDensityScale {scale}"]
 
 
+#: Runs CARLA's launcher as its child and stops it when the process that
+#: started it dies (#707).  CARLA runs in a session of its own, so neither the
+#: SIGTERM that ends a run nor the SIGKILL a sweeper sends a job past its
+#: timeout reaches it, and ``atexit`` runs on neither.  This watchdog leads
+#: CARLA's process group: every second it checks its parent (*argv[1]*) is
+#: still there, and once it is gone it sends the group SIGTERM, gives CARLA
+#: *argv[2]* seconds and then sends SIGKILL.  ``CarlaUnreal.sh`` runs UE5 as a
+#: child rather than ``exec``-ing it, which is why the whole group is signalled.
+#:
+#: The parent is polled rather than ``prctl(PR_SET_PDEATHSIG)`` asked for (the
+#: Autoware launcher's ``_DIE_WITH_PARENT``): that one fires when the *thread*
+#: that started the child ends, which would stop a server started from a
+#: worker thread that has since finished.  The watchdog's own SIGTERM, which
+#: :meth:`CarlaServerManager.stop` sends the group, is caught and ignored --
+#: not ``SIG_IGN``, which CARLA would inherit -- so the watchdog lives until
+#: CARLA exits and then exits with its code.
+_WATCHDOG = (
+    "import os, signal, subprocess, sys, time\n"
+    "parent, grace = int(sys.argv[1]), float(sys.argv[2])\n"
+    "signal.signal(signal.SIGTERM, lambda signum, frame: None)\n"
+    "def rest_of_group():\n"
+    "    me, group = os.getpid(), os.getpgid(0)\n"
+    "    try:\n"
+    "        names = os.listdir('/proc')\n"
+    "    except OSError:\n"
+    "        return True\n"
+    "    for name in names:\n"
+    "        if not name.isdigit() or int(name) == me:\n"
+    "            continue\n"
+    "        try:\n"
+    "            with open('/proc/%s/stat' % name) as stat:\n"
+    "                fields = stat.read().rsplit(')', 1)[1].split()\n"
+    "        except (OSError, IndexError):\n"
+    "            continue\n"
+    "        if int(fields[2]) == group and fields[0] != 'Z':\n"
+    "            return True\n"
+    "    return False\n"
+    "def stop_group():\n"
+    "    os.killpg(0, signal.SIGTERM)\n"
+    "    deadline = time.monotonic() + grace\n"
+    "    while time.monotonic() < deadline and rest_of_group():\n"
+    "        try:\n"
+    "            child.wait(timeout=0.2)\n"
+    "        except subprocess.TimeoutExpired:\n"
+    "            pass\n"
+    "    os.killpg(0, signal.SIGKILL)\n"
+    "if os.getppid() != parent:\n"
+    "    sys.exit(143)\n"
+    "child = subprocess.Popen(sys.argv[3:])\n"
+    "while True:\n"
+    "    try:\n"
+    "        code = child.wait(timeout=1.0)\n"
+    "        break\n"
+    "    except subprocess.TimeoutExpired:\n"
+    "        pass\n"
+    "    if os.getppid() != parent:\n"
+    "        stop_group()\n"
+    "sys.exit(code if code >= 0 else 128 - code)\n"
+)
+
+#: Seconds the watchdog gives CARLA between SIGTERM and SIGKILL.
+_WATCHDOG_GRACE_S = 10.0
+
+
+def _dying_with_this_process(argv: List[str]) -> List[str]:
+    """*argv*, run under :data:`_WATCHDOG`: stopped when this process dies.
+
+    ``-I``: the watchdog imports nothing from the run's directory or
+    ``PYTHONPATH`` -- a scenario package's ``signal.py`` must not stand in for
+    the standard library's.
+    """
+    return [
+        sys.executable,
+        "-I",
+        "-c",
+        _WATCHDOG,
+        str(os.getpid()),
+        str(_WATCHDOG_GRACE_S),
+    ] + argv
+
+
 class CarlaServerManager:
     """Start and stop a CARLA UE5 server process.
 
@@ -41,6 +123,15 @@ class CarlaServerManager:
     already reachable on *host*:*port* at the time :meth:`start` is called,
     no new process is launched – the existing server is reused.  This is the
     recommended mode for local development where CARLA may already be running.
+    A reused server is never stopped: not by :meth:`stop`, and not when this
+    process ends.
+
+    A server this manager launched does not outlive the process that launched
+    it, however that process ends: :meth:`stop` (or ``with``, or ``atexit``)
+    stops it when the process exits normally, and a watchdog that leads its
+    process group stops it when the process is killed (``SIGTERM``, or the
+    ``SIGKILL`` a sweeper sends a job past its timeout), within a second or so
+    and then a grace period.
 
     Example – managed lifecycle::
 
@@ -148,11 +239,12 @@ class CarlaServerManager:
         headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if headless and "-RenderOffScreen" not in self.extra_args:
             cmd.append("-RenderOffScreen")
-        # start_new_session=True puts CarlaUnreal.sh and all its children
-        # (the actual UE5 binary) into a new process group so that
-        # stop() can kill the entire group with os.killpg().
-        self._process = subprocess.Popen(
-            cmd,
+        # start_new_session=True puts the watchdog, CarlaUnreal.sh and all its
+        # children (the actual UE5 binary) into a new process group so that
+        # stop() can kill the entire group with os.killpg(), and the
+        # watchdog can do the same if this process dies without stopping it.
+        self._process = subprocess.Popen(  # noqa: S603 - the user's own launcher
+            _dying_with_this_process(cmd),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -161,7 +253,14 @@ class CarlaServerManager:
         # Guarantee cleanup even if __exit__ / stop() is never called explicitly
         # (e.g. pytest interrupted by Ctrl-C or an unhandled exception).
         atexit.register(self.stop)
-        self._wait_until_ready()
+        try:
+            self._wait_until_ready()
+        except BaseException:
+            # A server that never became reachable (or a Ctrl-C while
+            # waiting) is not left for atexit: the caller gets no manager to
+            # stop, since a failed __enter__ skips __exit__ (#711).
+            self.stop()
+            raise
 
     @classmethod
     def executable(cls) -> Optional[Path]:

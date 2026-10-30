@@ -81,10 +81,12 @@ class CompositionCondition(BaseCondition):
 
     1. **Entity existence guard** — when *entity_existence* is provided, the
        entity must be present in the world.  If the entity is absent the
-       condition short-circuits and returns ``None``.
+       condition returns ``None``.
     2. **Child condition** — when *child* is provided it must have fired
        (returned ``ScenarioResult(passed=True)``).  If the child has not yet
-       fired the condition short-circuits and returns ``None``.
+       fired the condition returns ``None``.  The child is checked on every
+       tick, even while the entity is absent, so a stateful child keeps its
+       state current.
     3. **Subclass logic** — :meth:`_check` is called only after both guards
        pass.
 
@@ -120,7 +122,9 @@ class CompositionCondition(BaseCondition):
         # Kept as its string, the one thing every use of it reads.
         self._entity_name = str(entity_name) if entity_name is not None else None
         self._entity_existence = (
-            EntityExistenceCondition(entity_name, label=f"{label}_entity_exists")
+            EntityExistenceCondition(
+                entity_name, label=f"{label}_entity_exists", quiet=True
+            )
             if entity_name is not None
             else None
         )
@@ -144,21 +148,26 @@ class CompositionCondition(BaseCondition):
         return details
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
-        """Evaluate entity existence, then child, then delegate to :meth:`_check`.
+        """Evaluate entity existence and the child, then delegate to :meth:`_check`.
 
-        Returns ``None`` immediately when the entity is absent or the
-        child exists but has not yet fired.
+        The child is checked on every tick, even while the entity is absent,
+        so a stateful child (a :class:`PersistentCondition` timer) sees the
+        ticks on which it does not hold.  Returns ``None`` when the entity is
+        absent or the child exists but has not fired.
         """
+        entity_absent = False
         if self._entity_existence is not None:
             existence_result = self._entity_existence.check(world, elapsed)
-            if existence_result is not None:
-                # Entity is absent — cannot evaluate further.
-                return None
+            # A result means the entity is absent.
+            entity_absent = existence_result is not None
 
+        child_fired = True
         if self._child is not None:
             result = self._child.check(world, elapsed)
-            if result is None or not result.passed:
-                return None
+            child_fired = result is not None and result.passed
+
+        if entity_absent or not child_fired:
+            return None
 
         return self._check(world, elapsed)
 

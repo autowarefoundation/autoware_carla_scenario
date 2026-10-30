@@ -66,6 +66,13 @@ class CommandSourceConfig:
             VisionPilot's ``carla_control_publisher`` builds it.
         jerk_mps3: The Ackermann jerk limit, for ``steer_accel`` and for a
             ``control`` command that leaves its jerk undefined.
+        pair_window_s: For ``steer_accel``, how far apart (in the publisher's
+            clock, by the samples' DDS source timestamps) the steering and the
+            acceleration of one cycle may be written.  A half with no partner
+            that close is dropped (:class:`~.commands.SteerAccelPairer`).
+            ``None`` takes half the publisher's cycle, measured from the
+            timestamps, which suits any publisher that writes the two halves
+            of a cycle closer to each other than to the next cycle's.
     """
 
     name: str
@@ -78,6 +85,7 @@ class CommandSourceConfig:
     steering_sign: float = 1.0
     speed_horizon_s: float = 2.0
     jerk_mps3: float = 10.0
+    pair_window_s: Optional[float] = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -99,6 +107,11 @@ class CommandSourceConfig:
             raise ValueError(
                 f"command source {self.name!r}: stale_s must be positive, "
                 f"got {self.stale_s}"
+            )
+        if self.pair_window_s is not None and self.pair_window_s < 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: pair_window_s must not be "
+                f"negative, got {self.pair_window_s}"
             )
 
     @property

@@ -106,3 +106,24 @@ def _map_manager_left_as_found() -> Iterator[None]:
     found = MapManager._instance
     yield
     MapManager._instance = found
+
+
+@pytest.fixture(autouse=True)
+def _vehicle_entity_run_state_cleared() -> Iterator[None]:
+    """Forget the entry speeds and the warm-up flag a test left behind.
+
+    Both are process-wide and only a ``ScenarioRunner.run_scenario`` clears
+    them, at the start and end of its run.  A test that executes a
+    ``SpawnAction`` with a speed outside a run holds that speed for its actor
+    id, which any later test in the same xdist worker that reads the entry
+    speeds or the flag without going through a run would see (#697).
+    """
+    from autoware_carla_scenario import ego_base_link
+    from autoware_carla_scenario.entity import vehicle_entity
+
+    yield
+    vehicle_entity._set_warmup_done(False)
+    vehicle_entity._clear_entry_speeds()
+    # As is where an ego that started its scenario outside a run (#739) has
+    # its base_link, which the trajectory log and the T4 dataset read.
+    ego_base_link.clear_ego_base_link()

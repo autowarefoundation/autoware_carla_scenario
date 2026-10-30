@@ -18,7 +18,14 @@ from typing import Any, Optional
 import pytest
 
 from autoware_carla_scenario.typecheck import model_dir
-from autoware_carla_scenario.typecheck.check import Diagnostic, _keyword_only_hint
+from autoware_carla_scenario.typecheck.check import (
+    Diagnostic,
+    _keyword_only_hint,
+    _keyword_only_hints,
+    _Module,
+    _Sources,
+    _variadic_hints,
+)
 from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.python_rewrites import (
     REWRITE_HINTS,
@@ -34,6 +41,7 @@ from autoware_carla_scenario.typecheck.transform import (
     flag_member_values,
     inherited_inits,
     literal_all,
+    plain_classes,
     relative_module_imports,
     split_tuple_excepts,
     transform_source,
@@ -3274,6 +3282,50 @@ def test_an_fstring_codon_parses_is_left_alone(field: str) -> None:
     assert _rewritten(f"r = {field}\n") == f"r = {field}\n"
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ('f"{x} {{y}}"', '(f"{x} " + "{" + "y" + "}")'),
+        ('f"{{y}}"', '("{" + "y" + "}")'),
+        ('f"{{{x}}}"', '("{" + f"{x}" + "}")'),
+        ('f"}}{x!r:>6}{{"', '("}" + f"{x!r:>6}" + "{")'),
+    ],
+)
+def test_an_fstring_with_an_escaped_brace_becomes_a_concatenation(
+    field: str, expected: str
+) -> None:
+    # Codon's f-string parser has no `{{` / `}}` (#696).
+    assert _rewritten(f"r = {field}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        'f"{x} {{y}}"',
+        'f"{{y}}"',
+        'f"{{{x}}}"',
+        'f"{{min, max}} of {x!r:>6} {{"',
+        "f'''{{\n{x}\n}}'''",
+        'f"a\\n{{\\t}}{x}"',
+        'rf"\\{{{x}\\}}"',
+        'f"{x=} }}"',
+        'f"{ x = !r:>{len(x) + 4}} {{"',
+        "f'{{{x!a:>6}}}'",
+        "F'{{\"{x}\"}}'",
+    ],
+)
+def test_an_fstring_with_an_escaped_brace_keeps_its_value(field: str) -> None:
+    source = f"r = {field}\n"
+    text, _ = python_rewrites(source)
+    assert "{{" not in text and "}}" not in text
+    assert python_rewrite_refusals(source) == []
+    written: dict[str, Any] = {"x": "ab"}
+    checked: dict[str, Any] = {"x": "ab"}
+    exec(source, written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert checked["r"] == written["r"]
+
+
 def test_a_rewritten_fstring_keeps_its_lines() -> None:
     source = 'r = f"""a\n{x:+.2f}\nb"""\nz = 1\nt = (f"{x:+d}"\n     f"{y}")\n'
     text, _ = python_rewrites(source)
@@ -3298,7 +3350,6 @@ def test_str_format_with_a_sign_composes_with_the_fstring_rewrite() -> None:
         ('f"{ {k: 1 for k in a}[1] }"', "a brace in an expression"),
         ('f"{ {**a}[1] }"', "a brace in an expression"),
         ("f\"{f'{x}'}\"", "f-string inside an f-string"),
-        ('f"{x!a:+d}"', "!a together with a format spec"),
     ],
 )
 def test_an_fstring_with_a_brace_in_an_expression_is_refused(
@@ -3307,6 +3358,144 @@ def test_an_fstring_with_a_brace_in_an_expression_is_refused(
     refused = python_rewrite_refusals(f"x = 1\nr = {field}\n")
     assert [line for line, _ in refused] == [2]
     assert hint in refused[0][1]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('f"{x!a}"', '(f"{x!r}")'),
+        ('f"{x!a:>6}"', '(f"{x!r:>6}")'),
+        ('f"{{{x!a}}}"', '("{" + f"{x!r}" + "}")'),
+        ('f"{x!r}{y!a}{x!s}"', '(f"{x!r}{y!r}{x!s}")'),
+        ('f"{x=!a}"', '(f"x={x!r}")'),
+        ('f"{x!a:+d}"', '(repr(x).__format__("+d"))'),
+        ('f"{x!a:>{w}}"', '(repr(x).__format__(">" + str(w)))'),
+        ('f"{x:>{w!a}}"', '((x).__format__(">" + repr(w)))'),
+        ("f'{d[\"k\"]!a:>6}'", "(f\"{d['k']!r:>6}\")"),
+        # An expression ast.unparse writes with a double quote: a call.
+        ("f'''{d[\"it's\"]!a}'''", '(repr(d["it\'s"]))'),
+        ("f'''{{{d[\"it's\"]!a:>6}'''", '("{" + repr(d["it\'s"]).__format__(">6"))'),
+        ('"{!a}".format(x)', 'f"{x!r}"'),
+        ('"{0!a:>6} {k!a}".format(x, k=y)', 'f"{x!r:>6} {y!r}"'),
+    ],
+)
+def test_an_ascii_conversion_becomes_repr(source: str, expected: str) -> None:
+    # Codon 0.19 has no ascii() (#701): `!r` is the same type, a str.
+    assert _rewritten(f"r = {source}\n") == f"r = {expected}\n"
+    assert python_rewrite_refusals(f"r = {source}\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f"{x!a}"',
+        'f"{x!a:>6}"',
+        'f"{{{x!a}}}"',
+        'f"<{x!a}|{x!r}>"',
+        'f"{x=!a}"',
+        'f"{x!a:>{w}}"',
+        'f"{x:>{w!a}}"',
+        "f'{d[\"k\"]!a}'",
+        "f'''{{{d[\"it's\"]!a:>6}'''",
+        '"{!a}".format(x)',
+        '"{0!a:>6}".format(x)',
+    ],
+)
+@pytest.mark.parametrize("value", ["ab", "\u00e9\u4e00\U0001f600"])
+def test_an_ascii_conversion_keeps_its_type(source: str, value: str) -> None:
+    """`!r` for `!a` differs only in how non-ASCII characters are escaped."""
+    text, _ = python_rewrites(f"r = {source}\n")
+    assert "!a" not in text and "ascii" not in text
+    written: dict[str, Any] = {"x": value, "w": 8, "d": {"k": value, "it's": value}}
+    checked: dict[str, Any] = dict(written)
+    exec(f"r = {source}\n", written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert type(checked["r"]) is str and type(written["r"]) is str
+    if value.isascii():
+        assert checked["r"] == written["r"]
+    elif not any(s in source for s in ("w", ":", "!r")):
+        # ascii() is repr() with the non-ASCII characters escaped.
+        escaped = checked["r"].encode("ascii", "backslashreplace").decode()
+        assert escaped == written["r"]
+        assert checked["r"] != written["r"]
+
+
+#: Rewritten f-strings with a field whose expression ast.unparse writes with a
+#: double quote, valid on Python 3.10 (#704).
+_QUOTED_FIELDS = [
+    ("f'''{d[\"it's\"]} {{x}}'''", '(str(d["it\'s"]) + " " + "{" + "x" + "}")'),
+    ("f'''{d[\"it's\"]!s} {{'''", '(str(d["it\'s"]) + " " + "{")'),
+    ("f'''{d[\"it's\"]!r} {{'''", '(repr(d["it\'s"]) + " " + "{")'),
+    ("f'''{d[\"it's\"]:>6} {{'''", '((d["it\'s"]).__format__(">6") + " " + "{")'),
+    ("f'''{d[\"it's\"]!s:>6}{{'''", '(str(d["it\'s"]).__format__(">6") + "{")'),
+    ("f'''{d[\"it's\"]!r:>9}{{'''", '(repr(d["it\'s"]).__format__(">9") + "{")'),
+    ("f'''{x:+d} {d[\"it's\"]}'''", '((x).__format__("+d") + " " + str(d["it\'s"]))'),
+    ("f'''{d[\"it's\"]=}{{'''", '("d[\\"it\'s\\"]=" + repr(d["it\'s"]) + "{")'),
+    (
+        "f'''{n[\"it's\"]:+d}|{e[\"it's\"]:>8.2f}|{n[\"it's\"]}'''",
+        '((n["it\'s"]).__format__("+d") + "|" + (e["it\'s"]).__format__(">8.2f")'
+        ' + "|" + str(n["it\'s"]))',
+    ),
+    (
+        "f'''{e[\"it's\"]!r:^9} {e[\"it's\"]} {{'''",
+        '(repr(e["it\'s"]).__format__("^9") + " " + str(e["it\'s"]) + " " + "{")',
+    ),
+]
+
+#: The same with PEP 701 syntax: the f-string's own quote and a backslash in
+#: a field (Python 3.12+), kept as text so this file parses on 3.10.
+_QUOTED_FIELDS_312 = [
+    ('f"{d["it\'s"]} {{x}}"', '(str(d["it\'s"]) + " " + "{" + "x" + "}")'),
+    ("f\"{x:+d} {d['a\\\\b']}\"", '((x).__format__("+d") + " " + str(d[\'a\\\\b\']))'),
+    (
+        "f\"{d['a\\\\b']!r:>9} {{\"",
+        '(repr(d[\'a\\\\b\']).__format__(">9") + " " + "{")',
+    ),
+    (
+        "f\"{d['a\\\\b']!s:<4}|{d['a\\\\b']:>4}}}\"",
+        '(str(d[\'a\\\\b\']).__format__("<4") + "|"'
+        ' + (d[\'a\\\\b\']).__format__(">4") + "}")',
+    ),
+    ('f"{"\\n".join(xs)} {{"', '(str(\'\\n\'.join(xs)) + " " + "{")'),
+]
+
+_PEP_701 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 701)"
+)
+_ALL_QUOTED_FIELDS = [pytest.param(*case, id=case[0]) for case in _QUOTED_FIELDS] + [
+    pytest.param(*case, id=case[0], marks=_PEP_701) for case in _QUOTED_FIELDS_312
+]
+
+
+@pytest.mark.parametrize(("source", "expected"), _ALL_QUOTED_FIELDS)
+def test_a_quoted_field_of_a_rewritten_fstring_becomes_a_call(
+    source: str, expected: str
+) -> None:
+    # The rewrite writes double-quoted strings: a field whose expression holds
+    # a double quote or a backslash is a call, whatever its conversion (#704).
+    assert python_rewrite_refusals(f"r = {source}\n") == []
+    assert _rewritten(f"r = {source}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(("source", "expected"), _ALL_QUOTED_FIELDS)
+def test_a_quoted_field_of_a_rewritten_fstring_keeps_its_value(
+    source: str, expected: str
+) -> None:
+    del expected
+    text, _ = python_rewrites(f"r = {source}\n")
+    values = {"it's": "q'\"z", "a\\b": "v", "k": 1}
+    written: dict[str, Any] = {
+        "x": 5,
+        "xs": ["a", "b"],
+        "d": values,
+        "n": {"it's": -12},
+        "e": {"it's": 3.14159},
+    }
+    checked: dict[str, Any] = dict(written)
+    exec(f"r = {source}\n", written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert type(checked["r"]) is str and type(written["r"]) is str
+    assert checked["r"] == written["r"]
 
 
 def test_open_text_keywords_are_dropped() -> None:
@@ -6609,3 +6798,596 @@ def test_a_list_display_of_an_annotated_target_gets_no_annotate_hint(
     assert "annotated element type" in annotated.message
     assert "annotate the target" not in annotated.message
     assert "annotate the target" in bare.message
+
+
+# ---------------------------------------------------------------------------
+# list[tuple[X, ...]] locals (#625)
+# ---------------------------------------------------------------------------
+
+
+def test_a_local_list_of_variable_length_tuples_keeps_its_annotation() -> None:
+    # Dropped, the annotation would leave Codon to type the list from its
+    # first append, a tuple of fixed length.
+    out = _transform(
+        """
+        def f() -> None:
+            pairs: list[tuple[int, ...]] = []
+            pairs.append((1, 2))
+            pairs.append((3,))
+            pairs.insert(0, ())
+            by: dict[str, tuple[float, ...]] = {}
+            other = []
+            other.append((1, 2))
+            fixed: list[tuple[int, int]] = []
+            fixed.append((1, 2))
+            xs = [pairs.append((5, 6)) for pairs in [[]]]
+        """
+    )
+    assert "pairs = List[List[int]]()" in out
+    assert "pairs.append(List[int]([1, 2]))" in out
+    assert "pairs.append(List[int]([3,]))" in out
+    assert "pairs.insert(0, List[int]())" in out
+    assert "by = {}" in out
+    assert "other.append((1, 2))" in out
+    assert "fixed.append((1, 2))" in out
+    # A comprehension's own `pairs` is no such local.
+    assert "pairs.append((5, 6)) for pairs in" in out
+
+
+def test_a_list_of_variable_length_tuples_of_one_length_is_left_to_codon() -> None:
+    # Given tuples of one length only, the annotation is dropped as before
+    # (#625 review): the list of fixed-length tuples Codon types from them
+    # takes a tuple held in a name, `extend`, `in` with a tuple display, and
+    # a `tuple[X, ...]` in a dict, a set, a nested list or an Optional, which
+    # no append rewrites, is left to Codon too.
+    out = _transform(
+        """
+        def f() -> None:
+            pairs: list[tuple[int, ...]] = []
+            pairs.append((1, 2))
+            t = (3, 4)
+            pairs.append(t)
+            ok = (1, 2) in pairs
+            d: dict[str, tuple[int, ...]] = {}
+            s: set[tuple[int, ...]] = set()
+            nested: list[list[tuple[int, ...]]] = []
+            o: list[tuple[int, ...] | None] = []
+            seeded: list[tuple[int, ...]] = [(1, 2)]
+            seeded.append((3,))
+            seeded.append((4, 5))
+        """
+    )
+    assert "pairs = []" in out
+    assert "pairs.append((1, 2))" in out
+    assert "d = {}" in out
+    assert "s = set()" in out
+    assert "nested = []" in out
+    assert "o = []" in out
+    # Not an empty display: Codon types it from its first element as before,
+    # and the tuples given to it are left alone.
+    assert "seeded.append((3,))" in out
+
+
+def test_codon_annotation_takes_a_variadic_tuple_only_where_asked() -> None:
+    node = ast.parse("list[tuple[int, ...]]", mode="eval").body
+    assert codon_annotation(node) is None
+    assert codon_annotation(node, variadic_tuples=True) == "list[List[int]]"
+    assert codon_annotation(node, class_level=True) == "list[List[int]]"
+
+
+# ---------------------------------------------------------------------------
+# super().__init__ past a mixin listed first (#626)
+# ---------------------------------------------------------------------------
+
+_MIXINS = """
+from autoware_carla_scenario import BaseScenario
+
+
+class VehicleInfoMixin:
+    ego_config: int
+
+    def label(self) -> str:
+        return "x"
+
+
+class Deeper(VehicleInfoMixin):
+    pass
+
+
+class CaseScenario(Deeper, BaseScenario):
+    def __init__(self, ego_config, spawn_pose):
+        super().__init__(ego_config, spawn_pose=spawn_pose)
+
+    def again(me):
+        super().__init__()
+
+        def inner():
+            super().__init__(1)
+
+    @classmethod
+    def make(cls, c):
+        super().__init__(c)
+
+
+class First(BaseScenario, VehicleInfoMixin):
+    def __init__(self, c):
+        super().__init__(c)
+
+
+class WithInit:
+    def __init__(self) -> None:
+        pass
+
+
+class OwnInitFirst(WithInit, BaseScenario):
+    def __init__(self, c):
+        super().__init__()
+
+
+@dataclass
+class Fields:
+    a: int = 0
+
+
+class DataclassFirst(Fields, BaseScenario):
+    def __init__(self, c):
+        super().__init__(c)
+
+
+class UnknownFirst(Unknown, BaseScenario):
+    def __init__(self, c):
+        super().__init__(c)
+"""
+
+
+def test_super_init_passes_over_a_mixin_listed_first_by_naming_the_base() -> None:
+    out = transform_source(textwrap.dedent(_MIXINS), init_classes={"BaseScenario"})
+    lines = out.splitlines()
+
+    def at(needle: str, after: int = 0) -> str:
+        line = next(n for n, text in enumerate(lines) if needle in text and n > after)
+        return lines[line + 1].strip()
+
+    # Python's MRO passes Deeper and VehicleInfoMixin, which define no
+    # __init__, to BaseScenario's; Codon's super() is Deeper's.
+    assert at("class CaseScenario(") == "def __init__(self, ego_config, spawn_pose):"
+    assert "BaseScenario.__init__(self, ego_config, spawn_pose=spawn_pose)" in out
+    assert "BaseScenario.__init__(me)" in out
+    assert "            super().__init__(1)" in out  # a nested function's
+    # A first base with an __init__ (its own, or a dataclass's), or one the
+    # check cannot see, keeps super().
+    # A classmethod has no `self` to pass (#626 review).
+    assert out.count("super().__init__(c)") == 4
+    assert "BaseScenario.__init__(cls" not in out
+    assert "        super().__init__()\n" in out
+
+
+def test_plain_classes_are_the_mixins_without_an_init() -> None:
+    tree = ast.parse(textwrap.dedent(_MIXINS))
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    with_init = classes_with_init(classes, {"BaseScenario"})
+    assert plain_classes(classes, with_init) == {"VehicleInfoMixin", "Deeper"}
+    # A mixin of another module counts as one too.
+    elsewhere = ast.parse("class Local(Shared):\n    pass\n")
+    local = {n.name: n for n in elsewhere.body if isinstance(n, ast.ClassDef)}
+    assert plain_classes(local, set(), {"Shared"}) == {"Local", "Shared"}
+    assert plain_classes(local, set()) == set()
+    # Python gives a protocol class an __init__ of its own; ABC and Generic
+    # add none.
+    bases = ast.parse(
+        "class P(Protocol):\n    pass\n"
+        "class A(ABC):\n    pass\n"
+        "class G(Generic[T]):\n    pass\n"
+    )
+    found = {n.name: n for n in bases.body if isinstance(n, ast.ClassDef)}
+    assert plain_classes(found, set()) == {"A", "G"}
+
+
+# ---------------------------------------------------------------------------
+# Keyword-only lambdas, overrides and Callable tables (#629)
+# ---------------------------------------------------------------------------
+
+
+def test_a_lambda_with_keyword_only_parameters_is_refused() -> None:
+    [(line, message)] = python_rewrite_refusals("x = 1\nf = lambda a, *, k=1: a * k\n")
+    assert line == 2
+    assert "`k` after a bare `*`" in message
+    assert "write a nested def instead" in message
+    # `*args` before them is no bare `*`, and a def is compiled as it is.
+    assert python_rewrite_refusals("g = lambda *a, k=1: k\n") == []
+    assert python_rewrite_refusals("def h(a, *, k=1):\n    return a\n") == []
+
+
+@pytest.mark.parametrize(
+    ("message", "hint"),
+    [
+        (
+            "'s' is an invalid keyword argument for class_thunk_dispatch()",
+            "through a dispatch thunk, which takes no keyword argument",
+        ),
+        (
+            "unsupported operand type(s) for +: 'Capsule[Optional[int]]' and '1'",
+            "copy it into an annotated local",
+        ),
+    ],
+)
+def test_a_codon_limit_of_629_gets_its_hint(message: str, hint: str) -> None:
+    (out,) = _variadic_hints([Diagnostic(message)])
+    assert out.message.startswith(message + ": ")
+    assert hint in out.message
+
+
+_KEYWORD_ONLY_SOURCES = """
+def key_of(x: int, *, rev: bool = False) -> int:
+    return x
+
+
+def dbl(x: int) -> int:
+    return x
+
+
+class Base:
+    def m(self, a: float, *, s: float = 1.0) -> float:
+        return a
+
+
+class Sub(Base):
+    def m(self, a: float, *, s: float = 2.0) -> float:
+        return a
+
+    def n(self) -> int:
+        return 1
+"""
+
+
+def test_keyword_only_hints_name_the_function_and_the_override(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scenario.py"
+    path.write_text(_KEYWORD_ONLY_SOURCES)
+    sources = _Sources(
+        modules={
+            "pkg.scenario": _Module(
+                path, False, _KEYWORD_ONLY_SOURCES, ast.parse(_KEYWORD_ONLY_SOURCES)
+            )
+        }
+    )
+    table = "no function 'Callable.__new__' with arguments (key_of[int,T2,bool])"
+    plain = "no function 'Callable.__new__' with arguments (dbl[int])"
+    call = "cannot typecheck 'b.m(1.0)'"
+    other = "cannot typecheck 'b.n()'"
+    out = _keyword_only_hints(
+        [
+            Diagnostic(f"{table}: generic"),
+            Diagnostic(plain),
+            Diagnostic(call),
+            Diagnostic(other),
+        ],
+        sources,
+    )
+    assert out[0].message.startswith(table + ": `key_of` has keyword-only")
+    assert "(`lambda x: key_of(x)`)" in out[0].message
+    assert out[1].message == plain
+    assert out[2].message.startswith(call + ": `m` is overridden. ")
+    assert out[3].message == other
+
+
+def test_an_error_inside_a_replace_method_is_located_at_a_call_of_another_module(
+    tmp_path: Path,
+) -> None:
+    # #623: the class in configs.py, the call in scenario.py.  Codon's frame
+    # names the call's file by its basename, resolved against the checked
+    # modules; an ambiguous basename leaves the error at the class.
+    from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
+
+    configs = str(tmp_path / "configs.py")
+    scenario = str(tmp_path / "scenario.py")
+    message = "'Tuple[int,int,int]' does not match expected type 'List[int]'"
+    frame = (
+        "during the realization of _acs_with__ids(self: Lanes, ids: "
+        "Tuple[int,int,int]) [scenario.py:69]"
+    )
+    error = Diagnostic(message, configs, 6, None, (frame,))
+    (out,) = _variadic_hints([error], {"configs.py": configs, "scenario.py": scenario})
+    assert (out.path, out.line, out.column, out.trace) == (scenario, 69, None, ())
+    (kept,) = _variadic_hints([error], {"configs.py": configs})
+    assert (kept.path, kept.line, kept.trace) == (configs, 6, (frame,))
+
+
+def test_the_unique_basenames_of_a_workspace_resolve_codon_frames(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.check import _unique_basenames, _Workspace
+
+    ws = _Workspace(tmp_path, None)
+    ws.files = {
+        "pkg/scenario.codon": "/src/pkg/scenario.py",
+        "pkg/configs.codon": "/src/pkg/configs.py",
+        "pkg/sub/configs.codon": "/src/pkg/sub/configs.py",
+    }
+    assert _unique_basenames(ws) == {"scenario.codon": "/src/pkg/scenario.py"}
+
+
+_NESTED_DATACLASS_SOURCE = """\
+from dataclasses import dataclass, replace
+
+
+class Plans:
+    @dataclass(frozen=True)
+    class Leg:
+        lanelet: int = 0
+        speed: float = 1.0
+
+    def faster(self, leg: "Plans.Leg") -> "Plans.Leg":
+        return replace(leg, speed=leg.speed * 2)
+
+
+def segments() -> int:
+    @dataclass(order=True)
+    class Seg:
+        a: int = 0
+    return replace(Seg(1), a=2).a
+
+
+class Outer:
+    @dataclass
+    class Last:
+        x: int = 0
+"""
+
+
+def test_a_nested_dataclass_gets_its_methods_in_its_body() -> None:
+    # #623: `@extend` cannot name `Plans.Leg`, so its `replace` methods and
+    # its ==, hash and ordering go at the end of its body, each line of the
+    # module on its own line of origin.
+    out, origin = transform_source_lines(_NESTED_DATACLASS_SOURCE)
+    body = out[len(PRELUDE) :]
+    lines = body.split("\n")
+    assert out.count("\n") == len(origin) + PRELUDE.count("\n")
+    tree = ast.parse(body)
+    plans = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    leg = next(n for n in plans.body if isinstance(n, ast.ClassDef))
+    assert {m.name for m in leg.body if isinstance(m, ast.FunctionDef)} == {
+        "__eq__",
+        "__ne__",
+        "__hash__",
+        "_acs_with__lanelet",
+        "_acs_with__speed",
+    }
+    assert "        def _acs_with__speed(self, speed: float) -> Plans.Leg:" in lines
+    assert "            return Plans.Leg(lanelet=self.lanelet, speed=speed)" in lines
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    seg = next(n for n in function.body if isinstance(n, ast.ClassDef))
+    assert {"__lt__", "_acs_with__a"} <= {
+        m.name for m in seg.body if isinstance(m, ast.FunctionDef)
+    }
+    assert "            return Seg(a=a)" in lines
+    # The nested class's methods come before the outer class's `@extend`.
+    outer = [i for i, ln in enumerate(lines) if ln == "class Outer:"]
+    last = lines.index("        def _acs_with__x(self, x: int) -> Outer.Last:")
+    extend = lines.index("@extend", outer[0])
+    assert outer[0] < last < extend
+    # Each generated line maps to its class's line; the others to their own.
+    source = _NESTED_DATACLASS_SOURCE.split("\n")
+
+    def written(start: str) -> str:
+        number = next(i for i, ln in enumerate(lines) if ln.startswith(start))
+        return source[origin[number] - 1]
+
+    assert written("    def faster(").startswith("    def faster(")
+    assert written("def segments(") == "def segments() -> int:"
+    assert written("    return replace(Seg(1))") == "    return replace(Seg(1), a=2).a"
+    assert written("class Outer:") == "class Outer:"
+    assert written("            return Seg(a=a)") == "    class Seg:"
+    assert written("        def _acs_with__speed(") == "    class Leg:"
+
+
+def test_a_dataclass_nested_on_its_header_line_is_left_alone() -> None:
+    source = "class A:\n    @dataclass\n    class B: x: int = 0\n"
+    out, origin = transform_source_lines(
+        "from dataclasses import dataclass\n\n\n" + source
+    )
+    assert "_acs_with__x" not in out
+    assert out.count("\n") == len(origin) + PRELUDE.count("\n")
+
+
+# ---------------------------------------------------------------------------
+# Python 3.12+ syntax (#624): the inputs are strings, as the suite runs on 3.10
+# ---------------------------------------------------------------------------
+
+_PY312 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 695, PEP 701)"
+)
+
+
+def test_fstring_requoting_leaves_source_before_3_12_syntax_alone() -> None:
+    from autoware_carla_scenario.typecheck.typing_rewrites import (
+        requote_fstring_fields,
+    )
+
+    for source in (
+        "x = f\"{d['k']}\"\n",
+        'x = f"""{d["k"]}"""\n',
+        "x = f'{a!r:>{w}}' + \"it's\"\n",
+    ):
+        assert requote_fstring_fields(source) == (source, [])
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("source", "requoted"),
+    [
+        (
+            'x = f"{cfg.name.replace("_", "-")} {d["k"]}"\n',
+            "x = f\"{cfg.name.replace('_', '-')} {d['k']}\"\n",
+        ),
+        ("x = f'{d['k']}'\n", "x = f'{d[\"k\"]}'\n"),
+        ('x = f"a" f"{d["k"]}"\n', 'x = f"a" f"{d[\'k\']}"\n'),
+        ('x = f"{x!r:>8} {rb"x"}"\n', "x = f\"{x!r:>8} {rb'x'}\"\n"),
+        ('x = f"{f"{a}"}"\n', "x = f\"{f'{a}'}\"\n"),
+        (
+            'x = f"""{d["k"]} {f"{a}"}"""\n',
+            'x = f"""{d["k"]} {f"{a}"}"""\n',
+        ),
+        # A form feed or U+2028 does not end a line for the tokenizer: the
+        # requoted quote stays on the token's row (an IndexError before).
+        (
+            '\x0c\ns = "a\x0cb"\nx = f"{d["k"]}"\n',
+            '\x0c\ns = "a\x0cb"\nx = f"{d[\'k\']}"\n',
+        ),
+        ('# \u2028\nx = f"{d["k"]}"\n', "# \u2028\nx = f\"{d['k']}\"\n"),
+    ],
+)
+def test_a_same_quote_fstring_field_is_requoted(source: str, requoted: str) -> None:
+    from autoware_carla_scenario.typecheck.typing_rewrites import (
+        requote_fstring_fields,
+    )
+
+    out, refused = requote_fstring_fields(source)
+    assert (out, refused) == (requoted, [])
+    assert ast.dump(ast.parse(out)) == ast.dump(ast.parse(source))
+    assert typing_rewrites(source) == requoted
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("source", "hint"),
+    [
+        ('x = 1\ny = f"{d["it\'s"]}"\n', "cannot quote it with the other quote"),
+        ('x = 1\ny = f"{f"it\'s {a}"}"\n', "cannot quote it with the other quote"),
+        ('x = 1\ny = f"{f"{a} {d["k"]}"}"\n', "cannot quote it with the other quote"),
+        ('x = 1\ny = f"{d["a\\nb"]}"\n', "holds a backslash"),
+        ("x = 1\ny = f\"{d['a\\nb']}\"\n", "holds a backslash"),
+        # The f-string's own quote inside a literal of the other quote: Codon,
+        # as Python before 3.12, ends the f-string at it.
+        ("x = 1\ny = f'{d[\"it's\"]}'\n", "holds the f-string's own quote"),
+        ("x = 1\ny = f'{m[\"it's\"] * 2:>6}'\n", "holds the f-string's own quote"),
+        ('x = 1\ny = f\'{"""it\'s"""}\'\n', "holds the f-string's own quote"),
+    ],
+)
+def test_an_fstring_field_that_cannot_be_requoted_is_refused(
+    source: str, hint: str
+) -> None:
+    ((line, message),) = typing_rewrite_refusals(source)
+    assert line == 2 and hint in message
+
+
+@_PY312
+@pytest.mark.parametrize(
+    "line",
+    [
+        'y = f"{d["it\'s"]} {{x}}"',
+        "y = f\"{x:+d} {d['a\\\\b']}\"",
+        'y = f"{"\\n".join(xs)!r:>9} {d["it\'s"]!s}}}"',
+        'y = "é" + f"{d["k"]} {d["it\'s"]!a} {{"',
+        'y = f"{{" f"{d["it\'s"]}"',
+        # A nested spec field: rewritten, so not requoted either.
+        'y = f"{x!r:>{w}} {rb"x"}"',
+        # Not requoted: the text of `{d['k']=}` keeps its quotes.
+        "y = f'{d['k']=} {d[\"it's\"]!r} {{'",
+    ],
+)
+def test_a_field_of_an_fstring_written_as_calls_is_not_refused(line: str) -> None:
+    # python_rewrites writes these f-strings as `+` parts, the field a call
+    # that needs no quote (#704): nothing for the requote to refuse.
+    source = f"x = 1\n{line}\n"
+    assert typing_rewrite_refusals(source) == []
+    assert python_rewrite_refusals(source) == []
+    assert typing_rewrites(source) == source  # neither requoted
+    text, _ = python_rewrites(typing_rewrites(source))
+    assert text.count("\n") == source.count("\n")
+    values: dict[str, Any] = {
+        "x": 5,
+        "w": 6,
+        "xs": ["a"],
+        "d": {"k": 1, "it's": 2, "a\\b": 3},
+    }
+    written, checked = dict(values), dict(values)
+    exec(source, written)  # noqa: S102 - a literal of this test
+    exec(text, checked)  # noqa: S102
+    assert checked["y"] == written["y"] and type(checked["y"]) is str
+    # No f-string field with a quote or a backslash is left for Codon.
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.FormattedValue):
+            assert not any(c in ast.unparse(node.value) for c in '"\\')
+    # The f-string that is not rewritten is still refused where it cannot be
+    # requoted.
+    assert [
+        n for n, _ in typing_rewrite_refusals(source + 'w = f"{d["it\'s"]}"\n')
+    ] == [3]
+
+
+@_PY312
+def test_a_type_statement_becomes_an_alias() -> None:
+    source = (
+        "type LaneIds = list[int]\nclass A:\n    type Ids = tuple[\n        int, int]\n"
+    )
+    assert typing_rewrites(source) == (
+        "LaneIds = list[int]\nclass A:\n    Ids = tuple[\n        int, int]\n"
+    )
+    assert typing_rewrite_refusals(source) == []
+
+
+@_PY312
+def test_a_generic_type_alias_is_refused() -> None:
+    ((line, message),) = typing_rewrite_refusals("x = 1\ntype Pair[T] = tuple[T, T]\n")
+    assert line == 2 and "no generic alias" in message
+    assert "`tuple[T, T]`" in message
+
+
+@_PY312
+def test_type_parameters_stay_without_bounds() -> None:
+    # Codon has PEP 695 generics; it would read `T: int` as a static integer.
+    source = (
+        "def f[T, B: Base, N: (int, float)](a: T, b: B, n: N) -> T:\n"
+        "    return a\n"
+        "class Box[K: Base]:\n"
+        "    item: K\n"
+    )
+    assert typing_rewrites(source) == (
+        "def f[T, B, N](a: T, b: B, n: N) -> T:\n"
+        "    return a\n"
+        "class Box[K]:\n"
+        "    item: K\n"
+    )
+    assert typing_rewrite_refusals(source) == []
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("source", "spelling"),
+    [
+        ("def f[*Ts](*a: *Ts) -> None:\n    pass\n", "`*Ts`"),
+        ("def f[**P](x: int) -> None:\n    pass\n", "`**P`"),
+    ],
+)
+def test_variadic_type_parameters_are_refused(source: str, spelling: str) -> None:
+    ((line, message),) = typing_rewrite_refusals(source)
+    assert line == 1 and spelling in message
+
+
+@_PY312
+def test_a_generic_function_or_class_is_compiled_where_it_is_used() -> None:
+    from autoware_carla_scenario.typecheck.library_driver import (
+        render_library_checks,
+    )
+
+    source = (
+        "def first[T](xs: list[T]) -> T:\n"
+        "    return xs[0]\n"
+        "class Box[K, V]:\n"
+        "    def __init__(self, k: K, v: V) -> None:\n"
+        "        self.k = k\n"
+        "class Plain:\n"
+        "    def wrap[X](self, x: X) -> list[X]:\n"
+        "        return [x]\n"
+        "    def size(self) -> int:\n"
+        "        return 1\n"
+    )
+    checks = render_library_checks(ast.parse(source))
+    problems = dict(checks.problems)
+    assert "annotated with a TypeVar" in problems[1]
+    assert "`class Box[K, V]`" in problems[3]
+    assert "annotated with a TypeVar" in problems[7]
+    assert "Box" not in checks.source and ".wrap(" not in checks.source
+    assert "_acs_value(Plain).size()" in checks.source

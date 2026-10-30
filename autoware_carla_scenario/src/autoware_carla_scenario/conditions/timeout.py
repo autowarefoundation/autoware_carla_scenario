@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult
+from ..failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -36,6 +37,10 @@ class TimeoutCondition(BaseCondition):
         """
         super().__init__(label=label)
         self.timeout_seconds = timeout_seconds
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        """Running out of time: :attr:`~FailureCategory.PROGRESS`."""
+        return FailureCategory.PROGRESS
 
     def get_details(self) -> dict[str, Any]:
         return {"timeout_seconds": self.timeout_seconds}

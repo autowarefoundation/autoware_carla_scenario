@@ -399,10 +399,5 @@ def load_lanelet2(
     path = Path(lanelet2_path)
     projector, name = resolve_projector(path, origin, projector_type)
     lanelet_map = lanelet2.io.load(str(path), projector)
-    if TYPE_CHECKING:
-        # _read_local_tags() moves points and rebuilds the map, which the
-        # lanelet2 model has no setters for (UNCALLED in typecheck/library.py).
-        read = lanelet_map
-    else:
-        read = _read_local_tags(lanelet_map, path) if name == LOCAL_XY else lanelet_map
+    read = _read_local_tags(lanelet_map, path) if name == LOCAL_XY else lanelet_map
     return read, projector, name

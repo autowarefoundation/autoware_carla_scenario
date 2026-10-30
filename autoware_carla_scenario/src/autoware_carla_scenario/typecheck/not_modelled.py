@@ -188,14 +188,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main",
         _CARLA_INSTALL,
     ),
-    f"{_PACKAGE}.debug_markers": {
-        "plan_markers": (
-            "takes carla_driver_interface's Trajectory, a driver's plan, which "
-            "only the driver-backed entities hold (checked from their source); "
-            "the model of carla_driver_interface declares it for the driver "
-            "modules, not for a scenario"
-        ),
-    },
+    f"{_PACKAGE}.debug_markers": _each(
+        "plan_markers plan_polyline world_point",
+        "draws a driver's plan (carla_driver_interface's Trajectory and Pose), "
+        "which only the driver-backed entities hold (checked from their "
+        "source); the model of carla_driver_interface declares them for the "
+        "driver modules, not for a scenario",
+    ),
     f"{_PACKAGE}.driver.egodriver_client": _each(
         "EGODRIVER_SERVICE_FULL_NAME MAX_MESSAGE_BYTES channel_options", _GRPC
     ),
@@ -283,11 +282,19 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.t4": _each(
         "DATASET_SUFFIX INSTALL_HINT LIDAR_CHANNEL T4Settings T4UnavailableError "
         "active_recording camera_channel category_of dataset_path opencv_of_ftheta "
-        "offer_driver_sensors require_writer withdraw_driver_sensors",
+        "offer_driver_sensors offered_rear_axle require_writer withdraw_driver_sensors",
         "writes a run as a T4 dataset with the autoware-carla-scenario-t4 "
         "package, which the runner does (t4.enabled), not a scenario; the "
         "model declares only the T4Recorder and T4Recording the checked "
         "runner drives",
+    ),
+    f"{_PACKAGE}.t4_scene": _each(
+        "LOG_SUFFIX MAP_SUFFIX SCENE_SUFFIX T4SceneExport map_resource "
+        "trajectory_log_to_t4_scene write_t4_scene",
+        "writes a run's trajectory log as a T4Scene, which the runner does "
+        "after a run (t4scene.enabled) and scenario-t4scene does from the "
+        "shell, not a scenario; the model declares only the T4SceneExporter "
+        "the checked runner hands each log to",
     ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
@@ -440,6 +447,31 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "PedestrianEntity": {
+        "walk_path": (
+            "the walk route_to() laid out, a trajectory.model ResolvedTrajectory "
+            "the routing action paces a walker along; a scenario routes the "
+            "pedestrian, it does not read its walk"
+        ),
+        "walk_along": (
+            "lays a walk out whole as a trajectory.model ResolvedTrajectory, "
+            "what the routing action does with a recorded walk; a scenario "
+            "routes the pedestrian with a RoutingAction instead"
+        ),
+        "set_traffic_backend": _SET_TRAFFIC_BACKEND,
+        "set_turn_back": (
+            "how the walks it is given wait at a kerb and turn back, which the "
+            "routing action sets from its turn_back_* thresholds; a scenario "
+            "sets them on the RoutingAction"
+        ),
+    },
+    "SpawnAction": {
+        "apply": (
+            "spawns at once with a blueprint library and a ground lookup shared "
+            "by many props, what ConstructionZoneAction does; a scenario "
+            "registers the action instead"
+        ),
+    },
     "AdversarialTrafficAction": {
         "choices": (
             "the adversities NADE sampled, as adversity.nade's NadeChoice, "
@@ -471,7 +503,6 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "compiles them from their source",
     ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
-    "PedestrianEntity": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {
         **_members("get_details to_summary_dict", _CONDITION_DETAILS),
@@ -484,7 +515,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "CarlaDriverEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
-        "config debug_markers debug_state destroy drive_count follow_route forget_lane_change "
+        "config debug_markers debug_state destroy drive_count finish_at follow_route forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
         "on_scenario_start on_tick release_from_traffic require_microscopic "
         "requires_goal resume_traffic route_to set_client set_desired_speed "
@@ -523,6 +554,20 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "client_address client_connected close config configure is_ready port "
         "start take_turn_indicators",
         _BY_NAME,
+    ),
+    "HilsEgoEntity": _members(
+        "actor attaches_to_existing_actor carried_actor_ids change_lane command "
+        "config debug_markers destroy finish_at follow_route forget_lane_change "
+        "is_initialized lane_change_finished on_scenario_end on_scenario_start "
+        "on_tick release_from_traffic require_microscopic requires_goal "
+        "resume_traffic route_to set_client set_desired_speed set_initial_speeds "
+        "simulation_fidelity spawn stack_name termination_reason "
+        "termination_requested turn_at_junction use_autopilot",
+        "the model declares only what the checked CommunicationLossAction "
+        "calls on the HILS ego (disconnect, reconnect), and a scenario cannot "
+        "build one (its constructor is a compile error): the runner builds it "
+        "from the run's config (ego.entity=hils); entity.hils_entity imports "
+        "socket, so the library check does not compile it",
     ),
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
@@ -569,6 +614,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "start_sensors and stop_sensors whatever it is"
         ),
     },
+    "T4SceneExporter": _members(
+        "max_distance_m step_s",
+        "the settings the exporter was made with, which only its own export() "
+        "reads; the checked runner calls export() whatever they are",
+    ),
     "T4Recorder": {
         "settings": (
             "the T4Settings the recorder was made with (the sensors, the "
@@ -595,6 +645,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
+    "Failure": {
+        "to_dict": _AS_DICT,
+        "from_dict": _FROM_MAPPING,
+    },
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},

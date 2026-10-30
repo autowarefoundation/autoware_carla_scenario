@@ -71,7 +71,10 @@ def setup(self) -> None:
 ### Route Verification (Visit Multiple Roads)
 
 ```python
-# Verify ego passes through roads in order using sticky conditions
+# Verify ego visits every road (in any order) using sticky conditions.
+# AndCondition checks every child on every tick, so each sticky child latches
+# as soon as its road is reached.  To require an order, latch the later road
+# on the earlier one: StickyCondition(AndCondition([StickyCondition(a), b])).
 sticky_conditions = [
     StickyCondition(
         EntityLanePositionCondition.anywhere_on_road(

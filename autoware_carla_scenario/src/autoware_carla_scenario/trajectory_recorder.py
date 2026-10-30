@@ -18,6 +18,8 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "actor", "id", "type_id", "role", "extent": [x,y,z],
   "center": [x,y,z]}`` -- the first time a vehicle/walker is seen; ``extent`` is
   the bounding box's half size, ``center`` its offset from the actor origin.
+* ``{"type": "rear_axle", "id", "offset"}`` -- right after an ego's ``actor``
+  record: where its rear axle (``base_link``) is along its x axis.
 * ``{"type": "traffic_light", "id", "opendrive_id", "location": [x,y,z],
   "boxes": [[x, y, z, ex, ey, ez, yaw], ...], "stops": [[x, y, z, yaw], ...]}``
   -- every traffic light, once: its light heads' boxes (world frame, half
@@ -34,8 +36,17 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   ``control`` only for the ego; ``lights`` only the lights whose state changed
   since the last written tick (all of them in the first).  Ticks without any
   vehicle/walker are not written.
+* ``{"type": "turn_indicators", "frame", "t", "states": {id:
+  "off"|"left"|"right"|"hazard"}}`` -- right after a tick on which a recorded
+  vehicle's turn indicators changed (every vehicle's the first time it is
+  seen): only the vehicles whose indicators changed.
 * ``{"type": "markers", "frame", "t", "actor", "polylines": [...]}`` -- after
   a tick on which the ego's debug markers (its plan) changed.
+* ``{"type": "plan", "frame", "t", "actor", "step", "planned_at_us",
+  "policy", "inference_seconds", "turn_indicator", "debug_scalars",
+  "points": [[dt, x, y, z, yaw], ...]}`` -- right after the ``markers`` line
+  of a driver's plan (:class:`~autoware_carla_scenario.ego_plan.PlanMarkers`):
+  the plan itself, each point timed ``dt`` seconds after it was made.
 * ``{"type": "condition", "frame", "t", "role", "index", "label",
   "satisfied"}`` -- when a pass/fail condition is first checked, and whenever
   it changes.
@@ -45,6 +56,22 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "adversity", "frame", "t", "label", "agent", "kind", "location",
   "probability", "is_probability", "weight", "avoidable", "victims",
   "response"}`` -- an adversity NADE sampled, on its tick (#397).
+* ``{"type": "waypoint_arrival", "frame", "t", "label", "entity", "vertex",
+  "kind", "mode", "target_t", "actual_t", "error_s"}`` -- a routed entity
+  reached a waypoint with a time or a departure condition: when it was due
+  (its time; the moment its condition first held) and when it arrived.
+* ``{"type": "collision", "frame", "t", "actors": [role, role], "ids":
+  [id, id], "impulse", "ego", "phase", "duration"}`` -- a vehicle other than
+  the ego began (``phase: "start"``) or ended (``"end"``, with how long it
+  lasted) a contact with a vehicle or a walker
+  (:mod:`~autoware_carla_scenario.npc_collisions`).
+* ``{"type": "walker_fallen", "frame", "t", "id", "role", "drop", "tilt"}``
+  -- a walker was seen fallen over, once per walker.
+* ``{"type": "spawn", "frame", "t", "label", "entity", "id"}`` -- a
+  ``SpawnAction`` brought an entity spawned hidden into the scene.
+* ``{"type": "despawn", "frame", "t", "label", "entity", "id", "reason"}``
+  -- a ``DespawnAction`` (``reason: "action"``), or the run for a walker
+  lying fallen (``"fallen"``), took an entity out of the world.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -71,9 +98,13 @@ from typing import IO, Any, Optional
 import orjson
 import typesafe_carla.carla as carla
 
+from .constants import EGO_ROLES
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
+from .ego_plan import PlanMarkers
 from .utils.traffic_light import traffic_light_state_name
+from .utils.turn_indicator import turn_indicator_state
+from .waypoint_arrival import WaypointArrival
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +117,32 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trajectory.schema.j
 DRAFT7_SCHEMA_PATH = Path(__file__).resolve().parent / "trajectory_recorder.schema.json"
 #: Actor type prefixes whose motion is recorded.
 RECORDED_KINDS = ("vehicle.", "walker.")
-#: ``role_name`` values whose control inputs are recorded.
-EGO_ROLES = ("ego", "hero")
+
+
+def _rear_axle(actor: Any) -> Optional[float]:
+    """Where the run takes an ego's rear axle to be, along its x axis from its
+    origin: the ``base_link`` the running ego set (``ego_base_link``: a driver
+    entity's rig origin, a ROS 2 ego's odometry, a bridged stack's
+    ``base_link``), else the rig origin a driver entity offered, else from its
+    wheels or its box (``driver.observation.rear_axle_offset``, as the T4
+    dataset takes it); ``None`` when none can be read."""
+    from .driver.observation import rear_axle_offset  # noqa: PLC0415
+    from .ego_base_link import ego_base_link  # noqa: PLC0415
+    from .t4 import offered_rear_axle  # noqa: PLC0415
+
+    run_offset = ego_base_link()
+    if run_offset is not None:
+        return run_offset
+    offered = offered_rear_axle()
+    if offered is not None:
+        return offered
+    try:
+        return rear_axle_offset(actor)
+    except Exception:  # noqa: BLE001 - the log goes on without it
+        logger.debug(
+            "No rear axle for actor %s", getattr(actor, "id", "?"), exc_info=True
+        )
+        return None
 
 
 def _r(value: float) -> float:
@@ -245,6 +300,9 @@ class TrajectoryRecorder:
         self._egos: dict[int, Any] = {}
         self._lights: list[Any] = []
         self._shown: dict[int, str] = {}
+        # Each recorded vehicle's turn indicators as last written; None once
+        # the world could not say (its light states are then left out).
+        self._indicators: Optional[dict[int, str]] = {}
         # The recorded actors of the last tick, to tell the ones gone.
         self._present: set[int] = set()
         # The tick last recorded (written or not): what later records refer to.
@@ -309,7 +367,8 @@ class TrajectoryRecorder:
     def record_markers(self, markers: Any) -> None:
         """Write the ego's debug markers on the tick last recorded, when they
         are not the ones written last (an entity hands out one object per
-        plan; no markers at all are written once, as none)."""
+        plan; no markers at all are written once, as none), and the plan
+        they draw when they carry one (:class:`PlanMarkers`)."""
         if self._out is None:
             return
         if markers is not None and not markers:
@@ -318,18 +377,43 @@ class TrajectoryRecorder:
             return
         self._markers = markers
         egos = list(self._egos)
+        head = {
+            "frame": self._frame,
+            "t": _r(self._t),
+            "actor": egos[0] if egos else None,
+        }
         self._guarded(
             "stopped",
             lambda: self._emit(
                 {
                     "type": "markers",
-                    "frame": self._frame,
-                    "t": _r(self._t),
-                    "actor": egos[0] if egos else None,
+                    **head,
                     "polylines": [] if markers is None else _polylines(markers),
                 }
             ),
         )
+        if isinstance(markers, PlanMarkers):
+            plan = markers.plan
+            # orjson writes a number that is not finite (a diagnostic, the
+            # inference time) as null, which the schema allows there.
+            self._guarded(
+                "stopped",
+                lambda: self._emit(
+                    {
+                        "type": "plan",
+                        **head,
+                        "step": plan.step,
+                        "planned_at_us": plan.planned_at_us,
+                        "policy": plan.policy_name,
+                        "inference_seconds": _r(plan.inference_seconds),
+                        "turn_indicator": plan.turn_indicator,
+                        "debug_scalars": {
+                            key: _r(value) for key, value in plan.debug_scalars.items()
+                        },
+                        "points": [[_r(v) for v in point] for point in plan.points],
+                    }
+                ),
+            )
 
     def record_condition(
         self, role: str, index: int, label: str, satisfied: bool
@@ -401,6 +485,117 @@ class TrajectoryRecorder:
                     "label": label,
                     # Every field of the event, so none can be left out.
                     **dataclasses.asdict(event),
+                }
+            ),
+        )
+
+    def record_waypoint_arrival(self, label: str, arrival: WaypointArrival) -> None:
+        """Write a timed waypoint reached (:class:`WaypointArrival`) by the
+        routing action labelled *label*, on the tick last recorded."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "waypoint_arrival",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    "entity": arrival.entity,
+                    "vertex": int(arrival.vertex),
+                    "kind": arrival.kind,
+                    "mode": arrival.mode,
+                    "target_t": _r(arrival.target_t),
+                    "actual_t": _r(arrival.actual_t),
+                    "error_s": _r(arrival.error_s),
+                }
+            ),
+        )
+
+    def record_collision(self, collision: Any) -> None:
+        """Write a collision of a vehicle other than the ego
+        (:class:`~autoware_carla_scenario.npc_collisions.NpcCollision`)."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "collision",
+                    "frame": int(collision.frame),
+                    "t": _r(collision.t),
+                    "actors": [str(name) for name in collision.actors],
+                    "ids": [int(i) for i in collision.ids],
+                    "impulse": _r(collision.impulse),
+                    "ego": bool(collision.ego),
+                    "phase": str(collision.phase),
+                    "duration": None
+                    if collision.duration is None
+                    else _r(collision.duration),
+                }
+            ),
+        )
+
+    def record_walker_fallen(self, fallen: Any) -> None:
+        """Write a walker seen fallen over
+        (:class:`~autoware_carla_scenario.npc_collisions.WalkerFallen`)."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "walker_fallen",
+                    "frame": int(fallen.frame),
+                    "t": _r(fallen.t),
+                    "id": int(fallen.id),
+                    "role": str(fallen.role),
+                    "drop": _r(fallen.drop),
+                    "tilt": _r(fallen.tilt),
+                }
+            ),
+        )
+
+    def record_spawn(self, label: str, entity: str, actor_id: int) -> None:
+        """Write that the ``SpawnAction`` labelled *label* brought *entity*
+        (its actor *actor_id*, ``-1`` if unknown) into the scene, on the tick
+        last recorded."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "spawn",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    "entity": entity,
+                    "id": None if actor_id < 0 else int(actor_id),
+                }
+            ),
+        )
+
+    def record_despawn(
+        self, label: str, entity: str, actor_id: int, reason: str = "action"
+    ) -> None:
+        """Write that *label* removed *entity* (its actor *actor_id*, ``-1``
+        if it had none), on the tick last recorded: a ``DespawnAction``
+        (*reason* ``"action"``) or the run, a walker down (``"fallen"``)."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "despawn",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    "entity": entity,
+                    "id": None if actor_id < 0 else int(actor_id),
+                    "reason": reason,
                 }
             ),
         )
@@ -525,6 +720,12 @@ class TrajectoryRecorder:
                         ],
                     }
                 )
+                if role.lower() in EGO_ROLES:
+                    offset = _rear_axle(actor)
+                    if offset is not None:
+                        self._emit(
+                            {"type": "rear_axle", "id": actor.id, "offset": _r(offset)}
+                        )
             for actor_id in new:  # gone before it could be looked up
                 self._known.setdefault(actor_id, None)
 
@@ -588,6 +789,41 @@ class TrajectoryRecorder:
         if changed:
             record["lights"] = changed
         self._emit(record)
+        self._record_turn_indicators(world, present, elapsed)
+
+    def _record_turn_indicators(
+        self, world: carla.World, present: set[int], elapsed: float
+    ) -> None:
+        """Write the turn indicators of the recorded vehicles that changed
+        since the last tick, from every vehicle's light state at once."""
+        if self._indicators is None:
+            return
+        try:
+            light_states = world.get_vehicles_light_states()
+        except Exception:  # noqa: BLE001 - the log goes on without them
+            logger.debug(
+                "No vehicle light states; turn indicators left out", exc_info=True
+            )
+            self._indicators = None
+            return
+        changed: dict[str, str] = {}
+        for actor_id, light_state in light_states.items():
+            if actor_id not in present:
+                continue
+            state = turn_indicator_state(int(light_state)).name.lower()
+            if self._indicators.get(actor_id) != state:
+                self._indicators[actor_id] = changed[str(actor_id)] = state
+        if changed:
+            self._emit(
+                {
+                    "type": "turn_indicators",
+                    "frame": self._frame,
+                    "t": _r(elapsed),
+                    "states": dict(
+                        sorted(changed.items(), key=lambda item: int(item[0]))
+                    ),
+                }
+            )
 
 
 __all__ = [

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import List
 from unittest.mock import MagicMock, patch
 
@@ -120,7 +121,13 @@ class TestTrafficSignalConditionStateMatch:
         assert result is not None
         assert result.passed is True
 
-    def test_state_mismatch_returns_failed(self) -> None:
+    def test_state_mismatch_returns_none(self) -> None:
+        """A light in another state has not fired (#662).
+
+        Any non-``None`` result fires a pass condition or an action trigger,
+        so a ``passed=False`` here would pass the run, or start the action,
+        while the light is red.
+        """
         expected = MagicMock(name="Green")
         actual = MagicMock(name="Red")
         tl = _FakeTrafficLight(opendrive_id="sig_1", state=actual)
@@ -137,8 +144,60 @@ class TestTrafficSignalConditionStateMatch:
             )
             result = cond.check(world, elapsed=1.0)
 
+        assert result is None
+
+    def test_fires_once_the_light_turns_to_the_expected_state(self) -> None:
+        green = int(carla.TrafficLightState.Green)
+        red = int(carla.TrafficLightState.Red)
+        tl = _FakeTrafficLight(opendrive_id="sig_1", state=red)
+        world = _FakeWorld([tl])
+
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=100),
+            patch(_PATCH_SIGNAL_IDS, return_value=["sig_1"]),
+        ):
+            cond = TrafficSignalCondition(
+                lanelet2_regulatory_element_id=242,
+                expected_state=green,
+                label="wait_for_green",
+            )
+            assert cond.check(world, elapsed=0.05) is None
+            tl._state = green
+            result = cond.check(world, elapsed=0.10)
+
         assert result is not None
-        assert result.passed is False
+        assert result.passed is True
+
+    def test_does_not_trigger_an_action_while_red(self) -> None:
+        """As an action trigger, a red light holds the action back (#662)."""
+        from autoware_carla_scenario.actions.base import BaseAction
+
+        class _Recording(BaseAction):
+            def __init__(self, condition: TrafficSignalCondition) -> None:
+                super().__init__(label="start_npc", condition=condition)
+                self.executions = 0
+
+            def execute(self, world: object) -> None:
+                self.executions += 1
+
+        green = int(carla.TrafficLightState.Green)
+        red = int(carla.TrafficLightState.Red)
+        world = _FakeWorld([_FakeTrafficLight(opendrive_id="sig_1", state=red)])
+
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=100),
+            patch(_PATCH_SIGNAL_IDS, return_value=["sig_1"]),
+        ):
+            action = _Recording(
+                TrafficSignalCondition(
+                    lanelet2_regulatory_element_id=242,
+                    expected_state=green,
+                    label="wait_for_green",
+                )
+            )
+            action.tick(world, elapsed=0.05)
+
+        assert action.executions == 0
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +208,7 @@ class TestTrafficSignalConditionStateMatch:
 class TestTrafficSignalConditionNoActors:
     """Tests for missing actor scenarios."""
 
-    def test_no_matching_actors_returns_failed(self) -> None:
+    def test_no_matching_actors_returns_none(self) -> None:
         expected = MagicMock(name="Green")
         tl = _FakeTrafficLight(opendrive_id="sig_other", state=expected)
         world = _FakeWorld([tl])
@@ -165,8 +224,31 @@ class TestTrafficSignalConditionNoActors:
             )
             result = cond.check(world, elapsed=1.0)
 
-        assert result is not None
-        assert result.passed is False
+        assert result is None
+
+    def test_no_matching_actors_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A condition that cannot fire says why, once rather than every tick."""
+        expected = MagicMock(name="Green")
+        world = _FakeWorld([_FakeTrafficLight(opendrive_id="other", state=expected)])
+
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=100),
+            patch(_PATCH_SIGNAL_IDS, return_value=["sig_1"]),
+            caplog.at_level(logging.WARNING),
+        ):
+            cond = TrafficSignalCondition(
+                lanelet2_regulatory_element_id=242,
+                expected_state=expected,
+                label="no_actors_warn",
+            )
+            cond.check(world, elapsed=1.0)
+            cond.check(world, elapsed=2.0)
+
+        warnings = [r for r in caplog.records if "no_actors_warn" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "sig_1" in warnings[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +323,7 @@ class TestTrafficSignalConditionMultipleActors:
         assert result is not None
         assert result.passed is True
 
-    def test_partial_mismatch_returns_failed(self) -> None:
+    def test_partial_mismatch_returns_none(self) -> None:
         expected = int(carla.TrafficLightState.Green)
         actual_wrong = int(carla.TrafficLightState.Red)
         tl1 = _FakeTrafficLight(opendrive_id="sig_1", state=expected)
@@ -259,9 +341,8 @@ class TestTrafficSignalConditionMultipleActors:
             )
             result = cond.check(world, elapsed=1.0)
 
-        assert result is not None
-        assert result.passed is False
-        assert "expected Green, got sig_2=Red" in result.message
+        assert result is None
+        assert cond.get_details()["last_mismatch"] == "sig_2=Red"
 
 
 # ---------------------------------------------------------------------------

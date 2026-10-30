@@ -1,5 +1,19 @@
 # Migrating
 
+## The viewer and the editor bind 127.0.0.1 by default
+
+`viewer` and `scenario-editor` now take command-line options (`--help`,
+`--host`, `--port`, and the directories they serve; see
+[usage](usage.md#viewer-scenario-result-viewer) and
+[the editor's configuration](scenario_editor.md#configuration)). They used to
+ignore every argument and bind `0.0.0.0`; both now bind `127.0.0.1`, because
+neither has authentication and the viewer's API starts scenario runs and SLURM
+submissions.
+
+To serve other machines as before, say so: `uv run viewer --host 0.0.0.0`, or
+`VIEWER_HOST=0.0.0.0` / `SCENARIO_EDITOR_HOST=0.0.0.0` in the environment,
+which still works (a flag wins over it). Either prints a warning on stderr.
+
 ## To 15.0.0: no video, the trajectory log instead
 
 15.0.0 removes the video a run used to render (`{Scenario}.mp4`). After each

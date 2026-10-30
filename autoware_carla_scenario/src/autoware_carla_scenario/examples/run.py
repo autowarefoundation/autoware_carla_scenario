@@ -38,8 +38,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -62,11 +65,12 @@ from autoware_carla_scenario import (
     TrafficSinkAction,
     TrafficSourceAction,
 )
+import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
-from autoware_carla_scenario.constants import DEFAULT_TM_PORT
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT, FIXED_DELTA_SECONDS
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
@@ -78,6 +82,7 @@ from autoware_carla_scenario.rerun import (
 from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
+from autoware_carla_scenario.t4_scene import T4SceneExporter
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -523,9 +528,27 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
         return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)
 
+    if entity == "hils":
+        # ECUs under test drive the ego, through the HILS bridge resident on
+        # the HILS PC (scenario-hils, docs/hils.md): the entity tells it when
+        # the scenario starts and ends, and applies the ECUs' command.
+        from autoware_carla_scenario.entity.hils_entity import (  # noqa: PLC0415
+            HilsEgoConfig,
+            HilsEgoEntity,
+        )
+
+        hils_cfg = cfg.get("hils")
+        scenario_cfg = cfg.get("scenario") or {}
+        return HilsEgoEntity(
+            HilsEgoConfig.from_mapping(
+                _to_dict(hils_cfg) if hils_cfg is not None else {}
+            ),
+            episode_name=str(scenario_cfg.get("name", "")),
+        )
+
     msg = (
         f"Unknown ego.entity: {entity!r}. "
-        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2'."
+        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2', 'hils'."
     )
     raise ValueError(msg)
 
@@ -650,6 +673,9 @@ def run_scenario_with_queue(
     map_source: str | None = None,
     rerun: RerunConverter | None = None,
     t4: T4Recorder | None = None,
+    world_reset: str = "reload",
+    reload_every: int = 0,
+    t4scene: T4SceneExporter | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -661,6 +687,9 @@ def run_scenario_with_queue(
     *rerun* converts the run's trajectory log into a Rerun recording once it
     is closed (:func:`build_rerun_converter`); the caller waits for it.
     *t4* writes the run as a T4 dataset (:func:`build_t4_recorder`).
+    *world_reset* and *reload_every* are how the queue resets the world
+    (:func:`world_reset_settings`).  *t4scene* writes the run's trajectory log
+    as a T4Scene once it is closed (:func:`build_t4scene_exporter`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -694,6 +723,9 @@ def run_scenario_with_queue(
         map_source=map_source,
         rerun=rerun,
         t4=t4,
+        world_reset=world_reset,
+        reload_every=reload_every,
+        t4scene=t4scene,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -704,6 +736,25 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
+    """``server.world_reset`` and ``server.reload_every``, checked.
+
+    Raises:
+        ValueError: naming the key, when ``world_reset`` is neither ``reload``
+            nor ``soft`` or ``reload_every`` is negative.
+    """
+    from ..world_reset import RESET_RELOAD, check_world_reset  # noqa: PLC0415
+
+    server = cfg.get("server") or {}
+    world_reset = str(server.get("world_reset", RESET_RELOAD) or RESET_RELOAD)
+    reload_every = int(server.get("reload_every", 0) or 0)
+    try:
+        check_world_reset(world_reset, reload_every)
+    except ValueError as exc:
+        raise ValueError(f"server.{exc}") from None
+    return world_reset, reload_every
 
 
 def _fog_density_scale(cfg: DictConfig) -> float | None:
@@ -821,6 +872,33 @@ def build_t4_recorder(*cfgs: DictConfig) -> T4Recorder | None:
             driver, _to_dict(t4_cfg) if isinstance(t4_cfg, DictConfig) else t4_cfg
         )
         return T4Recorder(settings)
+    return None
+
+
+def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
+    """What writes each run's trajectory log as a T4Scene as the run ends,
+    when the first of *cfgs* that sets ``t4scene.enabled`` does, with its
+    ``step_s`` and ``max_distance_m``; ``None`` otherwise.
+
+    Raises:
+        ValueError: ``t4scene.step_s`` is not a positive multiple of the tick.
+    """
+    for cfg in cfgs:
+        t4scene_cfg = cfg.get("t4scene") or {}
+        if not t4scene_cfg.get("enabled", False):
+            continue
+        step_s = float(t4scene_cfg.get("step_s", 0.1))
+        ticks = round(step_s / FIXED_DELTA_SECONDS)
+        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - step_s) > 1e-9:
+            raise ValueError(
+                f"t4scene.step_s={step_s} is not a positive multiple of the "
+                f"{FIXED_DELTA_SECONDS} s tick"
+            )
+        max_distance = t4scene_cfg.get("max_distance_m", 100.0)
+        return T4SceneExporter(
+            step_s=step_s,
+            max_distance_m=None if max_distance is None else float(max_distance),
+        )
     return None
 
 
@@ -1155,6 +1233,7 @@ def _batch_queue(
     """
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
+    world_reset, reload_every = world_reset_settings(first_cfg)
     return ScenarioQueue(
         host=first_cfg.server.host,
         port=first_cfg.server.port,
@@ -1176,6 +1255,9 @@ def _batch_queue(
         map_source=_map_source(first_cfg),
         rerun=rerun,
         t4=build_t4_recorder(first_cfg),
+        world_reset=world_reset,
+        reload_every=reload_every,
+        t4scene=build_t4scene_exporter(first_cfg),
     )
 
 
@@ -1315,8 +1397,10 @@ def run_batch(
     # SLURM each task converts its own cases (slurm/worker.py), so this only
     # checks.
     rerun = build_rerun_converter(*configs)
-    # Likewise a batch asking for T4 datasets without the `t4` extra.
+    # Likewise a batch asking for T4 datasets without the `t4` extra, and
+    # T4Scenes at a step that does not fit the tick.
     build_t4_recorder(*configs)
+    build_t4scene_exporter(*configs)
     if rerun is not None and launcher == "slurm":
         rerun.close()
         rerun = None
@@ -1350,6 +1434,8 @@ def run_batch(
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
+    # Refused here, before a SLURM submission or CARLA starts.
+    world_reset_settings(first_cfg)
 
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
@@ -1604,11 +1690,28 @@ def run_scenario(
     # Before anything is built: refused at once without the extras.
     rerun = build_rerun_converter(cfg)
     build_t4_recorder(cfg)
+    build_t4scene_exporter(cfg)
     try:
         apply_canvas(cfg)
         return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
     finally:
         _finish_rerun(rerun)
+
+
+def _queue_retries(cfg: DictConfig) -> int:
+    """How often the run's queue retries a run that raised.
+
+    ``server.cooldown_max_retries``, except in a case the lanelet sweeper
+    forked: the sweeper retries that case itself, so the queue does not.
+    """
+    # Loads Lanelet2, as the run does anyway.
+    from ..sweeper.isolation import (  # noqa: PLC0415
+        SWEEPER_OWNS_RETRIES_ENV,
+    )
+
+    if os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
+        return 0
+    return int(cfg.server.get("cooldown_max_retries", 0))
 
 
 def _run_scenario(
@@ -1624,7 +1727,8 @@ def _run_scenario(
 
     map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
-    cooldown_max_retries = int(cfg.server.get("cooldown_max_retries", 0))
+    cooldown_max_retries = _queue_retries(cfg)
+    world_reset, reload_every = world_reset_settings(cfg)
 
     # Retrieve the Hydra output directory (works regardless of
     # ``hydra.job.chdir`` which defaults to False since Hydra 1.2).
@@ -1656,6 +1760,9 @@ def _run_scenario(
         map_source=_map_source(cfg),
         rerun=rerun,
         t4=build_t4_recorder(cfg),
+        world_reset=world_reset,
+        reload_every=reload_every,
+        t4scene=build_t4scene_exporter(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"
@@ -1664,6 +1771,14 @@ def _run_scenario(
     json_path = (output_dir / f"{scenario_name}_result.json").resolve()
     print(f"Result JSON: {json_path}")  # noqa: T201
     return result
+
+
+#: The cases of a ``--multirun`` run in this process (Hydra's basic sweeper)
+#: that failed, and how many ran: :func:`main` exits 1 when any failed.  The
+#: lanelet sweeper runs its cases in forked children, which this does not see;
+#: it raises ``SweepFailedError`` itself.
+_multirun_failed: list[str] = []
+_multirun_ran: list[str] = []
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -1675,14 +1790,37 @@ def _hydra_main(cfg: DictConfig) -> None:
     try:
         result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
-        if _is_multirun():
-            raise
+        # A refusal ends a --multirun too, with the same 2: the next case
+        # would be refused for the same reason.  Hydra lets SystemExit through
+        # its basic sweeper, and the lanelet sweeper stops on a case's 2.
         print(exc, file=sys.stderr)  # noqa: T201
         sys.exit(2)
     # Only exit for single-run mode. In --multirun, Hydra calls this
-    # function repeatedly; sys.exit() would kill the entire sweep.
+    # function repeatedly; sys.exit() would kill the entire sweep.  Hydra
+    # discards what a job returns, so the verdict is recorded for main().
     if not _is_multirun():
         sys.exit(0 if result.passed else 1)
+    case = " ".join(HydraConfig.get().overrides.task)
+    _multirun_ran.append(case)
+    if not result.passed:
+        _multirun_failed.append(case)
+
+
+def _exit_if_multirun_failed() -> None:
+    """Exit 1 when a ``--multirun`` case run in this process failed.
+
+    After the sweep, so a failed case does not stop the ones after it.
+    """
+    if not _multirun_failed:
+        return
+    print(  # noqa: T201
+        f"Sweep failed: {len(_multirun_failed)} of {len(_multirun_ran)} "
+        "case(s) failed:",
+        file=sys.stderr,
+    )
+    for case in _multirun_failed:
+        print(f"  {case}", file=sys.stderr)  # noqa: T201
+    sys.exit(1)
 
 
 def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
@@ -1725,8 +1863,70 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
     return resume_from, remaining
 
 
+class _Terminated(KeyboardInterrupt):
+    """The ``KeyboardInterrupt`` a ``SIGTERM`` raises (:func:`_raise_interrupt`).
+
+    It carries the signal, so the run exits ``128 + signal`` (143) rather than
+    as Python ends one Ctrl-C stopped.
+    """
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"signal {signal.Signals(signum).name}")
+        self.signum = signum
+
+
+def _raise_interrupt(signum: int, _frame: object) -> None:
+    """End the run as Ctrl-C does, so its ``with`` blocks stop what they started.
+
+    Once: a second SIGTERM (``docker stop``, a CI runner and systemd may send
+    more than one) must not cut that clean-up short, ``atexit``'s included.
+    As ``slurm.worker._raise_interrupt`` does for a SLURM task.
+    """
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise _Terminated(signum)
+
+
+@contextmanager
+def _interrupt_on_sigterm() -> Iterator[None]:
+    """SIGTERM raises :class:`_Terminated`, a ``KeyboardInterrupt``, in the block (#707).
+
+    Python's default SIGTERM ends the process without unwinding: neither
+    ``with queue`` nor ``atexit`` runs, so the Autoware stack and CARLA are
+    stopped only by their die-with-parent watchdogs, without the run's own
+    clean-up (its results, its Rerun recording).  Installed only over the
+    default action, in the main thread: an embedding program's own handler is
+    left alone.  The default is put back when the block ends, unless a SIGTERM
+    came (it stays ignored for the rest of the clean-up) or the block put a
+    handler of its own in place.
+    """
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
+    ):
+        yield
+        return
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    try:
+        yield
+    finally:
+        if signal.getsignal(signal.SIGTERM) is _raise_interrupt:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def main() -> None:
-    """CLI entry point: detect glob patterns and dispatch accordingly."""
+    """CLI entry point: detect glob patterns and dispatch accordingly.
+
+    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.
+    """
+    try:
+        with _interrupt_on_sigterm():
+            _main()
+    except _Terminated as exc:
+        print(f"Interrupted ({exc})", file=sys.stderr)  # noqa: T201
+        sys.exit(128 + exc.signum)
+
+
+def _main() -> None:
     # First thing in main(), before the run starts its own threads (see
     # _cap_malloc_arenas). Threads the imports start have not allocated yet,
     # so they hold no arenas: glibc ignores a cap set once it has more.
@@ -1800,7 +2000,12 @@ def main() -> None:
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
+        # A sweep's verdict is this call's alone, not an earlier main()'s in
+        # this process (tests, an embedding runner).
+        _multirun_failed.clear()
+        _multirun_ran.clear()
         _hydra_main()
+        _exit_if_multirun_failed()
 
 
 if __name__ == "__main__":

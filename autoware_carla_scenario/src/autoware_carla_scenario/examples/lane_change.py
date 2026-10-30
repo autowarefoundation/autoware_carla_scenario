@@ -53,6 +53,7 @@ from autoware_carla_scenario import (
     TrafficLightTarget,
     TrafficSignalAction,
 )
+from autoware_carla_scenario.failure import FailureCategory
 
 from autoware_carla_scenario.conditions import beside_lane_id
 
@@ -147,7 +148,10 @@ class LaneChangeScenario(BaseScenario):
             # expect=fail: lane change should NOT happen.
             # If ego reaches the target lane → fail.
             # If timeout expires without lane change → pass.
-            self.register_fail_condition(NotCondition(lane_position_condition))
+            self.register_fail_condition(
+                NotCondition(lane_position_condition),
+                category=FailureCategory.LANE_KEEPING,
+            )
             self.register_pass_condition(timeout_condition)
         else:
             # expect=success: lane change should happen.

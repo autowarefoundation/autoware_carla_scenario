@@ -12,6 +12,7 @@ from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
 from .entity_role import EntityRole, _expect_role, _expect_optional_role, find_actor_in_list
+from .failure import Failure, FailureCategory
 
 
 @tuple
@@ -383,15 +384,18 @@ class ScenarioResult:
     elapsed_seconds: float
     condition_statuses: List[ConditionStatus]
     rerun_recording: Optional[str]
+    failure: Optional[Failure]
 
     def __init__(self, passed: bool, message: str, elapsed_seconds: float,
                  condition_statuses: List[ConditionStatus] = List[ConditionStatus](),
-                 rerun_recording: Optional[str] = None):
+                 rerun_recording: Optional[str] = None,
+                 failure: Optional[Failure] = None):
         self.passed = passed
         self.message = message
         self.elapsed_seconds = elapsed_seconds
         self.condition_statuses = condition_statuses
         self.rerun_recording = rerun_recording
+        self.failure = failure
 
     def to_json(self, **kwargs) -> str:
         raise NotImplementedError()
@@ -428,9 +432,14 @@ class BaseCondition:
         check checks (_acs_hook_return in _tc.codon, #238)."""
         if name == "check":
             _acs_expect_return(r, Optional[ScenarioResult], "BaseCondition.check() returns Optional[ScenarioResult]")
+        elif name == "failure_category":
+            _acs_expect_return(r, Optional[FailureCategory], "BaseCondition.failure_category() returns Optional[FailureCategory]")
 
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         raise NotImplementedError()
+
+    def failure_category(self) -> Optional[FailureCategory]:
+        return None
 
 
 def _expect_optional_condition(condition) -> Optional[BaseCondition]:
@@ -671,8 +680,8 @@ class EntityExistenceCondition(BaseCondition):
         compile_error("EntityExistenceCondition(): no constructor takes these arguments "
                       "(required: entity_name, keyword label)")
 
-    def __init__(self, entity_name, *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityExistenceCondition(): label")
+    def __init__(self, entity_name, *_kw, label = _Required(), quiet: bool = False):
+        _keyword_only(_kw, "EntityExistenceCondition(): label and quiet")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
 
@@ -771,6 +780,14 @@ class RouteProgressCondition(BaseCondition):
     def progress(self) -> Optional[float]:
         raise NotImplementedError()
 
+    @property
+    def target(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def rises(self) -> bool:
+        raise NotImplementedError()
+
 
 class RelativeSpeedCondition(BaseCondition):
     def __init__(self, label):
@@ -810,8 +827,8 @@ class EntityDistanceCondition(BaseCondition):
                  distance_type: RelativeDistanceType = RelativeDistanceType("euclidean"),
                  edge_to_edge: bool = False, tolerance: float = 1e-06,
                  coordinate_system: DistanceCoordinateSystem = DistanceCoordinateSystem(1),  # ENTITY
-                 *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityDistanceCondition(): label")
+                 *_kw, label = _Required(), signed: bool = False):
+        _keyword_only(_kw, "EntityDistanceCondition(): label and signed")
         _expect_role(source)
         _expect_role(target)
         super().__init__(_required_str(label, "EntityDistanceCondition(): label"))
@@ -827,7 +844,9 @@ class EntityPositionDistanceCondition(BaseCondition):
                  vertical: bool = False, tolerance: float = 1e-06, *_kw, label = _Required()):
         _keyword_only(_kw, "EntityPositionDistanceCondition(): label")
         _expect_role(entity_name)
-        _expect_pose(position)
+        # Here, not at the top: trajectory imports this module.
+        from .trajectory import _expect_trajectory_position
+        _expect_trajectory_position(position)
         super().__init__(_required_str(label, "EntityPositionDistanceCondition(): label"))
 
 
@@ -899,6 +918,20 @@ class TimeHeadwayCondition(BaseCondition):
         _expect_role(source)
         _expect_role(target)
         super().__init__(_required_str(label, "TimeHeadwayCondition(): label"))
+
+
+class PlaceClearCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("PlaceClearCondition(): no constructor takes these arguments "
+                      "(required: position, length, width, keyword label)")
+
+    def __init__(self, position, length: float, width: float, margin: float = 0.3,
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "PlaceClearCondition(): label")
+        # Here, not at the top: trajectory imports this module.
+        from .trajectory import _expect_trajectory_position
+        _expect_trajectory_position(position)
+        super().__init__(_required_str(label, "PlaceClearCondition(): label"))
 
 
 class TimeToCollisionCondition(BaseCondition):

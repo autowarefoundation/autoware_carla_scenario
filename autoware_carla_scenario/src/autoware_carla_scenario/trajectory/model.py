@@ -1,6 +1,6 @@
 """The trajectory an entity is told to follow, after OpenSCENARIO's.
 
-OpenSCENARIO 1.x describes ``FollowTrajectoryAction`` with four parts, and this
+OpenSCENARIO 1.x describes following a trajectory with four parts, and this
 module models each one under the same name:
 
 * a :class:`Trajectory` -- a named, possibly closed, shape.  Only the
@@ -297,7 +297,9 @@ class RouteCrossingPose:
 
     Junction ``junction`` of the route (its junction segments counted from 0)
     is entered by other lanelets as well; the *approach* says which, seen from
-    the ego coming in: from its ``left``, its ``right`` or ``opposite`` it.
+    the ego coming in: from its ``left``, its ``right`` or ``opposite`` it, or
+    ``same`` -- another lane of the ego's own approach (a car turning beside
+    it).
     ``turn`` narrows them to those that turn that way.  The pose is
     ``distance`` metres along that lanelet's path from where it enters the
     junction: negative is before it, on the approach road; positive is inside
@@ -305,12 +307,19 @@ class RouteCrossingPose:
 
     Args:
         junction: Which junction of the route, from 0.
-        approach: ``left``, ``right`` or ``opposite``.
+        approach: ``same``, ``left``, ``right`` or ``opposite``.
         distance: Metres along the crossing path from its junction entry.
         turn: ``left``, ``right``, ``straight`` or ``None`` (any).
         offset: Metres from that path's centreline, positive to its left.
         yaw: Heading relative to that path's direction; ``None`` faces along
             the trajectory.
+        d_lane: Lanes across from the path's own lane where the pose is,
+            positive to its left -- another lane of the road it is on.
+        path: Which of the paths entering from *approach* and turning *turn*
+            -- counted from 1, from the left as they enter the junction
+            (:func:`~autoware_carla_scenario.route.positions.paths_from_left`)
+            -- where two lanes turn the same way, say.  ``None``: the one
+            crossing the ego's way first, then the lowest lanelet id.
     """
 
     junction: int = 0
@@ -319,9 +328,11 @@ class RouteCrossingPose:
     turn: Optional[str] = None
     offset: float = 0.0
     yaw: Optional[float] = None
+    d_lane: int = 0
+    path: Optional[int] = None
 
     def __post_init__(self) -> None:
-        from ..route.model import APPROACHES  # noqa: PLC0415
+        from ..route.model import PATH_APPROACHES  # noqa: PLC0415
 
         _finite("RouteCrossingPose", "distance", self.distance)
         _finite("RouteCrossingPose", "offset", self.offset)
@@ -329,7 +340,19 @@ class RouteCrossingPose:
         if junction < 0:
             raise ValueError("RouteCrossingPose.junction counts from 0")
         object.__setattr__(self, "junction", junction)
-        _one_of("RouteCrossingPose", "approach", self.approach, APPROACHES)
+        _one_of("RouteCrossingPose", "approach", self.approach, PATH_APPROACHES)
+        object.__setattr__(
+            self, "d_lane", _whole("RouteCrossingPose", "d_lane", self.d_lane)
+        )
+        if self.path is not None:
+            path = _whole("RouteCrossingPose", "path", self.path)
+            if path < 1:
+                raise ValueError("RouteCrossingPose.path counts from 1")
+            if self.turn is None:
+                # The search counts the paths of one turn; any turn would
+                # count others.
+                raise ValueError("RouteCrossingPose.path needs a turn")
+            object.__setattr__(self, "path", path)
         if self.turn is not None:
             _one_of(
                 "RouteCrossingPose", "turn", self.turn, ("left", "right", "straight")
@@ -739,8 +762,7 @@ class Trajectory:
         for index, condition in advance.items():
             if not -count <= int(index) < count:
                 raise IndexError(
-                    f"trajectory {self.name!r} has no vertex {index} "
-                    f"(it has {count})"
+                    f"trajectory {self.name!r} has no vertex {index} (it has {count})"
                 )
             vertices[int(index)] = TrajectoryVertex(
                 vertices[int(index)].position, condition

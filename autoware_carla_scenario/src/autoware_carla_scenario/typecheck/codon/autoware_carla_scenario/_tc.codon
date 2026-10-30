@@ -389,6 +389,13 @@ class Dict:
             return self.pop(_acs_key)
         return None
 
+    # Python's one-argument dict.fromkeys(iterable) (#625): every value is
+    # None. Codon's own takes the value too; the dict's values are
+    # Optional[NoneType] here, so it holds only None (a dict to fill with
+    # other values takes them in the call: dict.fromkeys(xs, 0)).
+    def fromkeys(ks: Generator[K], K: type) -> Dict[K, Optional[NoneType]]:
+        return {k: Optional[NoneType]() for k in ks}
+
     # reversed(d) (#601): the keys, last first, as Python 3.8+ gives them.
     # Codon's reversed() indexes a value without __reversed__, which a dict
     # cannot be.

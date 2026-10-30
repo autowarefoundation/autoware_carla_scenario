@@ -1,19 +1,24 @@
-"""Resolve sweep constraints into concrete override batches.
+"""Resolve a scenario's sweep into concrete per-job override lists.
 
-Replicates the constraint matching + binding resolution from
-:class:`LaneletConstraintSweeper` without launching any jobs.
-This is lightweight (no CARLA import) and runs in the viewer process.
+The viewer expands a scenario exactly as ``scenario-batch`` and the lanelet
+sweeper do: through :func:`~autoware_carla_scenario.sweeper.expand.expand_config`,
+so ``sweep.constraints`` (with ``sweep.bindings``), ``sweep.route``,
+``sweep.odd_sample`` and ``sweep.case_index`` all behave as they do from the
+CLI.  No jobs are launched and CARLA is not imported; only the Lanelet2 map
+is loaded, in the viewer process.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
-from omegaconf import OmegaConf
 
-from pathlib import Path
+if TYPE_CHECKING:
+    from autoware_carla_scenario.odd.sampler import OddDraws
 
 logger = logging.getLogger(__name__)
 
@@ -21,118 +26,64 @@ logger = logging.getLogger(__name__)
 _CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf"
 
 
+class SweepResolutionError(ValueError):
+    """A scenario's sweep could not be expanded; the message says why."""
+
+
 def resolve_sweep(
     scenario_name: str,
     extra_overrides: list[str] | None = None,
+    *,
+    drawn: OddDraws | None = None,
 ) -> list[list[str]]:
-    """Resolve sweep constraints and return a list of override lists.
+    """The override list of every concrete scenario *scenario_name* expands to.
 
-    Each inner list contains the Hydra overrides for a single job,
-    e.g. ``["scenario=X", "ego.spawn_lanelet_id=5", "ego.spawn_s=18.6"]``.
+    Each inner list is ``scenario=<name>`` followed by that case's sweep
+    overrides, e.g. ``["scenario=X", "ego.spawn_lanelet_id=5",
+    "ego.spawn_s=18.6"]``.  The config is composed with *extra_overrides*
+    (e.g. ``["map=nishishinjuku"]``), so the cases are found on the
+    configuration the jobs will run with; the caller passes the same
+    overrides to every job (they come after the case's, as in
+    ``scenario-batch``).  A config without a sweep expands to itself: one
+    job, ``["scenario=<name>"]``.
 
     Args:
         scenario_name: A concrete (non-glob) scenario config name.
-        extra_overrides: Additional CLI overrides (e.g. ``["map=nishishinjuku"]``).
+        extra_overrides: The Run panel's overrides.
+        drawn: In a run of several scenarios, the cases the earlier ones drew
+            from the ODD (``sweep.odd_sample``), as ``scenario-batch`` shares
+            them.
 
-    Returns:
-        A list of override lists, one per matched lanelet.
-        Empty list if no lanelets match or the config has no sweep section.
+    Raises:
+        SweepResolutionError: When the config cannot be composed or its sweep
+            cannot be expanded (a bad constraint, a route search that does
+            not parse, a missing map, invalid ``controls``, ...).
     """
-    from autoware_carla_scenario.sweeper.bindings import (  # noqa: PLC0415
-        parse_binding,
+    from autoware_carla_scenario.odd.controls import (  # noqa: PLC0415
+        ControlsError,
+        format_diagnostics,
     )
-    from autoware_carla_scenario.sweeper.constraints import (  # noqa: PLC0415
-        create_routing_graph,
-        find_matching_lanelets,
-        parse_constraint,
-    )
-    from autoware_carla_scenario.sweeper.map_loader import (  # noqa: PLC0415
-        load_map,
+    from autoware_carla_scenario.sweeper.expand import (  # noqa: PLC0415
+        expand_config,
     )
 
-    # -- 1. Compose the Hydra config ------------------------------------
-    GlobalHydra.instance().clear()
-    with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
-        cfg = compose(
-            config_name="config",
-            overrides=[f"scenario={scenario_name}", *(extra_overrides or [])],
-        )
-
-    # -- 2. Check for sweep section -------------------------------------
-    sweep_cfg = OmegaConf.select(cfg, "sweep")
-    if sweep_cfg is None:
-        logger.info("No 'sweep' section in config for %s.", scenario_name)
-        return []
-
-    sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
-    assert isinstance(sweep_dict, dict)  # noqa: S101
-
-    constraints_cfg = sweep_dict.get("constraints", {})
-    if not constraints_cfg:
-        logger.warning("sweep.constraints is empty for %s.", scenario_name)
-        return []
-
-    # -- 3. Resolve map paths -------------------------------------------
-    from autoware_carla_scenario.maps import resolve_map_paths  # noqa: PLC0415
-
-    paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
-
-    # -- 4. Load lanelet2 map (lightweight, no CARLA) -------------------
     try:
-        lanelet_map = load_map(paths)
-    except FileNotFoundError as exc:
-        raise ValueError(f"Sweep resolution for {scenario_name}: {exc}") from exc
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
+            cfg = compose(
+                config_name="config",
+                overrides=[f"scenario={scenario_name}", *(extra_overrides or [])],
+            )
+        cases = expand_config(cfg, drawn=drawn)
+    except ControlsError as exc:
+        raise SweepResolutionError(
+            "; ".join(format_diagnostics(exc.diagnostics, scenario_name))
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 -- Hydra, OmegaConf, Lanelet2, ...
+        raise SweepResolutionError(
+            f"{scenario_name}: {type(exc).__name__}: {exc}"
+        ) from exc
 
-    # -- 5. Parse constraints and find matching lanelets ----------------
-    all_constraints = []
-    constraint_target_key: str | None = None
-    for target_key, constraint_list in constraints_cfg.items():
-        constraint_target_key = target_key
-        for c_cfg in constraint_list:
-            all_constraints.append(parse_constraint(c_cfg))
-
-    if not all_constraints or constraint_target_key is None:
-        return []
-
-    routing_graph = create_routing_graph(lanelet_map)
-    matched_ids = find_matching_lanelets(all_constraints, lanelet_map, routing_graph)
-    if not matched_ids:
-        logger.warning("No lanelets match constraints for %s.", scenario_name)
-        return []
-
-    # -- 6. Resolve bindings for each matched lanelet -------------------
-    bindings_cfg = sweep_dict.get("bindings", {})
-    bindings = [parse_binding(k, v) for k, v in bindings_cfg.items()]
-
-    batches: list[list[str]] = []
-    for lid in matched_ids:
-        overrides = [
-            f"scenario={scenario_name}",
-            f"{constraint_target_key}={lid}",
-        ]
-        for binding in bindings:
-            try:
-                result = binding.resolve(lid, lanelet_map, routing_graph)
-                overrides.append(f"{binding.target_key}={result.value}")
-                if result.lanelet_id_override is not None:
-                    overrides[1] = (
-                        f"{constraint_target_key}={result.lanelet_id_override}"
-                    )
-            except Exception:
-                logger.warning(
-                    "Binding %s failed for lanelet %d; skipping.",
-                    binding.target_key,
-                    lid,
-                    exc_info=True,
-                )
-                break
-        else:
-            batches.append(overrides)
-
-    logger.info(
-        "Resolved %d job(s) for %s: %s",
-        len(batches),
-        scenario_name,
-        [b[1] for b in batches],  # show lanelet ids
-    )
-    return batches
+    jobs = [[f"scenario={scenario_name}", *case] for case in cases]
+    logger.info("Resolved %d job(s) for %s", len(jobs), scenario_name)
+    return jobs

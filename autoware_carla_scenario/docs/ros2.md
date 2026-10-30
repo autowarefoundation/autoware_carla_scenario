@@ -81,7 +81,9 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 `null` leaves a topic unpublished. The pose is in the right-handed local frame --
 CARLA's world with `y` flipped, as CARLA's own ROS 2 interface publishes it -- with
 its origin on the rear axle, Autoware's `base_link` (`rear_axle_offset_m`, derived
-from the wheel physics when `null`).
+from the wheel physics when `null`). The run's [trajectory log](trajectory_log.md)
+(its `rear_axle` record) and [T4 dataset](t4_dataset.md) put the ego's `base_link`
+there too.
 
 Cameras and `/clock` are CARLA's to publish when the server is built with ROS 2. For a
 server built without it, the entity publishes them as well:
@@ -129,9 +131,38 @@ The turn indicators are not a source: whichever source drives, the newest
 indicators, leaving its other lights as they are, until another changes them.
 `NO_COMMAND` changes nothing.
 
-A `steer_accel` command is complete once a fresh value has arrived on both topics, and
-each value is used once, so a node that publishes one of each per cycle drives once per
-cycle.
+A `steer_accel` command pairs the steering and the acceleration of one publisher cycle,
+and each value is used once, so a node that publishes one of each per cycle drives once
+per cycle. The halves are matched by the DDS source timestamp of each sample (when the
+publisher wrote it), not by when a tick happens to read it, so a tick that reads two
+cycles at once, or one half of a cycle before the tick and the other after it, still
+pairs every cycle with itself.
+
+Two halves pair only if they were written at most a window apart. By default the window
+is half the publisher's cycle, measured from the timestamps themselves (the median of
+the last few write intervals), so no rate or timing is assumed: any publisher that writes
+a cycle's two halves closer to each other than to the next cycle's pairs every cycle,
+whether it writes them back to back (VisionPilot does) or from two timers 40 ms apart at
+10 Hz. A half with no partner in the window is dropped, never paired with another
+cycle's: a lost steering or acceleration message costs that one cycle instead of
+shifting every later command by a cycle. An unmatched half is held only until the next
+sample of either topic shows it has no partner (a newer half of its own topic, or a half
+of the other topic written further than the window away).
+
+Dropped halves are logged as a warning (at most every 10 s, with the count and the
+window). An occasional drop is a lost message; a steady stream of them means the window
+does not fit the publisher. Set `pair_window_s` on the source to fix the window, in
+seconds: larger than the gap between a cycle's two halves, and smaller than the cycle
+minus that gap. The timestamps are the writers' clocks, so the two topics are expected
+to come from one host (or hosts whose clocks agree well within the window).
+
+```yaml
+    - name: visionpilot
+      kind: steer_accel
+      steering_topic: /vehicle/steering_cmd
+      acceleration_topic: /vehicle/throttle_cmd
+      pair_window_s: 0.03   # optional; null (the default) measures it
+```
 
 A trajectory's points are timed by `header.stamp + time_from_start`; one whose
 `time_from_start` does not increase (many planners leave it zero) is timed from its

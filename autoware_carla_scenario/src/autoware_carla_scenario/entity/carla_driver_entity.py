@@ -31,16 +31,18 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
 from ..constants import FIXED_DELTA_SECONDS
-from ..debug_markers import DebugMarkers, plan_markers
+from ..debug_markers import DebugMarkers
 from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
+from ..ego_plan import ego_plan_markers
 from ..utils.powertrain import ChaosPowertrain
 from ..utils.turn_indicator import (
     TurnIndicatorState,
@@ -61,6 +63,7 @@ from ..driver.observation import (
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ..rerun_lidar import CameraMount, active_recorder
+from ..ego_base_link import clear_ego_base_link, set_ego_base_link
 from ..t4 import active_recording, offer_driver_sensors, withdraw_driver_sensors
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
@@ -190,6 +193,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The turn indicators last lit at the policy's request; ``NO_COMMAND``
         #: until it asks for any.
         self._turn_indicator: TurnIndicator = TurnIndicator.NO_COMMAND
+        #: The OpenDRIVE roads of the route to the scenario's goal, which pick the
+        #: way the policy's road ahead takes at a fork; ``None`` without a goal.
+        self._route_roads: Optional[Set[str]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -231,10 +237,21 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         ground_projection: Optional["GroundProjectionConfig"] = None,
         waypoints: Sequence["Lanelet2Pose"] = (),
     ) -> None:
-        """Hand *goal* to the bridged stack's mission; a no-op without a bridge.
+        """Hand *goal* to the bridged stack's mission, and route the road ahead.
 
-        The policy itself is given the road ahead rather than a destination.
+        The policy itself is given the road ahead rather than a destination, and
+        the road ahead turns at a fork the way the route to *goal* (through
+        *waypoints*) does: a turn the scenario asserts is the one the policy is
+        shown.  Without a route there -- no lane route reaches the goal -- it
+        takes the first way, as it does without a goal.
         """
+        start = initial_pose
+        if start is None and self.actor is not None:
+            from ..coordinate import CarlaWorldPose  # noqa: PLC0415
+
+            start = CarlaWorldPose.from_carla_transform(self.actor.get_transform())
+        if start is not None:
+            self._route_roads = _route_roads(start, [*waypoints, goal])
         if self._handshake is not None:
             self._handshake.route_to(
                 world, goal, initial_pose, ground_projection, waypoints
@@ -274,6 +291,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # A retried scenario runs this entity again: the policy's request to end
         # the attempt before does not end this one.
         self._reset_termination()
+        # Nor does its clock or bookkeeping carry over: the new session starts
+        # at simulation time 0 and asks the policy on its first tick, as the
+        # first attempt did.
+        self._sim_time_us = 0
+        self._last_policy_time_us = None
+        self._drive_count = 0
+        self._pending_egomotion = []
+        self._recorded_lidar = {}
+        self._camera_mounts = {}
+        self._plan_markers = DebugMarkers()
         if self._handshake is not None:
             # Before anything moves the ego: the mission is checked against
             # where it stands.
@@ -285,6 +312,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         logger.info(
             "Rear-axle offset for the rig origin: %.2f m", self._rear_axle_offset_m
         )
+        set_ego_base_link(self._rear_axle_offset_m)
 
         self._attach_cameras(world, actor)
         self._world = world
@@ -412,6 +440,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         cannot abort the rest of the scenario cleanup.
         """
         withdraw_driver_sensors()
+        clear_ego_base_link()
         if self._warmup is not None:
             self._warmup.restore()
             self._warmup = None
@@ -592,6 +621,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             observation.pose,
             horizon_m=self._config.route_horizon_m,
             resolution_m=self._config.route_resolution_m,
+            route_roads=self._route_roads,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
         if self._config.send_ground_truth and len(waypoints):
@@ -629,8 +659,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             self._renderer_data(observation),
         )
         self._plan = outcome.trajectory
-        self._plan_markers = plan_markers(self._plan)
         self._drive_count += 1
+        self._plan_markers = ego_plan_markers(
+            outcome.trajectory,
+            self._sim_time_us,
+            self._drive_count,
+            policy_name=outcome.policy_name,
+            inference_seconds=outcome.inference_seconds,
+            turn_indicator=outcome.turn_indicator,
+            debug_scalars=outcome.debug_scalars,
+        )
         self._last_policy_time_us = self._sim_time_us
         if outcome.debug_scalars and self._drive_count % _DEBUG_LOG_INTERVAL == 0:
             logger.info(
@@ -752,7 +790,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         actor.apply_control(command.to_carla_control())
 
     def debug_markers(self) -> DebugMarkers:
-        """The policy's current plan, as a line along the road."""
+        """The policy's current plan, as a line along the road, carrying the
+        plan itself (:class:`~autoware_carla_scenario.ego_plan.PlanMarkers`)."""
         return self._plan_markers
 
     def debug_state(self) -> Dict[str, float]:
@@ -764,6 +803,42 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             "rear_axle_offset_m": self._rear_axle_offset_m,
             "turn_indicator": float(self._turn_indicator),
         }
+
+
+def _route_roads(
+    start: "CarlaWorldPose", stops: Sequence["Lanelet2Pose"]
+) -> Optional[Set[str]]:
+    """The OpenDRIVE roads of the lane route from *start* through *stops*.
+
+    The lanelets are :func:`~autoware_carla_scenario.odd.route_plan.route_lanelets`'s,
+    the route the ODD plans for the scenario, and their roads
+    :func:`~autoware_carla_scenario.coordinate.route_road_ids`': those outside
+    the junctions, which say which way each is crossed.  ``None``, said once,
+    when a stop is on no lane route from the one before or the map cannot answer.
+    """
+    from ..coordinate import route_road_ids, to_lanelet2  # noqa: PLC0415
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..odd.route_plan import PlannedRoute, RouteError, route_lanelets  # noqa: PLC0415
+
+    *via, goal = stops
+    try:
+        mm = MapManager.get_instance()
+        route = PlannedRoute(start=to_lanelet2(start), goal=goal, via=via)
+        lanelets = route_lanelets(route, mm.lanelet_map, mm.routing_graph)
+        return set(route_road_ids([int(lanelet.id) for lanelet in lanelets]))
+    except RouteError as error:
+        logger.warning(
+            "No lane route to the goal (%s): the policy's road ahead takes the "
+            "first way at a fork",
+            error,
+        )
+    except Exception:
+        logger.warning(
+            "Could not route the policy's road ahead to the goal: it takes the "
+            "first way at a fork",
+            exc_info=True,
+        )
+    return None
 
 
 class _CarriedActor:

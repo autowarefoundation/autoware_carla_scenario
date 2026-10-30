@@ -24,7 +24,10 @@ a PyO3 binding (``autoware_carla_scenario_t4.T4Writer``), which runs on every
 key frame: it turns the CARLA states into the map frame, keeps the tables, and
 hands the files to threads of its own, which write the sweeps, encode the raw
 camera frames and count each box's points.  This module only reads the world
-and hands it over.
+and hands it over; what the dataset holds (:class:`T4Settings`), its names
+and categories and the OpenCV model of an F-theta camera are
+:mod:`autoware_carla_scenario.t4_settings`'s, which this module re-exports
+and the library check compiles (#731).
 
 Frames (docs/t4_dataset.md): the map frame is Autoware's (the Lanelet2 map's:
 CARLA's with ``y`` flipped, plus the map's MGRS and elevation offsets); the
@@ -41,8 +44,6 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
@@ -58,13 +59,21 @@ from .driver.observation import (
     rear_axle_offset,
     sensor_pose_in_rig,
 )
+from .ego_base_link import ego_base_link
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
-from .sensor.carla_lidar import CarlaLidarSensor, CarlaLidarSensorConfig
+from .sensor.carla_lidar import CarlaLidarSensor
+from .t4_settings import (
+    DATASET_SUFFIX,
+    LIDAR_CHANNEL,
+    T4Settings,
+    camera_channel,
+    category_of,
+    dataset_path,
+    opencv_of_ftheta,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
-
-    from .driver.base import DriverCameraLens, DriverClientConfig
 
 __all__ = [
     "DATASET_SUFFIX",
@@ -80,6 +89,7 @@ __all__ = [
     "dataset_path",
     "opencv_of_ftheta",
     "offer_driver_sensors",
+    "offered_rear_axle",
     "require_writer",
     "withdraw_driver_sensors",
 ]
@@ -88,11 +98,6 @@ logger = logging.getLogger(__name__)
 
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[t4]'"
-#: What a run's dataset is named: ``{stem}.t4``, its one version ``0`` inside.
-DATASET_SUFFIX = ".t4"
-#: The channel every LiDAR's sweep goes into, in the ego's frame (T4's own
-#: name for a concatenated cloud).
-LIDAR_CHANNEL = "LIDAR_CONCAT"
 #: The package that writes the datasets.
 _WRITER_MODULE = "autoware_carla_scenario_t4"
 #: The dataset version a run writes (T4's ``<dataset id>/<version>/``).
@@ -104,15 +109,6 @@ _FRAME_TIMEOUT_S = 1.0
 _SENSOR_TICK_MARGIN_S = 1e-6
 #: The actors annotated, by blueprint prefix.
 _ANNOTATED_KINDS = ("vehicle.", "walker.")
-#: A vehicle blueprint's ``base_type`` -> its T4 category.
-_VEHICLE_CATEGORIES = {
-    "car": "car",
-    "van": "car",
-    "truck": "truck",
-    "bus": "bus",
-    "motorcycle": "motorcycle",
-    "bicycle": "bicycle",
-}
 
 _lock = threading.Lock()
 #: The recording of the run in progress, which a driver entity feeds.
@@ -143,17 +139,6 @@ def require_writer() -> ModuleType:
         ) from exc
 
 
-def dataset_path(directory: Path, stem: str) -> Path:
-    """``{directory}/{stem}.t4``: the run's dataset (its version ``0`` inside)."""
-    return Path(directory) / f"{stem}{DATASET_SUFFIX}"
-
-
-def camera_channel(logical_id: str) -> str:
-    """The T4 channel of the driver camera *logical_id*: upper-cased, as T4's
-    channels are (``camera_front_wide_120fov`` -> ``CAMERA_FRONT_WIDE_120FOV``)."""
-    return logical_id.upper()
-
-
 def active_recording() -> Optional["T4Recording"]:
     """The recording of the run in progress, if one is fed by a driver entity."""
     return _active
@@ -168,172 +153,19 @@ def offer_driver_sensors(rear_axle_offset_m: float) -> None:
         _driver_rear_axle = float(rear_axle_offset_m)
 
 
+def offered_rear_axle() -> Optional[float]:
+    """The rig origin's offset from the actor a driver entity offered
+    (:func:`offer_driver_sensors`), or ``None`` without one: where the run
+    takes the ego's rear axle to be."""
+    with _lock:
+        return _driver_rear_axle
+
+
 def withdraw_driver_sensors() -> None:
     """The driver entity's scenario has ended: its sensors are gone."""
     global _driver_rear_axle
     with _lock:
         _driver_rear_axle = None
-
-
-@dataclass(frozen=True)
-class T4Settings:
-    """What a run's dataset holds, and how often: the driver policy's sensors
-    and step, and the ``t4`` config."""
-
-    #: The LiDARs, as ``driver.lidars`` (their ``logical_id`` is not used:
-    #: every sweep goes into :data:`LIDAR_CHANNEL`).
-    lidars: tuple[CarlaLidarSensorConfig, ...] = ()
-    #: The cameras, ``(logical id, sensor)``, as ``driver.cameras``.
-    cameras: tuple[tuple[str, CarlaCameraSensorConfig], ...] = ()
-    #: The cameras whose frames are drawn through a lens of their own, not
-    #: CARLA's pinhole: ``(logical id, lens)``, as ``driver.cameras[].lens``.
-    lenses: tuple[tuple[str, "DriverCameraLens"], ...] = ()
-    #: Seconds between key frames, ``driver.policy_timestep_s``.
-    timestep_s: float = 0.1
-    #: The JPEG quality of the frames the recorder encodes itself
-    #: (``driver.image_quality``, which the policy's frames have too).
-    jpeg_quality: int = 90
-    #: The rig origin's offset from the actor, ``driver.rear_axle_offset_m``;
-    #: None derives it from the vehicle's wheels.
-    rear_axle_offset_m: Optional[float] = None
-    #: Annotate the road users within this distance of the ego; None for all.
-    max_distance_m: Optional[float] = 100.0
-    #: Threads writing the files and counting the boxes' points.
-    workers: int = 4
-
-    def __post_init__(self) -> None:
-        if not self.lidars and not self.cameras:
-            raise ValueError(
-                "t4: a dataset needs a sensor: set driver.lidars or driver.cameras"
-            )
-        self.interval_ticks  # noqa: B018 - validates timestep_s
-        if self.max_distance_m is not None and self.max_distance_m <= 0.0:
-            raise ValueError("t4.max_distance_m must be positive (or null)")
-        if not 1 <= self.jpeg_quality <= 100:
-            raise ValueError("driver.image_quality must be 1-100")
-        if self.workers < 1:
-            raise ValueError("t4.workers must be positive")
-
-    @property
-    def interval_ticks(self) -> int:
-        """World ticks from one key frame to the next."""
-        ticks = round(self.timestep_s / FIXED_DELTA_SECONDS)
-        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - self.timestep_s) > 1e-9:
-            raise ValueError(
-                f"t4: the key frames' step (driver.policy_timestep_s) must be a "
-                f"positive multiple of the {FIXED_DELTA_SECONDS} s tick, got "
-                f"{self.timestep_s}"
-            )
-        return int(ticks)
-
-    @classmethod
-    def from_driver(
-        cls, driver: "DriverClientConfig", config: Mapping[str, Any]
-    ) -> "T4Settings":
-        """The settings of the driver policy's *driver* config and a ``t4``
-        config section (``max_distance_m``, ``workers``)."""
-        values: dict[str, Any] = {}
-        if "max_distance_m" in config:
-            distance = config["max_distance_m"]
-            values["max_distance_m"] = None if distance is None else float(distance)
-        if config.get("workers") is not None:
-            values["workers"] = int(config["workers"])
-        return cls(
-            lidars=tuple(driver.lidars),
-            cameras=tuple(
-                (camera.logical_id, camera.to_sensor_config())
-                for camera in driver.cameras
-            ),
-            lenses=tuple(
-                (camera.logical_id, camera.lens)
-                for camera in driver.cameras
-                if camera.lens is not None
-            ),
-            timestep_s=float(driver.policy_timestep_s),
-            jpeg_quality=int(driver.image_quality),
-            rear_axle_offset_m=driver.rear_axle_offset_m,
-            **values,
-        )
-
-
-#: The largest angle from the optical axis a pinhole model, OpenCV's rational
-#: one included, can hold: it projects through tan(theta).
-_PINHOLE_MAX_ANGLE_RAD = np.radians(85.0)
-
-
-def opencv_of_ftheta(
-    lens: "DriverCameraLens", width: int, height: int, *, samples: int = 2000
-) -> tuple[list[list[float]], list[float], float, float]:
-    """OpenCV's rational camera model fitted to the F-theta *lens* of a
-    *width* x *height* image: T4's cameras are OpenCV's (``camera_intrinsic``
-    and the ``camera_distortion`` ``[k1, k2, p1, p2, k3, k4, k5, k6]``), and
-    have no F-theta model.
-
-    In normalised coordinates both models are radial, so the fit is of one
-    curve: the distorted radius ``angle_to_pixeldist_poly(theta) / f`` against
-    the pinhole's ``tan(theta)``, ``f`` being the lens' pixels per radian at
-    its centre (the focal lengths: ``linear_cde``'s ``c`` and ``d`` scale and
-    skew the columns). The radial terms are fitted by least squares, linear
-    in them, weighted to pixels, at angles out to the image's farthest corner
-    within the lens (``max_angle``, and 85 degrees, short of a pinhole's 90).
-
-    Returns:
-        ``(intrinsic, distortion, mean error, max error)``: the errors are the
-        pixels between the fitted model and the lens along that curve.
-
-    Raises:
-        ValueError: If the lens is skewed in its rows (``linear_cde``'s ``e``
-            is not 0), which OpenCV's intrinsic matrix cannot hold, or no
-            rational model fits it (its denominator would pass through 0).
-    """
-    poly = np.polynomial.polynomial
-    c, d, e = (float(v) for v in lens.linear_cde)
-    if abs(e) > 1e-12:
-        raise ValueError("an F-theta lens with linear_cde e != 0 has no OpenCV model")
-    cx, cy = (float(v) for v in lens.principal_point)
-    to_angle = np.asarray(lens.pixeldist_to_angle_poly, np.float64)
-    to_radius = np.asarray(lens.angle_to_pixeldist_poly, np.float64)
-    focal = float(poly.polyder(to_radius)[0])
-
-    # The farthest the image reaches from the principal point, as a radius in
-    # the lens (linear_cde undone), and its angle, within the lens.
-    corners_x = np.array([-0.5, width - 0.5, -0.5, width - 0.5]) - cx
-    corners_y = np.array([-0.5, -0.5, height - 0.5, height - 0.5]) - cy
-    corner_radius = float(np.hypot((corners_x - d * corners_y) / c, corners_y).max())
-    max_angle = min(float(lens.max_angle), _PINHOLE_MAX_ANGLE_RAD)
-    radius = min(corner_radius, float(poly.polyval(max_angle, to_radius)))
-    reach = min(float(poly.polyval(radius, to_angle)), max_angle)
-
-    theta = np.linspace(1e-4, reach, samples)
-    r = np.tan(theta)
-    r2 = r * r
-    ratio = poly.polyval(theta, to_radius) / focal / r
-    weight = (r * focal)[:, None]
-    a = np.stack([r2, r2**2, r2**3, -ratio * r2, -ratio * r2**2, -ratio * r2**3], 1)
-    k1, k2, k3, k4, k5, k6 = np.linalg.lstsq(
-        a * weight, (ratio - 1.0) * weight[:, 0], rcond=None
-    )[0]
-    numerator = 1 + k1 * r2 + k2 * r2**2 + k3 * r2**3
-    denominator = 1 + k4 * r2 + k5 * r2**2 + k6 * r2**3
-    if not (denominator > 0.0).all():
-        raise ValueError("no OpenCV rational model fits this F-theta lens")
-    error = np.abs(focal * r * (numerator / denominator - ratio))
-    intrinsic = [[c * focal, d * focal, cx], [0.0, focal, cy], [0.0, 0.0, 1.0]]
-    distortion = [float(k) for k in (k1, k2, 0.0, 0.0, k3, k4, k5, k6)]
-    return intrinsic, distortion, float(error.mean()), float(error.max())
-
-
-def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
-    """The T4 category of a CARLA blueprint: ``pedestrian`` for a walker; a
-    vehicle's from its ``base_type`` (``car``, ``truck``, ``bus``,
-    ``motorcycle``, ``bicycle``), else ``motorcycle`` on two wheels, else
-    ``car``."""
-    if type_id.startswith("walker."):
-        return "pedestrian"
-    category = _VEHICLE_CATEGORIES.get(base_type.lower())
-    if category is not None:
-        return category
-    return "motorcycle" if wheels == 2 else "car"
 
 
 def _attribute(actor: Any, name: str) -> str:
@@ -490,8 +322,13 @@ class T4Recording:
         with _lock:
             driver_rear_axle = _driver_rear_axle
         self.fed_by_driver = driver_rear_axle is not None
+        run_base_link = ego_base_link()
         if driver_rear_axle is not None:
             self._rear_axle = driver_rear_axle
+        elif run_base_link is not None:
+            # Where the running ego (a ROS 2 or a bridged stack's) has its
+            # base_link, rather than the driver config's offset.
+            self._rear_axle = run_base_link
         else:
             self._rear_axle = rear_axle_offset(ego, settings.rear_axle_offset_m)
 

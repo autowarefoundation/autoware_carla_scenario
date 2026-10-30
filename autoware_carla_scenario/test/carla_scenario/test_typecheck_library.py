@@ -13,6 +13,7 @@ import re
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -79,10 +80,15 @@ def test_every_excluded_module_has_a_reason() -> None:
 
 
 def _shim(module: str) -> str | None:
-    """The source of the standard module's shim in the model, if it has one."""
+    """The source of the standard module's shim in the model, if it has one.
+
+    A dotted module is a submodule's shim (``importlib.metadata`` is
+    ``importlib/metadata.codon``).
+    """
+    stem = module.replace(".", "/")
     for path in (
-        model_dir() / f"{module}.codon",
-        model_dir() / module / "__init__.codon",
+        model_dir() / f"{stem}.codon",
+        model_dir() / stem / "__init__.codon",
     ):
         if path.is_file():
             return path.read_text(encoding="utf-8")
@@ -105,11 +111,22 @@ def _declares(shim: str, name: str) -> bool:
     )
 
 
+def _dotted(node: ast.expr) -> str | None:
+    """``a.b.c`` for a chain of attributes of a name, else ``None``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted(node.value)
+        return None if owner is None else f"{owner}.{node.attr}"
+    return None
+
+
 def _shimmed_uses(source: str) -> dict[str, set[str]]:
     """The names a module takes from each standard module with a shim.
 
     ``import X`` counts the ``X.name`` it reads, ``from X import name`` the
-    names; a method of a class (``Path.rename()``) is not seen.
+    names, a submodule's (``import X.Y``, ``from X.Y import name``) included;
+    a method of a class (``Path.rename()``) is not seen.
     """
     tree = ast.parse(source)
     aliases: dict[str, str] = {}
@@ -117,24 +134,30 @@ def _shimmed_uses(source: str) -> dict[str, set[str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if "." not in alias.name and _shim(alias.name) is not None:
+                if _shim(alias.name) is not None:
                     aliases[alias.asname or alias.name] = alias.name
                     uses.setdefault(alias.name, set())
         elif (
             isinstance(node, ast.ImportFrom)
             and node.level == 0
             and node.module
-            and "." not in node.module
             and _shim(node.module) is not None
         ):
-            uses.setdefault(node.module, set()).update(a.name for a in node.names)
+            names = uses.setdefault(node.module, set())
+            for alias in node.names:
+                submodule = f"{node.module}.{alias.name}"
+                if _shim(submodule) is None:
+                    names.add(alias.name)
+                else:
+                    # `from lxml import etree`: what is read of etree is
+                    # taken from lxml.etree.
+                    aliases[alias.asname or alias.name] = submodule
+                    uses.setdefault(submodule, set())
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in aliases
-        ):
-            uses[aliases[node.value.id]].add(node.attr)
+        if isinstance(node, ast.Attribute):
+            owner = _dotted(node.value)
+            if owner in aliases:
+                uses[aliases[owner]].add(node.attr)
     return uses
 
 
@@ -147,7 +170,7 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
     modules = package_modules()
     wrong = []
     for module, reason in EXCLUDED.items():
-        for name, attr in re.findall(r"`(\w+)\.(\w+)(?:\(\))?`", reason):
+        for name, attr in re.findall(r"`([\w.]+)\.(\w+)(?:\(\))?`", reason):
             shim = _shim(name)
             if shim is not None and _declares(shim, attr):
                 wrong.append(f"{module}: `{name}.{attr}` is declared by its shim")
@@ -4051,6 +4074,292 @@ def test_the_os_pathlib_and_popen_shims_refuse_what_cpython_refuses(
     located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
     assert located, result.format()
     assert located[0].line == line, result.format()
+
+
+# ---------------------------------------------------------------------------
+# The process calls of a forking parent and its child: os.fork(), waitpid()
+# and the wait-status macros, signal.alarm(), getsignal() and
+# pthread_sigmask(), KeyboardInterrupt, ChildProcessError and SystemExit.code
+# (#719)
+# ---------------------------------------------------------------------------
+
+
+_FORKING = """
+from __future__ import annotations
+
+import os
+import signal
+from typing import Any, Callable
+
+
+def on_alarm(signum: int, frame: Any) -> None:
+    pass
+
+
+def launch(run: Callable[[], int], timeout: int) -> tuple[bool, int]:
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            os.setpgrp()
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            code = run()
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+        except KeyboardInterrupt:
+            code = 128 + int(signal.SIGINT)
+        finally:
+            os._exit(code)
+    previous = signal.getsignal(signal.SIGALRM)
+    os.setpgid(pid, pid)
+    signal.signal(signal.SIGALRM, on_alarm)
+    left: int = signal.alarm(timeout)
+    try:
+        done, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        done, status = os.waitpid(pid, 0)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+    if os.WIFSIGNALED(status):
+        return False, -os.WTERMSIG(status)
+    code = os.WEXITSTATUS(status=status) if os.WIFEXITED(status) else 1
+    return code == 0, code + left + done + len(mask)
+"""
+
+
+def _check_forking_case(
+    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TypeCheckResult:
+    # The handler's frame is `Any`: it is compiled through signal.signal().
+    monkeypatch.setitem(
+        check.UNCALLED,
+        f"{_FAKE}.on_alarm",
+        "a signal handler, whose frame Codon has no type for",
+    )
+    return _check_case(source, tmp_path, monkeypatch)
+
+
+@needs_codon
+def test_the_os_and_signal_shims_take_what_a_forking_parent_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_forking_case(_FORKING, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError in CPython 3.10 (the oldest Python the package
+        # supports) and 3.13 when it is called.
+        ("os.fork()", "os.fork(1)"),
+        ("os.setpgid(pid, pid)", "os.setpgid(pid=pid, pgrp=pid)"),
+        ("os.waitpid(pid, 0)", "os.waitpid(pid)"),
+        ("os._exit(code)", "os._exit(str(code))"),
+        ("os.WIFSIGNALED(status)", "os.WIFSIGNALED(str(status))"),
+        ("os.WEXITSTATUS(status=status)", "os.WEXITSTATUS(code=status)"),
+        ("signal.alarm(timeout)", "signal.alarm(seconds=timeout)"),
+        ("signal.alarm(0)", "signal.alarm(0.5)"),
+        ("signal.getsignal(signal.SIGALRM)", 'signal.getsignal("SIGALRM")'),
+        ("{signal.SIGINT, signal.SIGTERM}", '{"SIGINT"}'),
+        ("signal.SIG_SETMASK, mask)", "signal.SIG_SETMASK, 2)"),
+        ("signal.SIGALRM, previous)", "signal.SIGALRM, mask)"),
+    ],
+    ids=[
+        "fork-arguments",
+        "setpgid-positional-only",
+        "waitpid-arguments",
+        "exit-status-int",
+        "wifsignaled-status-int",
+        "wexitstatus-keyword",
+        "alarm-positional-only",
+        "alarm-seconds-int",
+        "getsignal-number",
+        "sigmask-signal-numbers",
+        "sigmask-iterable",
+        "signal-handler",
+    ],
+)
+def test_the_os_and_signal_shims_refuse_what_cpython_refuses_of_a_fork(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FORKING.replace(right, wrong, 1)
+    assert source != _FORKING
+    result = _check_forking_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_the_process_shims_are_declared_with_the_parameters_cpython_has() -> None:
+    # As for the file helpers: the parameter names CPython takes by keyword
+    # (`os._exit(status)`, `signal.pthread_sigmask(how, mask)`) are the
+    # shims'; a positional-only one (`waitpid(pid, options, /)`) is a
+    # `*args` there.
+    import inspect
+    import os
+    import signal
+
+    cases = [
+        (
+            model_dir() / "os" / "__init__.codon",
+            os,
+            "fork setpgrp setpgid waitpid _exit WIFEXITED WEXITSTATUS "
+            "WIFSIGNALED WTERMSIG",
+        ),
+        (model_dir() / "signal.codon", signal, "getsignal alarm pthread_sigmask"),
+    ]
+    for path, python, names in cases:
+        shim = {
+            node.name: node.args
+            for node in ast.parse(path.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in names.split():
+            parameters = inspect.signature(getattr(python, name)).parameters.values()
+            by_keyword = [
+                p.name
+                for p in parameters
+                if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            ]
+            positional_only = [
+                p.name
+                for p in parameters
+                if p.kind is inspect.Parameter.POSITIONAL_ONLY
+            ]
+            args = shim[name]
+            assert [a.arg for a in args.args] == by_keyword, f"{name}"
+            assert (args.vararg is not None) == bool(positional_only), f"{name}"
+    assert os.WNOHANG == 1
+    assert (signal.SIG_BLOCK, signal.SIG_UNBLOCK, signal.SIG_SETMASK) == (0, 1, 2)
+    shim_os = (model_dir() / "os" / "__init__.codon").read_text()
+    shim_signal = (model_dir() / "signal.codon").read_text()
+    assert re.search(r"^WNOHANG = 1$", shim_os, re.MULTILINE)
+    for number, mask in enumerate(("SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK")):
+        assert re.search(rf"^{mask} = {number}$", shim_signal, re.MULTILINE)
+
+
+# ---------------------------------------------------------------------------
+# The fnmatch shim: fnmatch() and fnmatchcase() (#728)
+# ---------------------------------------------------------------------------
+
+
+_FNMATCH = """
+from __future__ import annotations
+
+import fnmatch
+from fnmatch import fnmatchcase
+from pathlib import Path
+
+EXCLUDED = ("*firetruck*", "*ambulance*", "*cop*", "*police*")
+
+
+def candidate(name: str) -> bool:
+    if any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED):
+        return False
+    if fnmatch.fnmatch(Path(name), "*.osm"):
+        return False
+    return fnmatchcase(name=name, pat="vehicle.*") or fnmatch.fnmatchcase(name, "?")
+"""
+
+
+@needs_codon
+def test_the_fnmatch_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "fnmatch.codon").is_file()
+    result = _check_case(_FNMATCH, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.13 when it is called: a TypeError or an AttributeError.
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, len(pattern))"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(len(name), pattern)"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, pattern=pattern)"),
+        ("fnmatch.fnmatch(name, pattern)", "fnmatch.fnmatch(name, pattern, True)"),
+        ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatchcase(name, "?", 1)'),
+        ('fnmatch.fnmatchcase(name, "?")', 'fnmatch.fnmatches(name, "?")'),
+        (
+            'fnmatch.fnmatch(Path(name), "*.osm")',
+            'fnmatch.fnmatchcase(Path(name), "*.osm")',
+        ),
+    ],
+    ids=[
+        "pattern-str",
+        "name-str",
+        "pattern-keyword",
+        "fnmatch-arguments",
+        "fnmatchcase-arguments",
+        "unknown-name",
+        "fnmatchcase-path",
+    ],
+)
+def test_the_fnmatch_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FNMATCH.replace(right, wrong, 1)
+    assert source != _FNMATCH
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
+    # The shim is plain Python too: run under CPython, its match (written
+    # without a regular expression) gives what fnmatch's does, for its
+    # parameter names, the patterns entity.fit excludes, and every set, range
+    # and wildcard of a sample of patterns.
+    import fnmatch
+    import inspect
+    import random
+
+    from autoware_carla_scenario.entity.fit import FIT_EXCLUDED
+
+    source = (model_dir() / "fnmatch.codon").read_text()
+    shim: dict[str, Any] = {}
+    exec(source, shim)  # noqa: S102 - the shim, which is valid Python
+    for name in ("fnmatch", "fnmatchcase"):
+        python = list(inspect.signature(getattr(fnmatch, name)).parameters)
+        assert list(inspect.signature(shim[name]).parameters) == python, name
+    blueprints = [
+        "vehicle.carlamotors.firetruck",
+        "vehicle.ford.ambulance",
+        "vehicle.dodge.charger_police_2020",
+        "vehicle.mini.cooper",
+        "vehicle.tesla.model3",
+    ]
+    for blueprint in blueprints:
+        for pattern in (*FIT_EXCLUDED, "vehicle.*", "vehicle.?ini.*"):
+            want = fnmatch.fnmatch(blueprint, pattern)
+            assert shim["fnmatch"](blueprint, pattern) == want, (blueprint, pattern)
+    rng = random.Random(728)
+    for _ in range(20000):
+        pattern = "".join(rng.choice("ab]![-*?^\\z&") for _ in range(rng.randint(0, 8)))
+        name = "".join(rng.choice("ab]![-^\\z&\nc") for _ in range(rng.randint(0, 6)))
+        want = fnmatch.fnmatchcase(name, pattern)
+        assert shim["fnmatchcase"](name, pattern) == want, (name, pattern)
+        assert shim["fnmatch"](name, pattern) == want, (name, pattern)
 
 
 # Directories of codon/ that model a third-party package, not the standard

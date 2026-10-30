@@ -10,12 +10,11 @@ import typesafe_carla.carla as carla
 
 from ..action_state import ActionState
 from ..conditions.base import BaseCondition, ScenarioResult
-from ..coordinate.lane_distance import lane_closing_speed, lane_separation
 from ..coordinate.map_manager import run_carla_map
-from ..coordinate.poses import CarlaWorldPose
 from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
+from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M, STEP_BACK_M, road_threat
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -27,18 +26,6 @@ __all__ = ["WalkStraightAction"]
 #: needs a defensible default rather than a zero that would leave the
 #: pedestrian standing in the road.
 DEFAULT_WALKING_SPEED_MS = 1.4
-
-#: How far onto the road a pedestrian may have walked and still turn back (m),
-#: when the scenario does not say: about one stride and a half.
-DEFAULT_TURN_BACK_WITHIN_M = 1.0
-
-#: How far back from the kerb a pedestrian that turns back stands (m), at most
-#: as far as where it set off.  Not on the kerb's edge itself: a CARLA 0.10
-#: walker stopped with its feet on the edge tips over, slowly, into the road.
-_STEP_BACK_M = 0.5
-
-#: Closing speeds below this are "not closing", as in the TTC condition.
-_CLOSING_SPEED_EPSILON = 1e-6
 
 # Where a walk that may turn back is (``_phase``).
 _WALKING = "walking"
@@ -292,7 +279,7 @@ class WalkStraightAction(BaseAction):
         # Where it stands once back: behind the kerb, on the pavement.
         back = math.radians(self._back_yaw_deg())
         step = min(
-            _STEP_BACK_M,
+            STEP_BACK_M,
             math.hypot(self._start_x - self._kerb_x, self._start_y - self._kerb_y),
         )
         self._target_x = self._kerb_x + step * math.cos(back)
@@ -352,31 +339,16 @@ class WalkStraightAction(BaseAction):
         self, world: "carla.World", pedestrian: carla.Actor, location: carla.Location
     ) -> Optional[str]:
         """What makes the pedestrian turn back -- a vehicle within a threshold,
-        along the road -- or ``None``."""
-        target = CarlaWorldPose(x=location.x, y=location.y, z=location.z, yaw=0.0)
+        along the road -- or ``None`` (:func:`~._road_threat.road_threat`)."""
         walking = pedestrian.get_velocity()
-        for vehicle in world.get_actors().filter("vehicle.*"):
-            at = vehicle.get_location()
-            source = CarlaWorldPose(x=at.x, y=at.y, z=at.z, yaw=0.0)
-            separation = lane_separation(source, target)
-            if separation is None:
-                continue
-            distance_m = self._turn_back_distance_m
-            if distance_m is not None and separation <= distance_m:
-                return f"vehicle {vehicle.id} {separation:.1f} m away along the road"
-            ttc_s = self._turn_back_ttc_s
-            if ttc_s is None or separation < _CLOSING_SPEED_EPSILON:
-                continue
-            driving = vehicle.get_velocity()
-            closing = lane_closing_speed(
-                source, driving.x, driving.y, target, walking.x, walking.y
-            )
-            if closing is None or closing < _CLOSING_SPEED_EPSILON:
-                continue
-            ttc = separation / closing
-            if ttc <= ttc_s:
-                return f"vehicle {vehicle.id} {ttc:.1f} s away along the road"
-        return None
+        return road_threat(
+            world,
+            location,
+            walking.x,
+            walking.y,
+            self._turn_back_distance_m,
+            self._turn_back_ttc_s,
+        )
 
     def _warn_not_a_pedestrian(self) -> None:
         logger.warning(

@@ -338,6 +338,7 @@ class TestRouteToGoal:
         assert len(scenario._init_actions) == 1
         action = scenario._init_actions[0]
         assert isinstance(action, RoutingAction)
+        assert action.goal is not None
         assert action.goal.lanelet_id == 123
         # Registered, not performed: the runner runs init actions once the ego
         # actor exists, and nothing has reached the entity yet.
@@ -539,6 +540,7 @@ class TestGoalOnTheEgoConfig:
         assert len(scenario._init_actions) == 1
         action = scenario._init_actions[0]
         assert isinstance(action, RoutingAction)
+        assert action.goal is not None
         assert action.goal.lanelet_id == 265
 
 
@@ -564,6 +566,24 @@ class TestInitPhase:
         scenario.run_init(world)
 
         assert calls == ["callback", "action"]
+
+    def test_an_init_action_that_fired_is_complete_once_init_is_over(self) -> None:
+        # No tick steps its lifecycle: what waits on its completing (the route
+        # of an entity a spawn card brought in) would otherwise never start.
+        from autoware_carla_scenario.action_state import ActionState
+
+        calls: List[str] = []
+
+        class _RecordingAction(BaseAction):
+            def execute(self, world: object) -> None:
+                calls.append("action")
+
+        action = _RecordingAction(label="init_action")
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.register_init(action)
+        scenario.run_init(MagicMock())
+        assert calls == ["action"]
+        assert action.state is ActionState.COMPLETE
 
     def test_an_init_action_does_not_run_on_the_tick_loop(self) -> None:
         # The registration lists are separate: an init action is not a pre/post

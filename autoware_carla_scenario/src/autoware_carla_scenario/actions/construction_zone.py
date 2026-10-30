@@ -1,11 +1,12 @@
 """TeraSim's construction zone as an action: cones, barriers and signs on a lane (#402).
 
 :class:`ConstructionZoneAction` lays out TeraSim's ``ConstructionAdversity``
-(:mod:`~..adversity.construction`) along a lane of the Lanelet2 map, from
+or, with ``layout="urban"``, its ``UrbanConstructionAdversity`` on one
+intersection approach (:mod:`~..adversity.construction`) along a lane of the Lanelet2 map, from
 ``start_s`` to ``end_s`` metres along it -- past its lanelet's end, on along
 the straightest successors -- and from ``start_time`` to ``end_time``
 (scenario seconds; ``None`` for good) it stands the objects there as CARLA
-props, each added and removed by a :class:`~.prop.PropAction` (named
+props, each added and removed by a :class:`~.spawn.SpawnAction` (named
 ``<label>/<zone>/<n>``).  Then, as TeraSim's ``initialize``:
 
 * the traffic backend's background vehicles in the zone are taken off the
@@ -18,7 +19,7 @@ TeraSim's ``full_lane`` places no object, only closes the lane; in CARLA a
 closure nobody sees is one Autoware drives into, so the objects are always
 placed.  At ``end_time`` the props are removed and the lane reopened; when the
 run ends, the lane is reopened and the runner takes the props away with every
-other (:func:`~.prop.clear_props`).
+other (:func:`~.spawn.clear_props`).
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from ..trajectory.relative_lane import _centreline, _point_at, advance_along_lan
 from ..trajectory.resolve import road_height
 from .background_traffic import _BackendAction
 from .base import BaseAction, TickTiming
-from .prop import PropAction, PropOperation
+from .spawn import SpawnAction, remove_prop
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -75,10 +76,14 @@ class ConstructionZoneAction(_BackendAction):
 
     Args:
         lanelet_id: The lanelet the lane is measured from.
-        start_s: Where the work starts, metres along it.
+        start_s: Where the work starts, metres along it; for an urban
+            layout (``settings.layout == "urban"``), where the approach
+            starts, the warning signs from there.
         end_s: Where it ends; past the lanelet's end, along the straightest
-            successors.
-        settings: TeraSim's layout numbers (zones, spacing, tapers, side).
+            successors.  Urban: the intersection the approach ends at.
+        settings: TeraSim's layout numbers (zones, spacing, tapers, side,
+            and the layout: :data:`~..adversity.construction.URBAN_CONSTRUCTION`
+            is TeraSim's ``UrbanConstructionAdversity``).
         start_time: When the zone appears (s from the scenario's start).
         end_time: When it is cleared away; ``None`` never.
         close_lane: Tell the traffic backend the lane is closed (TeraSim's
@@ -237,10 +242,9 @@ class ConstructionZoneAction(_BackendAction):
             except ValueError:
                 continue  # past the lane's last lanelet
             name = f"{self.label}/{item.zone}/{index}"
-            added = PropAction(
-                name,
-                PropOperation.ADD,
-                Lanelet2Pose(lanelet_id, along, item.t),
+            added = SpawnAction(
+                name=name,
+                position=Lanelet2Pose(lanelet_id, along, item.t),
                 blueprint=self._blueprints[item.kind],
                 label=self.label,
             )
@@ -299,7 +303,7 @@ class ConstructionZoneAction(_BackendAction):
     def _teardown(self, world: "carla.World") -> None:
         """Remove the props and reopen the lane."""
         for name in self._props:
-            PropAction(name, PropOperation.REMOVE, label=self.label).apply(world)
+            remove_prop(name)
         self._props = []
         self._reopen(world)
 

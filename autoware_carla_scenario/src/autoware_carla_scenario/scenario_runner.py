@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
-from .actions.prop import clear_props
+from .actions.spawn import clear_props
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -28,27 +28,49 @@ from .conditions import (
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
+from .failure import Failure, FailureCategory, progress_detail
 from .maps.opendrive import map_asset_env_var
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
-from .metrics import set_importance_sampling_weight
+from .metrics import (
+    ego_progress,
+    reset_ego_motion,
+    set_importance_sampling_weight,
+    track_ego_motion,
+)
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
-from .entity.vehicle_entity import _set_warmup_done
+from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
+from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
-from .world_reset import episode_of, reload_current_map, same_episode, short_map_name
+from .world_reset import (
+    RESET_RELOAD,
+    RESET_SOFT,
+    WorldBaseline,
+    capture_baseline,
+    check_world_reset,
+    episode_of,
+    reload_current_map,
+    same_episode,
+    short_map_name,
+    soft_reset_world,
+)
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
 from .t4 import T4Recorder, T4Recording
+from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
 from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
+
+if TYPE_CHECKING:
+    from .npc_collisions import NpcCollisionMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +125,10 @@ def _register_default_timeout(
     ``sweep.job_timeout_seconds`` guard over every job.
 
     Registered after ``ego_existence``, as the last fail condition: on a tick
-    where several fire, the result names the first.  On a retry of the same
-    scenario object, the default the first attempt registered is still there
-    and counts as the scenario's own, so it is not added twice.
+    where several fire, the result names the first.  A retry of the same
+    scenario object starts without the earlier attempt's registrations
+    (:meth:`BaseScenario._reset_registrations`), so it is given the default
+    again, once.
 
     Returns:
         Whether the default was registered.
@@ -186,6 +209,42 @@ def _log_ego_opendrive_position(
         )
 
 
+def _status_label(role: str, index: int, cond: BaseCondition) -> str:
+    """A condition's label in the run's statuses: ``fail[2](late)``."""
+    return f"{role}[{index}]({cond.label})"
+
+
+def _failure(
+    condition: str,
+    category: FailureCategory,
+    at: float,
+    message: str,
+    statuses: list[ConditionStatus],
+) -> Failure:
+    """Why a run failed: by *condition* (its :func:`_status_label`, ``""``
+    for none), of *category*, at *at* seconds, with *message*; the other fail
+    conditions that held, from *statuses*.  A run out of time says how the ego ended it
+    (:func:`~autoware_carla_scenario.failure.progress_detail`)."""
+    detail: Optional[str] = None
+    if category == FailureCategory.PROGRESS:
+        progress = ego_progress()
+        if progress is not None:
+            detail = progress_detail(progress[0], progress[1])
+    also = [
+        status.label
+        for status in statuses
+        if status.role == "fail" and status.satisfied and status.label != condition
+    ]
+    return Failure(
+        condition=condition,
+        category=category,
+        at=at,
+        message=message,
+        detail=detail,
+        also_triggered=also,
+    )
+
+
 def _build_condition_status(
     cond: "BaseCondition",
     index: int,
@@ -214,7 +273,7 @@ def _build_condition_status(
         message = "not yet satisfied" if role == "pass" else "not triggered"
 
     return ConditionStatus(
-        label=f"{role}[{index}]({cond.label})",
+        label=_status_label(role, index, cond),
         satisfied=satisfied,
         message=message,
         condition_type=cond_type,
@@ -280,6 +339,14 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
+def _npc_collision_monitor() -> "NpcCollisionMonitor":
+    """The run's :class:`~autoware_carla_scenario.npc_collisions.NpcCollisionMonitor`:
+    the road users' own collisions and falls, logged, not judged."""
+    from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
+
+    return NpcCollisionMonitor()
+
+
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
     """What drove the run's traffic, as the result records it: the backend's
     :meth:`~TrafficBackend.describe`, with how many vehicles it simulated at
@@ -316,9 +383,11 @@ def _write_result(
 
     What it ran with: the lock and the environment beside the result, and
     their summary (with the environment's id) in it, and what drove the
-    traffic (*traffic*, :func:`_traffic_record`).  With ``json`` and
-    :mod:`.environment` (platform, json), which Codon does not have: the check
-    (docs/typecheck.md) does not compile it.
+    traffic (*traffic*, :func:`_traffic_record`).  It merges values of mixed
+    types (the traffic record, ``Any``, and :mod:`.environment`'s record, a
+    module the check does not compile: platform, importlib.metadata) into the
+    result document, which Codon cannot express: the check (docs/typecheck.md)
+    does not compile it.
     """
     import json  # noqa: PLC0415
 
@@ -566,6 +635,17 @@ class ScenarioRunner:
     _batch_xodr: Optional[Path]
     #: The episode this runner last loaded _batch_map into, if it knows it.
     _batch_episode: Optional[int]
+    #: How the world is reset between runs: RESET_RELOAD or RESET_SOFT.
+    _world_reset: str
+    #: With RESET_SOFT, load the map instead on every this many-th reset (0:
+    #: only when a soft reset cannot be done).
+    _reload_every: int
+    #: Soft resets since the map was last loaded.
+    _soft_resets: int
+    #: What a soft reset puts the world back to, read when the map was last
+    #: loaded; None when there is none to soft-reset to (RESET_RELOAD, or the
+    #: map was not loaded by this runner yet).
+    _baseline: Optional[WorldBaseline]
     #: The map the runs are on, as the trajectory log's ``map`` record names
     #: it: where it came from (``map.source``), the Lanelet2 file read, and the
     #: projection the config overrode its own with.  The queue sets them.
@@ -579,6 +659,9 @@ class ScenarioRunner:
     #: What writes each run as a T4 dataset, with sensors of its own on the
     #: ego (``t4.enabled``), or None for no dataset.  The queue sets it.
     t4: Optional[T4Recorder]
+    #: What writes each run's trajectory log as a T4Scene once the log is
+    #: closed (``t4scene.enabled``), or None for none.  The queue sets it.
+    t4scene: Optional[T4SceneExporter]
 
     def __init__(
         self,
@@ -591,6 +674,8 @@ class ScenarioRunner:
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Optional[OddDefinition] = None,
+        world_reset: str = RESET_RELOAD,
+        reload_every: int = 0,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -620,12 +705,34 @@ class ScenarioRunner:
             odd: The ODD every run is measured against: its attributes are
                 the ODD coverage, its modules say which ticks were outside it
                 (docs/odd.md).  *None* selects the built-in ``default`` ODD.
+            world_reset: How :meth:`reset_world` resets the world between
+                runs.  ``"reload"`` (the default) loads the map again.
+                ``"soft"`` keeps the loaded map and destroys what the run
+                spawned, restoring the weather, the episode settings, the
+                traffic lights and the spectator as they were when the map
+                was loaded (:func:`~autoware_carla_scenario.world_reset.soft_reset_world`);
+                the map is loaded instead when the world is not that one any
+                more, or the soft reset fails or finds anything left over
+                (docs/usage.md, "Resetting the world between cases").
+            reload_every: With ``world_reset="soft"``, load the map instead of
+                a soft reset on every *reload_every*-th reset; 0 (the default)
+                only when a soft reset cannot be done.
+
+        Raises:
+            ValueError: *world_reset* is not ``"reload"`` or ``"soft"``, or
+                *reload_every* is negative.
         """
+        check_world_reset(world_reset, reload_every)
+        self._world_reset = world_reset
+        self._reload_every = reload_every
+        self._soft_resets = 0
+        self._baseline = None
         self.map_source = None
         self.lanelet2_path = None
         self.projector_type = None
         self.rerun = None
         self.t4 = None
+        self.t4scene = None
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -903,12 +1010,14 @@ class ScenarioRunner:
                 f"Available maps: {short_names}"
             )
 
-        self._world = self._client.load_world(map_name)
+        loaded = self._client.load_world(map_name)
+        self._world = loaded
         # The map the runs are for, to reset the world to -- not whatever map
         # the server happens to run then (see _world_for_next_run).
         self._batch_map = short_map_name(map_name)
         self._batch_xodr = None
-        self._batch_episode = episode_of(self._world)
+        self._batch_episode = episode_of(loaded)
+        self._baseline = self._capture_baseline(loaded, map_name)
 
     def _load_batch_map(self) -> None:
         """Load the runs' map again, the way it was loaded first."""
@@ -967,12 +1076,89 @@ class ScenarioRunner:
     # Scenario execution
     # ------------------------------------------------------------------
 
-    def reset_world(self, scenario_name: str = "") -> None:
-        """Reload the map, so the next scenario starts on a clean world.
+    @property
+    def world_reset(self) -> str:
+        """How :meth:`reset_world` resets the world: ``"reload"`` or ``"soft"``."""
+        return self._world_reset
 
-        The map is the one :meth:`load_map_by_name` loaded, when this runner
-        loaded one, and the server's current map otherwise.
+    def _capture_baseline(
+        self, world: "carla.World", scenario_name: str
+    ) -> Optional[WorldBaseline]:
+        """What a soft reset of *world*, freshly loaded, puts back; None when
+        the runner reloads, or the world cannot be read (the next reset then
+        loads the map)."""
+        self._soft_resets = 0
+        if self._world_reset != RESET_SOFT:
+            return None
+        try:
+            return capture_baseline(world)
+        except Exception:  # noqa: BLE001 - the next reset reloads instead
+            logger.warning(
+                "[%s] Reading the world for a soft reset failed: the next "
+                "reset loads the map",
+                scenario_name,
+                exc_info=True,
+            )
+            return None
+
+    def _soft_reset(self, scenario_name: str) -> bool:
+        """Reset the world without loading the map, if it can be done.
+
+        Returns False -- the caller then loads the map -- when there is no
+        baseline, a reload is due (*reload_every*), the server runs another
+        episode than the one the baseline was read in (another client loaded
+        a world), or the soft reset raises or finds anything left over.
         """
+        if self._baseline is None:
+            logger.info(
+                "[%s] No baseline to soft-reset to: loading the map", scenario_name
+            )
+            return False
+        baseline: WorldBaseline = self._baseline
+        if self._reload_every > 0 and self._soft_resets + 1 >= self._reload_every:
+            logger.info(
+                "[%s] Reload due (every %d resets): loading the map",
+                scenario_name,
+                self._reload_every,
+            )
+            return False
+        try:
+            world = self._client.get_world()
+            if not same_episode(episode_of(world), baseline.episode):
+                logger.warning(
+                    "[%s] The CARLA world is not the one the soft reset knows "
+                    "(another client loaded a world on this server): loading "
+                    "the map",
+                    scenario_name,
+                )
+                return False
+            soft_reset_world(self._client, world, baseline, scenario_name)
+            self._world = world
+        except Exception:  # noqa: BLE001 - the map is loaded instead
+            logger.warning(
+                "[%s] The soft reset failed: loading the map",
+                scenario_name,
+                exc_info=True,
+            )
+            return False
+        self._soft_resets += 1
+        return True
+
+    def reset_world(self, scenario_name: str = "") -> None:
+        """Reset the world, so the next scenario starts on a clean one.
+
+        With ``world_reset="reload"`` (the default) the map is loaded again:
+        the one :meth:`load_map_by_name` loaded, when this runner loaded one,
+        and the server's current map otherwise.  With ``world_reset="soft"``
+        the world is put back as it was loaded, without a load, when it can
+        be (:meth:`_soft_reset`), and the map is loaded otherwise.
+        """
+        if self._world_reset == RESET_SOFT and self._soft_reset(scenario_name):
+            return
+        self._reload_world(scenario_name)
+
+    def _reload_world(self, scenario_name: str) -> None:
+        """Load the map again (see :meth:`reset_world`)."""
         # Reload the world to guarantee a completely clean state (all
         # actors, sensors, physics state, settings and weather are reset).
         # This is more reliable than destroying actors individually, which
@@ -998,8 +1184,11 @@ class ScenarioRunner:
             fresh.tick()
             self._world = fresh
             self._batch_episode = episode_of(fresh)
+            self._baseline = self._capture_baseline(fresh, scenario_name)
             logger.info("[%s] World reloaded and ticked", scenario_name)
         except Exception:
+            # Whatever the world is now, it is not one to soft-reset to.
+            self._baseline = None
             logger.warning(
                 "[%s] Reloading the map failed — world may retain residual state",
                 scenario_name,
@@ -1052,8 +1241,9 @@ class ScenarioRunner:
                 space it was drawn in: recorded in the coverage file with the
                 run's outcome, so that the merged report can assess its
                 flakiness and the next sweep's flaky search learn from it.
-            reset_world: Reload the map at the end, so the next scenario starts
-                on a clean world.  A queue's last scenario has no next one, and
+            reset_world: Reset the world at the end (:meth:`reset_world`: a
+                map reload, or a soft reset), so the next scenario starts on a
+                clean world.  A queue's last scenario has no next one, and
                 whatever runs on the server after it loads its map anyway.
             file_stem: The stem the run's files are named by.  ``None`` (the
                 default) names them by the scenario's class, numbered past the
@@ -1074,9 +1264,17 @@ class ScenarioRunner:
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
         # entity from the last run still answering to "npc1" would be worse
-        # than no entity at all.  So are the props a PropAction placed.
+        # than no entity at all.  So are the props a SpawnAction placed, and
+        # the entry speeds and warm-up flag: the end of a run clears them too,
+        # but a spawn card ticked outside any run (a test, a tool) holds a
+        # speed for an actor id this run's world may reuse.
         clear_entities()
         clear_props()
+        _set_warmup_done(False)
+        _clear_entry_speeds()
+        # And where the last run's ego had its base_link: this run's ego says
+        # where its own is when its scenario starts.
+        clear_ego_base_link()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1116,8 +1314,9 @@ class ScenarioRunner:
         )
 
         # Enable synchronous mode so we control the simulation tick rate.
-        # Original settings are not saved because the map reload at the
-        # end of this method resets everything to defaults.
+        # Original settings are not saved because the reset at the end of
+        # this method (a map reload, or a soft reset to the settings the map
+        # was loaded with) puts them back.
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
@@ -1139,6 +1338,7 @@ class ScenarioRunner:
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
+        npc_events: Optional["NpcCollisionMonitor"] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -1179,15 +1379,17 @@ class ScenarioRunner:
                 logger.info("[%s] Traffic: %s", scenario_name, backend.describe())
 
             logger.info("[%s] === Setup start ===", scenario_name)
+            # A retry, or a re-run, of the same scenario object calls setup()
+            # on it again: what the earlier attempt registered -- conditions
+            # that may have latched, actions, callbacks, entities, coverage,
+            # measures -- goes, and what __init__ registered stays.  Before
+            # set_traffic_backend(), so the backend is handed only to actions
+            # this run has.
+            scenario._reset_registrations()
             scenario.set_client(self._client, tm_port=self._backend_tm_port)
             # Before setup(), because setup() is where a scenario spawns and
             # registers its NPCs, and register_entity() passes the backend on.
             scenario.set_traffic_backend(backend)
-            # setup() declares the cover items again on a retry of the same
-            # scenario, so the ones from an attempt that failed are dropped.
-            scenario._cover_items.clear()
-            scenario._cross_items.clear()
-            scenario._restore_measures()
             # A logical scenario's route is process-wide, like the signal
             # controllers: one left by the previous scenario of a batch must
             # not be read as this one's.  A scenario with a route sets its own
@@ -1374,10 +1576,14 @@ class ScenarioRunner:
             else:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
+            reset_ego_motion()
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )
             coverage.start(world, clock.simulated)
+
+            # The road users' own collisions and falls, logged (not judged).
+            npc_events = _npc_collision_monitor()
 
             # Tick loop
             while not scenario.is_done():
@@ -1447,10 +1653,28 @@ class ScenarioRunner:
                         # What it sampled this tick (NADE's adversities).
                         for event in action.take_adversity_events():
                             trajectory.record_adversity(action.label, event)
+                        for arrival in action.take_waypoint_arrivals():
+                            trajectory.record_waypoint_arrival(action.label, arrival)
+                        for entity, actor_id in action.take_spawns():
+                            trajectory.record_spawn(action.label, entity, actor_id)
+                        for entity, actor_id in action.take_despawns():
+                            trajectory.record_despawn(action.label, entity, actor_id)
+                if npc_events is not None:
+                    collisions, falls, fallen_gone = npc_events.tick(world, elapsed)
+                    for collision in collisions:
+                        trajectory.record_collision(collision)
+                    for fall in falls:
+                        trajectory.record_walker_fallen(fall)
+                    for entity, actor_id in fallen_gone:
+                        trajectory.record_despawn(
+                            "fallen walker", entity, actor_id, "fallen"
+                        )
 
                 # The weight the actions above leave the run with, for the
                 # metric that reads it.
                 set_importance_sampling_weight(scenario.importance_sampling_weight)
+                # The ego's motion, which the weaving metrics read.
+                track_ego_motion(world, elapsed)
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1511,12 +1735,20 @@ class ScenarioRunner:
                             condition.label,
                             check.message,
                         )
+                        statuses = _condition_statuses(
+                            scenario, world, elapsed, scenario_name
+                        )
                         result = ScenarioResult(
                             passed=False,
                             message=check.message,
                             elapsed_seconds=check.elapsed_seconds,
-                            condition_statuses=_condition_statuses(
-                                scenario, world, elapsed, scenario_name
+                            condition_statuses=statuses,
+                            failure=_failure(
+                                _status_label("fail", i, condition),
+                                scenario.fail_category(i),
+                                check.elapsed_seconds,
+                                check.message,
+                                statuses,
                             ),
                         )
                         break
@@ -1536,13 +1768,19 @@ class ScenarioRunner:
                         tick_count,
                     )
                     reason = ego.termination_reason
+                    message = "Ego entity requested session termination" + (
+                        "" if reason is None else f": {reason}"
+                    )
+                    statuses = _condition_statuses(
+                        scenario, world, elapsed, scenario_name
+                    )
                     result = ScenarioResult(
                         passed=False,
-                        message="Ego entity requested session termination"
-                        + ("" if reason is None else f": {reason}"),
+                        message=message,
                         elapsed_seconds=elapsed,
-                        condition_statuses=_condition_statuses(
-                            scenario, world, elapsed, scenario_name
+                        condition_statuses=statuses,
+                        failure=_failure(
+                            "", FailureCategory.DRIVER, elapsed, message, statuses
                         ),
                     )
                     break
@@ -1562,8 +1800,10 @@ class ScenarioRunner:
         finally:
             set_measured_scenario(None)
             set_importance_sampling_weight(None)
+            reset_ego_motion()
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
+            _clear_entry_speeds()
 
             # Let the ego entity tear down its own resources (driver session,
             # sensors) while the world is still alive.
@@ -1575,6 +1815,10 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # The ego's base_link was this run's: the ego forgets it in its
+            # on_scenario_end, which may have failed before it did.  Right
+            # here, before any later step of the cleanup can raise past it.
+            clear_ego_base_link()
 
             # Stop and destroy the sensors the conditions started listening,
             # through their own handles, while the world is still the run's:
@@ -1589,7 +1833,10 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
-            # And the props a PropAction placed: the leftovers' sweep takes
+            if npc_events is not None:
+                # Its sensors, through their own handles, as the conditions'.
+                npc_events.close()
+            # And the props a SpawnAction placed: the leftovers' sweep takes
             # vehicles, walkers and sensors, not static props.
             clear_props()
 
@@ -1637,6 +1884,10 @@ class ScenarioRunner:
                     recording = converter.submit(trajectory.path, file_stem)
                     if result is not None:
                         result.rerun_recording = str(recording)
+                if self.t4scene is not None:
+                    # Best effort, as the log itself: a failure is logged.
+                    exporter: T4SceneExporter = self.t4scene
+                    exporter.export(trajectory.path)
 
             if TYPE_CHECKING:
                 # describe() and fidelity_census() are dicts of mixed value
@@ -1672,7 +1923,8 @@ class ScenarioRunner:
             json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             if TYPE_CHECKING:
-                # json and environment (platform, json): Codon has neither.
+                # The result document of mixed value types, with the traffic
+                # and environment records (UNCALLED in typecheck/library.py).
                 pass
             else:
                 _write_result(

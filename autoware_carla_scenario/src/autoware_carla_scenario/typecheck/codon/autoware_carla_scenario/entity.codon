@@ -14,7 +14,7 @@ from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProj
 from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
 from ._vehicle_entity import (SpawnLocation, SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
-from .entity_role import _expect_role_name
+from .entity_role import _expect_role, _expect_role_name
 
 
 def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
@@ -108,8 +108,8 @@ class PedestrianEntity:
 
     def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
                  initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
-                 waypoints = (), walking_speed: float = 1.4) -> None:
-        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints and walking_speed")
+                 waypoints = (), walking_speed: float = 1.4, cross_factor = None) -> None:
+        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints, walking_speed and cross_factor")
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
         raise NotImplementedError()
@@ -118,7 +118,7 @@ class PedestrianEntity:
     def walking(self) -> bool:
         raise NotImplementedError()
 
-    def walk_on(self) -> None:
+    def walk_on(self, speed_mps: Optional[float] = None) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:
@@ -178,6 +178,8 @@ class EgoVehicle:
             _acs_expect_return(r, NoneType, "EgoVehicle.turn_at_junction() returns None")
         elif name == "follow_route":
             _acs_expect_return(r, NoneType, "EgoVehicle.follow_route() returns None")
+        elif name == "finish_at":
+            _acs_expect_return(r, bool, "EgoVehicle.finish_at() returns bool")
         elif name == "release_from_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
         elif name == "resume_traffic":
@@ -253,6 +255,9 @@ class EgoVehicle:
     def follow_route(self, world: carla.World, stops: List[Lanelet2Pose]) -> None:
         raise NotImplementedError()
 
+    def finish_at(self, world: carla.World, points: List[carla.Location]) -> bool:
+        raise NotImplementedError()
+
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 
@@ -299,6 +304,31 @@ class CarlaDriverEntity:
         compile_error("CarlaDriverEntity is not modelled: the static check cannot "
                       "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
 
+
+
+# entity.hils_entity imports socket and hils.protocol (socket); the checked
+# actions.communication_loss reaches the HILS ego through find_hils_entity()
+# (Codon resolves isinstance() of a vehicle by its static type) and calls its
+# disconnect() and reconnect(). Only those are declared; the constructor is
+# Python's and any call to it fails the check, as its HilsEgoConfig is not in
+# the model: a scenario cannot build one (ego.entity=hils builds it).
+class HilsEgoEntity:
+    def __init__(self, config=None, episode_name: str = ""):
+        compile_error("HilsEgoEntity is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
+
+    # Optional[Sequence[str]] in Python: the checked caller hands a tuple.
+    def disconnect(self, device: Optional[str] = None, messages = None,
+                   direction: str = "both") -> Optional[str]:
+        raise NotImplementedError()
+
+    def reconnect(self, cut_id: str) -> bool:
+        raise NotImplementedError()
+
+
+def find_hils_entity(role_name) -> Optional[HilsEgoEntity]:
+    _expect_role(role_name)
+    return None
 
 def _expect_optional_ego_vehicle(ego) -> Optional[EgoVehicle]:
     """An Optional[EgoVehicle] argument (Codon's Optional does not take a subclass)."""

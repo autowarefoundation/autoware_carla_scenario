@@ -27,6 +27,33 @@ def _set_warmup_done(done: bool) -> None:
     _warmup_done = done
 
 
+def warmup_done() -> bool:
+    """Whether the clock has started (:data:`_warmup_done`)."""
+    return _warmup_done
+
+
+#: The speeds (m/s, by actor id) of the vehicles a spawn card brought in
+#: before the clock started -- in the init phase, which holds every vehicle
+#: still: the runner gives them these with the initial speeds.
+_entry_speeds: dict[int, float] = {}
+
+
+def hold_entry_speed(actor_id: int, speed: float) -> None:
+    """Have the vehicle *actor_id*, brought in before the clock started,
+    start the run at *speed* (m/s)."""
+    _entry_speeds[actor_id] = speed
+
+
+def entry_speeds() -> dict[int, float]:
+    """:data:`_entry_speeds`, a copy."""
+    return dict(_entry_speeds)
+
+
+def _clear_entry_speeds() -> None:
+    """Forget the entry speeds, for the runner at the start and end of a run."""
+    _entry_speeds.clear()
+
+
 @dataclass
 class VehicleEntityConfig:
     """Configuration for spawning a vehicle entity (ego or NPC).

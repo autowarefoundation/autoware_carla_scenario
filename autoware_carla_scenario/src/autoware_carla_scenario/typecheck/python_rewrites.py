@@ -22,17 +22,29 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``f"{x:+.2f}"``; a field inside the spec, ``f"{x:>{w}.2f}"``; anything its
   grammar does not know) becomes the value's own ``__format__`` call, and the
   f-string a ``+`` of its parts: ``((x).__format__("+.2f"))``, a ``str``
-  as before.  A nested field is ``str(w)`` (``repr`` for ``!r``).  The spec
+  as before.  A nested field is ``str(w)`` (``repr`` for ``!r``).  An
+  f-string with a literal brace (``f"{x} {{y}}"``) becomes the same ``+``,
+  the brace a string of its own, whatever its fields (#696).  The spec
   is parsed at run time, so a spec Python rejects (``{x:q}``) is accepted by
-  the check.  An f-string with a brace or a nested f-string inside an
-  expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
-  Codon's f-string parser loses the position there.
+  the check.  A field with ``!a`` makes the f-string rewritten too, the
+  field ``!r`` (``repr(x)`` where it is a call): Codon has no ``ascii()``,
+  and ``repr`` has the same type (#701).  In a rewritten f-string, a field
+  whose expression holds a double quote or a backslash (``d["it's"]``,
+  ``d['a\\b']``) cannot go in the double-quoted f-string written there, so
+  it is a call too, whatever its conversion: ``str(e)`` (none, ``!s``),
+  ``repr(e)`` (``!r``, ``!a``), and that call's ``.__format__(spec)``
+  with a spec, ``(e).__format__(spec)`` with no conversion (#704).  An
+  f-string with a brace or a
+  nested f-string inside an expression (``f"{'{}'.format(x)}"``,
+  ``f"{len({1, 2})}"``) is refused: Codon's f-string parser loses the
+  position there.
 * An f-string in the body of a lambda that reads a name the lambda does not
   bind (a captured variable, or the parameter of a lambda around it) becomes
   ``str(v) + str(p)`` (#470): Codon resolves the names of an f-string in the
   lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
-  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
+  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``,
+  as it is ``!r`` in ``"{!a}".format(x)``.
   So does any f-string of a decorator (``@tag(f"lane-{n}")``, #616), which
   Codon reads as an attribute of the string ("'str' object has no attribute
   '__prefix_f__'"), with or without fields.
@@ -501,10 +513,6 @@ def _match_refusal(pattern: ast.AST) -> str | None:
     return None
 
 
-class _Refused(Exception):
-    """An f-string the rewrite cannot express; the message says what to write."""
-
-
 #: A format spec Codon's f-string parser takes, as Python's grammar has it
 #: without the sign: [[fill]align][#][0][width][,|_][.precision][type].
 _CODON_SPEC = re.compile(
@@ -584,8 +592,16 @@ def _keyword_dict(node: ast.AST) -> bool:
 
 
 def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
+    """Whether Codon refuses *node* as written: a field its parser does not
+    take, a literal brace (``{{`` / ``}}``), which it has no escape for and
+    refuses with no position of the file (#696), or an ``!a`` field, which
+    calls the ``ascii()`` Codon lacks ("name 'ascii' is not defined", #701)."""
     return any(
-        isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v)
+        (
+            isinstance(v, ast.FormattedValue)
+            and (v.conversion == _ASCII or _field_needs_rewrite(v))
+        )
+        or (isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}"))
         for v in node.values
     )
 
@@ -601,18 +617,19 @@ def _expression_text(expression: ast.expr) -> str:
     return text
 
 
+#: The ``!a`` conversion of an f-string field, as :mod:`ast` stores it.
+_ASCII = ord("a")
+
+
 def _converted(field: ast.FormattedValue) -> str:
-    """The field's value as the expression ``!r`` / ``!s`` makes of it."""
+    """The field's value as the expression ``!r`` / ``!s`` makes of it;
+    ``repr`` for ``!a`` too, as for ``ascii(x)``: Codon has no ``ascii()``
+    (#701), and ``repr`` gives the same ``str``."""
     text = _expression_text(field.value)
-    if field.conversion == ord("r"):
+    if field.conversion in (ord("r"), _ASCII):
         return f"repr({text})"
     if field.conversion == ord("s"):
         return f"str({text})"
-    if field.conversion == ord("a"):
-        raise _Refused(
-            "!a together with a format spec the check rewrites is not "
-            "supported (Codon has no ascii()): use !r"
-        )
     return f"({text})"
 
 
@@ -620,7 +637,8 @@ def _formatted(field: ast.FormattedValue) -> str:
     """A ``str`` expression formatting *field* with its spec, at run time."""
     value = _converted(field)
     if field.format_spec is None:
-        return value if field.conversion in (ord("r"), ord("s")) else f"str{value}"
+        converted = field.conversion in (ord("r"), ord("s"), _ASCII)
+        return value if converted else f"str{value}"
     return f"{value}.__format__({_spec_expression(field.format_spec)})"
 
 
@@ -637,10 +655,11 @@ def _spec_expression(spec: ast.expr) -> str:
 
 
 def _fstring_rewrite(node: ast.JoinedStr) -> str:
-    """*node* as ``str`` parts joined by ``+``; raises :class:`_Refused`.
+    """*node* as ``str`` parts joined by ``+``.
 
     A field Codon's parser takes stays in an f-string of its own; the others
-    are ``value.__format__(spec)``, as Python's ``format`` calls it.
+    are calls: ``value.__format__(spec)``, as Python's ``format`` calls it,
+    or ``str(value)`` / ``repr(value)`` without a spec.
     """
     parts: list[str] = []
     chunk = ""
@@ -660,18 +679,20 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
                 else:
                     chunk += _escaped(piece)
         elif isinstance(value, ast.FormattedValue):
-            if _field_needs_rewrite(value):
+            body = _expression_text(value.value)
+            if _field_needs_rewrite(value) or any(c in body for c in '"\\{}'):
+                # A field whose expression cannot go in the double-quoted
+                # f-string written here (`d["it's"]`, which ast.unparse
+                # spells with a double quote; `d['a\\b']`) is a call
+                # instead, `str(...)` / `repr(...)` / `.__format__(spec)`:
+                # a call needs no quote of its own, and has the field's
+                # type (#704).
                 flush()
                 parts.append(_formatted(value))
                 continue
-            body = _expression_text(value.value)
-            if any(c in body for c in '"\\{}'):
-                raise _Refused(
-                    "an f-string expression holding a double quote, a "
-                    "backslash or a brace cannot be rewritten: bind it to a "
-                    "local first"
-                )
-            if value.conversion in (ord("r"), ord("s"), ord("a")):
+            if value.conversion == _ASCII:
+                body += "!r"  # Codon has no ascii() (#701)
+            elif value.conversion in (ord("r"), ord("s")):
                 body += "!" + chr(value.conversion)
             spec = _spec_text(value.format_spec)
             if spec:
@@ -705,14 +726,7 @@ def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
         if chunk:
             parts.append(_string_literal(chunk))
             chunk = ""
-        if value.conversion == ord("a"):
-            # Codon has no ascii(); repr() has the same type (as for ascii()).
-            value = ast.FormattedValue(
-                value=value.value,
-                conversion=ord("r"),
-                format_spec=value.format_spec,
-            )
-        parts.append(_formatted(value))
+        parts.append(_formatted(value))  # `!a` is `repr`, as `!r` (#701)
     if chunk:
         parts.append(_string_literal(chunk))
     return " + ".join(parts) if parts else '""'
@@ -1468,15 +1482,11 @@ class _Pass(ShadowScopes):
             bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
         ) or id(node) in self._decorator_fstrings
         if lambda_lowered or _fstring_needs_rewrite(node):
-            try:
-                text = (
-                    _lambda_fstring_rewrite(node)
-                    if lambda_lowered
-                    else _fstring_rewrite(node)
-                )
-            except _Refused as error:
-                self._refuse(node, str(error))
-                return
+            text = (
+                _lambda_fstring_rewrite(node)
+                if lambda_lowered
+                else _fstring_rewrite(node)
+            )
             start, end = self.edits.node_span(node)
             # The line breaks of a triple-quoted string stay inside the
             # brackets of the replacement.
@@ -2167,7 +2177,8 @@ class _Pass(ShadowScopes):
                 expression = "(" + expression + ")"
             body = expression + access
             if conversion:
-                body += "!" + conversion
+                # Codon has no ascii(): `!r` is the same type (#701).
+                body += "!" + ("r" if conversion == "a" else conversion)
             if spec:
                 body += ":" + spec
             chunk += "{" + body + "}"
@@ -2185,6 +2196,19 @@ class _Pass(ShadowScopes):
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         args = node.args
+        if args.kwonlyargs and args.vararg is None:
+            # `lambda a, *, k=1: ...` (#629): Codon 0.19 cannot parse the
+            # bare `*` of a lambda ("unexpected dedent"), and a lambda that
+            # takes `*_acs_kw` instead (what a def's becomes, #622) is not
+            # one Codon passes as a key or callback.
+            names = ", ".join(a.arg for a in args.kwonlyargs)
+            self._refuse(
+                node,
+                "Codon cannot compile a lambda with keyword-only parameters "
+                f"(`{names}` after a bare `*`): write a nested def instead "
+                "(`def f(a, *, k=1): return ...`), whose keyword-only "
+                "parameters the check compiles",
+            )
         positional = [*args.posonlyargs, *args.args]
         first = len(positional) - len(args.defaults)
         moved: list[tuple[str, ast.expr]] = []

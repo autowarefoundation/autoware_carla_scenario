@@ -187,6 +187,14 @@ class SystemExit:
     def args(self) -> Tuple[str]:
         return (self.message,)
 
+    # `e.code`, what it was raised with (`sys.exit(2)`): an int here, the
+    # status Codon's SystemExit holds. CPython's is whatever it was raised
+    # with, an int, a str or None, so code reading it tests it with
+    # isinstance() first, as CPython needs.
+    @property
+    def code(self) -> int:
+        return self.status
+
 
 # OSError's subclasses pass their own type name on, as Codon's LookupError
 # and RuntimeError take one for theirs; its own constructor stays.
@@ -249,6 +257,14 @@ class ProcessLookupError(Static[OSError]):
         self.python_type = self.__class__._pytype
 
 
+class ChildProcessError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("ChildProcessError", _message(args, kwargs, "ChildProcessError()"))
+        self.python_type = self.__class__._pytype
+
+
 class TimeoutError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
@@ -276,4 +292,14 @@ class BrokenPipeError(Static[ConnectionError]):
 
     def __init__(self, *args, **kwargs):
         super().__init__("BrokenPipeError", _message(args, kwargs, "BrokenPipeError()"))
+        self.python_type = self.__class__._pytype
+
+
+# Derived from BaseException, not Exception, as CPython's is: `except
+# Exception:` does not catch it.
+class KeyboardInterrupt(Static[BaseException]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("KeyboardInterrupt", _message(args, kwargs, "KeyboardInterrupt()"))
         self.python_type = self.__class__._pytype

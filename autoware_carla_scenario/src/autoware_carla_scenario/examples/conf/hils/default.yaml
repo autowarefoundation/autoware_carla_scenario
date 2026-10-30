@@ -1,0 +1,20 @@
+# @package _global_
+#
+# Settings for an ego driven by ECUs under test, used when `ego.entity: hils`
+# (docs/hils.md). The HILS bridge, `scenario-hils`, stays up on the HILS PC; the
+# run connects to it for each scenario, waits while it initializes the ECUs
+# (its `scenario_start` steps), applies the ECUs' command every tick, and lets
+# it finalize them (its `scenario_end` steps) when the scenario ends.
+hils:
+  # The bridge's `runner.listen` address.
+  host: localhost
+  port: 7700
+  # Seconds, wall clock: reaching the bridge, its scenario_start steps, its
+  # scenario_end steps.
+  connect_timeout_s: 10.0
+  ready_timeout_s: 60.0
+  end_timeout_s: 30.0
+  # A command older than this (wall clock: the ECUs run in real time) is stale.
+  stale_s: 0.5
+  # brake | hold: what the ego does once the command is stale.
+  on_stale: brake

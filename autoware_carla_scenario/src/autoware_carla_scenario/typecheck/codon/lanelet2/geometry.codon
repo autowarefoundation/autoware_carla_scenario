@@ -66,3 +66,11 @@ def findNearest(layer: LaneletLayer, point: BasicPoint2d, n: int) -> List[Tuple[
 
 def inside(lanelet: ConstLanelet, point: BasicPoint2d) -> bool:
     raise NotImplementedError()
+
+
+# findWithin2d(layer, geometry, maxDist): the primitives of the layer within
+# maxDist of the point (0.0: those it is inside), nearest first, each with its
+# distance. Of the layers only the lanelets' is declared, and of the
+# geometries only a point.
+def findWithin2d(layer: LaneletLayer, geometry: BasicPoint2d, maxDist: float = 0.0) -> List[Tuple[float, Lanelet]]:
+    raise NotImplementedError()

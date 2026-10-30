@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..batch_report import print_summary
+from ..failure import Failure, FailureCategory
 from .manifest import BatchLayout, resubmit_target, write_json
 
 __all__ = ["RecordedResult", "collect", "missing_cases", "unfinished_cases"]
@@ -57,6 +58,11 @@ class RecordedResult:
     def rerun_recording(self) -> str | None:
         recording = self.data.get("rerun_recording")
         return None if recording is None else str(recording)
+
+    @property
+    def failure(self) -> Failure | None:
+        failure = self.data.get("failure")
+        return None if failure is None else Failure.from_dict(failure)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.data)
@@ -134,13 +140,16 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         record = layout.read_result(index)
         if record is None:
             missing.append(position)
+            message = _missing_message(layout, index, target)
+            failure = Failure("", FailureCategory.INFRASTRUCTURE, 0.0, message)
             results.append(
                 RecordedResult(
                     {
                         "passed": False,
-                        "message": _missing_message(layout, index, target),
+                        "message": message,
                         "elapsed_seconds": 0.0,
                         "condition_statuses": [],
+                        "failure": failure.to_dict(),
                     }
                 )
             )

@@ -61,7 +61,6 @@ from autoware_carla_scenario import (
     ComparisonRule,
     EgoConfig,
     ElapsedTimeCondition,
-    FollowTrajectoryAction,
     GroundProjectionConfig,
     LaneChangeDirection,
     Lanelet2Pose,
@@ -69,6 +68,8 @@ from autoware_carla_scenario import (
     OpenDrivePose,
     ReferenceContext,
     RelativeLanePose,
+    RoutingAction,
+    RoutingMode,
     SamplingEvent,
     ScenarioResult,
     SpeedCondition,
@@ -920,18 +921,22 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
             ],
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
+            RoutingAction(
                 "npc1",
-                path,
-                TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
-                TrajectoryFollowingMode.FOLLOW,
+                trajectory=path,
+                time_reference=TrajectoryTiming(ReferenceContext.ABSOLUTE, scale=2.0),
+                mode=RoutingMode.FOLLOW,
                 condition=ElapsedTimeCondition(1.0, label="go"),
                 label="npc1_follow",
             )
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
-                "npc2", path, hidden_outside_trajectory=True, label="npc2_follow"
+            RoutingAction(
+                "npc2",
+                trajectory=path,
+                time_reference=TrajectoryTiming(),
+                mode=RoutingMode.POSITION,
+                label="npc2_follow",
             )
         )
         """
@@ -973,9 +978,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         gate = path.vertices[1].gate
         if gate is not None:
             logger.info("second departs on %s", gate.label)
-        action = FollowTrajectoryAction("npc1", path, TrajectoryTiming(), label="npc1_gated", speed=8.0)
+        action = RoutingAction("npc1", trajectory=path, time_reference=TrajectoryTiming(), label="npc1_gated", speed=8.0)
         self.register_pre_tick(action)
-        self.register_pre_tick(FollowTrajectoryAction("npc2", untimed, label="npc2_gated"))
+        self.register_pre_tick(RoutingAction("npc2", trajectory=untimed, mode=RoutingMode.POSITION, label="npc2_gated"))
         held = action.held_vertex
         if held is not None:
             logger.info("held at %d", held)
@@ -1054,9 +1059,9 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
             "expected an EntityRole or a str",
         ),
         (
-            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
-            "TrajectoryVertex(MapPose(3.0, 4.0))]), TrajectoryFollowingMode.FOLLOW)\n",
-            "FollowTrajectoryAction(",
+            'RoutingAction("npc1", trajectory=Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0)), '
+            "TrajectoryVertex(MapPose(3.0, 4.0))]), time_reference=RoutingMode.FOLLOW)\n",
+            "RoutingAction(",
             "TrajectoryTiming",
         ),
         (
@@ -3004,10 +3009,10 @@ def test_a_scenario_may_use_the_signal_and_atexit_shims_and_nothing_beyond_them(
     scenario, config, _ = _write_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
-    wrong = 'logger.info("%s", str(signal.getsignal(signal.SIGUSR1)))'
+    wrong = "signal.siginterrupt(signal.SIGUSR1, True)"
     scenario, config, path = _write_case(tmp_path, setup + wrong + "\n")
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "getsignal" in error.message
+    assert "siginterrupt" in error.message
     assert error.path == str(path)
     assert error.line == _line_of(path, wrong)
 
@@ -3674,20 +3679,27 @@ from autoware_carla_scenario import (
     JaywalkAction,
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
-    PropAction,
-    PropOperation,
+    SpawnAction,
+    DespawnAction,
     RunTrafficRuleAction,
     Lanelet2Pose,
     MapPose,
     StalledObjectAction,
     StopCrossingAction,
     TrajectoryFollowingMode,
+    URBAN_CONSTRUCTION,
     collision_objects,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
 self.register_pre_tick(
     ConstructionZoneAction(
         12, 20.0, 80.0, ConstructionSettings(construction_type="mixed"), end_time=30.0
+    )
+)
+self.register_pre_tick(ConstructionZoneAction(14, 0.0, 300.0, URBAN_CONSTRUCTION))
+self.register_pre_tick(
+    ConstructionZoneAction(
+        15, 0.0, 200.0, ConstructionSettings(layout="urban", merge_signs=3)
     )
 )
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
@@ -3716,13 +3728,13 @@ self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
 self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
 self.register_pre_tick(
-    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+    SpawnAction(name="cone1", position=Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
 )
-self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction(name="box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction("npc5", position=Lanelet2Pose(1, 8.0), shift_max=30.0, speed=3.0))
 self.register_pre_tick(
-    PropAction(
-        "cone1",
-        PropOperation.REMOVE,
+    DespawnAction(
+        name="cone1",
         condition=ElapsedTimeCondition(8.0, label="gone"),
         label="clear",
     )
@@ -4716,6 +4728,7 @@ _SEQUENCE_HEADER = _HEADER.replace(
     MapManager,
     OrCondition,
     RoutingAction,
+    RoutingMode,
     TrafficSignalAction,
     TrafficSourceAction,
     VehicleEntity,
@@ -7329,6 +7342,96 @@ def test_fstring_format_specs_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_fstring_escaped_braces_compile(tmp_path: Path) -> None:
+    """A literal brace with no field the check rewrites otherwise (#696)."""
+    setup = """
+        name = "ab"
+        a = f"{name} {{x}}"
+        b = f"{{x}}"
+        c = f"{{{name}}}"
+        d = f"{{min, max}} of {name!r:>6} {{"
+        e = f'''{{
+        {name}
+        }}'''
+        for text in (a, b, c, d, e):
+            assert len(text) > 0
+        k: str = f"}}{name}{{"
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_fstring_ascii_conversion_compiles(tmp_path: Path) -> None:
+    """Codon 0.19 has no ascii(): `!a` is checked as `!r` (#701)."""
+    setup = """
+        name = "ab"
+        n = 7
+        w = 6
+        table = {"k": name, "it's": name}
+        a = f"{name!a}"
+        b = f"{name!a:>6}"
+        c = f"{{{name!a}}}"
+        d = f"{n!a:+>6} {name=!a} {name!r} {n!s}"
+        e = f"{name!a:>{w}} {n:>{w!a}}"
+        f = f'{table["k"]!a}' + f'''{{{table["it's"]!a:>6}'''
+        g = "{!a} {k!a:>6}".format(name, k=n)
+        h = ascii(name) + ascii(n)
+        for text in (a, b, c, d, e, f, g, h):
+            assert len(text) > 0
+        k: str = f"{n!a}"
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_fstring_quoted_field_calls_compile(tmp_path: Path) -> None:
+    """A field holding a double quote, in an f-string the check rewrites, is a
+    call whatever its conversion (#704); Python 3.10 syntax."""
+    setup = """
+        n = 7
+        names = {"it's": "ab"}
+        counts = {"it's": -12}
+        sizes = {"it's": 3.25}
+        a = f'''{names["it's"]} {{x}}'''
+        b = f'''{names["it's"]!s} {names["it's"]!r} {{'''
+        c = f'''{names["it's"]:>6} {names["it's"]!s:<6} {names["it's"]!r:^9}{{'''
+        d = f'''{n:+d} {counts["it's"]} {counts["it's"]:+d} {counts["it's"]!r:>5}'''
+        e = f'''{sizes["it's"]:>8.2f} {sizes["it's"]} {sizes["it's"]!s:>6}}}'''
+        f = f'''{counts["it's"]=} {sizes["it's"]=:+.1f} {{'''
+        for text in (a, b, c, d, e, f):
+            assert len(text) > 0
+        k: str = f'''{counts["it's"]!r} {{'''
+        assert len(k) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 701)")
+def test_fstring_pep701_quoted_field_calls_compile(tmp_path: Path) -> None:
+    """The forms of #704 with the f-string's own quote and a backslash in a
+    field; text here, so this file parses on Python 3.10."""
+    setup = r"""
+        x = 5
+        d = {"it's": "ab", "a\\b": "cd"}
+        xs = ["a", "b"]
+        a = f"{d["it's"]} {{x}}"
+        b = f"{x:+d} {d['a\\b']}"
+        c = f"{d['a\\b']!r:>9} {d["it's"]!s} {{"
+        e = f"{"\n".join(xs)} {d['a\\b']:<4}}}"
+        for text in (a, b, c, e):
+            assert len(text) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
     """The driver's copy of a class-level default is rewritten too (#434, #433)."""
     definitions = """
@@ -7354,8 +7457,23 @@ def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
         ('r: int = f"{3.5:>{4}.2f}"', "int"),
         ('r: float = "{:+.2f}".format(3.5)', "float"),
         ('r = f"{3.5:+.2f}" + 1', "str"),
+        ('r: int = f"{3.5!a}"', "int"),
+        ('r: int = f"{{{3.5!a:>6}}}"', "int"),
+        ("r: int = f'''{str(\"it's\")} {{'''", "int"),
+        ("r: float = f'''{len(\"it's\")!r:>6}{{'''", "float"),
+        ("r: int = f'''{len(\"it's\"):+d}{{'''", "int"),
     ],
-    ids=["sign", "nested", "format", "operand"],
+    ids=[
+        "sign",
+        "nested",
+        "format",
+        "operand",
+        "ascii",
+        "ascii-brace",
+        "quoted",
+        "quoted-repr-spec",
+        "quoted-spec",
+    ],
 )
 def test_a_rewritten_fstring_is_still_a_str(
     tmp_path: Path, line: str, message: str
@@ -7373,9 +7491,8 @@ def test_a_rewritten_fstring_is_still_a_str(
         ('r = f"{len({1, 2})}"', "a brace in an expression"),
         ('r = f"{ {1: 2}[1] :>3}"', "a brace in an expression"),
         ("r = f\"{f'{3}'}\"", "f-string inside an f-string"),
-        ('r = f"{3.5!a:+.2f}"', "!a together with a format spec"),
     ],
-    ids=["format", "set", "dict", "nested", "ascii"],
+    ids=["format", "set", "dict", "nested"],
 )
 def test_an_fstring_codon_cannot_parse_is_refused_at_its_line(
     tmp_path: Path, line: str, hint: str
@@ -7412,6 +7529,40 @@ def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
     assert diagnostic.path == "/user/scenario.py"
     assert diagnostic.line == 4
     assert diagnostic.message == message
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # An f-string with no format spec: still the f-string's line (#696).
+        ("a = 1\n\nr = f'{a} {{x}}'\n", 3),
+        ("a = 1\nr = f'{{x}}'\ns = f'{a}'\n", 2),
+        ("a = 1\nr = f'{a}'\n", 2),
+        ("a = 1\nr = (f'{a}'\n     f'{a}')\n", 2),
+        # Several f-strings, none more likely than another: no line rather
+        # than a guessed one, which would send the author to valid code.
+        ("a = 1\nr = f'{a}'\ns = f'{a}!'\n", None),
+        # No f-string at all: no line rather than one before the file's first.
+        ("a = 1\n", None),
+    ],
+)
+def test_an_unplaced_syntax_error_is_never_before_the_first_line(
+    tmp_path: Path, source: str, expected: int | None
+) -> None:
+    """Codon's bare parser error on an f-string it cannot read (#696)."""
+    from autoware_carla_scenario.typecheck import check
+
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(check.PRELUDE + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = list(range(1, source.count("\n") + 1))
+    message = "syntax error, expecting '(', '(', '[', '{', '...'."
+    (diagnostic,) = check._parse_output(f"{rel}:1 (1): error: {message}\n", ws)
+    assert diagnostic.path == "/user/scenario.py"
+    assert diagnostic.line == expected
+    assert diagnostic.column is None
 
 
 def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
@@ -11055,6 +11206,77 @@ def test_a_local_first_bound_to_none_and_rebound_names_its_annotation(
         assert hinted[0].line == _line_of(path, "best = x")
 
 
+def test_codon_killed_by_the_oom_killer_blames_no_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon killed with SIGKILL (the out-of-memory killer, two Codon builds at
+    # once) printed nothing wrong: the check says so, and neither reruns the
+    # compile nor names a local first bound to None (#584) as the cause.
+    from autoware_carla_scenario.typecheck import check
+
+    monkeypatch.setenv(check.CACHE_DIR_ENV, "")  # this process's verdicts only
+    monkeypatch.setattr(check, "_CACHE", {})
+    run = subprocess.run
+    builds: list[object] = []
+
+    def killed(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        if len(args) > 1 and args[1] == "build":
+            builds.append(args)
+            warning = "m.codon:158: warning: function '__add__' marked with unnecessary @overload\n"
+            return subprocess.CompletedProcess(args, -9, "", warning)
+        return run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", killed)
+    extra = _RUNNING_MIN.format(
+        annotation="", result="bool", tail="    return best is not None\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, "pass\n", extra=extra)
+    checked = typecheck_scenario(scenario, config)
+    assert not checked.ok
+    assert checked.crashed
+    assert len(builds) == 1
+    assert len(checked.diagnostics) == 1, checked.format()
+    message = checked.diagnostics[0].message
+    assert "killed (SIGKILL)" in message
+    assert "out-of-memory killer" in message
+    assert "annotate it" not in checked.format()
+
+
+def test_a_build_killed_by_the_oom_killer_is_compiled_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A SIGKILL is no verdict on the code, as a timeout is none: it is not
+    # kept, in this process or on disk, so the next check of the same program
+    # (the next case of a sweep, which shares its key) runs Codon again (#694).
+    from autoware_carla_scenario.typecheck import check
+
+    cache = tmp_path / "cache"
+    monkeypatch.setenv(check.CACHE_DIR_ENV, str(cache))
+    monkeypatch.setattr(check, "_CACHE", {})
+    run = subprocess.run
+    builds: list[object] = []
+
+    def killed_once(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        if len(args) > 1 and args[1] == "build":
+            builds.append(args)
+            code = -9 if len(builds) == 1 else 0
+            return subprocess.CompletedProcess(args, code, "", "")
+        return run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", killed_once)
+    scenario, config, _ = _write_case(tmp_path, "pass\n")
+    first = typecheck_scenario(scenario, config)
+    assert first.crashed and "killed (SIGKILL)" in first.format()
+    assert not list(cache.glob("*.json"))
+    second = typecheck_scenario(scenario, config)
+    assert len(builds) == 2, "the kill was kept as the verdict"
+    assert second.ok, second.format()
+    # A verdict Codon did reach is kept as before.
+    assert typecheck_scenario(scenario, config).ok
+    assert len(builds) == 2
+    assert len(list(cache.glob("*.json"))) == 1
+
+
 # ---------------------------------------------------------------------------
 # Identity == and hash of a plain class (#596)
 # ---------------------------------------------------------------------------
@@ -11302,8 +11524,8 @@ _LITERAL_HEADER = _HEADER.replace(
         ),
         (
             'RouteCrossingPose(approach="Left")',
-            "RouteCrossingPose.approach must be one of ['left', 'right', "
-            "'opposite'], got 'Left'",
+            "RouteCrossingPose.approach must be one of ['same', 'left', "
+            "'right', 'opposite'], got 'Left'",
         ),
         (
             'RouteRoadsidePose(side="kerb")',
@@ -11336,7 +11558,7 @@ def test_literal_arguments_the_framework_accepts_pass(tmp_path: Path) -> None:
                 TrajectoryVertex(RouteRoadsidePose(ds=3.0, side="right")),
             ],
         )
-        self.register_pre_tick(FollowTrajectoryAction("npc", traj))
+        self.register_pre_tick(RoutingAction("npc", trajectory=traj, label="npc"))
         """
     )
     scenario, config, _ = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
@@ -12057,6 +12279,230 @@ def test_a_tuple_display_replace_it_cannot_type_is_refused_at_the_call(
 
 
 # ---------------------------------------------------------------------------
+# replace() of a class of another module, of a nested dataclass (#623)
+# ---------------------------------------------------------------------------
+
+_LANES_CONFIG = """
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Lanes:
+    ids: tuple[int, ...] = (460, 265)
+
+
+@dataclass
+class CaseConfig:
+    name: str = "case"
+    goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
+    timeout_seconds: float = 10.0
+    min_speed_kmh: float | None = None
+    lanes: Lanes = field(default_factory=Lanes)
+"""
+
+
+def test_a_wrong_replace_of_a_class_of_another_module_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    # The method `replace` is lowered to is in configs.py, the call in
+    # scenario.py: the error is at the call, not at the class.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "lanes = replace(cfg.lanes, ids=(1, 2, 3))\n"
+        'logger.info("%d", len(lanes.ids))\n',
+        config=_LANES_CONFIG,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'Tuple[int,int,int]' does not match expected type 'List[int]'" in (
+        error.message
+    ), error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, "lanes = replace(cfg.lanes")
+
+
+_NESTED_DATACLASSES = """
+
+
+class Plans:
+    @dataclass(frozen=True)
+    class Leg:
+        lanelet: int = 0
+        speed: float = 1.0
+
+    def faster(self, leg: Plans.Leg) -> Plans.Leg:
+        return replace(leg, speed=leg.speed * 2)
+
+
+def segments() -> int:
+    @dataclass(frozen=True)
+    class Seg:
+        a: int = 0
+
+        @dataclass(order=True)
+        class Part:
+            b: int = 0
+
+    kept = {replace(Seg(1), a=2), Seg(2)}
+    lower = Seg.Part(1) < replace(Seg.Part(1), b=3)
+    return len(kept) + replace(Seg(1), a=2).a + int(lower)
+"""
+
+
+def test_replace_and_hash_of_a_nested_dataclass_compile(tmp_path: Path) -> None:
+    # A dataclass in a class or in a function gets its `replace` methods and
+    # its ==, hash and ordering in its body, as `@extend` cannot name it.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "leg = Plans().faster(Plans.Leg(3, 2.0))\n"
+        "legs = {leg, Plans.Leg(3, 4.0)}\n"
+        'logger.info("%f %d %d", leg.speed, len(legs), segments())\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_wrong_replace_of_a_nested_dataclass_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'leg = replace(Plans.Leg(), speed="fast")\n' 'logger.info("%f", leg.speed)\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'float'" in error.message, error.format()
+    assert error.line == _line_of(path, "leg = replace(Plans.Leg()")
+
+
+# ---------------------------------------------------------------------------
+# Python 3.12+ syntax (#624): kept in strings, as the suite runs on 3.10
+# ---------------------------------------------------------------------------
+
+_PY312 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 695, PEP 701)"
+)
+
+_PY312_DEFINITIONS = """
+
+
+type LaneIds = list[int]
+
+
+def total(ids: LaneIds) -> int:
+    return sum(ids)
+
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+
+class Base:
+    def v(self) -> int:
+        return 1
+
+
+def pick[B: Base](a: B, b: B) -> B:
+    return a if a.v() >= b.v() else b
+
+
+class Box[T]:
+    item: T
+
+    def __init__(self, item: T) -> None:
+        self.item = item
+
+    def get(self) -> T:
+        return self.item
+
+
+@dataclass(frozen=True)
+class Pair[K, V]:
+    k: K
+    v: V
+"""
+
+
+@_PY312
+def test_python_3_12_syntax_compiles(tmp_path: Path) -> None:
+    # Same-quote f-string fields are requoted, `type X = T` is an alias, and
+    # type parameters are Codon's generics; a generic function or class is
+    # compiled where it is used, with a warning each.
+    scenario, config, path = _write_case(
+        tmp_path,
+        'd = {"k": 1}\n'
+        'p = replace(Pair(1, "a"), v="b")\n'
+        'logger.info(f"{cfg.name.replace("_", "-")} {d["k"]} '
+        '{total(cfg.goal_lanelet_ids)} {first(cfg.goal_lanelet_ids)}")\n'
+        'logger.info(f"{pick(Base(), Base()).v()} {Box(1).get()} {Box("x").get()} '
+        '{p.v} {hash(p) == hash(Pair(1, "b"))}")\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    lines = {w.line for w in result.warnings}
+    assert lines == {
+        _line_of(path, "def first["),
+        _line_of(path, "def pick["),
+        _line_of(path, "class Box["),
+        _line_of(path, "class Pair["),
+    }, result.format()
+
+
+@_PY312
+def test_a_generic_class_is_checked_where_it_is_used(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'n = Box("a").get() + 1\nlogger.info("%d", n)\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand type(s) for +: 'str'" in error.message, error.format()
+    assert error.line == _line_of(path, 'n = Box("a")')
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("code", "needle", "hint"),
+    [
+        (
+            'd = {"it\'s": 1}\nlogger.info(f"{d["it\'s"]}")\n',
+            "logger.info(f",
+            "cannot quote it with the other quote",
+        ),
+        (
+            'd = {"a\\n": 1}\nlogger.info(f"{d["a\\n"]}")\n',
+            "logger.info(f",
+            "holds a backslash",
+        ),
+        (
+            'x: Pair2[int] = (1, 2)\nlogger.info("%d", x[0])\n',
+            "type Pair2[",
+            "no generic alias",
+        ),
+    ],
+)
+def test_python_3_12_syntax_codon_cannot_parse_is_refused_at_its_line(
+    tmp_path: Path, code: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        code,
+        extra="\n\ntype Pair2[T] = tuple[T, T]\n",
+        header=_FROZEN_HEADER,
+    )
+    errors = typecheck_scenario(scenario, config).diagnostics
+    found = [e for e in errors if hint in e.message]
+    assert found, "\n".join(e.format() for e in errors)
+    assert found[0].line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
 # A conditional expression narrowing an attribute chain (#621)
 # ---------------------------------------------------------------------------
 
@@ -12268,3 +12714,262 @@ def test_a_positional_argument_for_a_keyword_only_parameter_is_refused_at_the_ca
     assert len(result.diagnostics) == 1, result.format()
     assert error.message == message, error.format()
     assert error.line == _line_of(path, call)
+
+
+# ---------------------------------------------------------------------------
+# sum() of strings, dict.fromkeys(xs), list[tuple[X, ...]] (#625)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("call", ['sum(["a", "b"], "")', 'sum(["a"], start="")'])
+def test_sum_with_a_str_start_is_refused_as_python_refuses_it(
+    tmp_path: Path, call: str
+) -> None:
+    # CPython raises TypeError before it adds anything; Codon concatenates.
+    scenario, config, path = _write_case(tmp_path, f'logger.info("%s", {call})\n')
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "sum() can't sum strings [use ''.join(seq) instead]" in error.message
+    assert error.line == _line_of(path, call)
+
+
+def test_dict_fromkeys_of_one_argument_and_a_list_of_variable_length_tuples_pass(
+    tmp_path: Path,
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        """
+        d = dict.fromkeys(["a", "b", "a"])
+        logger.info("%s %s", list(d), d["a"] is None)
+        e = dict.fromkeys(["a"], 0)
+        logger.info("%s", e["a"] + 1)
+        pairs: list[tuple[int, ...]] = []
+        pairs.append((1, 2))
+        pairs.append((3,))
+        pairs.insert(0, ())
+        for p in pairs:
+            logger.info("%d", len(p))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_variable_length_tuples_of_one_length_pass_as_before(
+    tmp_path: Path,
+) -> None:
+    # Given tuples of one length, the annotation is dropped as before (#625
+    # review): the list of fixed-length tuples Codon types takes a tuple held
+    # in a name, `extend` and `in`, and so do a dict, a set and an Optional.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        """
+        pairs: list[tuple[int, ...]] = []
+        t = (3, 4)
+        pairs.append(t)
+        pairs.extend([(5, 6)])
+        logger.info("%s", (3, 4) in pairs)
+        d: dict[str, tuple[int, ...]] = {}
+        d["a"] = (1, 2)
+        s: set[tuple[int, ...]] = set()
+        s.add((1, 2))
+        o: list[tuple[int, ...] | None] = []
+        o.append((1, 2))
+        logger.info("%d %d %d %d", len(pairs), len(d), len(s), len(o))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_list_of_variable_length_tuples_still_checks_its_elements(
+    tmp_path: Path,
+) -> None:
+    # The annotation is kept, not dropped: a tuple of str is no tuple[int, ...].
+    scenario, config, path = _write_case(
+        tmp_path,
+        """
+        pairs: list[tuple[int, ...]] = []
+        pairs.append((1, 2))
+        pairs.append(("a",))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert error.line == _line_of(path, 'pairs.append(("a",))'), result.format()
+
+
+# ---------------------------------------------------------------------------
+# A mixin listed before the framework base (#626)
+# ---------------------------------------------------------------------------
+
+
+def _mixin_first_header(init_call: str) -> str:
+    return _HEADER.replace(
+        "class CaseScenario(BaseScenario):",
+        "class VehicleInfoMixin:\n"
+        "    ego_config: EgoConfig\n\n"
+        "    def vehicle_label(self) -> str:\n"
+        '        return "ego:" + self.ego_config.vehicle_type\n\n\n'
+        "class CaseScenario(VehicleInfoMixin, BaseScenario):",
+        1,
+    ).replace(
+        "super().__init__(ego_config, spawn_pose=spawn_pose, "
+        "ground_projection=ground_projection)",
+        init_call,
+        1,
+    )
+
+
+def test_super_init_passes_over_a_mixin_listed_before_the_framework_base(
+    tmp_path: Path,
+) -> None:
+    # Codon's super() is the first base's; Python's follows the MRO past the
+    # mixin, which defines no __init__, to BaseScenario.__init__.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _VALID_SETUP + '        logger.info("%s", self.vehicle_label())\n',
+        header=_mixin_first_header(
+            "super().__init__(ego_config, spawn_pose=spawn_pose, "
+            "ground_projection=ground_projection)"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_super_init_past_a_mixin_still_checks_the_base_arguments(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        _VALID_SETUP,
+        header=_mixin_first_header(
+            "super().__init__(ego_config, spawn_pose=spawn_pose, no_such=1)"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "no_such" in error.message, result.format()
+    assert error.line == _line_of(path, "no_such=1")
+
+
+# ---------------------------------------------------------------------------
+# Keyword-only overrides, kw-only lambdas and None-first locals (#629)
+# ---------------------------------------------------------------------------
+
+_OVERRIDES = r"""
+
+
+class Base:
+    def m(self, a: float, *, s: float = 1.0) -> float:
+        return a * s
+
+
+class Sub(Base):
+    def m(self, a: float, *, s: float = 2.0) -> float:
+        return a + s
+
+
+def use(b: Base) -> float:
+    return b.m(1.0)
+
+
+def key_of(x: int, *, rev: bool = False) -> int:
+    return -x if rev else x
+
+
+def dbl(x: int) -> int:
+    return 2 * x
+
+
+def counter(v: Optional[int]) -> Optional[int]:
+    y = v
+    out: Optional[int] = None
+
+    def bump() -> None:
+        nonlocal y, out
+        out = y + 1 if y is not None else None
+        y = 3
+
+    bump()
+    return out
+
+
+def deltas(xs: list[float]) -> list[Optional[float]]:
+    out: list[Optional[float]] = []
+    prev = None
+    for v in xs:
+        d = v - prev if prev is not None else None
+        out.append(d)
+        prev = v
+    return out
+
+
+def none_only() -> Optional[int]:
+    z = None
+    return z + 1 if z is not None else None
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "hint"),
+    [
+        # A call of an overridden method with a keyword-only parameter: through
+        # the base, then by keyword.
+        ('logger.info("%s", use(Sub()))\n', "return b.m(1.0)", "dispatch thunk"),
+        (
+            'logger.info("%s", Sub().m(1.0, s=3.0))\n',
+            "Sub().m(1.0, s=3.0)",
+            "dispatch thunk",
+        ),
+        (
+            "fs: list[Callable[[int], int]] = [key_of, dbl]\n"
+            'logger.info("%s", [f(1) for f in fs])\n',
+            "fs: list",
+            "put a lambda that calls it in the table instead (`lambda x: key_of(x)`)",
+        ),
+        (
+            'logger.info("%s", counter(1))\n',
+            "out = y + 1",
+            "copy it into an annotated local",
+        ),
+        (
+            'logger.info("%s", deltas([1.0, 2.0]))\n',
+            "prev = None",
+            "`prev: float | None = None`",
+        ),
+        (
+            'logger.info("%s", none_only())\n',
+            "return z + 1",
+            "the local `z` is only ever None",
+        ),
+    ],
+)
+def test_keyword_only_overrides_and_none_first_locals_say_why(
+    tmp_path: Path, setup: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        setup,
+        _OVERRIDES,
+        header=_stdlib_header("from typing import Callable, Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    hinted = [d for d in result.diagnostics if hint in d.message]
+    assert hinted, result.format()
+    assert hinted[0].line == _line_of(path, needle), result.format()
+
+
+def test_a_lambda_with_keyword_only_parameters_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        "f = lambda a, *, k=1: a * k\n" 'logger.info("%s", f(2, k=3))\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "write a nested def instead" in error.message, error.format()
+    assert error.line == _line_of(path, "f = lambda")

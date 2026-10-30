@@ -1,10 +1,12 @@
 """Actions that execute side effects in response to conditions during scenarios."""
 
 from .base import BaseAction, TickTiming
+from .communication_loss import CommunicationLossAction
+from .despawn import DespawnAction
+from .spawn import SpawnAction
 from .environment import EnvironmentAction
-from .follow_trajectory import FollowTrajectoryAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
-from .routing import RoutingAction
+from .routing import RoutingAction, RoutingMode
 from .set_speed import SetSpeedAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
 from .traffic_signal_controller import TrafficSignalControllerAction
@@ -16,11 +18,14 @@ from .walk_straight import WalkStraightAction
 
 __all__ = [
     "BaseAction",
+    "CommunicationLossAction",
+    "DespawnAction",
+    "SpawnAction",
     "EnvironmentAction",
-    "FollowTrajectoryAction",
     "LaneChangeAction",
     "LaneChangeDirection",
     "RoutingAction",
+    "RoutingMode",
     "SetSpeedAction",
     "TickTiming",
     "TrafficLightTarget",

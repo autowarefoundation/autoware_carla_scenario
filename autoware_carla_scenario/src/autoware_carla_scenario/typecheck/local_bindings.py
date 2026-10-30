@@ -396,6 +396,80 @@ def none_first_bindings(tree: ast.Module) -> list[NoneFirstBinding]:
     return found
 
 
+def _tested_in_conditional(scope: ast.AST, name: str) -> int | None:
+    """The line of the first conditional expression of *scope*'s own body
+    whose test reads the local *name* (``a if name is not None else b``)."""
+    lines = [
+        node.lineno
+        for node in _own_nodes(scope)
+        if isinstance(node, ast.IfExp)
+        and any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node.test))
+    ]
+    return min(lines) if lines else None
+
+
+def narrowed_none_first_bindings(tree: ast.Module) -> list[NoneFirstBinding]:
+    """The bindings of :func:`none_first_bindings` whose local a conditional
+    expression of its function tests (``v - prev if prev is not None else
+    None``, #629): Codon decides that test while the local's type is still
+    the unresolved ``Optional`` of its ``= None``, which it completes as
+    ``Optional[int]``, its default."""
+    out: list[NoneFirstBinding] = []
+    for binding in none_first_bindings(tree):
+        scope = _scope_at(tree, binding.line)
+        if isinstance(scope, _SCOPES) and _tested_in_conditional(scope, binding.name):
+            out.append(binding)
+    return out
+
+
+@dataclass(frozen=True)
+class NoneOnlyTest:
+    """An unannotated local only ever bound to ``None``, tested by a
+    conditional expression (#629)."""
+
+    name: str
+    #: The line of its first ``name = None``.
+    line: int
+    #: The line of the conditional expression testing it.
+    test_line: int
+
+    def message(self) -> str:
+        return (
+            f"the local `{self.name}` is only ever None (`{self.name} = None` "
+            f"on line {self.line}), and Codon 0.19 crashes on a conditional "
+            f"expression whose test it decides from such a local's type (line "
+            f"{self.test_line}): annotate it (`{self.name}: <T> | None = None`), "
+            "or drop the branch that cannot run"
+        )
+
+
+def none_only_tests(tree: ast.Module) -> list[NoneOnlyTest]:
+    """Each local of *tree*'s functions bound only to ``None``, with no
+    annotation, that a conditional expression of the function tests: Codon
+    0.19 crashes with no diagnostic on such an expression (``z + 1 if z is
+    not None else None``, even ``1 if z is None else 2``, #629)."""
+    found: list[NoneOnlyTest] = []
+    for scope in ast.walk(tree):
+        if not isinstance(scope, _SCOPES):
+            continue
+        skip = (
+            _declared_elsewhere(scope) | _parameters(scope) | set(_annotations(scope))
+        )
+        by_name: dict[str, list[_Binding]] = {}
+        for binding in _bindings(scope):
+            by_name.setdefault(binding.name, []).append(binding)
+        for name, each in by_name.items():
+            if name in skip or not all(
+                _is_none(b.value) and not b.annotated and not b.augmented for b in each
+            ):
+                continue
+            test_line = _tested_in_conditional(scope, name)
+            if test_line is not None:
+                found.append(NoneOnlyTest(name, each[0].line, test_line))
+    found.sort(key=lambda f: f.line)
+    return found
+
+
 def none_mismatch_hint(
     message: str, line: int, tree: ast.Module
 ) -> tuple[str, int] | None:

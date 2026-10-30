@@ -77,13 +77,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
+        CommunicationLossAction as CommunicationLossAction,
+        DespawnAction as DespawnAction,
+        SpawnAction as SpawnAction,
         EnvironmentAction as EnvironmentAction,
-        FollowTrajectoryAction as FollowTrajectoryAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
         TickTiming as TickTiming,
         TrafficLightTarget as TrafficLightTarget,
         RoutingAction as RoutingAction,
+        RoutingMode as RoutingMode,
         SetSpeedAction as SetSpeedAction,
         TrafficSignalAction as TrafficSignalAction,
         TrafficSignalControllerAction as TrafficSignalControllerAction,
@@ -95,10 +98,6 @@ if TYPE_CHECKING:
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
-    from .actions.prop import (
-        PropAction as PropAction,
-        PropOperation as PropOperation,
-    )
     from .actions.stalled_object import (
         StalledObjectAction as StalledObjectAction,
         collision_objects as collision_objects,
@@ -108,6 +107,7 @@ if TYPE_CHECKING:
     )
     from .adversity.construction import (
         ConstructionSettings as ConstructionSettings,
+        URBAN_CONSTRUCTION as URBAN_CONSTRUCTION,
     )
     from .actions.adversarial_traffic import (
         AdversarialTrafficAction as AdversarialTrafficAction,
@@ -171,6 +171,7 @@ if TYPE_CHECKING:
         OffRoadFractionCondition as OffRoadFractionCondition,
         OrCondition as OrCondition,
         PersistentCondition as PersistentCondition,
+        PlaceClearCondition as PlaceClearCondition,
         RelativeSpeedCondition as RelativeSpeedCondition,
         RouteProgressCondition as RouteProgressCondition,
         ScalarComparisonRule as ScalarComparisonRule,
@@ -252,6 +253,7 @@ if TYPE_CHECKING:
         VehicleEntityConfig as VehicleEntityConfig,
     )
     from .entity_role import EntityRole as EntityRole
+    from .failure import FailureCategory as FailureCategory
     from .kinematics import (
         AbsoluteAcceleration as AbsoluteAcceleration,
         AbsoluteVelocity as AbsoluteVelocity,
@@ -337,6 +339,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EGO_ROLE_NAME",
     "EntityRole",
+    "FailureCategory",
     "ScenarioRunner",
     "CarlaScenarioFixture",
     "CarlaServerManager",
@@ -412,6 +415,7 @@ __all__ = [
     "OffRoadFractionCondition",
     "OrCondition",
     "PersistentCondition",
+    "PlaceClearCondition",
     "ScalarComparisonRule",
     "SpeedCondition",
     "DistanceCoordinateSystem",
@@ -492,12 +496,11 @@ __all__ = [
     "FrenetAcceleration",
     # Actions
     "BaseAction",
+    "CommunicationLossAction",
     "EnvironmentAction",
-    "FollowTrajectoryAction",
     "ConstructionSettings",
     "ConstructionZoneAction",
-    "PropAction",
-    "PropOperation",
+    "URBAN_CONSTRUCTION",
     "StalledObjectAction",
     "collision_objects",
     "LaneChangeAction",
@@ -506,6 +509,9 @@ __all__ = [
     "TurnIndicatorAction",
     "TrafficLightTarget",
     "RoutingAction",
+    "RoutingMode",
+    "DespawnAction",
+    "SpawnAction",
     "SetSpeedAction",
     "TrafficSignalAction",
     "TrafficSignalControllerAction",
@@ -563,13 +569,12 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
+    "CommunicationLossAction": (".actions", "CommunicationLossAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
-    "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
     "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
+    "URBAN_CONSTRUCTION": (".adversity.construction", "URBAN_CONSTRUCTION"),
     "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),
     "StalledObjectAction": (".actions.stalled_object", "StalledObjectAction"),
-    "PropAction": (".actions.prop", "PropAction"),
-    "PropOperation": (".actions.prop", "PropOperation"),
     "collision_objects": (".actions.stalled_object", "collision_objects"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "TurnIndicatorAction": (".actions", "TurnIndicatorAction"),
@@ -602,6 +607,9 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AdversityLocation": (".adversity", "AdversityLocation"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
+    "DespawnAction": (".actions", "DespawnAction"),
+    "SpawnAction": (".actions", "SpawnAction"),
+    "RoutingMode": (".actions", "RoutingMode"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
     "TrafficSignalControllerAction": (
@@ -663,6 +671,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "OffRoadFractionCondition": (".conditions", "OffRoadFractionCondition"),
     "OrCondition": (".conditions", "OrCondition"),
     "PersistentCondition": (".conditions", "PersistentCondition"),
+    "PlaceClearCondition": (".conditions", "PlaceClearCondition"),
     "ScalarComparisonRule": (".conditions", "ScalarComparisonRule"),
     "ScenarioResult": (".conditions", "ScenarioResult"),
     "SpeedCondition": (".conditions", "SpeedCondition"),
@@ -688,6 +697,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # constants / entity_role
     "EGO_ROLE_NAME": (".constants", "EGO_ROLE_NAME"),
     "EntityRole": (".entity_role", "EntityRole"),
+    "FailureCategory": (".failure", "FailureCategory"),
     # coordinate
     "CarlaWorldPose": (".coordinate", "CarlaWorldPose"),
     "CoordinateFrame": (".coordinate", "CoordinateFrame"),

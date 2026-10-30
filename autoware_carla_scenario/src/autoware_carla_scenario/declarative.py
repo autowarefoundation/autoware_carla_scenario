@@ -490,7 +490,7 @@ class DeclarativeScenario(BaseScenario):
         """Where a parked entity waits: under the ego's spawn, 10 m apart."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
-        from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+        from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
         assert self._spawn_pose is not None  # noqa: S101 -- set before NPCs spawn
@@ -567,12 +567,13 @@ class DeclarativeScenario(BaseScenario):
         """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""
         from .coordinate.transform import to_opendrive  # noqa: PLC0415
 
+        vehicle_type = _vehicle_type(entity, world)
         if self._parked(entity):
             return VehicleEntity(
                 VehicleEntityConfig(
                     role_name=self._compiled.role_of(entity.id),
                     spawn_location=SpawnTransform(self._parking_transform(entity)),
-                    vehicle_type=entity.vehicle_type,
+                    vehicle_type=vehicle_type,
                     initial_speed_kmh=entity.initial_speed_kmh,
                     spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                     spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
@@ -598,7 +599,7 @@ class DeclarativeScenario(BaseScenario):
                 spawn_location=SpawnTransform(
                     _hidden_if_asked(entity, snapped.to_carla_transform())
                 ),
-                vehicle_type=entity.vehicle_type,
+                vehicle_type=vehicle_type,
                 initial_speed_kmh=entity.initial_speed_kmh,
                 spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                 spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
@@ -610,13 +611,44 @@ class DeclarativeScenario(BaseScenario):
         )
 
 
+def _vehicle_type(entity: Entity, world: "object") -> str:
+    """*entity*'s blueprint: the one it names, or with ``vehicle_type: auto``
+    the vehicle of *world* nearest its size (the kind's default where there
+    is none)."""
+    from .authoring.models import AUTO_MODEL, DEFAULT_MODELS  # noqa: PLC0415
+
+    if entity.vehicle_type != AUTO_MODEL:
+        return entity.vehicle_type
+    from .entity.fit import fitted_vehicle  # noqa: PLC0415
+
+    size = entity.size
+    if size is not None:
+        chosen = fitted_vehicle(world, size.length, size.width)
+        if chosen is not None:
+            logger.info(
+                "%s: %s, the vehicle nearest %.2f x %.2f m",
+                entity.id,
+                chosen,
+                size.length,
+                size.width,
+            )
+            return chosen
+    fallback = DEFAULT_MODELS[entity.kind]
+    logger.warning(
+        "%s: no vehicle of this server fits its size; spawned as %s",
+        entity.id,
+        fallback,
+    )
+    return fallback
+
+
 def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Transform":
     """*transform*, moved under the map when *entity* spawns out of the world."""
     if not entity.spawn.hidden:
         return transform
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
-    from .actions.follow_trajectory import HIDDEN_DEPTH_M  # noqa: PLC0415
+    from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
 
     location = transform.location
     return carla.Transform(

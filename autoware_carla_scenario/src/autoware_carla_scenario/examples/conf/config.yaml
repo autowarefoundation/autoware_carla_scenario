@@ -5,6 +5,7 @@ defaults:
   - entity: default
   - driver: default
   - ros2: default
+  - hils: default
   - traffic_manager: default
   - traffic: traffic_manager
   - scenario: intersection_passing/left_turn
@@ -65,6 +66,19 @@ t4:
   # Threads writing the files (and encoding the frames of the recorder's own
   # cameras) while the run goes on.
   workers: 4
+
+# Write each run's trajectory log as a T4Scene, the scene exchange format of
+# tier4/e2e-devkit, as the run ends: {Scenario}.t4scene.pb, and the Lanelet2
+# map it names as {Scenario}.t4scene.map.pb (docs/t4_scene.md). Needs no extra;
+# `scenario-t4scene <output dir>` does the same after a run. Best effort: a log
+# that cannot be converted is logged, the run's verdict stands.
+t4scene:
+  enabled: false
+  # The scene's time step in seconds, a multiple of the 0.05 s tick.
+  step_s: 0.1
+  # The vehicles and pedestrians within this distance of the ego, in metres;
+  # null takes all of them.
+  max_distance_m: 100.0
 
 # Sensors rendered by carla_canvas instead of the CARLA server
 # (docs/usage.md#rendering-sensors-with-carla_canvas): a carla_canvas

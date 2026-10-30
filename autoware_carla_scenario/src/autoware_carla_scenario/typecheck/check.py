@@ -44,6 +44,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -106,9 +107,11 @@ from .library_driver import (
 )
 from .local_bindings import (
     int_literal_hint,
+    narrowed_none_first_bindings,
     none_first_binding_message,
     none_first_bindings,
     none_mismatch_hint,
+    none_only_tests,
 )
 from .module_cycles import cycle_hint
 from .python_rewrites import (
@@ -124,6 +127,7 @@ from .transform import (
     conflicting_imports,
     enum_class_names,
     literal_all,
+    plain_classes,
     redirect_imports,
     relative_module_imports,
     transform_source_lines,
@@ -138,7 +142,11 @@ from .call_diagnostics import (
 )
 from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
-from .static_raises import literal_argument_refusals, subscripted_isinstances
+from .static_raises import (
+    literal_argument_refusals,
+    str_sums,
+    subscripted_isinstances,
+)
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
@@ -179,6 +187,16 @@ _LLVM_ERROR = "LLVM: error:"
 #: Codon 0.19 aborting with no location, as for a ``Callable`` attribute that
 #: a value of another type is stored in (#488).
 _BAD_ALLOC = "std::bad_alloc"
+#: Codon killed by SIGKILL, with no error of its own: in practice the
+#: out-of-memory killer (a full library check takes about 8 GB), which says
+#: nothing about the program compiled.
+_KILLED = (
+    "Codon was killed (SIGKILL) after {seconds:.0f} s, with no error of its "
+    "own: most likely by the out-of-memory killer (the library check takes "
+    "about 8 GB; another Codon build running at the same time can use up the "
+    "memory). This says nothing about the code checked: run the check again "
+    "with more memory free"
+)
 #: LLVM refusing a call that passes a function where a ``Callable`` is
 #: expected, with the signature of another: Codon 0.19 converts the function
 #: without comparing the two and only the verifier of the IR it generated
@@ -486,12 +504,20 @@ class TypeCheckResult:
     #: What the check left unchecked and why; none fails it.  Last, so the
     #: fields before it keep their positions.
     warnings: list[Diagnostic] = field(default_factory=list)
+    #: The verdict is one an earlier run kept (the library check's cache
+    #: hit); :attr:`seconds` is then the time this run took, not the compile's.
+    cached: bool = False
+    #: Codon was killed from outside (SIGKILL: the out-of-memory killer), with
+    #: :attr:`crashed`: no verdict at all, so, like a compile that timed out,
+    #: it is kept nowhere and the next check of the program compiles it again.
+    killed: bool = False
 
     def format(self) -> str:
         if self.skipped is not None:
             return f"{self.scenario}: static check skipped: {self.skipped}"
         if self.ok:
-            head = f"{self.scenario}: static check passed ({self.seconds:.1f}s)"
+            took = f"{self.seconds:.1f}s" + (", cached" if self.cached else "")
+            head = f"{self.scenario}: static check passed ({took})"
             shown = self.warnings
         else:
             head = f"{self.scenario}: static check failed"
@@ -820,6 +846,8 @@ def _build_workspace(
         if isinstance(node, ast.ClassDef)
     }
     init_classes = _init_classes(classes)
+    # The mixins a `super().__init__` passes over (#626).
+    mixins = plain_classes(classes, init_classes)
     callers = call_sites([module.tree for module in sources.modules.values()])
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
@@ -840,12 +868,13 @@ def _build_workspace(
             Diagnostic(message, str(module.path), line) for line, message in refused
         ]
         # What Python raises for when it runs, decided from the syntax
-        # (#602, #603): Codon checks types, so it compiles these.
+        # (#602, #603, #625): Codon checks types, so it compiles these.
         problems += [
             Diagnostic(r.message, str(module.path), r.line, r.column)
             for r in [
                 *subscripted_isinstances(module.tree),
                 *literal_argument_refusals(module.tree),
+                *str_sums(module.tree),
             ]
         ]
         problems += [
@@ -861,6 +890,7 @@ def _build_workspace(
             init_classes=init_classes,
             enum_classes=enum_class_names(classes),
             file=str(module.path),
+            mixins=mixins,
         )
         checks = render_library_checks(
             module.tree,
@@ -904,7 +934,31 @@ def _build_workspace(
 
 #: Codon's refusals of valid Python on a ``**kwargs`` or ``*args`` (#266),
 #: or on any tuple's truth, and what to write instead.
+#: What a call of a method a subclass overrides cannot do (#629).
+_THUNK_HINT = (
+    "Codon 0.19 calls a method that a subclass overrides through a dispatch "
+    "thunk, which takes no keyword argument and fills in no default: pass "
+    "every argument by position. A keyword-only parameter (after `*`) cannot "
+    "be passed that way, so in a method that is overridden make it a "
+    "positional parameter (with its default) in the base and in each override"
+)
+
 _VARIADIC_LIMITS = (
+    (
+        re.compile(r"is an invalid keyword argument for class_thunk_dispatch\(\)"),
+        _THUNK_HINT,
+    ),
+    (
+        # A `nonlocal` that may be None, used where Codon unwraps the
+        # Optional (narrowed by a test, #629): Codon holds a nonlocal in a
+        # Capsule and unwraps no Optional through it.
+        re.compile(r"'Capsule\[Optional\["),
+        "Codon holds a `nonlocal` variable in a Capsule and does not unwrap an "
+        "Optional through it, so a nonlocal that may be None cannot be used as "
+        "its value even where a test narrowed it: copy it into an annotated "
+        "local of the inner function first (`cur: int | None = y`; unannotated, "
+        "the copy is a Capsule too), and test and use the local",
+    ),
     (
         # An empty container with no annotation, an unannotated class
         # attribute `items = []` most often (#611): Codon types it from what
@@ -1308,17 +1362,48 @@ _REPLACE_HELPER_FRAME = re.compile(
 )
 
 
-def _replace_helper_location(diagnostic: Diagnostic) -> Diagnostic:
+def _replace_helper_location(
+    diagnostic: Diagnostic, files: Mapping[str, str] | None = None
+) -> Diagnostic:
     """*diagnostic* raised inside a ``replace`` method, at the ``replace(...)``
-    call of the same file that reached it, rather than at the class."""
+    call that reached it, rather than at the class.
+
+    The frame names the call's file by its basename, as Codon does: *files*
+    maps the basename of each checked module that no other checked module
+    shares to its path (:func:`_unique_basenames`), so a call in another
+    module than the class's (``replace(cfg.lanes, ids=...)`` in
+    ``scenario.py`` of a class of ``configs.py``) is found too (#623).  An
+    ambiguous basename leaves the diagnostic at the class.  Without *files*,
+    only a call in the class's own file is.
+    """
     if not diagnostic.trace or diagnostic.path is None:
         return diagnostic
     found = _REPLACE_HELPER_FRAME.match(diagnostic.trace[0])
-    if found is None or Path(diagnostic.path).name != found["file"]:
+    if found is None:
+        return diagnostic
+    if files is None:
+        path = diagnostic.path if Path(diagnostic.path).name == found["file"] else None
+    else:
+        path = files.get(found["file"])
+    if path is None:
         return diagnostic
     return dataclasses.replace(
-        diagnostic, line=int(found["line"]), column=None, trace=diagnostic.trace[1:]
+        diagnostic,
+        path=path,
+        line=int(found["line"]),
+        column=None,
+        trace=diagnostic.trace[1:],
     )
+
+
+def _unique_basenames(ws: _Workspace) -> dict[str, str]:
+    """The path of each checked module of *ws* by its basename, for the
+    basenames no other checked module has (Codon's frames name a file by its
+    basename alone)."""
+    by_name: dict[str, list[str]] = {}
+    for rel, original in ws.files.items():
+        by_name.setdefault(Path(rel).name, []).append(original)
+    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
 
 
 def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
@@ -1390,13 +1475,20 @@ def _misspelt_member(message: str) -> str | None:
     return f"CPython's {label} has no '{name}' either (a typo?){suggestion}"
 
 
-def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+def _variadic_hints(
+    diagnostics: list[Diagnostic], modules: Mapping[str, str] | None = None
+) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
-    ``*args`` or on a tuple saying why and what to write instead (#266)."""
+    ``*args`` or on a tuple saying why and what to write instead (#266).
+
+    *modules* is :func:`_unique_basenames` of the workspace, which places an
+    error inside a ``replace`` method (:func:`_replace_helper_location`)."""
     out = []
     files = _Files()
     for diagnostic in diagnostics:
-        diagnostic = _replace_helper_location(_replace_thunk_message(diagnostic))
+        diagnostic = _replace_helper_location(
+            _replace_thunk_message(diagnostic), modules
+        )
         keyword_only = _keyword_only_hint(diagnostic)
         if keyword_only is not None:
             out.append(keyword_only)
@@ -1861,7 +1953,10 @@ def _fstring_line(
     file's first one; the column is within the field's text
     (``{x:+.2f}``).  The f-strings of the file are searched for the field
     whose character at that column is the unexpected token, else the first
-    field with a format spec; ``None`` if the file holds none.
+    field with a format spec, else the first f-string with a literal brace
+    (which Codon's parser has no escape for, #696), else the f-string when
+    the file holds f-strings on one line only; ``None`` otherwise: a guess
+    among several would name a line that is likely not the one at fault.
     """
     try:
         tree = ast.parse(text)
@@ -1869,8 +1964,16 @@ def _fstring_line(
         return None
     token = _UNEXPECTED_TOKEN.search(message)
     fields: list[tuple[int, str]] = []
+    braced: list[int] = []
+    fstrings: list[int] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr):
+            fstrings.append(node.lineno)
+            if any(
+                isinstance(v, ast.Constant) and any(c in str(v.value) for c in "{}")
+                for v in node.values
+            ):
+                braced.append(node.lineno)
             for value in node.values:
                 if isinstance(value, ast.FormattedValue) and value.format_spec:
                     inner = value.format_spec
@@ -1884,6 +1987,10 @@ def _fstring_line(
                     fields.append((node.lineno, shown))
     fields.sort()
     if not fields:
+        if braced:
+            return _original_line(origin, min(braced))
+        if len(set(fstrings)) == 1:
+            return _original_line(origin, fstrings[0])
         return None
     if token is not None and column is not None:
         for line, shown in fields:
@@ -2291,10 +2398,15 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             )
             if found is not None:
                 original = found
-        if original >= 1:
-            texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
-            if texts is not None:
-                moved[(file, line)] = texts
+                # Codon's column within the field, not of the line (#696).
+                in_fields.add((file, line))
+        if original < 1:
+            # Still no line of the file (a position before its first line):
+            # reported with none rather than a negative one (#696).
+            return (ws.files[rel], 0, True, None)
+        texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
+        if texts is not None:
+            moved[(file, line)] = texts
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
@@ -2378,7 +2490,7 @@ _CACHE: dict[str, TypeCheckResult] = {}
 _CHECKED_FOR: dict[str, dict[str, str]] = {}
 #: The verdict of each key being made right now, for the checks of the same
 #: key that start meanwhile to wait for (``scenario-check`` runs configs in
-#: threads side by side); ``None`` when the compile timed out.
+#: threads side by side); ``None`` when the compile timed out or was killed.
 _IN_FLIGHT: dict[str, Future[TypeCheckResult | None]] = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
@@ -2493,9 +2605,15 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
     """Keep *result* under *key*; in ``$CACHE_DIR_ENV`` too unless Codon crashed.
 
     A crash says nothing about the program (Codon may have run out of memory),
-    so it is not worth keeping for another run. The file is written whole or
-    not at all: workers that compile the same program race harmlessly.
+    so it is not worth keeping for another run. A Codon killed from outside
+    (:attr:`TypeCheckResult.killed`) is not kept at all, not even for this
+    process: the next check of the same program (the next case of a sweep,
+    which has the same key) compiles it again (#694). The file is written
+    whole or not at all: workers that compile the same program race
+    harmlessly.
     """
+    if result.killed:
+        return result
     _CACHE[key] = result
     path = _cache_file(key)
     if path is None or result.crashed:
@@ -2954,8 +3072,8 @@ def _typecheck(
         return _reused(name, key, rendered.case, cached)
     # scenario-check runs configs side by side: one of the same shape that is
     # being compiled right now is waited for rather than compiled again. A
-    # compile that timed out is no verdict: who waited for it compiles under
-    # its own timeout.
+    # compile that timed out or was killed is no verdict: who waited for it
+    # compiles under its own timeout.
     while True:
         with _IN_FLIGHT_LOCK:
             pending = _IN_FLIGHT.get(key)
@@ -2980,7 +3098,9 @@ def _typecheck(
         owned.set_exception(exc)
         raise
     else:
-        owned.set_result(result)
+        # A killed compile is no verdict either: who waited for it compiles
+        # under its own timeout, as after a timeout (#694).
+        owned.set_result(None if result is not None and result.killed else result)
     finally:
         with _IN_FLIGHT_LOCK:
             del _IN_FLIGHT[key]
@@ -2993,7 +3113,13 @@ def _reused(
     name: str, key: str, case: dict[str, str], result: TypeCheckResult
 ) -> TypeCheckResult:
     """*result*, the verdict kept (or being made) under *key*, for the check
-    *name* of the case *case*: logged when it was made for another case."""
+    *name* of the case *case*: logged when it was made for another case.
+
+    Named *name*: the key is the program, which another check may share with
+    this one under another name (#652).
+    """
+    if result.scenario != name:
+        result = dataclasses.replace(result, scenario=name)
     checked_for = _CHECKED_FOR.setdefault(key, case)
     changed = [k for k, v in case.items() if checked_for.get(k) != v]
     if changed:
@@ -3040,6 +3166,8 @@ def _none_checked(
     the stubs are written from), so a kept verdict holds the check's too.
     """
     checked = _with_none_misuses(result, none_check)
+    if checked.killed:  # no verdict: kept nowhere, like a timeout (#694)
+        return checked
     if len(checked.warnings) > len(result.warnings):
         # The None check did not run (mypy missing, out of time): a verdict
         # for this process only, so the next run checks it again.
@@ -3282,9 +3410,16 @@ def _compile(
             return None
         output = proc.stdout + proc.stderr
         diagnostics = _data_model_hints(
-            _with_member_reasons(_variadic_hints(_parse_output(output, ws)), sources),
+            _with_member_reasons(
+                _variadic_hints(_parse_output(output, ws), _unique_basenames(ws)),
+                sources,
+            ),
             sources,
         )
+        try:
+            diagnostics = _keyword_only_hints(diagnostics, sources)
+        except Exception:  # only a hint: never lose Codon's own errors to it
+            pass
         if proc.returncode != 0:
             try:
                 diagnostics += _uninferred_attributes(diagnostics, sources)
@@ -3292,6 +3427,10 @@ def _compile(
                 pass
             try:
                 diagnostics += _unplaced_none_mismatches(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
+            try:
+                diagnostics += _narrowed_none_first_hints(diagnostics, sources)
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
     seconds = time.monotonic() - started
@@ -3308,6 +3447,11 @@ def _compile(
         or codegen
         or any(m in output for m in _CRASH_MARKERS)
     )
+    # Killed from outside (the out-of-memory killer): no verdict on the code,
+    # so neither the #609 rerun nor the #584 hints, which would blame it.
+    killed = proc.returncode == -signal.SIGKILL
+    if killed:
+        diagnostics = [Diagnostic(_KILLED.format(seconds=seconds)), *diagnostics]
     if proc.returncode != 0 and not diagnostics and _SIGNATURE_MISMATCH in output:
         try:
             diagnostics = _callable_signature_hints(output, sources)
@@ -3320,6 +3464,7 @@ def _compile(
             diagnostics = []
     if (
         crashed
+        and not killed
         and not codegen
         and not diagnostics
         and any(uses_sequence_helpers(m.text) for m in sources.modules.values())
@@ -3359,6 +3504,20 @@ def _compile(
             )
         except Exception:  # only a hint: the crash is reported either way
             pass
+        try:
+            # ... and on a conditional expression testing a local that is
+            # only ever None (#629).
+            diagnostics += [
+                Diagnostic(
+                    f"Codon crashed ({tail[0]}); a likely cause: {test.message()}",
+                    str(module.path),
+                    test.test_line,
+                )
+                for module in sources.modules.values()
+                for test in none_only_tests(module.tree)
+            ]
+        except Exception:  # only a hint: the crash is reported either way
+            pass
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
@@ -3369,7 +3528,107 @@ def _compile(
         crashed=crashed,
         output=output,
         seconds=seconds,
+        killed=killed,
     )
+
+
+#: Codon completing a type it had not resolved as ``int``, its default
+#: (``'Optional[int]' does not match expected type 'Optional[float]'``).
+_DEFAULTED_INT = re.compile(
+    r"^'Optional\[int\]' does not match expected type 'Optional\[(?!int\])"
+)
+
+
+def _narrowed_none_first_hints(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """The locals first bound to ``None`` that a conditional expression tests,
+    when Codon refused an ``Optional[int]`` it made up (#629): ``prev = None``
+    in a loop, then ``v - prev if prev is not None else None``."""
+    if not any(_DEFAULTED_INT.search(d.message) for d in diagnostics):
+        return []
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for binding in narrowed_none_first_bindings(module.tree):
+            found.append(
+                Diagnostic(
+                    "Codon typed a value Optional[int], which it gives a type "
+                    "it has not resolved yet; a likely cause: "
+                    f"{none_first_binding_message(binding)}",
+                    str(module.path),
+                    binding.line,
+                )
+            )
+    return found
+
+
+#: Codon's refusal of a function in a table annotated ``Callable`` (#629).
+_CALLABLE_TABLE = re.compile(
+    r"^(?P<codon>no function 'Callable\.__new__' with arguments "
+    r"\((?P<fn>\w+)\[[^)]*\))"
+)
+#: Codon failing on a call of a method (``b.m(1.0)``) with no other word.
+_UNTYPED_METHOD_CALL = re.compile(
+    r"^cannot typecheck '[^']*\.(?P<method>\w+)\([^']*\)'$"
+)
+
+
+def _bare_star(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether *function* has keyword-only parameters after a bare ``*``."""
+    return bool(function.args.kwonlyargs) and function.args.vararg is None
+
+
+def _keyword_only_hints(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """*diagnostics*, a refusal that keyword-only parameters cause saying so
+    (#629): a function with them in a table annotated ``Callable``, and a
+    call of an overridden method with them (or with defaults), which goes
+    through Codon's dispatch thunk."""
+    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    methods: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for module in sources.modules.values():
+        for node in module.tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions[node.name] = node
+            elif isinstance(node, ast.ClassDef):
+                for member in node.body:
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        methods.setdefault(member.name, []).append(member)
+    out: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        table = _CALLABLE_TABLE.match(diagnostic.message)
+        untyped = _UNTYPED_METHOD_CALL.match(diagnostic.message)
+        if table is not None:
+            function = functions.get(table["fn"])
+            if function is not None and _bare_star(function):
+                positional = ", ".join(
+                    a.arg for a in [*function.args.posonlyargs, *function.args.args]
+                )
+                diagnostic = dataclasses.replace(
+                    diagnostic,
+                    message=(
+                        f"{table['codon']}: `{function.name}` has keyword-only "
+                        "parameters, which Codon cannot convert to a Callable "
+                        "even when they have defaults: put a lambda that calls "
+                        f"it in the table instead (`lambda {positional}: "
+                        f"{function.name}({positional})`)"
+                    ),
+                )
+        elif untyped is not None:
+            defined = methods.get(untyped["method"], [])
+            if len(defined) > 1 and any(
+                _bare_star(m) or m.args.defaults or m.args.kw_defaults for m in defined
+            ):
+                diagnostic = dataclasses.replace(
+                    diagnostic,
+                    message=(
+                        f"{diagnostic.message}: `{untyped['method']}` is "
+                        f"overridden. {_THUNK_HINT}"
+                    ),
+                )
+        out.append(diagnostic)
+    return out
 
 
 def _unplaced_none_mismatches(
@@ -3919,6 +4178,7 @@ def typecheck_library(
         The result; ``result.ok`` is ``False`` when a module does not compile
         or uses a value that may be ``None`` where it may not be.
     """
+    started = time.monotonic()
     names = sorted(CHECKED if modules is None else set(modules))
     title = f"{_PACKAGE} library ({len(names)} checked modules)"
     if not names:
@@ -3972,7 +4232,15 @@ def typecheck_library(
     )
     cached = _cached(key, sources)
     if cached is not None:
-        return cached
+        # The key is the compiled program, every module of the closure: other
+        # named modules with the same closure are the same program (#652).  The
+        # verdict is the program's; the title and the time are this run's.
+        return dataclasses.replace(
+            cached,
+            scenario=title,
+            seconds=time.monotonic() - started,
+            cached=True,
+        )
     none_check = _none_check_started(sources, timeout)
     result = _compile(
         title,

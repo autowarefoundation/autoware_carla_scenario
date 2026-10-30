@@ -166,6 +166,65 @@ class TestMapSource:
                 "maps/T",
             ),
             ("https://example.com/o/n", "https://example.com/o/n", "", ""),
+            # A ref may contain '/': everything after the last '@' of the
+            # repository path is the ref (#671).
+            (
+                "git+https://github.com/o/r@feature/x#maps",
+                "https://github.com/o/r",
+                "feature/x",
+                "maps",
+            ),
+            (
+                "https://user@example.com/o/n@release/1.0",
+                "https://user@example.com/o/n",
+                "release/1.0",
+                "",
+            ),
+            (
+                "git@github.com:o/r.git@feature/x#maps/T",
+                "git@github.com:o/r.git",
+                "feature/x",
+                "maps/T",
+            ),
+            (
+                "https://github.com/o/n/tree/dev/maps/T@feature/x",
+                "https://github.com/o/n",
+                "feature/x",
+                "maps/T",
+            ),
+            # An scp-like URL with no '/' at all is still a repository (#671).
+            ("git@example.com:maps.git@v1", "git@example.com:maps.git", "v1", ""),
+            ("git@example.com:maps.git", "git@example.com:maps.git", "", ""),
+            ("git@github.com:o/r", "git@github.com:o/r", "", ""),
+            ("git@github.com:o/r@main", "git@github.com:o/r", "main", ""),
+            (
+                "ssh://git@github.com/o/r.git@v2",
+                "ssh://git@github.com/o/r.git",
+                "v2",
+                "",
+            ),
+            ("file:///srv/maps@main#T", "file:///srv/maps", "main", "T"),
+            (
+                "ssh://git@example.com:2222/o/r.git@feature/x",
+                "ssh://git@example.com:2222/o/r.git",
+                "feature/x",
+                "",
+            ),
+            (
+                "git+ssh://git@example.com/o/r@release/1.0#maps",
+                "ssh://git@example.com/o/r",
+                "release/1.0",
+                "maps",
+            ),
+            # A remote path's own '@' is written '%40' and is then no split.
+            (
+                "https://example.com/o/a%40b@v1",
+                "https://example.com/o/a%40b",
+                "v1",
+                "",
+            ),
+            ("/srv/maps@main", "/srv/maps", "main", ""),
+            ("/srv/maps", "/srv/maps", "", ""),
         ],
     )
     def test_parses_the_urls_people_actually_have(
@@ -184,6 +243,49 @@ class TestMapSource:
 
     def test_userinfo_is_not_mistaken_for_a_ref(self) -> None:
         assert MapSource.parse("https://user@example.com/o/n").ref == ""
+
+    @pytest.mark.parametrize("scheme", ["", "file://"])
+    def test_an_at_in_an_existing_local_directory_is_not_a_ref(
+        self, tmp_path: Path, scheme: str
+    ) -> None:
+        # Nix store paths and user@domain home directories are real: a local
+        # path that exists is the repository, '@' and all (#671).
+        repo = tmp_path / "maps@2" / "repo"
+        repo.mkdir(parents=True)
+        source = MapSource.parse(f"{scheme}{repo}#T")
+        assert (source.repo_url, source.ref, source.path) == (
+            f"{scheme}{repo}",
+            "",
+            "T",
+        )
+
+    @pytest.mark.parametrize("scheme", ["", "file://"])
+    def test_a_local_ref_follows_the_last_at_that_leaves_a_directory(
+        self, tmp_path: Path, scheme: str
+    ) -> None:
+        repo = tmp_path / "maps@2" / "repo"
+        repo.mkdir(parents=True)
+        source = MapSource.parse(f"{scheme}{repo}@feature/x#T")
+        assert (source.repo_url, source.ref) == (f"{scheme}{repo}", "feature/x")
+        assert MapSource.parse(source.uri) == source
+
+    def test_a_missing_local_path_falls_back_to_the_last_at(
+        self, tmp_path: Path
+    ) -> None:
+        missing = tmp_path / "maps@2" / "repo"
+        source = MapSource.parse(f"file://{missing}")
+        assert (source.repo_url, source.ref) == (f"file://{tmp_path}/maps", "2/repo")
+
+    def test_a_percent_encoded_at_is_never_a_split(self, tmp_path: Path) -> None:
+        source = MapSource.parse(f"file://{tmp_path}/maps%402/repo@main")
+        assert (source.repo_url, source.ref) == (
+            f"file://{tmp_path}/maps%402/repo",
+            "main",
+        )
+
+    def test_a_ref_with_a_slash_round_trips(self) -> None:
+        source = MapSource(repo_url="https://github.com/o/r", ref="feature/x", path="m")
+        assert MapSource.parse(source.uri) == source
 
     def test_only_a_full_commit_counts_as_pinned(self) -> None:
         base = "https://example.com/o/n"
@@ -256,6 +358,16 @@ class TestResolveMap:
         again = resolve_map(_uri(origin_repo), cache=cache)
         assert again.lanelet2_path == first.lanelet2_path
         assert again.lanelet2_path.read_text() == _OSM
+
+    def test_a_repository_under_a_directory_with_an_at_resolves(
+        self, origin_repo: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        moved = tmp_path / "maps@2" / "origin"
+        moved.parent.mkdir()
+        origin_repo.rename(moved)
+        resolved = resolve_map(_uri(moved), cache=cache)
+        assert resolved.lanelet2_path.read_text() == _OSM
+        assert resolved.commit == _head(moved)
 
     def test_a_map_the_repository_does_not_have_is_reported(
         self, origin_repo: Path, cache: GitMapCache

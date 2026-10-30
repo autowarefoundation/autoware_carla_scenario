@@ -1,0 +1,17 @@
+# Model of autoware_carla_scenario.t4_scene (docs/typecheck.md), which reads
+# trajectory logs with orjson and writes Protobuf messages: what the checked
+# scenario_runner and scenario_queue use of it, with the signatures of the
+# Python class.
+
+from pathlib import Path
+from typing import Optional
+
+from ._tc import _keyword_only as _acs_keyword_only
+
+
+class T4SceneExporter:
+    def __init__(self, *_kw, step_s: float = 0.1, max_distance_m: Optional[float] = 100.0):
+        _acs_keyword_only(_kw, "T4SceneExporter(): step_s and max_distance_m")
+
+    def export(self, trajectory: Path) -> Optional[Path]:
+        raise NotImplementedError()

@@ -31,6 +31,12 @@ An event (a collision, being off the road) reads ``1.0`` when it holds and
 ``None`` when there is no ego, and the map-based ones when the world has no
 map.
 
+Four are not AlpaSim's and read the run so far rather than a frame: how the
+ego weaves from side to side (:data:`LATERAL_REVERSALS`,
+:data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`) and how often its turn
+indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
+runner hands this module every tick (:func:`track_ego_motion`).
+
 AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
 ``min_ade``), the driver's plan (``plan_deviation``, ``open_loop_collision``),
@@ -41,11 +47,13 @@ its safety monitor (``safety_monitor_triggered``) or a camera image
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
+from .failure import FailureCategory
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -58,16 +66,23 @@ __all__ = [
     "COLLISION_LATERAL",
     "COLLISION_REAR",
     "IMPORTANCE_SAMPLING_WEIGHT",
+    "LATERAL_REVERSALS",
+    "LATERAL_WOBBLE_M",
     "MIN_DISTANCE_TO_LANE_BOUNDARY_M",
     "MIN_DISTANCE_TO_OBSTACLE_M",
     "Metric",
     "OFFROAD",
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
+    "STEERING_REVERSALS",
+    "TURN_INDICATOR_CHANGES",
     "WRONG_LANE",
     "is_metric",
     "read_metric",
+    "ego_progress",
+    "reset_ego_motion",
     "set_importance_sampling_weight",
+    "track_ego_motion",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -95,6 +110,18 @@ MIN_DISTANCE_TO_LANE_BOUNDARY_M = "min_distance_to_lane_boundary_m"
 #: The run's importance-sampling weight so far (NADE's), not AlpaSim's: the
 #: likelihood ratio a batch of runs is weighted by.
 IMPORTANCE_SAMPLING_WEIGHT = "importance_sampling_weight"
+#: How many times so far the ego's drift across its lane turned back, by more
+#: than :data:`_LATERAL_REVERSAL_GAP_M`: its weaving, not AlpaSim's.
+LATERAL_REVERSALS = "lateral_reversals"
+#: Metres: how far the ego strays across its lane about its course over the
+#: last :data:`_WOBBLE_WINDOW_S` seconds (RMS), not AlpaSim's.
+LATERAL_WOBBLE_M = "lateral_wobble_m"
+#: How many times so far the steering applied to the ego turned back, by more
+#: than :data:`_STEERING_REVERSAL_GAP`, not AlpaSim's.
+STEERING_REVERSALS = "steering_reversals"
+#: How many times so far the ego's turn indicators changed (off, left, right,
+#: hazard), not AlpaSim's.
+TURN_INDICATOR_CHANGES = "turn_indicator_changes"
 
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
@@ -104,6 +131,18 @@ _WRONG_LANE_HEADING_DEG = 120.0
 _LANE_SEARCH_RADIUS_M = 6.0
 #: How many lanes beside its own the drivable area is walked to, at most.
 _MAX_SIDE_LANES = 8
+#: How far the ego's drift across its lane must turn back to count as a
+#: reversal, in metres: less is the noise of holding a lane.
+_LATERAL_REVERSAL_GAP_M = 0.1
+#: How far the steering must turn back to count as a reversal, in CARLA's
+#: normalised steer (``1`` the vehicle's full lock): about 3.5 degrees at the
+#: wheels of a car that locks at 70.  A driver policy's controller holding a
+#: lane or a bend moves its steer by a few hundredths, closed loop; sawing
+#: through a turn, by a tenth or more.
+_STEERING_REVERSAL_GAP = 0.05
+#: The seconds :data:`LATERAL_WOBBLE_M` looks back over: a weave of 0.25 Hz
+#: or faster turns back within it, where a lane change is mostly the course.
+_WOBBLE_WINDOW_S = 4.0
 
 #: What the ego's box meets in a frame, as bits: a road user at its front
 #: edge, at its rear edge, at its side only, and the edge of the road.
@@ -365,11 +404,16 @@ class _Cache:
 _CACHE = _Cache()
 
 
-def _frame(world: "carla.World") -> _Frame:
+def _hold(world: "carla.World") -> None:
+    """Make *world* the one the cache holds, dropping another's."""
     held = _CACHE.world
     if held is None or held is not world:
         _CACHE.world = world
         _CACHE.at, _CACHE.frame, _CACHE.carla_map = None, None, None
+
+
+def _frame(world: "carla.World") -> _Frame:
+    _hold(world)
     at: Optional[int] = None
     try:
         at = int(world.get_snapshot().frame)
@@ -530,6 +574,261 @@ def set_importance_sampling_weight(weight: Optional[float]) -> None:
 def _importance_sampling_weight(world: "carla.World") -> Optional[float]:
     """The running scenario's weight, or None outside a run."""
     return _RUN["weight"]
+
+
+class _Reversals:
+    """Counts how often a signal turns back by at least *gap*: the steering
+    reversal count of driver-workload studies (Markkula and Engstrom, 2006),
+    which a drift one way, however long, does not add to."""
+
+    gap: float
+    count: int
+    #: +1 while the signal rises, -1 while it falls, 0 until it has moved
+    #: *gap* either way.
+    heading: int
+    #: The furthest it has gone the way it heads; until it heads anywhere,
+    #: the lowest and the highest it has been.
+    extreme: float
+    low: float
+    high: float
+
+    def __init__(self, gap: float) -> None:
+        self.gap = gap
+        self.count = 0
+        self.heading = 0
+        self.extreme = 0.0
+        self.low = math.inf
+        self.high = -math.inf
+
+    def add(self, value: float) -> None:
+        if self.heading == 0:
+            self.low = min(self.low, value)
+            self.high = max(self.high, value)
+            if value - self.low >= self.gap:
+                self.heading, self.extreme = 1, value
+            elif self.high - value >= self.gap:
+                self.heading, self.extreme = -1, value
+        elif (value - self.extreme) * self.heading >= 0.0:
+            self.extreme = value
+        elif abs(self.extreme - value) >= self.gap:
+            self.count += 1
+            self.heading, self.extreme = -self.heading, value
+
+
+class _Motion:
+    """The ego's motion through the run so far (:func:`track_ego_motion`).
+
+    ``lateral`` is how far the ego has moved across its lanes since the run
+    began, in metres to the right: its velocity across the lane under it,
+    summed over time.  The lane's heading is taken anew every frame, so a bend
+    is not a drift; moving from lane to lane is, without the jump of a lane
+    centre measured from.
+    """
+
+    ego_id: int
+    at: Optional[float]
+    lateral: float
+    #: ``(elapsed, lateral)`` of the frames of the last
+    #: :data:`_WOBBLE_WINDOW_S` seconds, oldest first.
+    window: deque[tuple[float, float]]
+    lateral_reversals: _Reversals
+    steering_reversals: _Reversals
+    #: The indicators the ego showed last (``TurnIndicatorState.value``), -1
+    #: before the first frame, and how many times they changed since.
+    indicator: int
+    indicator_changes: int
+    #: How far the ego has driven (m); whether that is :data:`_MOVED_M`, and
+    #: since when it has stood still (:data:`_STILL_MPS`), ``None`` while it
+    #: moves.
+    travelled_m: float
+    moved: bool
+    still_since: Optional[float]
+
+    def __init__(self) -> None:
+        self.ego_id = -1
+        self.at = None
+        self.lateral = 0.0
+        self.window = deque()
+        self.lateral_reversals = _Reversals(_LATERAL_REVERSAL_GAP_M)
+        self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
+        self.indicator = -1
+        self.indicator_changes = 0
+        self.travelled_m = 0.0
+        self.moved = False
+        self.still_since = None
+
+    def wobble(self) -> Optional[float]:
+        """The RMS of :attr:`lateral` over the window about the straight line
+        that fits it best; None before it holds three frames."""
+        n = len(self.window)
+        if n < 3:
+            return None
+        mean_t = sum(t for t, _ in self.window) / n
+        mean_y = sum(y for _, y in self.window) / n
+        stt = sum((t - mean_t) ** 2 for t, _ in self.window)
+        sty = sum((t - mean_t) * (y - mean_y) for t, y in self.window)
+        slope = sty / stt if stt > 0.0 else 0.0
+        residual = sum((y - mean_y - slope * (t - mean_t)) ** 2 for t, y in self.window)
+        return math.sqrt(residual / n)
+
+
+_MOTION: list[_Motion] = [_Motion()]
+
+
+def reset_ego_motion() -> None:
+    """Forget the ego's motion: the runner calls it as a run begins and
+    ends."""
+    _MOTION[0] = _Motion()
+
+
+def track_ego_motion(world: "carla.World", elapsed: float) -> None:
+    """Add the frame of *world* at *elapsed* simulated seconds to the ego's
+    motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M`,
+    :data:`STEERING_REVERSALS` and :data:`TURN_INDICATOR_CHANGES` read.
+
+    The runner calls it every tick; a frame at the time of the last one adds
+    nothing.  Off the driving lanes, and in a junction, the ego has no lane
+    to drift across, and its drift holds until it is back on one.  Another ego starts the motion
+    anew.
+    """
+    try:
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        ego = None
+    if ego is None:
+        return
+    motion = _MOTION[0]
+    if motion.ego_id != ego.id:
+        motion = _Motion()
+        motion.ego_id = ego.id
+        _MOTION[0] = motion
+    last = motion.at
+    if last is not None and elapsed <= last:
+        return
+    motion.at = elapsed
+    try:
+        motion.steering_reversals.add(float(ego.get_control().steer))
+    except Exception:
+        pass
+    _track_indicator(motion, ego)
+    try:
+        velocity = ego.get_velocity()
+    except Exception:
+        return
+    _track_progress(
+        motion,
+        math.hypot(velocity.x, velocity.y),
+        elapsed,
+        0.0 if last is None else elapsed - last,
+    )
+    if last is not None:
+        # The ego's centre alone, not the frame :func:`_frame` reads: that
+        # reads every actor, and this runs every tick whether or not anything
+        # reads a metric.
+        _hold(world)
+        try:
+            transform = ego.get_transform()
+            waypoint = _driving_waypoint(world, _centre(_box_of(ego, transform)))
+        except Exception:
+            waypoint = None
+        # A junction's lanes overlap, and the one read may be another's, at
+        # any angle to the ego's: its drift holds through the junction.
+        if waypoint is not None and not waypoint.is_junction:
+            yaw = math.radians(waypoint.transform.rotation.yaw)
+            # A lane the other way (overtaking on it) is crossed the ego's way.
+            if math.cos(yaw - math.radians(transform.rotation.yaw)) < 0.0:
+                yaw += math.pi
+            across = -velocity.x * math.sin(yaw) + velocity.y * math.cos(yaw)
+            motion.lateral += across * (elapsed - last)
+    motion.lateral_reversals.add(motion.lateral)
+    start = elapsed - _WOBBLE_WINDOW_S
+    while motion.window and motion.window[0][0] < start:
+        motion.window.popleft()
+    motion.window.append((elapsed, motion.lateral))
+
+
+#: The ego has moved once it has driven this far (m): a creep counts, a
+#: roll on the spot does not.
+_MOVED_M = 1.0
+#: It stands still while it goes slower than this (m/s).
+_STILL_MPS = 0.3
+
+
+def _track_progress(motion: _Motion, speed: float, elapsed: float, dt: float) -> None:
+    """Note how far the ego, going at *speed* (m/s) for the *dt* s up to
+    *elapsed*, has driven, and since when it has stood still."""
+    motion.travelled_m += speed * dt
+    if motion.travelled_m >= _MOVED_M:
+        motion.moved = True
+    if speed >= _STILL_MPS:
+        motion.still_since = None
+    elif motion.still_since is None:
+        motion.still_since = elapsed
+
+
+def ego_progress() -> Optional[tuple[bool, float]]:
+    """Whether the ego has moved this run, and how long it had stood still
+    at its last frame, in seconds; ``None`` before its first frame.
+
+    What tells a timeout apart (:func:`~autoware_carla_scenario.failure.progress_detail`).
+    """
+    motion = _MOTION[0]
+    at = motion.at
+    if at is None:
+        return None
+    since = motion.still_since
+    return motion.moved, 0.0 if since is None else at - since
+
+
+def _track_indicator(motion: _Motion, ego: "carla.Actor") -> None:
+    """Count a change of the indicators *ego* shows since the last frame."""
+    # Imported here: it reads CARLA's light bits, and this module does not
+    # import CARLA at import time.
+    from .utils.turn_indicator import is_vehicle, turn_indicators_of  # noqa: PLC0415
+
+    try:
+        if not is_vehicle(ego):
+            return
+        shown = int(turn_indicators_of(ego).value)
+    except Exception:
+        return
+    if motion.indicator >= 0 and shown != motion.indicator:
+        motion.indicator_changes += 1
+    motion.indicator = shown
+
+
+def _tracked(world: "carla.World") -> Optional[_Motion]:
+    """The ego's motion, None without an ego or before its first frame."""
+    motion = _MOTION[0]
+    if motion.at is None:
+        return None
+    try:
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        return None
+    return motion if ego is not None and ego.id == motion.ego_id else None
+
+
+def _lateral_reversals(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else float(motion.lateral_reversals.count)
+
+
+def _lateral_wobble_m(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else motion.wobble()
+
+
+def _steering_reversals(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    return None if motion is None else float(motion.steering_reversals.count)
+
+
+def _turn_indicator_changes(world: "carla.World") -> Optional[float]:
+    motion = _tracked(world)
+    if motion is None or motion.indicator < 0:
+        return None
+    return float(motion.indicator_changes)
 
 
 def _offroad(world: "carla.World") -> Optional[float]:
@@ -737,7 +1036,64 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             "by its last value estimates the naturalistic rate",
             aggregation="last",
         ),
+        Metric(
+            LATERAL_REVERSALS,
+            _lateral_reversals,
+            title="Weaving (reversals)",
+            unit="count",
+            text="How many times so far the ego's drift across its lane turned "
+            "back by more than 0.1 m; a lane change is a drift, not a reversal",
+            aggregation="last",
+        ),
+        Metric(
+            LATERAL_WOBBLE_M,
+            _lateral_wobble_m,
+            title="Weaving (amplitude)",
+            unit="m",
+            text="How far the ego strayed across its lane about its course "
+            "over the last 4 s, RMS",
+            aggregation="max",
+        ),
+        Metric(
+            STEERING_REVERSALS,
+            _steering_reversals,
+            title="Steering reversals",
+            unit="count",
+            text="How many times so far the steering applied to the ego "
+            "turned back by more than 0.05 of full lock",
+            aggregation="last",
+        ),
+        Metric(
+            TURN_INDICATOR_CHANGES,
+            _turn_indicator_changes,
+            title="Turn indicator changes",
+            unit="count",
+            text="How many times so far the ego's turn indicators changed: "
+            "off, left, right or hazard",
+            aggregation="last",
+        ),
     ]
+}
+
+#: What a run a metric fails is a failure of
+#: (:mod:`autoware_carla_scenario.failure`), when a
+#: :class:`~autoware_carla_scenario.conditions.MetricCondition` on it is
+#: registered without saying.  A metric not here reads more than one thing
+#: (off the road *or* a collision) or no failure (a weight), and says nothing.
+_FAILURE_CATEGORIES: dict[str, FailureCategory] = {
+    COLLISION_ANY: FailureCategory.COLLISION,
+    COLLISION_FRONT: FailureCategory.COLLISION,
+    COLLISION_REAR: FailureCategory.COLLISION,
+    COLLISION_LATERAL: FailureCategory.COLLISION,
+    COLLISION_AT_FAULT: FailureCategory.COLLISION,
+    OFFROAD: FailureCategory.LANE_KEEPING,
+    MIN_DISTANCE_TO_LANE_BOUNDARY_M: FailureCategory.LANE_KEEPING,
+    WRONG_LANE: FailureCategory.TRAFFIC_RULE,
+    MIN_DISTANCE_TO_OBSTACLE_M: FailureCategory.SAFETY_MARGIN,
+    LATERAL_REVERSALS: FailureCategory.STABILITY,
+    LATERAL_WOBBLE_M: FailureCategory.STABILITY,
+    STEERING_REVERSALS: FailureCategory.STABILITY,
+    TURN_INDICATOR_CHANGES: FailureCategory.STABILITY,
 }
 
 

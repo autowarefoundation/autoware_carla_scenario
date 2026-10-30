@@ -31,7 +31,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   each dataclass of the module gets one ``_acs_with__<field>`` method per field
   (:func:`_dataclass_replacers`), a typed copy of the object with that field
   changed, so Codon checks the field name and the value's type (the erased
-  ``**changes`` it replaces crashed Codon on a ``None``, #487).
+  ``**changes`` it replaces crashed Codon on a ``None``, #487).  A dataclass
+  nested in a class or a function gets these methods, and those of
+  :func:`_dataclass_dunders`, at the end of its body
+  (:func:`nested_dataclass_methods`, #623), as ``@extend`` cannot name it.
 * A ``class Pt(NamedTuple)`` becomes a Codon ``@tuple`` class, the decorator
   on a new line above it (:func:`tuple_named_tuples`).
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
@@ -158,6 +161,17 @@ which :func:`transform_source_lines` maps back onto the handler):
   (in the module, or among *init_classes*: another module's, the model's) is
   given one passing everything on to the base's, with ``@extend`` after the
   module: Codon 0.19 inherits no ``__init__`` (#201).
+* ``super().__init__(...)`` in a method of a top-level class whose first
+  bases are plain mixins (no ``__init__``, :func:`plain_classes`) becomes
+  ``Base.__init__(self, ...)``, ``Base`` the first base with one: Python's
+  MRO reaches it, Codon 0.19's ``super()`` is the first base's (#626).
+* A local ``pairs: list[tuple[X, ...]] = []`` of a function that appends
+  (or inserts) tuple displays of more than one length to it keeps its
+  annotation, as ``List[List[X]]()``, and each tuple display it is given by
+  ``append`` / ``insert`` becomes ``List[X]([...])`` (#625): dropped, the
+  annotation left Codon to type the list from its first element, a
+  fixed-length tuple.  Given tuples of one length, it is dropped as before:
+  the list of tuples Codon types is then the one the rest of the code uses.
 
 Before that, the scenario check gives each of the scenario's modules to
 :func:`relative_module_imports`, which imports a module of the scenario's
@@ -199,6 +213,8 @@ __all__ = [
     "inherited_inits",
     "redirect_imports",
     "literal_all",
+    "mixin_super_inits",
+    "plain_classes",
     "relative_module_imports",
     "split_tuple_excepts",
     "tuple_named_tuples",
@@ -213,9 +229,11 @@ __all__ = [
 #: every transformed module, where Python finds them among its builtins.
 MISSING_BUILTIN_EXCEPTIONS = (
     "BrokenPipeError",
+    "ChildProcessError",
     "ConnectionError",
     "FileNotFoundError",
     "ImportError",
+    "KeyboardInterrupt",
     "ModuleNotFoundError",
     "PermissionError",
     "ProcessLookupError",
@@ -798,8 +816,14 @@ def _ndarray(node: ast.Subscript, base_name: str) -> str | None:
     return f"{base_name}[{scalar}, {len(dims)}]"
 
 
-def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
-    """The Codon spelling of a Python annotation, or ``None`` to drop it."""
+def codon_annotation(
+    node: ast.AST, *, class_level: bool = False, variadic_tuples: bool = False
+) -> str | None:
+    """The Codon spelling of a Python annotation, or ``None`` to drop it.
+
+    *variadic_tuples*: a ``tuple[X, ...]`` becomes ``List[X]`` outside a
+    class body too (the element of a local's ``list[tuple[X, ...]]``, #625).
+    """
     literal = _literal_type(node)
     if literal is not None:
         return literal
@@ -811,14 +835,18 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
                 inner = ast.parse(node.value, mode="eval").body
             except SyntaxError:
                 return None
-            return codon_annotation(inner, class_level=class_level)
+            return codon_annotation(
+                inner, class_level=class_level, variadic_tuples=variadic_tuples
+            )
         return None
     members = _union_members(node)
     if members is not None:
         rest = [m for m in members if not _is_none(m)]
         if len(rest) != 1:
             return None  # a real Union: Codon 0.19 cannot take one
-        inner_text = codon_annotation(rest[0], class_level=class_level)
+        inner_text = codon_annotation(
+            rest[0], class_level=class_level, variadic_tuples=variadic_tuples
+        )
         if inner_text is None:
             return None
         return f"Optional[{inner_text}]" if len(rest) < len(members) else inner_text
@@ -828,13 +856,19 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         return None
     base = base_name.removeprefix("typing.")
     if subscript and base_name in _OPTIONAL_NAMES:
-        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        inner_text = codon_annotation(
+            node.slice,  # type: ignore[attr-defined]
+            class_level=class_level,
+            variadic_tuples=variadic_tuples,
+        )
         return None if inner_text is None else f"Optional[{inner_text}]"
     if subscript and base in _WRAPPERS:
         wrapped = node.slice  # type: ignore[attr-defined]
         if isinstance(wrapped, ast.Tuple):
             wrapped = wrapped.elts[0]
-        return codon_annotation(wrapped, class_level=class_level)
+        return codon_annotation(
+            wrapped, class_level=class_level, variadic_tuples=variadic_tuples
+        )
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
     if subscript and base.rsplit(".", 1)[-1] in _BOOL_GUARDS:
@@ -842,7 +876,11 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     if base_name in _FROZENSET_NAMES:
         if not subscript:
             return None  # a bare frozenset: the element type is unknown
-        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        inner_text = codon_annotation(
+            node.slice,  # type: ignore[attr-defined]
+            class_level=class_level,
+            variadic_tuples=variadic_tuples,
+        )
         return None if inner_text is None else f"Set[{inner_text}]"
     if not subscript:
         if base_name in _BYTES_NAMES:
@@ -863,13 +901,24 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
             # tuple[X, ...]: Codon's tuples have a fixed length.  A class-level
             # declaration holds a list instead, as `tuple(x)` is checked as one;
             # a parameter, which a caller may pass a tuple, is dropped.
-            if not class_level or len(args) != 2 or base not in _TUPLE_NAMES:
+            if (
+                not (class_level or variadic_tuples)
+                or len(args) != 2
+                or base not in _TUPLE_NAMES
+            ):
                 return None
-            item = codon_annotation(args[0], class_level=class_level)
+            item = codon_annotation(
+                args[0], class_level=class_level, variadic_tuples=variadic_tuples
+            )
             if item is None:
                 item = _class_union(args[0])
             return None if item is None else f"List[{item}]"
-        converted = [codon_annotation(a, class_level=class_level) for a in args]
+        converted = [
+            codon_annotation(
+                a, class_level=class_level, variadic_tuples=variadic_tuples
+            )
+            for a in args
+        ]
         if any(c is None for c in converted):
             return None
         return f"{base_name}[{', '.join(c for c in converted if c is not None)}]"
@@ -1240,6 +1289,52 @@ def _sequence_list(annotation: ast.AST) -> str | None:
     return None if item is None else f"List[{item}]"
 
 
+def _variadic_tuple_element(annotation: ast.AST) -> ast.expr | None:
+    """The ``tuple[X, ...]`` of a ``list[tuple[X, ...]]`` annotation, or ``None``."""
+    if not (
+        isinstance(annotation, ast.Subscript)
+        and _dotted(annotation.value) in _LIST_ANNOTATIONS
+    ):
+        return None
+    element = annotation.slice
+    if _sequence_list(element) is None or not isinstance(element, ast.Subscript):
+        return None
+    base = (_dotted(element.value) or "").rsplit(".", 1)[-1]
+    return element if base in _TUPLE_NAMES else None
+
+
+def _mixed_tuple_appends(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """The names *function*'s own body gives tuple displays of more than one
+    length by ``append`` / ``insert`` (``pairs.append((1, 2))``,
+    ``pairs.append((3,))``, #625)."""
+    lengths: dict[str, set[int]] = {}
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.attr in ("append", "insert")
+            and len(node.args) == (1 if node.func.attr == "append" else 2)
+            and not node.keywords
+        ):
+            continue
+        value = node.args[-1]
+        if isinstance(value, ast.Tuple) and not any(
+            isinstance(e, ast.Starred) for e in value.elts
+        ):
+            lengths.setdefault(node.func.value.id, set()).add(len(value.elts))
+    return {name for name, each in lengths.items() if len(each) > 1}
+
+
 def _optional_member(annotation: ast.AST) -> ast.AST | None:
     """``X`` of an ``Optional[X]`` / ``X | None`` / ``Union[X, None]``, or ``None``."""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
@@ -1332,6 +1427,13 @@ class _Rewriter(ShadowScopes):
         self._list_scopes: list[tuple[dict[str, str | None], set[str] | None, int]] = [
             ({}, None, 0)
         ]
+        #: The locals annotated ``list[tuple[X, ...]]`` of the module and of
+        #: each function being visited, innermost last, to the element
+        #: annotation: a tuple display appended to one is the ``List[X]`` the
+        #: element is checked as (#625).  With them, the names the scope
+        #: gives tuple displays of more than one length
+        #: (:func:`_mixed_tuple_appends`), the only locals so kept.
+        self._tuple_lists: list[tuple[dict[str, ast.expr], set[str]]] = [({}, set())]
         #: The element class of the ``-> list[B]`` of each function being
         #: visited (``None``: no such return annotation).
         self._return_elements: list[str | None] = []
@@ -2157,8 +2259,10 @@ class _Rewriter(ShadowScopes):
             if node.returns is None or isinstance(node, ast.AsyncFunctionDef)
             else self._list_element(node.returns)
         )
+        self._tuple_lists.append(({}, _mixed_tuple_appends(node)))
         for stmt in node.body:
             self.visit(stmt)
+        self._tuple_lists.pop()
         self._return_elements.pop()
         self._list_scopes.pop()
         self._function_depth -= 1
@@ -2387,7 +2491,12 @@ class _Rewriter(ShadowScopes):
         return True
 
     def _annotated_display(
-        self, value: ast.expr, annotation: ast.expr, *, class_level: bool
+        self,
+        value: ast.expr,
+        annotation: ast.expr,
+        *,
+        class_level: bool,
+        variadic_tuples: bool = False,
     ) -> bool:
         """Type an empty or ``None``-first display from its annotation (#611).
 
@@ -2418,7 +2527,11 @@ class _Rewriter(ShadowScopes):
             # `children: list[Node] = []` in the body of `Node`: the class is
             # not defined yet, and Codon crashes on `List[Node]()` there.
             return False
-        typed = codon_annotation(annotation, class_level=class_level)
+        # A `tuple[X, ...]` inside is the `List[X]` a class-level one is
+        # checked as, where *variadic_tuples* asks for it (#625).
+        typed = codon_annotation(
+            annotation, class_level=class_level, variadic_tuples=variadic_tuples
+        )
         if typed is None or "[" not in typed:
             return False
         typed = concrete + "[" + typed.split("[", 1)[1]
@@ -2519,10 +2632,27 @@ class _Rewriter(ShadowScopes):
             else:
                 self.edits.replace(*self.edits.node_span(value), default)
             value = None  # replaced as a whole
+        # `pairs: list[tuple[int, ...]] = []` given tuples of more than one
+        # length (#625): dropped, the annotation would leave Codon to type the
+        # list from its first append, a tuple of fixed length.  Given tuples
+        # of one length, the list Codon types from them is the one Python
+        # code uses (a tuple display `in` it, `extend`, a tuple variable),
+        # so the annotation is dropped as before.
+        variadic = (
+            isinstance(node.target, ast.Name)
+            and self._function_depth > 0
+            and node.target.id in self._tuple_lists[-1][1]
+            and _variadic_tuple_element(node.annotation) is not None
+        )
         if value is not None and self._annotated_display(
-            value, node.annotation, class_level=class_level
+            value, node.annotation, class_level=class_level, variadic_tuples=variadic
         ):
             value = None  # replaced as a whole
+            if variadic:
+                assert isinstance(node.target, ast.Name)
+                element = _variadic_tuple_element(node.annotation)
+                assert element is not None
+                self._tuple_lists[-1][0][node.target.id] = element
         typed = (
             self._dict_annotation_type(node.annotation)
             if isinstance(value, ast.Dict)
@@ -2573,7 +2703,30 @@ class _Rewriter(ShadowScopes):
             self.edits.replace(start, end, f"{node.exc.id}()")
         self.generic_visit(node)
 
+    def _tuple_list_element(self, node: ast.expr) -> ast.expr | None:
+        """The ``tuple[X, ...]`` element annotation of the local *node*, when
+        it is a ``list[tuple[X, ...]]`` of this scope not bound otherwise
+        since (a comprehension, a lambda)."""
+        if not isinstance(node, ast.Name):
+            return None
+        if any(
+            node.id in bound
+            for bound, _ in self._local_bound[self._list_scopes[-1][2] :]
+        ):
+            return None
+        return self._tuple_lists[-1][0].get(node.id)
+
     def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("append", "insert")
+            and len(node.args) == (1 if node.func.attr == "append" else 2)
+            and not node.keywords
+        ):
+            # `pairs.append((1, 2))` with `pairs: list[tuple[int, ...]]` (#625).
+            element = self._tuple_list_element(node.func.value)
+            if element is not None:
+                self._tuple_argument(node.args[-1], element)
         self._mark_list_arguments(node)
         if (
             isinstance(node.func, ast.Attribute)
@@ -3770,6 +3923,7 @@ def transform_source(
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
     file: str | None = None,
+    mixins: Collection[str] = (),
 ) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -3780,10 +3934,12 @@ def transform_source(
     model) that define an ``__init__``, their own or a base's
     (:func:`classes_with_init`): a class of *source* deriving from one
     without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
-    *file* is the module's path, bound to ``__file__`` (#515).
+    *file* is the module's path, bound to ``__file__`` (#515).  *mixins*
+    names the plain mixins of other modules (:func:`plain_classes`), which a
+    ``super().__init__`` passes over (:func:`mixin_super_inits`).
     """
     return transform_source_lines(
-        source, dropped_decorators, init_classes, enum_classes, file
+        source, dropped_decorators, init_classes, enum_classes, file, mixins
     )[0]
 
 
@@ -3793,6 +3949,7 @@ def transform_source_lines(
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
     file: str | None = None,
+    mixins: Collection[str] = (),
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
@@ -3846,6 +4003,7 @@ def transform_source_lines(
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lower_replace_calls(tree, edits)
+    mixin_super_inits(tree, edits, init_classes, mixins)
     # The decorators moved down to their `def` (#595).
     origin = [origin[line - 1] for line in edits.line_origin()]
     lines = {
@@ -3859,6 +4017,23 @@ def transform_source_lines(
     # class reads them while Codon reads the module (#437, #469).  Its lines
     # come from the class's line.
     after_class: dict[int, tuple[str, str]] = {}
+    #: The methods of a nested dataclass (#623), at the end of its body: the
+    #: line after which they go -> (their lines, the line they map to), the
+    #: innermost class first.
+    in_class: dict[int, list[tuple[int, str, int]]] = {}
+    for node, methods in nested_dataclass_methods(tree, exceptions):
+        first = node.body[0]
+        indent = edits.lines[first.lineno - 1][: first.col_offset].decode()
+        if first.lineno == node.lineno or indent.strip():
+            continue  # `class Leg: x: int = 0`: no line to put a method on
+        block = "".join(
+            indent + line.removeprefix("    ")
+            for line in methods.splitlines(keepends=True)
+        )
+        last = node.end_lineno or node.lineno
+        in_class.setdefault(last, []).append(
+            (node.col_offset, block, origin[node.lineno - 1])
+        )
     at_end = []
     for name, block in _enum_lookups(rewriter.enums):
         end = next(
@@ -3892,10 +4067,18 @@ def transform_source_lines(
         *ordering,
     ]
     origin = list(origin)
-    for end, (name, block) in sorted(after_class.items(), reverse=True):
+    inserted: dict[int, list[tuple[str, int]]] = {
+        end: [(block, line) for _, block, line in sorted(blocks, reverse=True)]
+        for end, blocks in in_class.items()
+    }
+    for end, (name, block) in after_class.items():
+        inserted.setdefault(end, []).append((block[1:], lines[name]))
+    for end, blocks in sorted(inserted.items(), reverse=True):
         at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
-        edits.replace(at, at, block[1:])
-        origin[end:end] = [lines[name]] * (block.count("\n") - 1)
+        edits.replace(at, at, "".join(block for block, _ in blocks))
+        origin[end:end] = [
+            line for block, line in blocks for _ in range(block.count("\n"))
+        ]
     # Python sets a module's `__file__`, which Codon 0.19 does not (#515): it
     # is bound on the prelude's last line, before any code of the module and
     # with no line moved.
@@ -4699,7 +4882,20 @@ def _defined_methods(node: ast.ClassDef) -> set[str]:
 
 
 def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
-    """The methods Python's ``@dataclass`` generates that Codon does not, per class.
+    """The methods Python's ``@dataclass`` generates that Codon does not, per
+    top-level class (:func:`_dataclass_dunder_methods`), each appended after
+    the module with ``@extend``.  Each is (the class, the lines)."""
+    return [
+        (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
+        for node, lines in _dataclass_dunder_methods(tree.body, exceptions)
+    ]
+
+
+def _dataclass_dunder_methods(
+    body: list[ast.stmt], exceptions: set[str], prefix: str | None = None
+) -> list[tuple[ast.ClassDef, str]]:
+    """The methods Python's ``@dataclass`` generates that Codon does not, per
+    class of *body*.
 
     The check drops ``@dataclass`` (Codon's constructor takes the fields), so
     ``==``, ``!=`` and ``in``, hashing (``frozen=True``, ``unsafe_hash=True``)
@@ -4708,13 +4904,17 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
     dataclass base first), as Python does: ``eq=False`` and a method the
     class defines itself are respected.  A top-level dataclass with a base the
     module does not define (a framework dataclass, ``Generic``) is left as it
-    is: its fields are not known here.  Each is (the class, the lines).
+    is: its fields are not known here.  *prefix* qualifies the name of a
+    class nested in a class (``Plans`` for ``Plans.Leg``; empty in a function,
+    where the bare name is bound).  Each is (the class, its methods, indented
+    as a class body's).
     """
     fields: dict[str, list[str]] = {}
-    out: list[tuple[str, str]] = []
-    for node in tree.body:
+    out: list[tuple[ast.ClassDef, str]] = []
+    for node in body:
         if not isinstance(node, ast.ClassDef):
             continue
+        qualified = f"{prefix}.{node.name}" if prefix else node.name
         options = _dataclass_options(node)
         if options is None or node.name in exceptions or node.keywords:
             continue
@@ -4742,7 +4942,7 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
         ) -> None:
             if name in own:
                 return
-            other = "" if name == "__hash__" else f", other: {node.name}"
+            other = "" if name == "__hash__" else f", other: {qualified}"
             lines.append(
                 f"    def {name}(self{other}) -> {result}:\n        return {body}\n"
             )
@@ -4783,9 +4983,7 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
             ):
                 method(dunder, "bool", tuples(op))
         if lines:
-            out.append(
-                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
-            )
+            out.append((node, "".join(lines)))
     return out
 
 
@@ -5001,6 +5199,134 @@ def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
             previous = keyword.value
 
 
+#: Bases a class of no ``__init__`` may have and stay a plain mixin (#626).
+#: Not ``Protocol``: Python gives a protocol class an ``__init__`` of its own.
+_MIXIN_BASES = {"object", "ABC", "Generic"}
+
+
+def plain_classes(
+    classes: Mapping[str, ast.ClassDef],
+    with_init: Collection[str],
+    known: Collection[str] = (),
+) -> set[str]:
+    """The classes of *classes* that Python's ``super().__init__`` passes
+    over (#626): no ``__init__`` of their own or of a base (*with_init*), no
+    ``@dataclass`` (which generates one), no class keywords, and only bases
+    that are such classes too (of *classes*, or *known* ones) or ``object``,
+    ``ABC`` or ``Generic[...]``.  Bases are looked up by their
+    last name, as :func:`classes_with_init` does."""
+    known = set(known)
+    memo: dict[str, bool] = {}
+
+    def plain(name: str, seen: frozenset[str]) -> bool:
+        if name in memo:
+            return memo[name]
+        node = classes.get(name)
+        if node is None:
+            return name in known
+        if name in seen or name in with_init:
+            return False
+        found = (
+            not _defines_init(node)
+            and not _is_dataclass_node(node)
+            and not node.keywords
+            and all(
+                base in _MIXIN_BASES or plain(base, seen | {name})
+                for base in (
+                    (
+                        _dotted(b.value if isinstance(b, ast.Subscript) else b) or ""
+                    ).rsplit(".", 1)[-1]
+                    for b in node.bases
+                )
+            )
+        )
+        memo[name] = found
+        return found
+
+    return {name for name in classes if plain(name, frozenset())} | known
+
+
+def mixin_super_inits(
+    tree: ast.Module,
+    edits: _Edits,
+    init_classes: Collection[str] = (),
+    mixins: Collection[str] = (),
+) -> None:
+    """``super().__init__(...)`` in a method of a class whose first bases are
+    plain mixins becomes ``Base.__init__(self, ...)`` (#626).
+
+    Python's ``super()`` follows the MRO: past the mixins of ``class
+    S(Mixin, BaseScenario)``, which define no ``__init__`` (nor do their
+    bases), to ``BaseScenario.__init__``.  Codon 0.19's ``super()`` is the
+    first base's, the mixin's constructor of its fields, which refuses the
+    base's arguments.  The call is made through the first base that has an
+    ``__init__`` by name, which the MRO makes the same method: every class
+    before it in the MRO is one of those mixins (:func:`plain_classes`, of
+    the module, or *mixins* of the scenario's other modules).  A class whose
+    first base has an ``__init__``, or whose earlier bases are not all such
+    mixins, is left alone.
+    """
+    local = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    aliases = _import_aliases(tree)
+    known = {
+        alias
+        for alias, name in aliases.items()
+        if name in init_classes and alias not in local
+    } | (set(init_classes) - set(local))
+    with_init = classes_with_init(local, known)
+    plain = plain_classes(local, with_init, set(mixins) - set(local))
+    for node in local.values():
+        bases = [(_dotted(b) or "").rsplit(".", 1)[-1] for b in node.bases]
+        index = next((i for i, b in enumerate(bases) if b in with_init), None)
+        if not index or not all(b in plain for b in bases[:index]):
+            continue
+        target = ast.unparse(node.bases[index])
+        for method in node.body:
+            if not (
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.args.args
+                # Not a classmethod's `cls`, nor a staticmethod's argument.
+                and not any(
+                    (_dotted(d) or "").rsplit(".", 1)[-1]
+                    in ("classmethod", "staticmethod")
+                    for d in method.decorator_list
+                )
+            ):
+                continue
+            receiver = method.args.args[0].arg
+            for call in _own_calls(method):
+                func = call.func
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__init__"
+                    and isinstance(func.value, ast.Call)
+                    and isinstance(func.value.func, ast.Name)
+                    and func.value.func.id == "super"
+                    and not func.value.args
+                    and not func.value.keywords
+                ):
+                    continue
+                start, end = edits.node_span(func)
+                paren = end + edits.text(end, edits.node_span(call)[1]).index("(")
+                edits.replace(start, end, f"{target}.__init__")
+                more = ", " if call.args or call.keywords else ""
+                edits.replace(paren + 1, paren + 1, f"{receiver}{more}")
+
+
+def _own_calls(function: ast.FunctionDef | ast.AsyncFunctionDef) -> Iterator[ast.Call]:
+    """The calls of *function*'s body, not of a function or class in it."""
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, ast.Call):
+            yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
 def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] | None:
     """The fields *node* declares, as (name, annotation, whether ``__init__``
     takes it); ``None`` for a class ``replace`` cannot copy (an ``InitVar``)."""
@@ -5034,7 +5360,19 @@ def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] 
 def _dataclass_replacers(
     tree: ast.Module, exceptions: set[str]
 ) -> list[tuple[str, str]]:
-    """The ``_acs_with__<field>`` methods of each dataclass, per class.
+    """The ``_acs_with__<field>`` methods of each top-level dataclass
+    (:func:`_dataclass_replacer_methods`), each appended after the module
+    with ``@extend``.  Each is (the class, the lines)."""
+    return [
+        (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
+        for node, lines in _dataclass_replacer_methods(tree.body, exceptions)
+    ]
+
+
+def _dataclass_replacer_methods(
+    body: list[ast.stmt], exceptions: set[str], prefix: str | None = None
+) -> list[tuple[ast.ClassDef, str]]:
+    """The ``_acs_with__<field>`` methods of each dataclass of *body*.
 
     Each returns the object's copy built through the constructor with that
     field changed (``Plan(points=self.points, best=best)``), typed as the
@@ -5043,13 +5381,16 @@ def _dataclass_replacers(
     declared ``init=False`` gets none, as Python's ``replace`` refuses it (the
     hint of the "no attribute" error says so).  A class with a base the module does not
     define, an ``__init__`` of its own or an ``InitVar`` has none: ``replace``
-    of it is refused ("no attribute").  Each is (the class, the lines).
+    of it is refused ("no attribute").  *prefix* qualifies a nested class's
+    name (:func:`_dataclass_dunder_methods`).  Each is (the class, its
+    methods, indented as a class body's).
     """
     fields: dict[str, list[tuple[str, ast.expr, bool]]] = {}
-    out: list[tuple[str, str]] = []
-    for node in tree.body:
+    out: list[tuple[ast.ClassDef, str]] = []
+    for node in body:
         if not isinstance(node, ast.ClassDef):
             continue
+        qualified = f"{prefix}.{node.name}" if prefix else node.name
         if _dataclass_options(node) is None or node.name in exceptions or node.keywords:
             continue
         inherited: list[tuple[str, ast.expr, bool]] | None = []
@@ -5081,14 +5422,53 @@ def _dataclass_replacers(
                 f"{n}={n}" if n == name else f"{n}=self.{n}" for n, _, i in listed if i
             )
             lines.append(
-                f"    def {method}(self, {param}) -> {node.name}:\n"
-                f"        return {node.name}({call})\n"
+                f"    def {method}(self, {param}) -> {qualified}:\n"
+                f"        return {qualified}({call})\n"
             )
         if lines:
-            out.append(
-                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
-            )
+            out.append((node, "".join(lines)))
     return out
+
+
+def _nested_class_bodies(
+    tree: ast.Module,
+) -> Iterator[tuple[list[ast.stmt], str]]:
+    """Each body below the module's that defines classes (a class's, a
+    function's), with the prefix that qualifies a class of it: the enclosing
+    classes since the innermost function (``Plans`` for ``Plans.Leg``; empty
+    in a function, whose classes are bound by their bare name)."""
+
+    def walk(body: list[ast.stmt], prefix: str) -> Iterator[tuple[list[ast.stmt], str]]:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                inner = f"{prefix}.{node.name}" if prefix else node.name
+                yield node.body, inner
+                yield from walk(node.body, inner)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node.body, ""
+                yield from walk(node.body, "")
+
+    yield from walk(tree.body, "")
+
+
+def nested_dataclass_methods(
+    tree: ast.Module, exceptions: set[str]
+) -> list[tuple[ast.ClassDef, str]]:
+    """The generated methods of each dataclass nested in a class or a function
+    (#623): what :func:`_dataclass_dunders` and :func:`_dataclass_replacers`
+    append after the module for a top-level one, which ``@extend`` cannot
+    name for a nested one (``Plans.Leg``).  They go at the end of its body
+    instead (:func:`transform_source_lines`).  Each is (the class, its
+    methods, indented as a class body's by four spaces)."""
+    out: dict[int, tuple[ast.ClassDef, str]] = {}
+    for body, prefix in _nested_class_bodies(tree):
+        for node, lines in [
+            *_dataclass_dunder_methods(body, exceptions, prefix),
+            *_dataclass_replacer_methods(body, exceptions, prefix),
+        ]:
+            done = out.get(id(node), (node, ""))[1]
+            out[id(node)] = (node, done + lines)
+    return list(out.values())
 
 
 def _inherited_init_extensions(

@@ -22,6 +22,17 @@ This guide will help you install the `autoware-carla-scenario` package.
   `requires-python = ">=3.10,<3.15"`: the interpreters CI tests. No
   dependency caps it any more; it is raised together with CI's interpreter
   matrix. Check your version with `python --version`.
+- **Hydra on Python 3.14** — Hydra 1.3 gives `--shell-completion` a help
+  object that Python 3.14's argparse refuses ("badly formed help string"),
+  so a `@hydra.main` command would fail before it parses anything (#692).
+  `autoware_carla_scenario.hydra_compat` works around it: the `scenario`
+  entry point and the lanelet sweeper import it, and it has Hydra build its
+  parser with an `ArgumentParser` subclass that skips argparse's check for
+  help that is not a string (argparse itself is left as it is, and
+  `--hydra-help` still shows the completion instructions). On Python 3.10
+  to 3.13 importing it changes nothing. A `@hydra.main` app of your own that runs on 3.14
+  imports it before calling the decorated function:
+  `import autoware_carla_scenario.hydra_compat  # noqa: F401`.
 
 ### CARLA Simulator
 
@@ -125,7 +136,7 @@ package, or by loading a `.env` file (the package depends on
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
 | `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
 | `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
-| `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT`, `VIEWER_CACHE_DIR`, `VIEWER_RERUN_WEB_VIEWER`, `VIEWER_RERUN_MAP_DIR` | optional | `viewer` web-app overrides. |
+| `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT`, `VIEWER_CACHE_DIR`, `VIEWER_RERUN_WEB_VIEWER`, `VIEWER_RERUN_MAP_DIR` | optional | `viewer` web-app overrides (`viewer --help` for the flags that win over them). |
 
 See the [Usage Guide](usage.md) and [Architecture](architecture.md) for
 the full list.

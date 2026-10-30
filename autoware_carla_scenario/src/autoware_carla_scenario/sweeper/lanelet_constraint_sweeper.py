@@ -8,6 +8,34 @@ sweeper:
 3. For each match, resolves bindings from ``sweep.bindings`` to compute
    derived parameters (e.g. ``ego.spawn_s``).
 4. Constructs per-lanelet Hydra override batches and launches them.
+
+Once every case has run, a sweep with a failed (or timed-out) case raises
+:class:`SweepFailedError`, which Hydra reports and turns into exit status 1.
+A refused case (one exiting 2, as ``examples/run.py`` does for a scenario that
+does not type-check or an extra that is not installed) ends the sweep at once
+with exit status 2: every case after it would be refused for the same reason.
+A sweep with no case to run (nothing expanded, or ``--resume-from`` past the
+last case) raises :class:`SweepFailedError` too, before anything runs.
+
+Each case runs in a forked child of its own process group.  A case whose
+scenario ran and failed exits :data:`_FAILED_VERDICT_EXIT_CODE` and is final;
+only a case that raised, timed out or crashed is retried
+(``server.cooldown_max_retries``).  Ctrl-C or ``SIGTERM`` stops the running
+case (``SIGTERM``, then ``SIGKILL`` after
+:data:`.isolation._STOP_GRACE_SECONDS`) and ends the sweep with 130 or 143.
+
+A case that timed out or died of a signal had no chance to stop the CARLA
+server it launched; the server's watchdog stops it instead, within about a
+second and then a grace period.  Before the next attempt the sweeper waits,
+at most :data:`.isolation._CARLA_GONE_TIMEOUT_S`, until every CARLA the case
+launched has exited (:func:`.isolation._wait_until_carla_gone`), so the next
+case neither reuses the dying server nor launches one next to it (#717).  A
+server the case did not launch (one the user started, which it reused) is not
+waited for.
+
+The forking, signalling and waiting is :mod:`.isolation`'s, which the library
+check compiles (docs/typecheck.md); this module adds what a case is (a Hydra
+launch, and the exit status its result reads as).
 """
 
 from __future__ import annotations
@@ -16,20 +44,29 @@ import json
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 from hydra.core.plugins import Plugins
 from hydra.core.utils import JobReturn, JobStatus
+from hydra.errors import CompactHydraException
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import HydraContext
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
+from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
-from ..rerun import require_converter
-from .expand import expand_sweep, scenario_controls
+from ..rerun import RerunUnavailableError, require_converter
+from .expand import check_constraint_keys, expand_sweep, scenario_controls
+from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
+    SWEEPER_OWNS_RETRIES_ENV,
+    _interrupt_signal,
+    _launch_isolated,
+    _raise_interrupted,
+)
 from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
@@ -38,34 +75,50 @@ logger = logging.getLogger(__name__)
 # ``sweep.job_timeout_seconds`` in the scenario YAML.
 _DEFAULT_JOB_TIMEOUT = 120
 
+#: The exit status of a refused run (docs/usage.md, "Exit Codes").
+_REFUSED_EXIT_CODE = 2
 
-def _check_result_json_in_dir(working_dir: str | None) -> bool | None:
-    """Read the scenario result JSON from a job's output directory.
+#: The exit status of a forked case whose scenario ran to a FAILED verdict
+#: (its result JSON says ``passed: false``).  Final, as in
+#: :class:`~autoware_carla_scenario.scenario_queue.ScenarioQueue`, which
+#: retries a run that raised but not one that completed: only a case exiting
+#: 1 (it raised, or wrote no result), timing out or dying of a signal is
+#: retried (``server.cooldown_max_retries``).
+_FAILED_VERDICT_EXIT_CODE = 3
 
-    Args:
-        working_dir: The Hydra job output directory (from ``JobReturn.working_dir``).
+
+class SweepFailedError(CompactHydraException):
+    """One or more cases of a sweep failed, crashed or timed out.
+
+    Raised by :meth:`LaneletConstraintSweeper.sweep` once every case has run
+    and the summary is logged, or before any runs when the sweep has no case
+    to run.  Hydra returns nothing of a ``--multirun`` to its caller, so
+    raising is how a sweep reports failure: Hydra prints the message and exits
+    with status 1 (docs/usage.md, "Exit Codes"), as a glob batch does.  Being
+    a :class:`~hydra.errors.CompactHydraException`, it is printed without a
+    traceback.
+    """
+
+
+def _read_verdict(output_dir: Path) -> bool | None:
+    """The verdict of the scenario result JSON in a job's output directory.
 
     Returns:
-        ``True`` if the scenario passed, ``False`` if it failed or the
-        result file is missing (e.g. spawn failure prevented the scenario
-        from running), or ``None`` if *working_dir* is not available.
+        ``True`` if the scenario passed, ``False`` if it ran and failed, or
+        ``None`` if there is no verdict: no result JSON (the run raised
+        before :class:`ScenarioRunner` could write it) or one that cannot be
+        read.
     """
-    if not working_dir:
-        return None
-    output_dir = Path(working_dir)
-    if not output_dir.is_dir():
-        return None
     result_files = sorted(output_dir.glob("*_result.json"))
     if not result_files:
-        # Output directory exists but no result JSON — the scenario did
-        # not complete (e.g. spawn failure raised before ScenarioRunner
-        # could write the result).
-        return False
+        return None
     try:
         data = json.loads(result_files[0].read_text(encoding="utf-8"))
-        return bool(data.get("passed", True))
     except (json.JSONDecodeError, OSError):
-        return False
+        return None
+    if not isinstance(data, dict):
+        return None
+    return bool(data.get("passed", True))
 
 
 def _get_job_output_dir(ret: JobReturn) -> str | None:
@@ -88,13 +141,41 @@ def _get_job_output_dir(ret: JobReturn) -> str | None:
     return getattr(ret, "working_dir", None)
 
 
+def _job_exit_code(job_returns: Any) -> int:
+    """The exit status of a forked case, from what ``launcher.launch`` returned.
+
+    ``launcher.launch()`` completes without error even when the scenario
+    *fails* (in --multirun mode ``_hydra_main`` does not ``sys.exit``), and
+    Hydra catches what the task function raises and stores it in the
+    ``JobReturn`` with ``status=FAILED``.  So:
+
+    * 1 -- the task raised, or completed without a readable result JSON;
+    * :data:`_FAILED_VERDICT_EXIT_CODE` -- the scenario ran and failed;
+    * 0 -- it passed (or there is no output directory to read a verdict from).
+    """
+    if not job_returns:
+        return 0
+    ret = job_returns[0]
+    if ret.status != JobStatus.COMPLETED:
+        return 1
+    # hydra_cfg.hydra.runtime.output_dir -- NOT working_dir, which equals the
+    # cwd when hydra.job.chdir=False (the default since Hydra 1.2).
+    output_dir = _get_job_output_dir(ret)
+    if not output_dir or not Path(output_dir).is_dir():
+        return 0
+    verdict = _read_verdict(Path(output_dir))
+    if verdict is None:
+        return 1
+    return 0 if verdict else _FAILED_VERDICT_EXIT_CODE
+
+
 def _launch_job_isolated(
     launcher: Any,
     batch: tuple[str, ...],
     idx: int,
     timeout: int,
 ) -> tuple[bool, int | None]:
-    """Fork a child process to run a single job, isolating SIGSEGV crashes.
+    """Run one case in a forked child of its own (:func:`.isolation._launch_isolated`).
 
     Args:
         launcher: Hydra job launcher instance.
@@ -104,75 +185,16 @@ def _launch_job_isolated(
 
     Returns:
         ``(succeeded, exit_code)`` where *exit_code* is 0 on success,
-        a positive int on normal failure, a negative int (``-signal_number``)
-        on signal death, or ``None`` on timeout.
+        :data:`_FAILED_VERDICT_EXIT_CODE` when the scenario ran and failed,
+        another positive int when the run raised (1) or was refused (2), a
+        negative int (``-signal_number``) on signal death, or ``None`` on
+        timeout.
     """
-    child_pid = os.fork()
 
-    if child_pid == 0:
-        # ---- child process ----
-        # Create a new process group so the parent can kill the entire tree.
-        os.setpgrp()
-        # Reset any inherited SIGALRM handler so it doesn't fire in the child.
-        signal.signal(signal.SIGALRM, signal.SIG_DFL)
-        signal.alarm(0)
-        try:
-            job_returns = launcher.launch([batch], initial_job_idx=idx)
-        except SystemExit as exc:
-            os._exit(exc.code if isinstance(exc.code, int) else 1)
-        except Exception:
-            logger.exception("Job raised an exception in child process")
-            os._exit(1)
-        # launcher.launch() completes without error even when the scenario
-        # *fails* (in --multirun mode _hydra_main does not sys.exit).
-        # Hydra catches task-function exceptions internally and stores them
-        # in JobReturn with status=FAILED, so we must inspect the status
-        # and the result JSON to determine the actual outcome.
-        if job_returns:
-            ret = job_returns[0]
-            # If the task function raised (e.g. spawn failure), Hydra
-            # sets status to FAILED without re-raising the exception.
-            if ret.status != JobStatus.COMPLETED:
-                os._exit(1)
-            # Use hydra_cfg.hydra.runtime.output_dir — NOT working_dir,
-            # which equals cwd (unchanged) when hydra.job.chdir=False
-            # (the default since Hydra 1.2).
-            output_dir = _get_job_output_dir(ret)
-            if _check_result_json_in_dir(output_dir) is False:
-                os._exit(1)
-        os._exit(0)
+    def run_case() -> int:
+        return _job_exit_code(launcher.launch([batch], initial_job_idx=idx))
 
-    # ---- parent process ----
-    timed_out = False
-
-    def _kill_child(signum: int, frame: Any) -> None:  # noqa: ARG001
-        nonlocal timed_out
-        timed_out = True
-        try:
-            os.killpg(child_pid, signal.SIGKILL)
-        except OSError:
-            pass
-
-    prev_handler = signal.getsignal(signal.SIGALRM)
-    try:
-        if timeout > 0:
-            signal.signal(signal.SIGALRM, _kill_child)
-            signal.alarm(timeout)
-
-        _, status = os.waitpid(child_pid, 0)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, prev_handler)
-
-    if timed_out:
-        return False, None
-
-    if os.WIFSIGNALED(status):
-        sig = os.WTERMSIG(status)
-        return False, -sig
-
-    exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
-    return exit_code == 0, exit_code
+    return _launch_isolated(run_case, timeout)
 
 
 class LaneletConstraintSweeper(Sweeper):
@@ -183,6 +205,9 @@ class LaneletConstraintSweeper(Sweeper):
         self.config: DictConfig | None = None
         self.hydra_context: HydraContext | None = None
         self.launcher: Any = None
+        #: The 1-based case running (or about to), for an interrupted sweep's
+        #: message; ``None`` before the first.
+        self._current_case: int | None = None
 
     def setup(
         self,
@@ -203,12 +228,53 @@ class LaneletConstraintSweeper(Sweeper):
     def sweep(self, arguments: list[str]) -> Any:
         """Execute the constraint-based sweep.
 
+        While it runs, ``SIGTERM`` is turned into a ``KeyboardInterrupt``, as
+        Ctrl-C is.  Either stops the case running (``SIGTERM`` to it, then
+        ``SIGKILL`` after :data:`.isolation._STOP_GRACE_SECONDS`) and ends the
+        sweep.
+
         Args:
             arguments: Additional CLI overrides passed alongside ``--multirun``.
 
         Returns:
             The aggregated results from all launched jobs.
+
+        Raises:
+            SweepFailedError: After every case has run, when one or more of
+                them failed or timed out; or at once, when the sweep has no
+                case to run (none expanded, or ``--resume-from`` past the
+                last).
+            SystemExit: With status 2, at once, when the sweep asks for
+                Rerun recordings without the extra or a case is refused;
+                with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
+                sweep is interrupted.
         """
+        self._current_case = None
+        try:
+            previous_sigterm = signal.signal(signal.SIGTERM, _raise_interrupted)
+        except ValueError:
+            # Not the main thread: signals are not this sweep's to handle.
+            previous_sigterm = None
+        try:
+            return self._sweep(arguments)
+        except KeyboardInterrupt as exc:
+            signum = _interrupt_signal(exc)
+            name = signal.Signals(signum).name
+            where = (
+                f" at case {self._current_case}; resume with "
+                f"--resume-from {self._current_case}"
+                if self._current_case is not None
+                else ""
+            )
+            logger.error("Sweep interrupted (%s)%s.", name, where)
+            print(f"Sweep interrupted ({name}){where}.", file=sys.stderr)  # noqa: T201
+            sys.exit(128 + signum)
+        finally:
+            if previous_sigterm is not None:
+                signal.signal(signal.SIGTERM, previous_sigterm)
+
+    def _sweep(self, arguments: list[str]) -> Any:
+        """:meth:`sweep`, but for turning an interrupt into the exit status."""
         assert self.config is not None
         assert self.launcher is not None
 
@@ -218,22 +284,13 @@ class LaneletConstraintSweeper(Sweeper):
         # the extra, rather than fail every case it forks.  Each case
         # converts its own log (examples/run.py).
         if OmegaConf.select(cfg, "rerun.enabled", default=False):
-            require_converter()
+            try:
+                require_converter()
+            except RerunUnavailableError as exc:
+                print(exc, file=sys.stderr)  # noqa: T201
+                sys.exit(_REFUSED_EXIT_CODE)
 
-        # -- 1. Resolve map paths ------------------------------------------
-        # A map named by `map.source` is cloned (or found already downloaded)
-        # here, so a sweep runs against a published HD map without anyone
-        # having to name a local file for it first; `map.directory` names a
-        # map on this machine and is read in place.
-        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
-
-        # -- 2. Load the Lanelet2 map (lightweight) ------------------------
-        try:
-            lanelet_map = load_map(paths)
-        except FileNotFoundError as exc:
-            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
-
-        # -- 3. Parse constraints ------------------------------------------
+        # -- 1. Read the sweep section, before any map is fetched --------
         sweep_cfg = OmegaConf.select(cfg, "sweep")
         if sweep_cfg is None:
             raise ValueError(
@@ -243,6 +300,20 @@ class LaneletConstraintSweeper(Sweeper):
             )
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
+        check_constraint_keys(sweep_dict)
+
+        # -- 2. Resolve map paths ------------------------------------------
+        # A map named by `map.source` is cloned (or found already downloaded)
+        # here, so a sweep runs against a published HD map without anyone
+        # having to name a local file for it first; `map.directory` names a
+        # map on this machine and is read in place.
+        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
+
+        # -- 3. Load the Lanelet2 map (lightweight) ------------------------
+        try:
+            lanelet_map = load_map(paths)
+        except FileNotFoundError as exc:
+            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         batches: list[tuple[str, ...]] = [
@@ -256,8 +327,12 @@ class LaneletConstraintSweeper(Sweeper):
             )
         ]
         if not batches:
-            logger.warning("Nothing to sweep.")
-            return []
+            # Exit 0 means every case passed: a sweep that tests nothing
+            # (a misspelt constraint, the wrong map) must not look like one.
+            raise SweepFailedError(
+                "Sweep failed: the sweep expands to no case (its constraints, "
+                "route or ODD sample match nothing on this map)."
+            )
 
         logger.info(
             "Sweeping %d case(s): %s",
@@ -286,8 +361,14 @@ class LaneletConstraintSweeper(Sweeper):
         )
 
         # -- 8. Apply resume: skip jobs before the resume point (1-indexed) --
+        if resume_from > len(batches):
+            # As a glob batch with no case left to run: exit 1, not 0.
+            raise SweepFailedError(
+                f"Sweep failed: --resume-from {resume_from} is past the sweep's "
+                f"{len(batches)} case(s); no case left to run."
+            )
         if resume_from > 1:
-            skip_count = min(resume_from - 1, len(batches))
+            skip_count = resume_from - 1
             logger.info(
                 "Resuming from job %d — skipping %d/%d job(s).",
                 resume_from,
@@ -308,6 +389,7 @@ class LaneletConstraintSweeper(Sweeper):
 
         for local_idx, batch in enumerate(batches):
             idx = local_idx + idx_offset
+            self._current_case = idx + 1
 
             succeeded = False
             exit_code: int | None = None
@@ -337,6 +419,28 @@ class LaneletConstraintSweeper(Sweeper):
                 if ok:
                     succeeded = True
                     break
+                if exit_code == _FAILED_VERDICT_EXIT_CODE:
+                    # The scenario ran and failed: final, as in the queue,
+                    # which retries only a run that raised.
+                    logger.error(
+                        "[%d/%d] Scenario FAILED (attempt %d/%d) for overrides "
+                        "%s -- not retried.",
+                        idx + 1,
+                        idx_offset + len(batches),
+                        attempt + 1,
+                        max_attempts,
+                        batch,
+                    )
+                    break
+                if exit_code == _REFUSED_EXIT_CODE:
+                    # The case printed why; the rest would be refused too.
+                    logger.error(
+                        "[%d/%d] Job REFUSED for overrides %s — stopping the " "sweep.",
+                        idx + 1,
+                        idx_offset + len(batches),
+                        batch,
+                    )
+                    sys.exit(_REFUSED_EXIT_CODE)
 
                 # Log based on exit code.
                 if exit_code is None:
@@ -387,7 +491,7 @@ class LaneletConstraintSweeper(Sweeper):
                     "— continuing.",
                     idx + 1,
                     idx_offset + len(batches),
-                    max_attempts,
+                    attempt + 1,
                     batch,
                 )
 
@@ -399,6 +503,11 @@ class LaneletConstraintSweeper(Sweeper):
             failed_count,
             timed_out_count,
         )
+        if failed_count:
+            raise SweepFailedError(
+                f"Sweep failed: {failed_count} of {executed} case(s) failed "
+                f"({timed_out_count} timed out)."
+            )
         return all_returns
 
 

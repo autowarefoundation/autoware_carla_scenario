@@ -69,6 +69,7 @@ from autoware_carla_scenario import (
     place_at_stop_line_distance,
     vehicle_bumpers,
 )
+from autoware_carla_scenario.failure import FailureCategory
 from autoware_carla_scenario.measures import bumpers_of, stop_line_distance_between
 
 from .configs import TrafficLightComplianceConfig
@@ -411,6 +412,10 @@ class RedLightViolationCondition(BaseCondition):
         super().__init__(label=label)
         self._watch = watch
 
+    def failure_category(self) -> Optional[FailureCategory]:
+        """Running the red, or not stopping for it: :attr:`~FailureCategory.TRAFFIC_RULE`."""
+        return FailureCategory.TRAFFIC_RULE
+
     def get_details(self) -> dict[str, Optional[float]]:
         return self._watch.details()
 
@@ -525,8 +530,8 @@ class TrafficLightComplianceScenario(BaseScenario):
             standstill_speed_mps=cfg.standstill_speed_mps,
         )
 
-        # 1) The ego stood still in the stop zone before the green.  First in
-        #    the AND, so the watch is asked every tick.
+        # 1) The ego stood still in the stop zone before the green.  An AND
+        #    checks every child on every tick, so the watch is asked every tick.
         stopped_in_zone = StoppedInStopZoneCondition(
             watch, label="ego_stopped_in_stop_zone"
         )

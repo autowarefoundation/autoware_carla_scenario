@@ -39,8 +39,9 @@ WALK_POINT_STEP_M: float = 1.5
 #: How far ahead (m) along its path a walker is steered at (:func:`steer_walker`).
 WALKER_LOOKAHEAD_M: float = 1.5
 
-#: How near (m) the end of its walk a walker has arrived, as
-#: :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` takes it.
+#: How near (m) the end of its walk a walker has arrived, as a
+#: :class:`~autoware_carla_scenario.actions.RoutingAction` following a
+#: trajectory takes it.
 WALK_ARRIVAL_M: float = 1.0
 
 #: A pedestrian's walking speed along a route, in m/s, unless it is told one.
@@ -76,8 +77,8 @@ def steer_walker(
     """One tick of walking *actor*, at *location*, along *path*: towards the
     point :data:`WALKER_LOOKAHEAD_M` past *here* (m along it), at *speed_mps*.
 
-    What a :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` in
-    ``FOLLOW`` mode and a routed pedestrian (:meth:`PedestrianEntity.walk_on`)
+    What a :class:`~autoware_carla_scenario.actions.RoutingAction` in
+    ``follow`` mode and a routed pedestrian (:meth:`PedestrianEntity.walk_on`)
     both send.
     """
     target = path.at_distance(here + WALKER_LOOKAHEAD_M)
@@ -91,6 +92,63 @@ def steer_walker(
             speed=walker_control_speed(speed_mps),
         )
     )
+
+
+def _walk_by_ai(
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
+    here: float,
+    speed: float,
+    location: "carla.Location",
+    cross_factor: Optional[float],
+    turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None,
+) -> bool:
+    """One tick of *walker* on CARLA's walker controller
+    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh, or
+    while it is stepped over a road stretch."""
+    from ._walker_ai import drive  # noqa: PLC0415
+
+    try:
+        return drive(walker, path, here, speed, location, cross_factor, turn_back)
+    except AttributeError:
+        return False  # a walker with no world to ask (a test double)
+
+
+def _gives_way(
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
+    here: float,
+    location: "carla.Location",
+) -> bool:
+    """Whether *walker*, stepped, stands this tick for a walker in its way
+    (:func:`._walker_ai.give_way`)."""
+    from ._walker_ai import give_way  # noqa: PLC0415
+
+    try:
+        return give_way(walker, path, here, location)
+    except (AttributeError, RuntimeError):
+        return False  # a walker with no world to ask (a test double)
+
+
+def _killed_by_crowd(walker: "carla.Actor") -> bool:
+    """Whether CARLA's crowd has taken *walker* for run over
+    (:func:`._walker_ai.killed_by_crowd`)."""
+    from ._walker_ai import killed_by_crowd  # noqa: PLC0415
+
+    try:
+        return killed_by_crowd(int(walker.id))
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def _release_walker_ai(walker: "carla.Actor") -> None:
+    """Stop and destroy *walker*'s controller, if it has one."""
+    from ._walker_ai import release  # noqa: PLC0415
+
+    try:
+        release(int(walker.id))
+    except (AttributeError, RuntimeError):
+        pass
 
 
 @dataclass
@@ -145,6 +203,8 @@ class PedestrianEntity(WalkedEntity):
     _walk: Optional["ResolvedTrajectory"]
     _walk_distance: float
     _walk_speed: float
+    _walk_cross: Optional[float]
+    _walk_turn_back: Optional[tuple[Optional[float], Optional[float], float]]
 
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
@@ -153,6 +213,8 @@ class PedestrianEntity(WalkedEntity):
         self._walk = None
         self._walk_distance = 0.0
         self._walk_speed = DEFAULT_WALKING_SPEED_MPS
+        self._walk_cross = None
+        self._walk_turn_back = None
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Hand this pedestrian's walks to *backend*, the run's traffic backend
@@ -246,8 +308,10 @@ class PedestrianEntity(WalkedEntity):
         return walker
 
     def destroy(self) -> None:
-        """Destroy the pedestrian actor and release resources."""
+        """Destroy the pedestrian actor and release resources (its walker
+        controller, first)."""
         if self._walker is not None:
+            _release_walker_ai(self._walker)
             self._walker.destroy()
             self._walker = None
 
@@ -300,19 +364,25 @@ class PedestrianEntity(WalkedEntity):
         ground_projection: "Optional[GroundProjectionConfig]" = None,
         waypoints: "Sequence[Lanelet2Pose]" = (),
         walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
+        cross_factor: Optional[float] = None,
     ) -> None:
         """Lay out a walk from where the walker is through *waypoints* to *goal*,
         which :meth:`walk_on` then walks a tick at a time; see
         ``docs/architecture.md``.  *ground_projection* is not used.
+        *cross_factor* is the probability that CARLA's walker controller may
+        take it across a road away from a crossing (``None``: CARLA's).
 
-        Each leg is the shortest path on the walkable lanelets where there is
-        one, and straight where there is none -- across a road whose crosswalks
-        only overlap its walkways, unless a crosswalk is a waypoint.
+        Each leg is the shortest walk on the walkable lanelets
+        (:class:`~autoware_carla_scenario.coordinate.walk_graph.WalkGraph`),
+        which crosses a road at a crosswalk that only overlaps the walkways and
+        walks a walkway either way, whatever its ``one_way`` tag.  A leg with no
+        such walk -- a map with nothing joining them, or a waypoint off them --
+        is straight, and says so in a warning.
         """
         from ..coordinate.map_manager import MapManager  # noqa: PLC0415
         from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
         from ..coordinate.transform import to_carla_world  # noqa: PLC0415
-        from ..odd.route_plan import PlannedRoute, route_poses  # noqa: PLC0415
+        from ..coordinate.walk_graph import walk_graph  # noqa: PLC0415
         from ..trajectory.model import ResolvedTrajectory  # noqa: PLC0415
 
         self._walk = None
@@ -329,20 +399,29 @@ class PedestrianEntity(WalkedEntity):
         if start is None:
             start = CarlaWorldPose.from_carla_transform(walking.get_transform())
         here: CarlaWorldPose = start
-        mm = MapManager.get_instance()
-        on = _on_walkable_lanelet(here)
-        poses: list[Lanelet2Pose] = list(waypoints)
-        poses.append(goal)
-        if on is not None:
-            walk_from: Lanelet2Pose = on
-            poses = route_poses(
-                PlannedRoute(start=walk_from, goal=goal, via=tuple(waypoints)),
-                mm.lanelet_map,
-                mm.pedestrian_routing_graph,
-                WALK_POINT_STEP_M,
-                bidirectional=True,
-                straight_legs=True,
-            )
+        graph = walk_graph(MapManager.get_instance().lanelet_map)
+        current = _on_walkable_lanelet(here)
+        stops: list[Lanelet2Pose] = list(waypoints)
+        stops.append(goal)
+        poses: list[Lanelet2Pose] = []
+        for stop in stops:
+            walk: Optional[list[Lanelet2Pose]] = None
+            if current is not None:
+                walk_from: Lanelet2Pose = current
+                walk = graph.walk(walk_from, stop, WALK_POINT_STEP_M)
+            if walk is None:
+                # The end pose alone: the walk goes straight there.
+                logger.warning(
+                    "PedestrianEntity '%s': no walk to lanelet %d on the walkable "
+                    "lanelets, walks straight there",
+                    self._config.role_name,
+                    stop.lanelet_id,
+                )
+                poses.append(stop)
+            else:
+                found: list[Lanelet2Pose] = walk
+                poses.extend(found)
+            current = stop
         xs, ys, zs = [here.x], [here.y], [here.z]
         yaws: list[Optional[float]] = [None]
         for pose in poses:
@@ -354,15 +433,53 @@ class PedestrianEntity(WalkedEntity):
         self._walk = ResolvedTrajectory(xs, ys, zs, yaws)
         self._walk_distance = 0.0
         self._walk_speed = walking_speed
+        self._walk_cross = cross_factor
+
+    def walk_along(
+        self,
+        path: "ResolvedTrajectory",
+        walking_speed: float,
+        cross_factor: Optional[float] = None,
+    ) -> None:
+        """Walk *path* as it is, from its start, which :meth:`walk_on` then
+        walks a tick at a time: the walk :meth:`route_to` would lay out, given
+        whole (a recorded walk).  *cross_factor* as :meth:`route_to`'s."""
+        self._walk = path
+        self._walk_distance = 0.0
+        self._walk_speed = walking_speed
+        self._walk_cross = cross_factor
+
+    def set_turn_back(
+        self,
+        distance_m: Optional[float],
+        ttc_s: Optional[float],
+        within_m: float,
+    ) -> None:
+        """How the walks it is given wait at a kerb and turn back where they
+        are stepped over a road stretch: a vehicle at most *distance_m* along
+        the road or *ttc_s* from it is a threat, and one within *within_m* of
+        the kerb turns it back (the thresholds and the test of
+        :class:`~..actions.walk_straight.WalkStraightAction`); no threshold:
+        neither, but the light at the kerb is still waited for."""
+        if distance_m is None and ttc_s is None:
+            self._walk_turn_back = None
+        else:
+            self._walk_turn_back = (distance_m, ttc_s, within_m)
 
     @property
     def walking(self) -> bool:
         """Whether a walk :meth:`route_to` laid out is still being walked."""
         return self._walk is not None
 
-    def walk_on(self) -> None:
+    @property
+    def walk_path(self) -> "Optional[ResolvedTrajectory]":
+        """The walk :meth:`route_to` laid out, while it is being walked."""
+        return self._walk
+
+    def walk_on(self, speed_mps: Optional[float] = None) -> None:
         """Walk one tick along the walk :meth:`route_to` laid out, standing
-        still once it has arrived."""
+        still once it has arrived: at *speed_mps*, or the walking speed
+        :meth:`route_to` was given (``None``)."""
         walk = self._walk
         actor = self._walker
         if walk is None or actor is None:
@@ -370,14 +487,79 @@ class PedestrianEntity(WalkedEntity):
         # Typed locals: Codon unwraps the Optionals here.
         path: "ResolvedTrajectory" = walk
         walker: "carla.Actor" = actor
+        if _killed_by_crowd(walker):
+            revived = self._revive(walker)
+            if revived is None:
+                return
+            walker = revived
         location = walker.get_transform().location
         here = path.project(location.x, location.y, near=self._walk_distance)
         self._walk_distance = here
         if here >= path.length - WALK_ARRIVAL_M:
             self._walk = None
+            _release_walker_ai(walker)
             walker.apply_control(carla.WalkerControl(speed=0.0))
             return
-        steer_walker(walker, location, path, here, self._walk_speed)
+        speed = self._walk_speed
+        if speed_mps is not None:
+            speed = speed_mps
+        if not _walk_by_ai(
+            walker, path, here, speed, location, self._walk_cross, self._walk_turn_back
+        ):
+            # Stepped along the route (over a road stretch, or on a map with
+            # no navigation mesh), giving way to a walker in its way.
+            if _gives_way(walker, path, here, location):
+                speed = 0.0
+            steer_walker(walker, location, path, here, speed)
+
+    def _revive(self, walker: "carla.Actor") -> "Optional[carla.Actor]":
+        """Put a new walker where *walker* stands, CARLA's crowd having taken
+        it for run over with no contact (it would remove it in ten seconds):
+        the same blueprint and role, so the scenario finds it as before; its
+        walk goes on from there.  ``None`` if CARLA refuses the spot."""
+        world = walker.get_world()
+        transform = walker.get_transform()
+        blueprint = world.get_blueprint_library().find(self._config.walker_type)
+        blueprint.set_attribute("role_name", self._config.role_name)
+        if blueprint.has_attribute("is_invincible"):
+            blueprint.set_attribute("is_invincible", "false")
+        old_id = int(walker.id)
+        _release_walker_ai(walker)
+        walker.destroy()
+        self._walker = None
+        revived: "Optional[carla.Actor]" = None
+        for lift in (0.0,) + _SPAWN_LIFTS_M:
+            spot = carla.Transform(
+                carla.Location(
+                    x=transform.location.x,
+                    y=transform.location.y,
+                    z=transform.location.z + lift,
+                ),
+                transform.rotation,
+            )
+            revived = world.try_spawn_actor(blueprint, spot)
+            if revived is not None:
+                break
+        if revived is None:
+            logger.warning(
+                "pedestrian '%s': CARLA's crowd took walker %d for run over by a "
+                "vehicle that did not touch it, and no new walker could be put "
+                "where it stood",
+                self._config.role_name,
+                old_id,
+            )
+            self._walk = None
+            return None
+        self._walker = revived
+        logger.warning(
+            "pedestrian '%s': CARLA's crowd took walker %d for run over by a "
+            "vehicle that did not touch it (it would remove it); walker %d "
+            "goes on in its place",
+            self._config.role_name,
+            old_id,
+            int(revived.id),
+        )
+        return revived
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Take this pedestrian back from the traffic backend that walks it,

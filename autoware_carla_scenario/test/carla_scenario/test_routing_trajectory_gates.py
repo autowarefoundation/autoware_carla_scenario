@@ -5,7 +5,7 @@ any other condition (``advance``) holds, or -- with neither -- on arrival.
 Between a vertex departed at ``T`` and the next one the entity arrives at the
 next vertex's time if it has one not before ``T``, and goes at the action's
 speed otherwise.  These tests run the action against the simulated vehicle
-(and walker) of ``test_follow_trajectory_action``; trajectories with times
+(and walker) of ``test_routing_trajectory_action``; trajectories with times
 alone or nothing at all are that module's, and stay as they were.
 """
 
@@ -26,11 +26,11 @@ from autoware_carla_scenario import (
     ComparisonRule,
     ElapsedTimeCondition,
     EntityDistanceCondition,
-    FollowTrajectoryAction,
+    RoutingAction,
+    RoutingMode,
     MapPose,
     ReferenceContext,
     Trajectory,
-    TrajectoryFollowingMode,
     TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
@@ -40,13 +40,20 @@ from autoware_carla_scenario.actions._departures import (
     DepartureTimeline,
     TimelineVertex,
 )
-from autoware_carla_scenario.actions.follow_trajectory import HIDDEN_DEPTH_M
 from autoware_carla_scenario.conditions.base import ScenarioResult
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 from ._fake_world import ActorsById
-from .test_follow_trajectory_action import _DT, _Actor, _Entity, _line, _run, _World
+from .test_routing_trajectory_action import (
+    _DT,
+    _Actor,
+    _Entity,
+    _line,
+    _run,
+    _World,
+    _route,
+)
 
 
 class _Recorder(BaseCondition):
@@ -115,7 +122,7 @@ def _path(*vertices: tuple[float, Any]) -> Trajectory:
 
 
 def _trace(
-    action: FollowTrajectoryAction, actor: _Actor, seconds: float, start: float = 0.0
+    action: RoutingAction, actor: _Actor, seconds: float, start: float = 0.0
 ) -> list[tuple[float, float, float]]:
     """Run like ``_run`` and return ``(elapsed, x, speed)`` after every tick."""
     world = _World()
@@ -254,7 +261,7 @@ class TestPosition:
     def test_time_condition_time(self, entity: _Entity) -> None:
         """Departed before the next time: interpolated to arrive on it."""
         gate = _Recorder(ElapsedTimeCondition(1.5, label="go"))
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path((0.0, 0.0), (10.0, gate), (20.0, 3.0), (30.0, 4.0)),
             TrajectoryTiming(),
@@ -279,7 +286,7 @@ class TestPosition:
     def test_a_late_departure_goes_at_the_speed(self, entity: _Entity) -> None:
         """Departed after the next times have passed: at the action's speed."""
         gate = _Recorder(ElapsedTimeCondition(3.5, label="late"))
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path((0.0, 0.0), (10.0, gate), (20.0, 3.0), (30.0, 4.0)),
             TrajectoryTiming(),
@@ -299,7 +306,7 @@ class TestPosition:
         self, entity: _Entity
     ) -> None:
         gate = _Recorder(AlwaysTrueCondition())
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path((0.0, 0.0), (10.0, gate), (20.0, 3.0)),
             TrajectoryTiming(),
@@ -312,7 +319,7 @@ class TestPosition:
     def test_a_condition_on_the_first_vertex_holds_the_start(
         self, entity: _Entity
     ) -> None:
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path((0.0, ElapsedTimeCondition(1.0, label="go")), (10.0, None)),
             speed=5.0,
@@ -327,7 +334,7 @@ class TestPosition:
         self, entity: _Entity
     ) -> None:
         gate = _Recorder(open=False)
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1", _path((0.0, None), (10.0, None), (20.0, gate)), speed=10.0
         )
         _run(action, entity.actor, 3.0)
@@ -341,7 +348,7 @@ class TestPosition:
 
     def test_absolute_scale_and_offset(self, entity: _Entity) -> None:
         """Times go through the timing; conditions read the scenario clock."""
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path(
                 (0.0, 0.0), (10.0, ElapsedTimeCondition(2.0, label="go")), (20.0, 2.0)
@@ -360,7 +367,7 @@ class TestPosition:
 
     def test_an_initial_offset_past_a_condition_skips_it(self, entity: _Entity) -> None:
         gate = _Recorder(open=False)
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(duration=None).gated({2: gate}),
             initial_distance_offset=12.0,
@@ -374,7 +381,7 @@ class TestPosition:
         self, entity: _Entity
     ) -> None:
         gate = _Recorder(open=False)
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(duration=None).gated({2: gate}),
             initial_distance_offset=5.0,
@@ -386,7 +393,7 @@ class TestPosition:
 
     def test_waiting_is_on_the_vertex_itself(self, entity: _Entity) -> None:
         """Waiting before a zero-duration jump stays on the waiting vertex."""
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path(
                 (0.0, 0.0),
@@ -404,7 +411,7 @@ class TestPosition:
         assert entity.actor.speed == 0.0
 
     def test_a_run_ended_while_waiting_holds_nothing(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(duration=None).gated({1: _Recorder(open=False)}),
             speed=10.0,
@@ -421,9 +428,7 @@ class TestPosition:
     ) -> None:
         at_start = _Recorder(AlwaysTrueCondition())
         corner = _Recorder(AlwaysTrueCondition())
-        action = FollowTrajectoryAction(
-            "npc1", _square().gated({0: at_start, 1: corner}), speed=10.0
-        )
+        action = _route("npc1", _square().gated({0: at_start, 1: corner}), speed=10.0)
         # A lap is 40 m, 4 s: the start is reached at 0, 4 and 8 s, the
         # corner at 1 and 5 s.
         _run(action, entity.actor, 8.5)
@@ -432,9 +437,7 @@ class TestPosition:
         assert not action.finished
 
     def test_a_closed_path_waits_on_its_last_vertex(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction(
-            "npc1", _square().gated({3: _Recorder(open=False)}), speed=10.0
-        )
+        action = _route("npc1", _square().gated({3: _Recorder(open=False)}), speed=10.0)
         _run(action, entity.actor, 6.0)
         assert (entity.actor.x, entity.actor.y) == (
             pytest.approx(0.0),
@@ -444,7 +447,7 @@ class TestPosition:
 
     def test_every_run_rearms_its_conditions(self, entity: _Entity) -> None:
         gate = _Recorder(AlwaysTrueCondition())
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _path((0.0, 0.0), (10.0, gate), (20.0, 2.0)),
             TrajectoryTiming(),
@@ -463,32 +466,6 @@ class TestPosition:
                 ends += 1
         assert ends == 2
         assert len(gate.asked) == 2
-
-
-class TestHidden:
-    def test_hidden_until_its_first_time_and_after_its_end(
-        self, entity: _Entity
-    ) -> None:
-        gate = _Recorder(ElapsedTimeCondition(3.0, label="go"))
-        action = FollowTrajectoryAction(
-            "npc1",
-            _path((0.0, 1.0), (10.0, gate), (20.0, 4.0)),
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-            hidden_outside_trajectory=True,
-            speed=10.0,
-        )
-        _run(action, entity.actor, 0.5)
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        _run(action, entity.actor, 2.0, start=0.5)
-        # 2.5 s: waiting at the condition vertex, in the world.
-        assert entity.actor.physics is True
-        assert entity.actor.x == pytest.approx(10.0)
-        assert action.held_vertex == 1
-        _run(action, entity.actor, 1.2, start=2.5)
-        assert not action.finished and entity.actor.physics is True
-        _run(action, entity.actor, 0.5, start=3.7)
-        assert action.finished
-        assert entity.actor.physics is False
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +489,7 @@ class TestOtherConditions:
         register_entity("npc2", _Entity(npc))
         register_entity("lead", _Entity(lead))
         try:
-            action = FollowTrajectoryAction(
+            action = _route(
                 "npc2", _line(length=60.0, duration=None, count=7).gated({1: gate})
             )
             elapsed = 0.0
@@ -538,9 +515,7 @@ class TestOtherConditions:
                 ElapsedTimeCondition(2.0, label="late_enough"),
             ]
         )
-        action = FollowTrajectoryAction(
-            "npc1", _line(duration=None).gated({1: both}), speed=10.0
-        )
+        action = _route("npc1", _line(duration=None).gated({1: both}), speed=10.0)
         _run(action, entity.actor, 1.9)
         assert entity.actor.x == pytest.approx(5.0)
         _run(action, entity.actor, 0.6, start=1.9)
@@ -573,17 +548,17 @@ def _drive(
     speed: Optional[float] = None,
     start_speed: float = 0.0,
     stop_when_finished: bool = True,
-) -> tuple[FollowTrajectoryAction, _Actor, float, list[float]]:
+) -> tuple[RoutingAction, _Actor, float, list[float]]:
     """Drive a fresh vehicle (FOLLOW); the action, the actor, the clock, its speeds."""
     actor = _Actor(speed=start_speed)
     register_entity("npc9", _Entity(actor))
     speeds: list[float] = []
     try:
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc9",
             trajectory,
             TrajectoryTiming() if timed else None,
-            TrajectoryFollowingMode.FOLLOW,
+            RoutingMode.FOLLOW,
             speed=speed,
         )
         world = _World()
@@ -605,10 +580,10 @@ class TestFollow:
         actor = entity.actor
         actor.vx = actor.speed = 5.0
         gate = _Recorder(open=False)
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(length=100.0, duration=None, count=11).gated({3: gate}),
-            following_mode=TrajectoryFollowingMode.FOLLOW,
+            mode=RoutingMode.FOLLOW,
         )
         world = _World()
         elapsed = 0.0
@@ -691,10 +666,10 @@ class TestFollow:
         walker = _Walker(speed=1.4)
         register_entity("walker1", _Entity(walker))
         try:
-            action = FollowTrajectoryAction(
+            action = _route(
                 "walker1",
                 _path((0.0, None), (10.0, None), (20.0, AlwaysTrueCondition())),
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                mode=RoutingMode.FOLLOW,
             )
             _run(action, walker, 30.0)
         finally:
@@ -707,10 +682,10 @@ class TestFollow:
         register_entity("walker1", _Entity(walker))
         gate = _Recorder(open=False)
         try:
-            action = FollowTrajectoryAction(
+            action = _route(
                 "walker1",
                 _line(duration=None).gated({2: gate}),
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                mode=RoutingMode.FOLLOW,
             )
             _run(action, walker, 15.0)
             assert action.held_vertex == 2

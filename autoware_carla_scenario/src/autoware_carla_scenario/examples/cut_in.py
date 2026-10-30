@@ -68,6 +68,7 @@ from autoware_carla_scenario import (
     to_opendrive,
     vehicle_bumpers,
 )
+from autoware_carla_scenario.failure import FailureCategory
 
 from .configs import CutInConfig
 
@@ -241,7 +242,8 @@ class CutInScenario(BaseScenario):
             self.register_fail_condition(
                 left_lanes_ahead(
                     spawn.lanelet_id, cfg.lanes_ahead_m, cfg.leaving_lane_seconds
-                )
+                ),
+                category=FailureCategory.LANE_KEEPING,
             )
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")

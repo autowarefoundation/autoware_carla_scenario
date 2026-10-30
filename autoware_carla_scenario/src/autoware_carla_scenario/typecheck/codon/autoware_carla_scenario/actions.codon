@@ -3,6 +3,7 @@
 import typesafe_carla.carla as carla
 
 from ._tc import (_keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool,
+                  _expect_optional_str,
                   _acs_expect_return, _acs_sequence)
 from .action_state import ActionState
 from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIndicatorState,
@@ -50,24 +51,29 @@ class TickTiming:
 class TrafficLightTarget:
     value: str
     ALL: ClassVar[TrafficLightTarget] = TrafficLightTarget("all")
+    ROUTE: ClassVar[TrafficLightTarget] = TrafficLightTarget("route")
 
     # Enum's name (#307): Codon has no Enum to give a framework enum one.
     @property
     def name(self) -> str:
         if self == TrafficLightTarget.ALL:
             return "ALL"
+        if self == TrafficLightTarget.ROUTE:
+            return "ROUTE"
         raise ValueError("not a member of TrafficLightTarget")
 
     # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
     # them (#437). Declared in Python's order, as the test checks.
     @staticmethod
     def _acs_members() -> List[TrafficLightTarget]:
-        return [TrafficLightTarget.ALL]
+        return [TrafficLightTarget.ALL, TrafficLightTarget.ROUTE]
 
     @staticmethod
     def _acs_by_name(name: str) -> TrafficLightTarget:
         if name == "ALL":
             return TrafficLightTarget.ALL
+        if name == "ROUTE":
+            return TrafficLightTarget.ROUTE
         raise KeyError(name)
 
 
@@ -94,6 +100,30 @@ class AdversityEvent:
         self.avoidable = avoidable
         self.victims = victims
         self.response = response
+
+
+# waypoint_arrival.WaypointArrival: what take_waypoint_arrivals() hands the
+# runner for the trajectory log.
+class WaypointArrival:
+    entity: str
+    vertex: int
+    kind: str
+    mode: str
+    target_t: float
+    actual_t: float
+
+    def __init__(self, entity: str, vertex: int, kind: str, mode: str,
+                 target_t: float, actual_t: float):
+        self.entity = entity
+        self.vertex = vertex
+        self.kind = kind
+        self.mode = mode
+        self.target_t = target_t
+        self.actual_t = actual_t
+
+    @property
+    def error_s(self) -> float:
+        return self.actual_t - self.target_t
 
 
 class BaseAction:
@@ -147,6 +177,15 @@ class BaseAction:
         elif name == "take_adversity_events":
             _acs_expect_return(r, List[AdversityEvent],
                                "BaseAction.take_adversity_events() returns List[AdversityEvent]")
+        elif name == "take_waypoint_arrivals":
+            _acs_expect_return(r, List[WaypointArrival],
+                               "BaseAction.take_waypoint_arrivals() returns List[WaypointArrival]")
+        elif name == "take_spawns":
+            _acs_expect_return(r, List[Tuple[str, int]],
+                               "BaseAction.take_spawns() returns List[Tuple[str, int]]")
+        elif name == "take_despawns":
+            _acs_expect_return(r, List[Tuple[str, int]],
+                               "BaseAction.take_despawns() returns List[Tuple[str, int]]")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
         elif name == "needs_tick_loop":
@@ -181,6 +220,15 @@ class BaseAction:
         raise NotImplementedError()
 
     def take_adversity_events(self) -> List[AdversityEvent]:
+        raise NotImplementedError()
+
+    def take_waypoint_arrivals(self) -> List[WaypointArrival]:
+        raise NotImplementedError()
+
+    def take_spawns(self) -> List[Tuple[str, int]]:
+        raise NotImplementedError()
+
+    def take_despawns(self) -> List[Tuple[str, int]]:
         raise NotImplementedError()
 
     @property
@@ -276,6 +324,51 @@ class LaneChangeAction(BaseAction):
         super().__init__(label, condition, timing, once=once, until=until)
 
 
+class CommunicationLossAction(BaseAction):
+    def __init__(self, label):
+        compile_error("CommunicationLossAction(): no constructor takes these arguments "
+                      "(device, messages, direction and duration come first, then entity_name)")
+
+    def __init__(self, device = None, messages = None, direction: str = "both",
+                 duration = None, entity_name = "Ego", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "communication_loss", once: bool = True, until = None):
+        _keyword_only(_kw, "CommunicationLossAction(): label, once and until")
+        _expect_optional_str(device)
+        _expect_optional_float(duration)
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once, until=until)
+
+    @property
+    def device(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    # tuple[str, ...] in Python: a List here, as a class-level variadic tuple
+    # is (_acs_tuple, _tc.codon).
+    @property
+    def messages(self) -> Optional[List[str]]:
+        raise NotImplementedError()
+
+    @property
+    def duration(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def direction(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def started_at(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def cutting(self) -> bool:
+        raise NotImplementedError()
+
+    def restore(self) -> None:
+        raise NotImplementedError()
+
+
 class TurnIndicatorAction(BaseAction):
     def __init__(self, label):
         compile_error("TurnIndicatorAction(): no constructor takes these arguments "
@@ -289,27 +382,81 @@ class TurnIndicatorAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+@tuple
+class RoutingMode:
+    value: str
+    DRIVER: ClassVar[RoutingMode] = RoutingMode("driver")
+    FOLLOW: ClassVar[RoutingMode] = RoutingMode("follow")
+    POSITION: ClassVar[RoutingMode] = RoutingMode("position")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == RoutingMode.DRIVER:
+            return "DRIVER"
+        if self == RoutingMode.FOLLOW:
+            return "FOLLOW"
+        if self == RoutingMode.POSITION:
+            return "POSITION"
+        raise ValueError("not a member of RoutingMode")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[RoutingMode]:
+        return [RoutingMode.DRIVER, RoutingMode.FOLLOW, RoutingMode.POSITION]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> RoutingMode:
+        if name == "DRIVER":
+            return RoutingMode.DRIVER
+        if name == "FOLLOW":
+            return RoutingMode.FOLLOW
+        if name == "POSITION":
+            return RoutingMode.POSITION
+        raise KeyError(name)
+
+
 class RoutingAction(BaseAction):
     def __init__(self, label):
         compile_error("RoutingAction(): no constructor takes these arguments "
-                      "(required: entity_name, goal)")
+                      "(required: entity_name, and a goal or a trajectory)")
 
-    def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
+    def __init__(self, entity_name, goal: Optional[Lanelet2Pose] = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
-                 ground_projection = None, waypoints = (), walking_speed: float = 1.4):
-        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, waypoints and walking_speed")
+                 ground_projection = None, waypoints = (), walking_speed: float = 1.4,
+                 cross_factor = None, turn_back_ttc_s: Optional[float] = None,
+                 turn_back_distance_m: Optional[float] = None,
+                 turn_back_within_m: float = 1.0,
+                 trajectory: Optional[Trajectory] = None,
+                 mode: RoutingMode = RoutingMode("driver"), time_reference = None,
+                 initial_distance_offset: float = 0.0, until = None,
+                 control_config = None, speed = None, stop_at_end: bool = True,
+                 stop_at_goal: bool = False):
+        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
+                           "waypoints, walking_speed, cross_factor, turn_back_ttc_s, "
+                           "turn_back_distance_m, turn_back_within_m, trajectory, mode, time_reference, "
+                           "initial_distance_offset, until, control_config, "
+                           "speed, stop_at_end and stop_at_goal")
         _expect_role(entity_name)
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
-        super().__init__(label, condition, timing, once=once)
+        _expect_optional_timing(time_reference)
+        _expect_optional_float(speed)
+        _expect_optional_float(cross_factor)
+        super().__init__(label, condition, timing, once=once, until=until)
 
     @property
-    def goal(self) -> Lanelet2Pose:
+    def goal(self) -> Optional[Lanelet2Pose]:
         raise NotImplementedError()
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def mode(self) -> RoutingMode:
         raise NotImplementedError()
 
     @property
@@ -322,26 +469,6 @@ class RoutingAction(BaseAction):
     def waypoints(self) -> List[Lanelet2Pose]:
         raise NotImplementedError()
 
-
-class FollowTrajectoryAction(BaseAction):
-    def __init__(self, label):
-        compile_error("FollowTrajectoryAction(): no constructor takes these arguments "
-                      "(required: entity_name, trajectory)")
-
-    def __init__(self, entity_name, trajectory: Trajectory, time_reference = None,
-                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("position"),
-                 initial_distance_offset: float = 0.0, condition = None,
-                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "follow_trajectory", once: bool = True, until = None,
-                 control_config = None, hidden_outside_trajectory: bool = False,
-                 speed = None, appear_on_start: bool = False, stop_at_end: bool = True):
-        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
-                           "hidden_outside_trajectory, speed, appear_on_start and stop_at_end")
-        _expect_role(entity_name)
-        _expect_optional_timing(time_reference)
-        _expect_optional_float(speed)
-        super().__init__(label, condition, timing, once=once, until=until)
-
     @property
     def trajectory(self) -> Trajectory:
         raise NotImplementedError()
@@ -352,6 +479,48 @@ class FollowTrajectoryAction(BaseAction):
 
     @property
     def held_vertex(self) -> Optional[int]:
+        raise NotImplementedError()
+
+
+class SpawnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("SpawnAction(): no constructor takes these arguments "
+                      "(an entity_name, or a name and a position for a prop)")
+
+    def __init__(self, entity_name = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "spawn",
+                 once: bool = True, position = None, shift_max: float = 0.0,
+                 speed: float = 0.0, name: Optional[str] = None,
+                 blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
+                 lanes = (), length: float = 0.0, width: float = 0.0):
+        _keyword_only(_kw, "SpawnAction(): label, once, position, shift_max, speed, "
+                           "name, blueprint, on_ground, lanes, length and width")
+        if entity_name is not None:
+            _expect_role(entity_name)
+        if position is not None:
+            _expect_trajectory_position(position)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def entity_name(self) -> str:
+        raise NotImplementedError()
+
+
+class DespawnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("DespawnAction(): no constructor takes these arguments "
+                      "(an entity_name, or a prop's name)")
+
+    def __init__(self, entity_name = None, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "despawn",
+                 once: bool = True, name: Optional[str] = None):
+        _keyword_only(_kw, "DespawnAction(): label, once and name")
+        if entity_name is not None:
+            _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def entity_name(self) -> str:
         raise NotImplementedError()
 
 
@@ -390,54 +559,11 @@ class StalledObjectAction(BaseAction):
 
 
 @tuple
-class PropOperation:
-    value: str
-    ADD: ClassVar[PropOperation] = PropOperation("add")
-    REMOVE: ClassVar[PropOperation] = PropOperation("remove")
-
-    # Enum's name (#307): Codon has no Enum to give a framework enum one.
-    @property
-    def name(self) -> str:
-        if self == PropOperation.ADD:
-            return "ADD"
-        if self == PropOperation.REMOVE:
-            return "REMOVE"
-        raise ValueError("not a member of PropOperation")
-
-    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
-    # them (#437). Declared in Python's order, as the test checks.
-    @staticmethod
-    def _acs_members() -> List[PropOperation]:
-        return [PropOperation.ADD, PropOperation.REMOVE]
-
-    @staticmethod
-    def _acs_by_name(name: str) -> PropOperation:
-        if name == "ADD":
-            return PropOperation.ADD
-        if name == "REMOVE":
-            return PropOperation.REMOVE
-        raise KeyError(name)
-
-
-class PropAction(BaseAction):
-    def __init__(self, label):
-        compile_error("PropAction(): no constructor takes these arguments (required: name)")
-
-    def __init__(self, name: str, operation: PropOperation = PropOperation("add"), position = None,
-                 *_kw, blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
-                 condition = None, timing: TickTiming = TickTiming("pre_tick"),
-                 label: str = "prop"):
-        _keyword_only(_kw, "PropAction(): blueprint, on_ground, condition, timing and label")
-        if position is not None:
-            _expect_trajectory_position(position)
-        super().__init__(label, condition, timing)
-
-    def apply(self, world: carla.World, library: Optional[carla.BlueprintLibrary] = None,
-              ground = None) -> bool:
-        raise NotImplementedError()
-
-
 def standing_props() -> List[str]:
+    raise NotImplementedError()
+
+
+def remove_prop(name: str) -> bool:
     raise NotImplementedError()
 
 
@@ -475,8 +601,10 @@ class TrafficSignalAction(BaseAction):
 
     def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "traffic_signal", once: bool = True, freeze: bool = True):
-        _keyword_only(_kw, "TrafficSignalAction(): label, once and freeze")
+                 label: str = "traffic_signal", once: bool = True, freeze: bool = True,
+                 route_junction: int = 0, route_approach: str = "same", route_turn: str = "any"):
+        _keyword_only(_kw, "TrafficSignalAction(): label, once, freeze, route_junction, "
+                      "route_approach and route_turn")
         _expect_traffic_light_ids(lanelet2_traffic_light_ids)
         super().__init__(label, condition, timing, once=once)
 
@@ -868,8 +996,11 @@ class ConstructionSettings:
     termination_zone_length: float
     warning_sign_offset: float
     side: str
+    layout: str
+    merge_distance: float
+    merge_signs: int
 
-    def __init__(self, construction_type: str = "cone", spacing: float = 20.0, work_zone_offset: float = 0.0, speed_limit_mph: float = 0.0, use_dynamic_spacing: bool = False, taper_length_in: float = 60.0, taper_length_out: float = 30.0, taper_type: str = "linear", warning_zone_length: float = 100.0, warning_zone_spacing: float = 30.0, buffer_zone_length: float = 10.0, termination_zone_length: float = 30.0, warning_sign_offset: float = 2.5, side: str = "right"):
+    def __init__(self, construction_type: str = "cone", spacing: float = 20.0, work_zone_offset: float = 0.0, speed_limit_mph: float = 0.0, use_dynamic_spacing: bool = False, taper_length_in: float = 60.0, taper_length_out: float = 30.0, taper_type: str = "linear", warning_zone_length: float = 100.0, warning_zone_spacing: float = 30.0, buffer_zone_length: float = 10.0, termination_zone_length: float = 30.0, warning_sign_offset: float = 2.5, side: str = "right", layout: str = "highway", merge_distance: float = 150.0, merge_signs: int = 2):
         self.construction_type = construction_type
         self.spacing = spacing
         self.work_zone_offset = work_zone_offset
@@ -884,6 +1015,12 @@ class ConstructionSettings:
         self.termination_zone_length = termination_zone_length
         self.warning_sign_offset = warning_sign_offset
         self.side = side
+        self.layout = layout
+        self.merge_distance = merge_distance
+        self.merge_signs = merge_signs
+
+
+URBAN_CONSTRUCTION: ConstructionSettings = ConstructionSettings(spacing=10.0, warning_zone_length=200.0, warning_sign_offset=2.0, layout="urban")
 
 
 class ConstructionZoneAction(BaseAction):

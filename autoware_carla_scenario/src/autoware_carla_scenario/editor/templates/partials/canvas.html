@@ -40,8 +40,8 @@
           {%- set actor_entity = draft.document.entity(actor) if actor else None -%}
           {%- set actor_kind = actor_entity.kind if actor_entity else '' -%}
           {% for spec in action_specs() %}
-            {% if spec.actor_required == (actor != '')
-                  and (not spec.actor_required or actor_kind in spec.actor_kinds) %}
+            {% if (spec.actor_required == (actor != '') or spec.actor_optional)
+                  and (actor == '' or actor_kind in spec.actor_kinds) %}
               <option value="{{ spec.type_id }}">{{ spec.title }}</option>
             {% endif %}
           {% endfor %}

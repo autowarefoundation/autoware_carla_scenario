@@ -532,6 +532,136 @@ class TestScenarioQueueUnit:
 
 
 # ---------------------------------------------------------------------------
+# A start() that fails undoes what it started (#711)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingLauncher:
+    """An Autoware launcher that records prepare() and close()."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def prepare(self, log_dir: object = None) -> None:
+        self._events.append("prepare")
+
+    def close(self) -> None:
+        self._events.append("close")
+
+
+def _failing_start_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+    error: BaseException,
+    server: object = None,
+) -> tuple[ScenarioQueue, list[str]]:
+    """A queue whose runner raises *error* after the server has started."""
+    from autoware_carla_scenario import scenario_queue as sq
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        CarlaServerManager, "start", lambda self: events.append("start")
+    )
+    monkeypatch.setattr(CarlaServerManager, "stop", lambda self: events.append("stop"))
+
+    def broken_runner(*args: object, **kwargs: object) -> None:
+        events.append("runner")
+        raise error
+
+    monkeypatch.setattr(sq, "ScenarioRunner", broken_runner)
+    queue = ScenarioQueue(
+        output_dir=tmp_path,  # type: ignore[arg-type]
+        server=server,  # type: ignore[arg-type]
+        autoware_launcher=_RecordingLauncher(events),  # type: ignore[arg-type]
+    )
+    return queue, events
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("map 'Town99' is not one of the server's maps"),
+        KeyboardInterrupt(),
+    ],
+)
+def test_a_failed_enter_stops_the_owned_server_and_closes_the_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, error: BaseException
+) -> None:
+    queue, events = _failing_start_queue(monkeypatch, tmp_path, error)
+    with pytest.raises(type(error)):
+        with queue:
+            pytest.fail("the body ran")
+    assert events == ["prepare", "start", "runner", "close", "stop"]
+    assert queue._runner is None
+
+
+def test_a_failed_start_leaves_a_server_the_queue_was_given_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    server = MagicMock()
+    queue, events = _failing_start_queue(
+        monkeypatch, tmp_path, RuntimeError("no connection"), server=server
+    )
+    with pytest.raises(RuntimeError):
+        queue.start()
+    server.start.assert_called_once()
+    server.stop.assert_not_called()
+    assert events == ["prepare", "runner", "close"]
+
+
+def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """as_fixture() skips on the failure, its server already stopped."""
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    monkeypatch.setattr(
+        CarlaServerManager, "executable", classmethod(lambda cls: tmp_path)
+    )
+    queue, events = _failing_start_queue(
+        monkeypatch, tmp_path, RuntimeError("map load failed")
+    )
+    fixture = queue.as_fixture()
+    generator = fixture.__wrapped__()  # type: ignore[attr-defined]
+    with pytest.raises(pytest.skip.Exception, match="map load failed"):
+        next(generator)
+    assert events == ["prepare", "start", "runner", "close", "stop"]
+
+
+def test_a_failed_stop_does_not_hide_why_start_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    queue, events = _failing_start_queue(
+        monkeypatch, tmp_path, RuntimeError("map 'Town99' is unknown")
+    )
+
+    def broken_stop() -> None:
+        events.append("broken stop")
+        raise OSError("stop failed")
+
+    monkeypatch.setattr(queue, "stop", broken_stop)
+    with pytest.raises(RuntimeError, match="Town99"):
+        queue.start()
+    assert events == ["prepare", "start", "runner", "broken stop"]
+
+
+def test_stop_stops_the_owned_server_when_the_launcher_close_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    queue, events = _failing_start_queue(monkeypatch, tmp_path, RuntimeError())
+
+    def broken_close() -> None:
+        events.append("close")
+        raise OSError("close failed")
+
+    monkeypatch.setattr(queue._autoware_launcher, "close", broken_close)
+    with pytest.raises(OSError, match="close failed"):
+        queue.stop()
+    assert events == ["close", "stop"]
+
+
+# ---------------------------------------------------------------------------
 # Integration tests – real CARLA (skipped if CARLA unavailable)
 # ---------------------------------------------------------------------------
 

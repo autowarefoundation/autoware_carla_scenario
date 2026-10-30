@@ -204,6 +204,58 @@ def system(command: str) -> int:
     return 0
 
 
+# The process calls of a forking parent and its child (the lanelet sweeper's
+# isolation of each case): fork() is the child's pid in the parent and 0 in
+# the child (0 here, and nothing is forked); setpgrp() and setpgid(pid,
+# pgrp, /) put a process in a group; waitpid(pid, options, /) is the
+# (pid, status) of a child that changed state, (0, 0) under WNOHANG when none
+# has; _exit(status) ends the process at once (it returns nothing in CPython
+# either, and here it returns). The wait-status macros read the status
+# waitpid() returns: they take an int, by position or as `status`.
+WNOHANG = 1
+
+
+def fork() -> int:
+    return 0
+
+
+def setpgrp() -> None:
+    pass
+
+
+def setpgid(*args) -> None:
+    _positional_only(args, 2, "setpgid()")
+    pid: int = args[0]
+    pgrp: int = args[1]
+
+
+def waitpid(*args) -> Tuple[int, int]:
+    _positional_only(args, 2, "waitpid()")
+    pid: int = args[0]
+    options: int = args[1]
+    return (0, 0)
+
+
+def _exit(status: int) -> None:
+    pass
+
+
+def WIFEXITED(status: int) -> bool:
+    return False
+
+
+def WEXITSTATUS(status: int) -> int:
+    return 0
+
+
+def WIFSIGNALED(status: int) -> bool:
+    return False
+
+
+def WTERMSIG(status: int) -> int:
+    return 0
+
+
 # Codon's os declared mkdir(); CPython's is mkdir(path, mode=0o777, *,
 # dir_fd=None) (511: Codon has no octal literal).
 def mkdir(path, mode: int = 511, *_kw, dir_fd: Optional[int] = None) -> None:

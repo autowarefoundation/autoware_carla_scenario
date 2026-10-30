@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "18.11.19"
+version = "19.17.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -107,17 +107,18 @@ sumo = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.41.1",
+    "roadgen>=0.41.2",
 ]
 # Map files for a driver policy (`driver.map_dir`): roadgen converts the
 # world's OpenDRIVE into Lanelet2 and friends, with the stop lines CARLA
 # paints (0.33), each junction lanelet's `turn_direction` (0.34), the
 # traffic-light regulatory elements on the lanelets through the junction
 # with the stop line before them (0.35), and a stop sign's `traffic_sign`
-# element (0.36), as Autoware's maps have them; the same version as the
-# `sumo` extra's, so the two install together.
+# element (0.36), and walkways open both ways (`one_way: no`, 0.41.2), as
+# Autoware's maps have them; the same version as the `sumo` extra's, so the
+# two install together.
 map = [
-    "roadgen>=0.41.1",
+    "roadgen>=0.41.2",
 ]
 # An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
 # Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with
@@ -147,6 +148,14 @@ rerun-lidar = [
 # users and the sweeps and frames of the driver policy's sensors.
 t4 = [
     "autoware-carla-scenario-t4>=0.1,<0.2",
+]
+# A HILS bridge (`scenario-hils`, docs/hils.md): a separate process, on the
+# HILS PC, that follows the run's ego through typesafe_carla (its sensors
+# optionally rendered by carla_canvas) and streams it to the ECUs under test
+# as their own traffic -- CAN frames, GNSS receiver output, LiDAR UDP packets,
+# camera frames -- through hilspy (a Rust core in one abi3 wheel).
+hils = [
+    "hilspy>=0.16,<0.17",
 ]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
@@ -190,3 +199,7 @@ viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not
 # start the other.
 scenario-editor = "autoware_carla_scenario.editor:main"
+# Stream the run's ego to ECUs under test (the `hils` extra; docs/hils.md).
+scenario-hils = "autoware_carla_scenario.hils.cli:main"
+# Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit (docs/t4_scene.md).
+scenario-t4scene = "autoware_carla_scenario.t4_scene.__main__:main"

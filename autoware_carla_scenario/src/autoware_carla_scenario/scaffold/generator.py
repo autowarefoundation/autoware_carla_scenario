@@ -100,6 +100,12 @@ def resolve_names(
     from ..authoring.package_export import _requires_python  # noqa: PLC0415
 
     package_name = _validate_identifier(_to_snake(name), kind="package name")
+    if not package_name.isascii():
+        # The distribution name (PEP 508) and the entry-point key in
+        # ``pyproject.toml`` (a bare TOML key) are ASCII-only, although a
+        # Python identifier need not be.
+        msg = f"package name {package_name!r} must be ASCII."
+        raise ValueError(msg)
 
     if scenario_name is None:
         # Default: strip a trailing package-ish suffix so

@@ -20,17 +20,17 @@ import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     CarlaWorldPose,
-    FollowTrajectoryAction,
+    RoutingAction,
+    RoutingMode,
     ReferenceContext,
     Trajectory,
-    TrajectoryFollowingMode,
     TrajectoryTimeCondition,
     TrajectoryTiming,
     TrajectoryVertex,
 )
 from autoware_carla_scenario.action_state import ActionState
-from autoware_carla_scenario.actions.follow_trajectory import (
-    HIDDEN_DEPTH_M,
+from autoware_carla_scenario.actions._trajectory_run import (
+    TrajectoryRun,
     _entity_actor,
     _ReferenceMissing,
     _TrajectoryEnd,
@@ -55,6 +55,28 @@ _ACTOR_IDS = itertools.count(1)
 def _at(time: Optional[float]) -> Optional[TrajectoryTimeCondition]:
     """A vertex's time, as the condition it departs on (``None``: no time)."""
     return None if time is None else TrajectoryTimeCondition(time)
+
+
+def _route(
+    entity_name: Any,
+    trajectory: Trajectory,
+    time_reference: Optional[TrajectoryTiming] = None,
+    mode: RoutingMode = RoutingMode.POSITION,
+    initial_distance_offset: float = 0.0,
+    condition: Any = None,
+    **kwargs: Any,
+) -> RoutingAction:
+    """A RoutingAction along *trajectory*, its arguments in the order the
+    trajectory-following tests give them (``position`` mode unless told)."""
+    return RoutingAction(
+        entity_name,
+        condition=condition,
+        trajectory=trajectory,
+        time_reference=time_reference,
+        mode=mode,
+        initial_distance_offset=initial_distance_offset,
+        **kwargs,
+    )
 
 
 class _Actor:
@@ -191,7 +213,7 @@ def _line(
 
 
 def _run(
-    action: FollowTrajectoryAction,
+    action: TrajectoryRun,
     actor: _Actor,
     seconds: float,
     *,
@@ -216,28 +238,14 @@ def _run(
 class TestConstruction:
     def test_a_timing_needs_vertex_times(self) -> None:
         with pytest.raises(ValueError, match="no vertex times"):
-            FollowTrajectoryAction("npc1", _line(duration=None), TrajectoryTiming())
-
-    def test_hiding_needs_a_timed_position_replay(self) -> None:
-        with pytest.raises(ValueError, match="hidden_outside_trajectory"):
-            FollowTrajectoryAction(
-                "npc1", _line(), None, hidden_outside_trajectory=True
-            )
-        with pytest.raises(ValueError, match="hidden_outside_trajectory"):
-            FollowTrajectoryAction(
-                "npc1",
-                _line(),
-                TrajectoryTiming(),
-                TrajectoryFollowingMode.FOLLOW,
-                hidden_outside_trajectory=True,
-            )
+            _route("npc1", _line(duration=None), TrajectoryTiming())
 
     def test_a_negative_offset_is_refused(self) -> None:
         with pytest.raises(ValueError, match="initial_distance_offset"):
-            FollowTrajectoryAction("npc1", _line(), initial_distance_offset=-1.0)
+            _route("npc1", _line(), initial_distance_offset=-1.0)
 
     def test_it_reissues_every_tick(self) -> None:
-        assert FollowTrajectoryAction("npc1", _line()).reissues_while_running
+        assert _route("npc1", _line()).reissues_while_running
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +255,7 @@ class TestConstruction:
 
 class TestPositionWithTiming:
     def test_the_vehicle_is_where_the_trajectory_says(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+        action = _route("npc1", _line(), TrajectoryTiming())
         _run(action, entity.actor, 1.0)
         # The last pose was set at t = 0.95 and carried one tick on at 10 m/s.
         assert entity.actor.x == pytest.approx(10.0)
@@ -257,7 +265,7 @@ class TestPositionWithTiming:
     def test_it_completes_at_the_last_vertex_and_stops_there(
         self, entity: _Entity
     ) -> None:
-        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+        action = _route("npc1", _line(), TrajectoryTiming())
         _run(action, entity.actor, 2.5)
         assert action.finished
         assert action.state is ActionState.COMPLETE
@@ -267,44 +275,38 @@ class TestPositionWithTiming:
 
     def test_it_can_end_still_moving(self, entity: _Entity) -> None:
         """stop_at_end=False: handed back to traffic at speed, not braked."""
-        action = FollowTrajectoryAction(
-            "npc1", _line(), TrajectoryTiming(), stop_at_end=False
-        )
+        action = _route("npc1", _line(), TrajectoryTiming(), stop_at_end=False)
         _run(action, entity.actor, 2.5)
         assert action.state is ActionState.COMPLETE
         assert entity.actor.speed > 0.0
         assert entity.actor.control.brake == 0.0
 
     def test_relative_timing_starts_with_the_action(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction(
-            "npc1", _line(), TrajectoryTiming(ReferenceContext.RELATIVE)
-        )
+        action = _route("npc1", _line(), TrajectoryTiming(ReferenceContext.RELATIVE))
         _run(action, entity.actor, 0.5, start=30.0)
         assert entity.actor.x == pytest.approx(5.0)
 
     def test_absolute_timing_follows_the_scenario_clock(self, entity: _Entity) -> None:
         """Started late, an absolute replay is already partway along."""
-        action = FollowTrajectoryAction(
-            "npc1", _line(), TrajectoryTiming(ReferenceContext.ABSOLUTE)
-        )
+        action = _route("npc1", _line(), TrajectoryTiming(ReferenceContext.ABSOLUTE))
         _run(action, entity.actor, 0.05, start=1.0)
         assert entity.actor.x == pytest.approx(10.5)
 
     def test_scale_slows_the_replay(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming(scale=2.0))
+        action = _route("npc1", _line(), TrajectoryTiming(scale=2.0))
         _run(action, entity.actor, 1.0)
         assert entity.actor.x == pytest.approx(5.0)
         assert entity.actor.speed == pytest.approx(5.0)
 
     def test_an_initial_offset_starts_further_along(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1", _line(), TrajectoryTiming(), initial_distance_offset=10.0
         )
         _run(action, entity.actor, 0.05)
         assert entity.actor.x == pytest.approx(10.5)
 
     def test_the_vehicle_is_taken_from_the_traffic_once(self, entity: _Entity) -> None:
-        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+        action = _route("npc1", _line(), TrajectoryTiming())
         _run(action, entity.actor, 1.0)
         assert entity.released == 1
 
@@ -312,14 +314,14 @@ class TestPositionWithTiming:
 class TestPositionWithoutTiming:
     def test_it_goes_at_the_speed_it_had(self, entity: _Entity) -> None:
         entity.actor.vx = entity.actor.speed = 4.0
-        action = FollowTrajectoryAction("npc1", _line(duration=None))
+        action = _route("npc1", _line(duration=None))
         _run(action, entity.actor, 1.0)
         assert entity.actor.x == pytest.approx(4.0)
         assert not action.finished
 
     def test_it_completes_at_the_end_of_the_path(self, entity: _Entity) -> None:
         entity.actor.vx = entity.actor.speed = 20.0
-        action = FollowTrajectoryAction("npc1", _line(duration=None))
+        action = _route("npc1", _line(duration=None))
         _run(action, entity.actor, 2.0)
         assert action.state is ActionState.COMPLETE
         assert entity.actor.x == pytest.approx(20.0)
@@ -336,48 +338,15 @@ class TestPositionWithoutTiming:
             ],
             closed=True,
         )
-        action = FollowTrajectoryAction("npc1", square)
+        action = _route("npc1", square)
         _run(action, entity.actor, 6.0)
         assert not action.finished
-
-
-class TestHidden:
-    def test_it_is_out_of_the_world_until_its_first_vertex(
-        self, entity: _Entity
-    ) -> None:
-        late = Trajectory(
-            "late",
-            [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), _at(1.0)),
-                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), _at(2.0)),
-            ],
-        )
-        action = FollowTrajectoryAction(
-            "npc1",
-            late,
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-            hidden_outside_trajectory=True,
-        )
-        _run(action, entity.actor, 0.5)
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        assert entity.actor.physics is False
-
-        _run(action, entity.actor, 0.6, start=0.5)
-        assert entity.actor.physics is True
-        assert entity.actor.z == pytest.approx(0.0)
-
-        _run(action, entity.actor, 1.0, start=1.1)
-        assert action.finished
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        assert entity.actor.physics is False
 
 
 class TestLateEntity:
     def test_a_run_begins_on_the_first_tick_that_finds_the_entity(self) -> None:
         """Triggered before the entity exists, it still takes it over and starts."""
-        action = FollowTrajectoryAction(
-            "late1", _line(), TrajectoryTiming(ReferenceContext.RELATIVE)
-        )
+        action = _route("late1", _line(), TrajectoryTiming(ReferenceContext.RELATIVE))
         world = _World()
         action.tick(world, 0.0)  # triggered: nobody answers to "late1" yet
         late = _Entity(_Actor())
@@ -396,7 +365,7 @@ class TestWho:
         driven = _Entity(_Actor(), use_autopilot=False)
         register_entity("ego", driven)
         try:
-            action = FollowTrajectoryAction("ego", _line(), TrajectoryTiming())
+            action = _route("ego", _line(), TrajectoryTiming())
             _run(action, driven.actor, 0.5)
         finally:
             unregister_entity("ego")
@@ -407,7 +376,7 @@ class TestWho:
         walker = _Entity(_Actor(type_id="walker.pedestrian.0001"))
         register_entity("walker1", walker)
         try:
-            action = FollowTrajectoryAction("walker1", _line(), TrajectoryTiming())
+            action = _route("walker1", _line(), TrajectoryTiming())
             _run(action, walker.actor, 0.5)
         finally:
             unregister_entity("walker1")
@@ -439,9 +408,7 @@ def _bend() -> Trajectory:
 class TestFollow:
     def test_a_controller_drives_it_round_the_bend(self, entity: _Entity) -> None:
         trajectory = _bend()
-        action = FollowTrajectoryAction(
-            "npc1", trajectory, TrajectoryTiming(), TrajectoryFollowingMode.FOLLOW
-        )
+        action = _route("npc1", trajectory, TrajectoryTiming(), RoutingMode.FOLLOW)
         worst = 0.0
         world = _World()
         elapsed = 0.0
@@ -467,10 +434,10 @@ class TestFollow:
 
     def test_untimed_it_holds_the_speed_it_had(self, entity: _Entity) -> None:
         entity.actor.vx = entity.actor.speed = 5.0
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(length=200.0, duration=None),
-            following_mode=TrajectoryFollowingMode.FOLLOW,
+            mode=RoutingMode.FOLLOW,
         )
         _run(action, entity.actor, 5.0, driven=True)
         assert entity.actor.speed == pytest.approx(5.0, abs=0.5)
@@ -520,7 +487,7 @@ class TestLookup:
         npc = _Entity(_Actor())
         register_vehicle_entity("npc7", npc)  # type: ignore[arg-type]
         try:
-            action = FollowTrajectoryAction("npc7", _line(), TrajectoryTiming())
+            action = _route("npc7", _line(), TrajectoryTiming())
             _run(action, npc.actor, 0.5)
         finally:
             unregister_entity("npc7")
@@ -531,7 +498,7 @@ class TestLookup:
         walker = _Entity(_Actor(type_id="walker.pedestrian.0001"))
         register_pedestrian_entity("walker7", walker)  # type: ignore[arg-type]
         try:
-            action = FollowTrajectoryAction("walker7", _line(), TrajectoryTiming())
+            action = _route("walker7", _line(), TrajectoryTiming())
             _run(action, walker.actor, 0.5)
         finally:
             unregister_entity("walker7")
@@ -542,7 +509,7 @@ class TestLookup:
     def test_nobody_is_warned_about_and_waited_for(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        action = FollowTrajectoryAction("nobody", _line(), TrajectoryTiming())
+        action = _route("nobody", _line(), TrajectoryTiming())
         with caplog.at_level("WARNING"):
             action.tick(_World(), 0.0)
         assert any("'nobody' not found" in r.getMessage() for r in caplog.records)
@@ -554,7 +521,7 @@ class TestLookup:
     ) -> None:
         register_entity("npc8", entity)
         try:
-            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            action = _route("npc8", _line(), TrajectoryTiming())
             with caplog.at_level("WARNING"):
                 action.tick(_World(), 0.0)
         finally:
@@ -565,7 +532,7 @@ class TestLookup:
     def test_an_actor_property_failing_otherwise_is_not_swallowed(self) -> None:
         register_entity("npc8", _Raising())
         try:
-            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            action = _route("npc8", _line(), TrajectoryTiming())
             with pytest.raises(RuntimeError, match="simulator is gone"):
                 action.tick(_World(), 0.0)
             with pytest.raises(RuntimeError, match="simulator is gone"):
@@ -577,7 +544,7 @@ class TestLookup:
         bare = _Bare(_Actor())
         register_entity("npc8", bare)
         try:
-            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            action = _route("npc8", _line(), TrajectoryTiming())
             _run(action, bare.actor, 0.5)
         finally:
             unregister_entity("npc8")
@@ -588,7 +555,7 @@ class TestLookup:
         bare.release_from_traffic = None  # type: ignore[attr-defined]
         register_entity("npc8", bare)
         try:
-            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            action = _route("npc8", _line(), TrajectoryTiming())
             _run(action, bare.actor, 0.5)
         finally:
             unregister_entity("npc8")
@@ -598,7 +565,7 @@ class TestLookup:
         bare = _Bare(_NoTypeId())
         register_entity("npc8", bare)
         try:
-            action = FollowTrajectoryAction("npc8", _line(), TrajectoryTiming())
+            action = _route("npc8", _line(), TrajectoryTiming())
             _run(action, bare.actor, 0.5)
         finally:
             unregister_entity("npc8")
@@ -609,10 +576,10 @@ class TestLookup:
     def test_a_control_without_a_gear_is_driven(self, entity: _Entity) -> None:
         entity.actor.control = _GearlessControl()
         entity.actor.vx = entity.actor.speed = 5.0
-        action = FollowTrajectoryAction(
+        action = _route(
             "npc1",
             _line(length=200.0, duration=None),
-            following_mode=TrajectoryFollowingMode.FOLLOW,
+            mode=RoutingMode.FOLLOW,
         )
         _run(action, entity.actor, 1.0, driven=True)
         assert entity.actor.x > 3.0
@@ -624,7 +591,7 @@ class TestLookup:
         walker = _Entity(_Actor(x=7.0, y=-3.0, type_id="walker.pedestrian.0001"))
         register_pedestrian_entity("walker7", walker)  # type: ignore[arg-type]
         try:
-            action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+            action = _route("npc1", _line(), TrajectoryTiming())
             own = action._reference_pose(None)
             other = action._reference_pose("walker7")
             assert _entity_actor("walker7") is walker.actor
@@ -639,13 +606,11 @@ class TestLookup:
 
 class TestUntil:
     def test_the_default_ends_at_the_end_of_the_trajectory(self) -> None:
-        action = FollowTrajectoryAction("npc1", _line(), TrajectoryTiming())
+        action = _route("npc1", _line(), TrajectoryTiming())
         assert isinstance(action._until, _TrajectoryEnd)
-        assert action._until.label == "follow_trajectory_end"
+        assert action._until.label == "routing_end"
 
     def test_a_given_condition_is_kept(self) -> None:
         until = AlwaysTrueCondition()
-        action = FollowTrajectoryAction(
-            "npc1", _line(), TrajectoryTiming(), until=until
-        )
+        action = _route("npc1", _line(), TrajectoryTiming(), until=until)
         assert action._until is until

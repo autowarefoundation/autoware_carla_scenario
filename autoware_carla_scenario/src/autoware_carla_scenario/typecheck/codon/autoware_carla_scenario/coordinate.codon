@@ -167,6 +167,10 @@ def lanelets_ahead(lanelet_id: int, distance_m: float) -> List[int]:
     raise NotImplementedError()
 
 
+def route_road_ids(lanelet_ids: List[int]) -> List[str]:
+    raise NotImplementedError()
+
+
 def get_stop_line_poses(lanelet_id: int) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 
@@ -346,10 +350,6 @@ class MapManager:
 
     @property
     def routing_graph(self) -> lanelet2.routing.RoutingGraph:
-        raise NotImplementedError()
-
-    @property
-    def pedestrian_routing_graph(self) -> lanelet2.routing.RoutingGraph:
         raise NotImplementedError()
 
     @property

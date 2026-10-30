@@ -3,6 +3,7 @@
 from .entity_role import EntityRole
 
 EGO_ROLE_NAME: EntityRole = EntityRole.ego()
+EGO_ROLES = ("ego", "hero")
 BUMPER_PROBE_ROLE_NAME: str = "bumper_probe"
 DEFAULT_TM_PORT: int = 8100
 FIXED_DELTA_SECONDS: float = 0.05

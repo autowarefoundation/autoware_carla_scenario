@@ -17,6 +17,8 @@ import typesafe_carla.carla as carla
 from autoware_carla_scenario.conditions.base import ConditionStatus, ScenarioResult
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.debug_markers import DebugMarkers, DebugPolyline
+from autoware_carla_scenario.driver.geometry import Pose, Trajectory
+from autoware_carla_scenario.ego_plan import EgoPlan, PlanMarkers, ego_plan_markers
 from autoware_carla_scenario.trajectory_recorder import (
     DRAFT7_SCHEMA_PATH,
     SCHEMA_PATH,
@@ -99,6 +101,14 @@ class _World:
         self.light = _Light(9)
         self.snapshot: list[_ActorSnapshot] = []
         self.frame = 100
+
+    #: What get_vehicles_light_states() gives; None: a world that cannot say.
+    vehicle_light_states: dict[int, int] | None = None
+
+    def get_vehicles_light_states(self) -> dict[int, int]:
+        if self.vehicle_light_states is None:
+            raise RuntimeError("no vehicle light states in this world")
+        return dict(self.vehicle_light_states)
 
     def get_map(self) -> SimpleNamespace:
         return SimpleNamespace(name="Carla/Maps/Town10HD_Opt")
@@ -190,6 +200,7 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
         "map",
         "traffic_light",
         "actor",
+        "rear_axle",
         "tick",
         "tick",
     ]
@@ -204,7 +215,9 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     assert records[2]["stops"] == [[5.0, 18.0, 0.0, -90.0]]
     # Only vehicles/walkers are recorded; the camera is looked up once and skipped.
     assert records[3]["id"] == 1 and records[3]["role"] == "Ego"
-    first, second = records[4], records[5]
+    # The ego's rear axle: half its box behind, the vehicle having no wheels.
+    assert records[4] == {"type": "rear_axle", "id": 1, "offset": -1.225}
+    first, second = records[5], records[6]
     assert first["actors"] == [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0]]
     assert first["control"] == {"1": [0.5, 0.0, 0.0, 1]}
     assert first["lights"] == {"9": "Red"}
@@ -220,6 +233,23 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
 class _UnnamedLight(_Light):
     def get_opendrive_id(self) -> str:
         raise RuntimeError("no signal")
+
+
+def test_the_rear_axle_is_the_one_a_driver_entity_offered(tmp_path: Path) -> None:
+    from autoware_carla_scenario import t4
+
+    world = _World()
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    t4.offer_driver_sensors(-1.4)
+    try:
+        recorder.record(world, 0.0)
+    finally:
+        t4.withdraw_driver_sensors()
+    recorder.close()
+    rear_axles = [r for r in _lines(recorder.path) if r["type"] == "rear_axle"]
+    assert rear_axles == [{"type": "rear_axle", "id": 1, "offset": -1.4}]
 
 
 def test_records_without_an_ego_or_a_light_change_follow_the_schema(
@@ -506,6 +536,7 @@ def test_actors_that_come_later_and_go_are_written_when_they_do(tmp_path) -> Non
     kinds = [(r["type"], r.get("id")) for r in records[3:]]
     assert kinds == [
         ("actor", 1),
+        ("rear_axle", 1),
         ("tick", None),
         ("actor", 3),
         ("tick", None),
@@ -545,6 +576,122 @@ def test_markers_are_written_when_they_change(tmp_path) -> None:
             "point_size": 0.1,
         }
     ]
+
+
+def _ego_plan(step: int, *xs: float) -> PlanMarkers:
+    markers = PlanMarkers(
+        EgoPlan(
+            step=step,
+            planned_at_us=step * 100_000,
+            points=[(0.1 * (i + 1), x, 1.0, 0.0, -90.0) for i, x in enumerate(xs)],
+            policy_name="fake",
+            inference_seconds=0.0123456,
+            turn_indicator=2,
+            debug_scalars={"speed": 3.14159, "nan": float("nan")},
+        )
+    )
+    markers.add_polyline(
+        DebugPolyline([(x, 1.0, 0.3) for x in xs], (0, 255, 0), 0.1, 0.1)
+    )
+    return markers
+
+
+def test_a_plan_is_written_after_its_markers_once_per_plan(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    first, second = _ego_plan(1, 0.0, 5.0), _ego_plan(2, 1.0)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    for tick, handed in enumerate([first, first, second, _plan(2.0)]):
+        world.frame = 100 + tick
+        recorder.record(world, 0.05 * tick)
+        recorder.record_markers(handed)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] in ("markers", "plan")]
+    # Each plan right after its markers; markers that carry no plan, alone.
+    assert [(r["type"], r["frame"]) for r in records] == [
+        ("markers", 100),
+        ("plan", 100),
+        ("markers", 102),
+        ("plan", 102),
+        ("markers", 103),
+    ]
+    assert records[1] == {
+        "type": "plan",
+        "frame": 100,
+        "t": 0.0,
+        "actor": 1,
+        "step": 1,
+        "planned_at_us": 100_000,
+        "policy": "fake",
+        "inference_seconds": 0.012,
+        "turn_indicator": 2,
+        "debug_scalars": {"speed": 3.142, "nan": None},
+        "points": [[0.1, 0.0, 1.0, 0.0, -90.0], [0.2, 5.0, 1.0, 0.0, -90.0]],
+    }
+
+
+def test_a_plan_with_nothing_to_draw_is_still_written(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    empty = PlanMarkers(
+        EgoPlan(
+            step=3,
+            planned_at_us=0,
+            points=[],
+            policy_name="",
+            inference_seconds=float("nan"),
+            turn_indicator=1,
+            debug_scalars={},
+        )
+    )
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.record_markers(empty)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] in ("markers", "plan")]
+    # Its markers clear the drawing; the plan, its command and all, is kept.
+    assert [r["type"] for r in records] == ["markers", "plan"]
+    assert records[0]["polylines"] == []
+    assert records[1]["points"] == [] and records[1]["turn_indicator"] == 1
+    assert records[1]["inference_seconds"] is None  # NaN: what JSON cannot hold
+
+
+def test_a_plan_leaves_out_a_point_that_is_not_finite() -> None:
+    trajectory = Trajectory.empty()
+    for i, x in enumerate([1.0, float("nan"), 3.0]):
+        trajectory.append(i * 100_000, Pose.from_xyz_yaw(x, 2.0, 0.0, 0.0))
+    markers = ego_plan_markers(trajectory, 0, 1)
+    assert [p[1] for p in markers.plan.points] == [1.0, 3.0]
+    assert [p[2] for p in markers.plan.points] == [-2.0, -2.0]  # y flipped back
+    assert [x for x, _, _ in markers.polylines[0].points] == [1.0, 3.0]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"points": [[0.1, 0.0, 1.0, 0.0]]},  # a point without its yaw
+        {"step": 0},  # plans count from 1
+        {"turn_indicator": -1},
+        {"debug_scalars": {"speed": "fast"}},
+        {"planned_at_us": -1},
+    ],
+)
+def test_the_schema_rejects_a_plan_the_recorder_does_not_write(change: dict) -> None:
+    plan = {
+        "type": "plan",
+        "frame": 1,
+        "t": 0.0,
+        "actor": 1,
+        "step": 1,
+        "planned_at_us": 0,
+        "policy": "",
+        "inference_seconds": 0.0,
+        "turn_indicator": 0,
+        "debug_scalars": {},
+        "points": [[0.1, 0.0, 1.0, 0.0, 0.0]],
+    }
+    assert _validator().is_valid(plan)
+    assert not _validator().is_valid({**plan, **change})
 
 
 def test_actions_are_written_when_first_seen_and_when_their_state_changes(
@@ -620,6 +767,52 @@ def test_an_adversity_nade_sampled_is_written_on_its_tick(tmp_path) -> None:
         "victims": ["npc2"],
         "response": "avoid",
     }
+
+
+def test_a_spawn_and_a_despawn_are_written_on_their_tick(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    world.frame = 140
+    recorder.record(world, 2.0)
+    recorder.record_spawn("npc1_enters", "npc1", 7)
+    recorder.record_spawn("npc2_enters", "npc2", -1)
+    recorder.record_despawn("npc1_leaves", "npc1", 7)
+    recorder.close()
+
+    written = [r for r in _lines(recorder.path) if r["type"] in ("spawn", "despawn")]
+    assert written == [
+        {
+            "type": "spawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc1_enters",
+            "entity": "npc1",
+            "id": 7,
+        },
+        {
+            "type": "spawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc2_enters",
+            "entity": "npc2",
+            "id": None,
+        },
+        {
+            "type": "despawn",
+            "frame": 140,
+            "t": 2.0,
+            "label": "npc1_leaves",
+            "entity": "npc1",
+            "id": 7,
+            "reason": "action",
+        },
+    ]
+
+
+def test_a_spawn_is_not_written_when_not_recording(tmp_path) -> None:
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.record_spawn("npc1_enters", "npc1", 7)  # never started: nothing
+    assert not recorder.path.exists()
 
 
 def test_conditions_are_written_when_first_checked_and_when_they_change(
@@ -701,6 +894,8 @@ def test_the_new_records_never_fail_the_run(tmp_path) -> None:
     recorder.record_condition("pass", 0, "x", True)
     recorder.record_result(MagicMock())
     recorder.record_warmup(1, 0, 1)
+    recorder.record_spawn("s", "npc1", 1)
+    recorder.record_despawn("d", "npc1", 1)
 
 
 def test_a_map_file_that_cannot_be_read_leaves_its_field_null(tmp_path) -> None:
@@ -750,3 +945,48 @@ def test_an_unparsable_projector_file_is_left_out(tmp_path) -> None:
     recorder.close()
     [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
     assert record["projector_info"] is None and record["lanelet2"] is not None
+
+
+def test_turn_indicators_are_written_when_they_change(tmp_path: Path) -> None:
+    recorder, world = _run(tmp_path)
+    left = int(carla.VehicleLightState.LeftBlinker)
+    right = int(carla.VehicleLightState.RightBlinker)
+    lights = {1: 0}
+    world.vehicle_light_states = lights
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0), _ActorSnapshot(3, 5.0, 0.0)]
+    recorder.record(world, 0.0)
+    world.frame += 1  # unchanged: nothing written
+    recorder.record(world, 0.05)
+    world.frame += 1
+    lights[1] = left | int(carla.VehicleLightState.Position)  # other lights don't count
+    recorder.record(world, 0.1)
+    world.frame += 1
+    lights[1] = left | right
+    recorder.record(world, 0.15)
+    recorder.close()
+
+    records = [r for r in _lines(recorder.path) if r["type"] == "turn_indicators"]
+    # The walker (3) has none; the vehicle's first state is written, then each change.
+    assert records == [
+        {"type": "turn_indicators", "frame": 100, "t": 0.0, "states": {"1": "off"}},
+        {"type": "turn_indicators", "frame": 102, "t": 0.1, "states": {"1": "left"}},
+        {"type": "turn_indicators", "frame": 103, "t": 0.15, "states": {"1": "hazard"}},
+    ]
+    kinds = [r["type"] for r in _lines(recorder.path)]
+    # Each right after the tick it belongs to.
+    assert kinds[kinds.index("turn_indicators") - 1] == "tick"
+
+
+def test_a_world_without_light_states_leaves_the_turn_indicators_out(
+    tmp_path: Path,
+) -> None:
+    recorder, world = _run(tmp_path)
+
+    world.vehicle_light_states = None
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    world.frame += 1
+    recorder.record(world, 0.05)
+    recorder.close()
+    kinds = [r["type"] for r in _lines(recorder.path)]
+    assert "turn_indicators" not in kinds and kinds.count("tick") == 2

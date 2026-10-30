@@ -46,6 +46,7 @@ from autoware_carla_scenario import (
     debug_markers,
     entity_role,
     environment,
+    failure,
     kinematics,
     measures,
     metrics,
@@ -55,6 +56,8 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario import rerun as rerun_module
 from autoware_carla_scenario import t4 as t4_module
+from autoware_carla_scenario import t4_scene as t4_scene_module
+from autoware_carla_scenario import waypoint_arrival
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -67,7 +70,7 @@ from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
 from autoware_carla_scenario.coverage import report as coverage_report
 from autoware_carla_scenario.driver import egodriver_client
-from autoware_carla_scenario.entity import carla_driver_entity
+from autoware_carla_scenario.entity import carla_driver_entity, hils_entity
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
@@ -116,6 +119,7 @@ _CONSTANTS_COMPARED_ON_THEIR_OWN = {
     "BUILT_IN_MEASURES",  # test_the_measures_model_holds_python_s_values
     "BUILT_IN_METRICS",  # test_the_metrics_model_holds_python_s_values
     "EGO_ROLE_NAME",  # test_the_constants_model_holds_python_s_values
+    "URBAN_CONSTRUCTION",  # test_the_urban_construction_model_holds_python_s_values
     "UNDECIDED",  # test_the_undecided_model_is_openodd_s_sentinel
 }
 
@@ -341,6 +345,9 @@ def test_every_exported_enum_is_named_by_the_model_as_iterable() -> None:
 #: Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CarlaDriverEntity": ("entity", carla_driver_entity.CarlaDriverEntity),
+    # What the checked actions.communication_loss uses of entity.hils_entity.
+    "HilsEgoEntity": ("entity", hils_entity.HilsEgoEntity),
+    "find_hils_entity": ("entity", hils_entity.find_hils_entity),
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
@@ -387,6 +394,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
             "on_lanelet",
             "project_onto_lanelet",
             "project_onto_road",
+            "route_road_ids",
         )
     },
     # What a scenario imports of conditions beside the package's exports.
@@ -415,6 +423,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         for name in (
             "BUMPER_PROBE_ROLE_NAME",
             "DEFAULT_TM_PORT",
+            "EGO_ROLES",
             "FIXED_DELTA_SECONDS",
             "LANE_CHANGE_CENTER_TOLERANCE_M",
             "LANE_CHANGE_HEADING_TOLERANCE_DEG",
@@ -430,10 +439,12 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "scenario_route_frame": ("route", route_active.scenario_route_frame),
     **{
         name: ("route", getattr(route_model, name))
-        for name in ("APPROACHES", "CROSSWALK_LEGS", "SIDES")
+        for name in ("APPROACHES", "PATH_APPROACHES", "CROSSWALK_LEGS", "SIDES")
     },
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
+    # What BaseAction.take_waypoint_arrivals() returns.
+    "WaypointArrival": ("actions", waypoint_arrival.WaypointArrival),
     "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
     "reset_probes": ("odd", odd_probes.reset_probes),
     "resolve_odd": ("odd", odd_registry.resolve_odd),
@@ -741,6 +752,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "rerun": (rerun_module, ("RerunConverter",)),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
+    # What the checked scenario_runner and scenario_queue hold of it.
+    "t4_scene": (t4_scene_module, ("T4SceneExporter",)),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (
         environment,
@@ -798,6 +811,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario imports of the checked metrics: every name of its
     # __all__, the values compared below.
     "metrics": (metrics, tuple(metrics.__all__)),
+    # What a scenario imports of the checked failure: every name of its
+    # __all__ (FailureCategory, to register a fail condition with).
+    "failure": (failure, tuple(failure.__all__)),
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),
@@ -821,6 +837,7 @@ _UNBUILDABLE: dict[str, str] = {
     "CoverageReport": "coverage",
     "EgoDriverGrpcClient": "driver/egodriver_client",
     "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
+    "HilsEgoEntity": "entity",
     # Stand-ins of checked classes the library check replaces (_ros2.codon):
     # a scenario has no ROS 2 transport to build.
     "Ros2EgoConfig": "_ros2",
@@ -1095,6 +1112,24 @@ def test_the_constants_model_holds_python_s_values() -> None:
     assert ast.unparse(node.annotation) == "EntityRole"
     assert ast.unparse(node.value) == "EntityRole.ego()"
     assert constants.EGO_ROLE_NAME == acs.EntityRole.ego()
+
+
+def test_the_urban_construction_model_holds_python_s_values() -> None:
+    # The preset is a ConstructionSettings call: the model's keywords are the
+    # fields Python's differs from the defaults in, with the same values.
+    node = _definitions("actions")["URBAN_CONSTRUCTION"][0]
+    assert isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Call)
+    assert ast.unparse(node.annotation) == "ConstructionSettings"
+    assert ast.unparse(node.value.func) == "ConstructionSettings"
+    assert not node.value.args
+    model = {k.arg: ast.literal_eval(k.value) for k in node.value.keywords}
+    default = acs.ConstructionSettings()
+    python = {
+        field.name: getattr(acs.URBAN_CONSTRUCTION, field.name)
+        for field in dataclasses.fields(acs.ConstructionSettings)
+        if getattr(acs.URBAN_CONSTRUCTION, field.name) != getattr(default, field.name)
+    }
+    assert model == python
 
 
 #: Every class the tests above compare with Python: name -> (model module,
@@ -1615,6 +1650,9 @@ def test_the_launcher_model_is_the_protocol_s_methods() -> None:
 #: (merge_coverage() a CoverageReport, #298): the members Codon has types for.
 _READ_ON_WHAT_A_FUNCTION_RETURNS: dict[str, tuple[str, ...]] = {
     "CoverageReport": ("group_grade", "groups", "runs", "scenarios", "to_markdown"),
+    # What CommunicationLossAction calls on the HILS ego find_hils_entity()
+    # returns.
+    "HilsEgoEntity": ("disconnect", "reconnect"),
 }
 
 

@@ -11,6 +11,7 @@ from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
+from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -175,6 +176,24 @@ class BaseAction(ABC):
         none: list[AdversityEvent] = []
         return none
 
+    def take_waypoint_arrivals(self) -> list[WaypointArrival]:
+        """The timed waypoints reached since the last call, for the run's
+        log; none unless the action paces a route."""
+        none: list[WaypointArrival] = []
+        return none
+
+    def take_spawns(self) -> list[tuple[str, int]]:
+        """The ``(role, actor id)`` brought in since the last call, for the
+        run's log; none unless the action brings entities in."""
+        none: list[tuple[str, int]] = []
+        return none
+
+    def take_despawns(self) -> list[tuple[str, int]]:
+        """The ``(role, actor id)`` removed since the last call, for the
+        run's log; none unless the action removes entities."""
+        none: list[tuple[str, int]] = []
+        return none
+
     @property
     def sets_tire_friction(self) -> bool:
         """Whether the action sets the vehicles' grip (an
@@ -240,6 +259,22 @@ class BaseAction(ABC):
             world: The CARLA world instance.
         """
         ...
+
+    def _settle_start(self, world: "carla.World", elapsed: float) -> None:
+        """Step one that fired out of ``startTransition`` without running it
+        again or looking at its trigger: under way, or -- one that ended the
+        moment it was commanded and does not reissue -- complete (standby for
+        a repeating one).  For the init phase, which has no ticks for an
+        action's lifecycle to step through."""
+        if self._lifecycle is not ActionState.START_TRANSITION:
+            return
+        self._lifecycle = ActionState.RUNNING
+        if self.reissues_while_running:
+            return
+        if self._until is None or self._until.check(world, elapsed) is not None:
+            self._lifecycle = (
+                ActionState.COMPLETE if self._once else ActionState.STANDBY
+            )
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Evaluate the condition and, if met, run :meth:`execute`.

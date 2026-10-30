@@ -12,6 +12,7 @@ from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
 from autoware_carla_scenario.typecheck.static_raises import (
     LITERAL_CHECKED,
     literal_argument_refusals,
+    str_sums,
     subscripted_isinstances,
 )
 
@@ -138,8 +139,8 @@ def test_a_rebound_name_is_not_taken_for_the_builtin() -> None:
         ('ElapsedTimeCondition(-1.0, label="x")', "duration_seconds must be positive"),
         (
             'RouteCrossingPose(approach="Left")',
-            "RouteCrossingPose.approach must be one of ['left', 'right', "
-            "'opposite'], got 'Left'",
+            "RouteCrossingPose.approach must be one of ['same', 'left', "
+            "'right', 'opposite'], got 'Left'",
         ),
         (
             'RouteRoadsidePose(side="kerb")',
@@ -356,3 +357,40 @@ def test_a_mismatch_at_a_conditional_expression_gets_its_hint(tmp_path: Path) ->
     assert "a conditional expression (`a if c else b`)" in at_ternary.message
     assert elsewhere.message == message
     assert inside.message == message
+
+
+# ---------------------------------------------------------------------------
+# sum() of strings (#625)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("call", "says"),
+    [
+        ('sum(["a", "b"], "")', "sum() can't sum strings [use ''.join(seq) instead]"),
+        ('sum(v, start="-")', "sum() can't sum strings"),
+        ('sum(v, f"{name}")', "sum() can't sum strings"),
+        ("sum(v, str())", "sum() can't sum strings"),
+        ('sum(v, b"")', "sum() can't sum bytes [use b''.join(seq) instead]"),
+        ("sum(v, bytearray())", "sum() can't sum bytearray"),
+    ],
+)
+def test_sum_with_a_str_start_is_refused(call: str, says: str) -> None:
+    # Python's own rule: TypeError before anything is added (#625).
+    (found,) = str_sums(_tree(f"x = {call}\n"))
+    assert says in found.message
+    assert "TypeError" in found.message
+    assert found.line == _IMPORTS.count("\n") + 2
+
+
+@pytest.mark.parametrize(
+    "call",
+    ["sum(v)", "sum(v, 0)", "sum(v, 0.0)", "sum(v, [])", "sum(v, name)", "sum(*v)"],
+)
+def test_sum_of_numbers_or_an_unknown_start_is_left_alone(call: str) -> None:
+    assert str_sums(_tree(f"x = {call}\n")) == []
+
+
+def test_a_rebound_sum_is_left_alone() -> None:
+    tree = ast.parse('def sum(a, b):\n    return a\nsum([1], "")\n')
+    assert str_sums(tree) == []

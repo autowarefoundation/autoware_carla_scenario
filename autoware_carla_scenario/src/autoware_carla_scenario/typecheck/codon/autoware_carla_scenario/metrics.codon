@@ -26,6 +26,10 @@ WRONG_LANE: str = "wrong_lane"
 MIN_DISTANCE_TO_OBSTACLE_M: str = "min_distance_to_obstacle_m"
 MIN_DISTANCE_TO_LANE_BOUNDARY_M: str = "min_distance_to_lane_boundary_m"
 IMPORTANCE_SAMPLING_WEIGHT: str = "importance_sampling_weight"
+LATERAL_REVERSALS: str = "lateral_reversals"
+LATERAL_WOBBLE_M: str = "lateral_wobble_m"
+STEERING_REVERSALS: str = "steering_reversals"
+TURN_INDICATOR_CHANGES: str = "turn_indicator_changes"
 
 
 def _acs_unread(world: carla.World) -> Optional[float]:
@@ -151,6 +155,42 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         "by its last value estimates the naturalistic rate",
         aggregation="last",
     ),
+    LATERAL_REVERSALS: Metric(
+        LATERAL_REVERSALS,
+        _acs_unread,
+        title="Weaving (reversals)",
+        unit="count",
+        text="How many times so far the ego's drift across its lane turned "
+        "back by more than 0.1 m; a lane change is a drift, not a reversal",
+        aggregation="last",
+    ),
+    LATERAL_WOBBLE_M: Metric(
+        LATERAL_WOBBLE_M,
+        _acs_unread,
+        title="Weaving (amplitude)",
+        unit="m",
+        text="How far the ego strayed across its lane about its course "
+        "over the last 4 s, RMS",
+        aggregation="max",
+    ),
+    STEERING_REVERSALS: Metric(
+        STEERING_REVERSALS,
+        _acs_unread,
+        title="Steering reversals",
+        unit="count",
+        text="How many times so far the steering applied to the ego "
+        "turned back by more than 0.05 of full lock",
+        aggregation="last",
+    ),
+    TURN_INDICATOR_CHANGES: Metric(
+        TURN_INDICATOR_CHANGES,
+        _acs_unread,
+        title="Turn indicator changes",
+        unit="count",
+        text="How many times so far the ego's turn indicators changed: "
+        "off, left, right or hazard",
+        aggregation="last",
+    ),
 }
 
 
@@ -163,4 +203,16 @@ def read_metric(key: str, world: carla.World) -> Optional[float]:
 
 
 def set_importance_sampling_weight(weight: Optional[float]) -> None:
+    raise NotImplementedError()
+
+
+def ego_progress() -> Optional[Tuple[bool, float]]:
+    raise NotImplementedError()
+
+
+def reset_ego_motion() -> None:
+    raise NotImplementedError()
+
+
+def track_ego_motion(world: carla.World, elapsed: float) -> None:
     raise NotImplementedError()

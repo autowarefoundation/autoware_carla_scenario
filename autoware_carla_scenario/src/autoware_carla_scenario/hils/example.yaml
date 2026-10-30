@@ -1,0 +1,136 @@
+# scenario-hils configuration (docs/hils.md).
+#
+#   uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+#
+# The bridge stays up on the HILS PC. It is a CARLA client beside the scenario
+# runner: it follows the ego the runner spawns, streams it to the devices
+# below, and hands the ECUs' commands back to the run (ego.entity=hils).
+# Relative paths are relative to this file.
+
+carla:
+  host: localhost        # the CARLA server the scenario runs on
+  port: 2000
+  timeout: 10.0          # seconds; also how long to wait for a tick
+
+ego:
+  role_name: Ego         # the scenario runner's ego
+  wait: 120.0            # warn after this long without an ego
+
+# Render the sensors below with carla_canvas instead of the CARLA server
+# (needs `--with 'carla-canvas[client]>=0.2'`). Its `sensors` rules can match
+# the devices by role_name: each sensor's role_name is its device's name.
+# canvas: canvas.yaml
+
+# Where runs with ego.entity=hils reach the bridge (their hils.host/port).
+# null: no run link; the ego appearing then starts a scenario.
+runner:
+  listen: 0.0.0.0:7700
+
+# How the ECUs' commands drive the ego: control (CARLA's VehicleControl:
+# throttle, brake, steer, ...) or ackermann (VehicleAckermannControl: steer in
+# rad, speed, acceleration, ...).
+commands:
+  mode: control
+
+# simulation: devices run on simulated time (a hilspy.Clock the world's ticks
+# advance); wall: on real time.
+clock: simulation
+
+devices:
+  # Vehicle CAN: periodic DBC messages filled from the ego's signals
+  # (`scenario-hils --signals` lists them). A field is a constant, $signal,
+  # or {signal: name, scale: k, offset: c}.
+  vehicle_can:
+    url: can://vcan0
+    codec: dbc:vehicle.dbc
+    # options: {ecu: VCU}          # hilspy codec options
+    messages:
+      - name: VehicleSpeed
+        period: 0.01               # omit to use the DBC's GenMsgCycleTime
+        fields:
+          Speed: $speed_kmh
+          Accel: $longitudinal_acceleration
+          Gear: D
+    # ECU -> simulation: messages the ECU sends that carry its command. A
+    # command field is a message field, {field: name, scale: k, offset: c},
+    # or a constant.
+    inputs:
+      - name: ControlCmd
+        command:
+          throttle: {field: AccelPedal, scale: 0.01}   # % -> [0, 1]
+          brake: {field: BrakePedal, scale: 0.01}
+          steer: {field: SteeringCmd, scale: -1.0}     # left-positive -> CARLA's right
+
+  # GNSS receiver: Septentrio SBF over TCP (the ECU connects to it).
+  gnss:
+    url: tcp://0.0.0.0:28784?listen
+    codec: sbf
+    messages:
+      - name: PVTGeodetic
+        period: 0.1
+        fields:
+          mode: 4
+          latitude: $latitude_rad
+          longitude: $longitude_rad
+          height: $altitude
+          vn: $velocity_north
+          ve: $velocity_east
+          vu: $velocity_up
+      - name: AttEuler
+        period: 0.1
+        fields:
+          heading: $heading
+          pitch: $pitch
+          roll: $roll
+
+  # LiDAR: a ray-cast LiDAR on the ego, sent as a Hesai PandarXT32's packets.
+  lidar_top:
+    url: udp://192.168.1.201:2368
+    codec: lidar:pandar_xt32
+    sensor:
+      blueprint: sensor.lidar.ray_cast
+      transform: {x: 0.0, y: 0.0, z: 2.0, roll: 0.0, pitch: 0.0, yaw: 0.0}
+      attributes:
+        channels: 32
+        range: 120
+        points_per_second: 640000
+        rotation_frequency: 10
+        upper_fov: 15
+        lower_fov: -16
+        dropoff_general_rate: 0.0
+
+  # Camera: frames into a v4l2loopback device (hilspy built with `v4l2`).
+  front_camera:
+    url: v4l2:///dev/video10?format=BGRA&width=1280&height=720&fps=20
+    sensor:
+      blueprint: sensor.camera.rgb
+      transform: {x: 1.5, z: 1.6}
+      attributes: {image_size_x: 1280, image_size_y: 720, fov: 90, sensor_tick: 0.05}
+      encoding: bgra
+
+# Initialization and termination. Steps: send a message (or a raw frame:
+# {send: DEVICE, id: 0x7DF, data: "02 10 01"}), wait for an ECU's message with
+# matching fields (it fails the phase after `timeout` s), or sleep.
+#   startup         once, when the bridge starts (no ego: constants only)
+#   scenario_start  a scenario starts; the run waits for these steps
+#   scenario_end    the scenario ends (also when the run goes away)
+#   shutdown        once, when the bridge stops (Ctrl-C, SIGTERM)
+lifecycle:
+  startup:
+    - send: vehicle_can
+      name: PowerMode
+      fields: {Ignition: 0}
+  scenario_start:
+    - send: vehicle_can
+      name: PowerMode
+      fields: {Ignition: 1}
+    - wait: vehicle_can
+      name: EcuStatus
+      fields: {Ready: 1}
+      timeout: 10.0
+  scenario_end:
+    - send: vehicle_can
+      name: PowerMode
+      fields: {Ignition: 0}
+    - sleep: 0.5
+  shutdown: []

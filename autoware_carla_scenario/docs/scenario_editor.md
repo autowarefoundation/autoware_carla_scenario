@@ -6,6 +6,7 @@ application:
 
 ```bash
 uv run scenario-editor          # http://localhost:9100
+uv run scenario-editor --help   # its options (Configuration below)
 ```
 
 It is deliberately **separate from the Scenario Result Viewer**
@@ -243,7 +244,7 @@ Three rules make it readable:
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
   next to each other instead of being correlated across the screen. A
-  *Follow Trajectory* card can also hold conditions on its vertices --
+  *Set Goal* card can also hold conditions on its waypoints --
   [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
   inspector with the same condition controls.
 * **One actor reacting to another is a reference, not a coincidence.**
@@ -552,8 +553,9 @@ box removes it; a malformed one is refused with the reason). A *Follow
 Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
-waypoint conditions. **Appear at the first vertex when the action starts**
-(`appear_on_start`) brings a hidden entity in.
+waypoint conditions. A **Spawn** card brings a hidden entity in (or, with no
+actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
+action state.
 
 ## Ego: who drives, and where to
 
@@ -601,6 +603,15 @@ phase is warned about: the ego's own goal is already delivered there, so the car
 would send a second destination in the same phase. Only a vehicle that plans its own route reads a
 goal at all, so a goal stored on any other entity is a validation error rather
 than something quietly dropped at export.
+
+The **Set Goal** card is also how any road user moves through waypoints
+(written out, each with a time or a waypoint condition) and **Driven by** says
+who moves it: its own driver, a controller, or a replay
+([Routes, Trajectories and Recorded-Scene Replay](trajectory.md)). The
+**Despawn** card (`despawn`, a vehicle or a pedestrian, never the ego) takes a
+road user out of the world when its trigger holds -- typically an *Action
+state* condition on its own Set Goal card reaching *Complete*, so it leaves
+where its route ends instead of driving on wherever its traffic takes it.
 
 ## Metadata-driven GUI
 
@@ -666,7 +677,7 @@ FieldSpec(
 ### The map path is a document field
 
 `/draft/<id>/map.osm` serves the file the document names, and that name is
-typed by whoever is using the editor -- which binds `0.0.0.0` by default. Handed
+typed by whoever is using the editor -- which may bind `0.0.0.0` (`--host`). Handed
 straight to a `FileResponse` it was an arbitrary local file read for anyone who
 could reach the port. A path is accepted only when it resolves **inside**
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) and names a
@@ -825,14 +836,25 @@ guess.
 
 ## Configuration
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged until the browser fetches it |
-| `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
-| `SCENARIO_EDITOR_HOST` | `0.0.0.0` | Bind address |
-| `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
-| `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
+| Option | Variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `--drafts` | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
+| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
+| — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
+| `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
+| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
+| — | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
+
+An option defaults to its variable, so a flag on the command line wins over the
+environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
+option is an error (exit 2) and serves nothing.
+
+!!! warning "The editor listens on this machine only by default"
+    The editor has no authentication, so it binds `127.0.0.1` unless told
+    otherwise. It used to bind `0.0.0.0`, every interface; to serve other
+    machines as before, pass `--host 0.0.0.0` (or set
+    `SCENARIO_EDITOR_HOST=0.0.0.0`) on a network you trust. The editor prints a
+    warning when it listens on anything but a loopback address.
 
 ## Running an authored scenario
 

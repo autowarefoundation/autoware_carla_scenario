@@ -15,6 +15,11 @@ BUMPER_PROBE_ROLE_NAME: str = "bumper_probe"
 # This value is used as a fallback when no Hydra config is available.
 DEFAULT_TM_PORT: int = 8100
 
+# The ``role_name`` values that make an actor the ego of a trajectory log: the
+# recorder logs their control inputs, and a reader of the log finds the ego by
+# them (t4_scene).
+EGO_ROLES = ("ego", "hero")
+
 # The simulation step the runner drives the world at (20 Hz).
 #
 # Named here because three places have to agree on it: the runner applies it to

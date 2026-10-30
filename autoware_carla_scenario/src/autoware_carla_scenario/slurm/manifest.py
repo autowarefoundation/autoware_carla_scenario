@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .scripts import BatchPaths
+
 __all__ = [
     "MANIFEST_VERSION",
     "MANIFEST_VERSIONS",
@@ -171,43 +173,13 @@ def sequential_stems(scenario_classes: list[str]) -> list[str]:
 
 
 @dataclass(frozen=True)
-class BatchLayout:
-    """Where the launcher's files of the batch in *batch_dir* are."""
+class BatchLayout(BatchPaths):
+    """Where the launcher's files of the batch in *batch_dir* are, and what
+    they hold.
 
-    batch_dir: Path
-
-    @property
-    def root(self) -> Path:
-        return self.batch_dir / "slurm"
-
-    @property
-    def manifest(self) -> Path:
-        return self.root / "manifest.json"
-
-    def submission(self, index: int) -> Path:
-        return self.root / "submissions" / f"{index}.json"
-
-    def job_script(self, index: int) -> Path:
-        return self.root / "jobs" / f"{index}.sh"
-
-    def task(self, submission: int, task: int) -> Path:
-        return self.root / "tasks" / f"{submission}-{task}.json"
-
-    def task_port(self, submission: int, task: int) -> Path:
-        """The CARLA RPC port task *task* holds (the job's leak guard reads it)."""
-        return self.root / "tasks" / f"{submission}-{task}.port"
-
-    @property
-    def start_lock(self) -> Path:
-        """When the batch's last task started (``launcher.start_stagger_seconds``)."""
-        return self.root / "start.lock"
-
-    def result(self, case: int) -> Path:
-        return self.root / "results" / f"{case}.json"
-
-    @property
-    def logs(self) -> Path:
-        return self.root / "logs"
+    The paths are :class:`~.scripts.BatchPaths`', which the library check
+    compiles (#732); this reads the files.
+    """
 
     def submissions(self) -> list[int]:
         """The indices of the batch's submissions, in order."""

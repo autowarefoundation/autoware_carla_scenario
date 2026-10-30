@@ -193,10 +193,15 @@ def _bezier(
 #: heading -40 deg, then ``SPLIT_SECOND`` on to the E road.  The second one's
 #: own heading where it starts is within 45 deg of an eastbound ego's.
 SPLIT_FIRST, SPLIT_SECOND = 590, 591
+#: With ``side_turn``: a right turn from the W road's outer lane
+#: (``W_OUT_LANE2``) into the S road -- another path from the ego's own
+#: approach, beside the W road's own junction lanelets.
+SIDE_RIGHT = 604
 
 
-def crossroads(split_path: bool = False) -> Any:
-    """The map described in the module docstring (see also ``SPLIT_FIRST``)."""
+def crossroads(split_path: bool = False, side_turn: bool = False) -> Any:
+    """The map described in the module docstring (see also ``SPLIT_FIRST`` and
+    ``SIDE_RIGHT``)."""
     b = _Builder()
     # Road reference lines are the centre lines (y = 0 / x = 0).
     # --- W road ---------------------------------------------------------------
@@ -258,6 +263,15 @@ def crossroads(split_path: bool = False) -> Any:
             _bezier(middle, heading, (10.0, -_HALF), 0.0),
             {"turn_direction": "left"},
             ends=(heading, 0.0),
+        )
+    if side_turn:
+        a, ha = (-10.0, -3 * _HALF), 0.0
+        z, hz = starts["S"]
+        b.lanelet(
+            SIDE_RIGHT,
+            _bezier(a, ha, z, hz),
+            {"turn_direction": "right"},
+            ends=(ha, hz),
         )
     # --- traffic light on the W approach --------------------------------------
     light = LineString3d(

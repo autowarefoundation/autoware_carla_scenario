@@ -240,7 +240,7 @@ def test_a_background_vehicle_s_actor_is_driven_without_an_entity() -> None:
     from autoware_carla_scenario.conditions import TrajectoryTimeCondition
     from autoware_carla_scenario.entity.registry import find_vehicle_entity
 
-    from .test_follow_trajectory_action import _Actor, _run
+    from .test_routing_trajectory_action import _Actor, _run
 
     actor, backend = _Actor(), _Backend()
     line = Trajectory(

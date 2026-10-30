@@ -126,6 +126,104 @@ uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
   launcher=slurm launcher.array_parallelism=2
 ```
 
+#### Resetting the world between cases
+
+Between two cases of a batch (and between two cases of a SLURM task) the world
+is reset, so that nothing of one case is in the next. `server.world_reset`
+says how:
+
+| `server.world_reset` | What happens | Cost per case (CARLA UE5, Town10HD_Opt) |
+|----------------------|--------------|-----------------------------------------|
+| `reload` (default)   | The map is loaded again: a new episode | ~5 s |
+| `soft`               | The map stays loaded; the world is put back as it was right after the load | well under a second |
+
+```bash
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt server.world_reset=soft
+# Soft resets, with a full reload on every 10th reset anyway
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
+  server.world_reset=soft server.reload_every=10
+```
+
+`soft` is opt-in: it is not yet shown that every case gives the same result
+after a soft reset as after a reload (#282). Compare a sweep run both ways
+before relying on it, and keep `reload` for results that have to be
+order-independent until that is shown for your scenarios.
+
+**What a soft reset does.** Right after the map is loaded (at the start, and
+after every reload) the runner reads a *baseline* off the world: its actors,
+the episode settings, the weather, every traffic light's green, yellow and red
+times and whether it is frozen, and the spectator's transform. A soft reset
+then, in this order:
+
+1. stops the CARLA recorder (the run stops its own already; this catches one
+   a failed run left going);
+2. destroys every actor the baseline does not list -- sensors and controllers
+   first, then walkers, vehicles and anything else (props, an ego an external
+   stack spawned) -- and ticks the world. Traffic lights, traffic signs and the
+   spectator are the map's and are never destroyed;
+3. gives every traffic light its baseline timing back, resets all of them to
+   the start of their cycle (`World.reset_all_traffic_lights()`) and freezes or
+   unfreezes each as it was;
+4. puts the weather and the spectator back, and ticks the world;
+5. checks that no actor outside the baseline is left and that none of the
+   map's is gone;
+6. applies the baseline episode settings (asynchronous, as a loaded world is;
+   the next run makes it synchronous again).
+
+What the run itself cleans up is cleaned up as before, whatever the reset: the
+ego, the conditions' sensors, the props, the T4 and Rerun sensors, the
+recorder, and the traffic backend (closed after every run, which is what resets
+the TrafficManager).
+
+**When it loads the map instead.** The map is loaded, as with `reload`, when
+
+- there is no baseline (the map was not loaded by this runner yet, or reading
+  the baseline failed);
+- the server runs another episode than the one the baseline was read in:
+  another client loaded a world -- another map, or the same one -- on the
+  server;
+- any step above raises, an actor survives its destroy, or an actor of the map
+  is gone;
+- the world has a traffic light the baseline does not list (the server listed
+  it only after the baseline was read): its timing and frozen state are not
+  known, so whatever a case did to it could not be put back;
+- `server.reload_every` is N > 0 and N - 1 soft resets have been done since
+  the last load (every N-th reset is a reload; `1` is the same as `reload`).
+
+A reload reads a new baseline, so the resets after it are soft again.
+
+**What a soft reset cannot guarantee.** These differ from a reload, and a
+scenario whose result depends on them can give a different result after a soft
+reset:
+
+- **The episode goes on.** The frame number and the episode's elapsed time keep
+  counting, and actor ids keep growing (a fresh episode starts both again).
+  The runner measures a case on its own clock from its first tick, so its
+  conditions and timeouts do not see this, but anything that reads raw frame
+  numbers, `elapsed_seconds` or actor ids does.
+- **Traffic light phase.** The lights are reset to the start of their cycle,
+  which is where a load leaves them too, but how far into it they are on the
+  case's first tick may differ by the ticks the reset itself takes.
+- **Vehicle and physics state.** The previous case's vehicles are destroyed and
+  new ones spawned, but state the server keeps outside an actor (physics
+  scene, pooled resources) is not reset. In the trials behind #282 an ego's
+  gear differed on every tick from a fresh-world run of the same case.
+- **What has no getter in the CARLA API.** Map layers unloaded with
+  `World.unload_map_layer()`, environment objects toggled with
+  `enable_environment_objects()`, street lights switched through the
+  `LightManager`, the pedestrians' cross factor and seed, and debug drawings
+  still within their `life_time`. The framework changes none of these but the
+  pedestrians' cross factor, which it puts back itself after starting each
+  walker; a scenario that changes the others needs `reload`.
+- **The TrafficManager.** It lives outside the episode, so a reload does not
+  reset it either: the traffic backend's `close()` after each run is what does.
+
+`server.world_reset` applies to the cases one batch runs in one queue
+(`--multirun` with a glob or a `sweep:`, and the cases of one SLURM task). A
+Hydra sweeper such as `hydra/sweeper=lanelet_constraint` runs each case as a
+job of its own, which loads the map when it starts, so there is nothing to
+reset between its cases.
+
 ### Selecting a Published HD Map
 
 A map group can name a git repository instead of local files, and the map is
@@ -158,6 +256,12 @@ optionally deriving per-job parameters via "bindings". Each scenario
 YAML may declare its own `sweep:` section (see
 `traffic_light_compliance.yaml` for an example).
 
+`sweep.constraints` sweeps **one** parameter: it holds a single target key
+(such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
+parameter a case needs is derived from the matched lanelet by
+`sweep.bindings`. A `sweep.constraints` with a second key is refused with an
+error when the sweep is expanded, rather than searched together with the first.
+
 ```bash
 # Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`
 # satisfies the scenario's `sweep.constraints`.
@@ -171,6 +275,40 @@ uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compl
 
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
 not `outputs/`. The result viewer scans both directories.
+
+A failed, crashed or timed-out case does not stop the sweep: every case runs,
+the sweeper logs `Sweep complete: P/N succeeded, F failed (T timed out).`, and
+the process then exits 1 when any case failed (see [Exit Codes](#exit-codes)).
+
+The sweeper runs each case in a forked process of its own. With
+`server.cooldown_max_retries` it runs a case again only when it could not run:
+its run raised (CARLA went away, a spawn failed), timed out
+(`sweep.job_timeout_seconds`) or crashed. A case whose scenario ran to a
+FAILED verdict is final and is not retried, as in a batch. The sweeper owns
+these retries: the case's own queue does not retry it as well, so a case runs
+at most `1 + server.cooldown_max_retries` times, as in a batch.
+
+A case that timed out or crashed had no chance to stop the CARLA server it
+launched; that server's watchdog stops it within about a second, giving it
+10 s before `SIGKILL`. So before the next attempt -- a retry or the next case
+-- the sweeper waits until the CARLA processes the case launched have exited
+(at most 15 s, then it kills them), on top of `server.cooldown_seconds`: the
+next case must neither reuse the dying server nor start one while it still
+holds the port, even if the case was killed while its server was still
+loading. A case that ended normally stopped its server itself, so nothing is
+waited for; nor is a server the case did not launch (one you started
+yourself, which it reused), which no case stops.
+
+A sweep with no case to run exits 1 before anything runs, as a batch with no
+case left does: its constraints, route or ODD sample match nothing on the map
+(`the sweep expands to no case`), or `--resume-from` / `sweep.resume_from` is
+past its last case.
+
+Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
+sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
+and `SIGKILL` if it is still running 30 s later (a second Ctrl-C does not
+wait). The sweep then exits 130 (Ctrl-C) or 143 (`SIGTERM`) and names the case
+to resume from.
 
 To get the concrete scenarios without running them (for example, to fan them
 out over a cluster), use `scenario-expand`. It takes the same arguments as
@@ -280,7 +418,9 @@ Defines the default config group composition:
 | `server.host` | str | `localhost` | CARLA server hostname |
 | `server.port` | int | `2000` | CARLA server port |
 | `server.cooldown_seconds` | float | `2.0` | Wait time between consecutive scenario runs |
-| `server.cooldown_max_retries` | int | `0` | Maximum retries on failure |
+| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed) |
+| `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
+| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
 
 #### Ego Vehicle Configuration
 
@@ -365,6 +505,13 @@ driver policy's sensors (`driver.lidars`, `driver.cameras`) at each policy
 step, and the box of every vehicle and pedestrian from CARLA's ground truth
 (the `t4` extra; [T4 Dataset](t4_dataset.md)).
 
+#### A T4Scene of a run
+
+With `t4scene.enabled=true` each run's trajectory log is also written as a
+T4Scene, `{ScenarioName}.t4scene.pb` with its map, `{ScenarioName}.t4scene.map.pb`,
+the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
+`scenario-t4scene <output dir>` does the same after a run.
+
 ### Sensors in the recording
 
 The trajectory log holds no sensor data. With `rerun.enabled=true` and:
@@ -448,11 +595,15 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `scenario.expected_route_lanelet_ids` | list[int] | varies | Lanelet IDs the ego must traverse |
+| `scenario.expected_route_lanelet_ids` | list[int] | varies | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
 | `scenario.timeout_seconds` | float | `5.0` | Maximum scenario duration |
 | `scenario.min_speed_kmh` | float \| null | null | Minimum ego speed (fail if below). `null` disables check |
 | `scenario.speed_check_delay_seconds` | float | `0.3` | Grace period before speed check starts |
 | `scenario.turn_direction` | str \| null | null | `"left"`, `"right"`, or `null` for straight |
+| `scenario.turn_indicator_before_m` | float \| null | null | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
+| `scenario.turn_indicator_grace_seconds` | float | `0.5` | How long the indicator may be wrong before the run fails |
+| `scenario.max_steering_reversals` | int \| null | null | Fail once the steering has turned back this many times since the start (the `steering_reversals` metric, [metrics.md](metrics.md#weaving)). `null` disables the check |
+| `scenario.max_turn_indicator_changes` | int \| null | null | Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the `turn_indicator_changes` metric). `null` disables the check |
 | `scenario.npc_vehicles` | list | `[]` | NPC vehicle configurations (see below) |
 
 **NPC vehicle configuration:**
@@ -593,17 +744,24 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
-| `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
+
+On a pass, `message` is the message of the pass condition that fired -- here
+an `AndCondition` of two `StickyCondition`s, which joins its children's
+messages with ` AND ` -- or `Scenario completed successfully` when
+`is_done()` ended the run. When a fail condition ends the run, it is that
+condition's message.
 
 ```json
 {
   "scenario": "intersection_passing/straight",
   "passed": true,
-  "message": "All pass conditions satisfied",
+  "message": "Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s",
   "elapsed_seconds": 3.42,
   "condition_statuses": [
     {"label": "Road 5 visited", "satisfied": true, "message": "..."},
@@ -612,12 +770,93 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 }
 ```
 
+**Why a run failed:**
+
+A failed run's result has a `failure`: the fail condition that ended it, and a
+*category* that names what went wrong the same way in every scenario, where
+the condition's label is the scenario author's. A batch, a sweep or two
+versions of a driver can then be compared by what went wrong
+(`batch_results.json` carries it for every case, and the summary prints it).
+
+```json
+"failure": {
+  "condition": "fail[1](scenario_timeout)",
+  "category": "progress",
+  "at": 25.0,
+  "message": "Timeout after 25.00s (limit: 25.0s)",
+  "detail": "stalled",
+  "also_triggered": []
+}
+```
+
+| Category | What went wrong |
+|---|---|
+| `collision` | The ego hit something |
+| `traffic_rule` | It broke a traffic rule: ran a red light, drove against the traffic |
+| `signalling` | It did not signal what it did (no turn indicator) |
+| `lane_keeping` | It left its lane or the road |
+| `stability` | It did not drive steadily: sawed at the steering, weaved, flicked its indicators |
+| `safety_margin` | It came too close: time to collision, headway, distance |
+| `progress` | It did not get where the scenario asked in time |
+| `driver` | The driver ended the run itself |
+| `infrastructure` | The run could not go on: the ego vanished, or the run raised |
+| `other` | None of these, or a condition that does not say |
+
+A scenario gives a fail condition its category when it registers it:
+
+```python
+from autoware_carla_scenario.failure import FailureCategory
+
+self.register_fail_condition(
+    PersistentCondition(AndCondition([...]), 0.5, label="no_left_indicator"),
+    category=FailureCategory.SIGNALLING,
+)
+```
+
+Without one, the condition says (`BaseCondition.failure_category()`): a
+collision condition is `collision`, a timeout `progress`, a time-to-collision
+or headway condition `safety_margin`, the ego's existence `infrastructure`,
+and a `MetricCondition` what its metric reads (the
+collision metrics `collision`, `offroad` `lane_keeping`, `wrong_lane`
+`traffic_rule`, the weaving ones `stability`). A sticky or persistent
+condition says what it wraps. A combination of conditions (AND, OR, NOT) says
+nothing, and the run's failure is `other`: give it a category.
+
+`detail` tells a `progress` failure apart by how the ego ended the run:
+`never_moved` (it never drove 1 m), `stalled` (it had stood
+still for 3 s or more: waiting for something that never cleared) or `moving`
+(it was driving, but not where the scenario's pass condition asked). The other
+fail conditions that held when the run ended are in `also_triggered`. The
+driver ending the run is `driver`, and a case that raised on every attempt is
+`infrastructure`.
+
 ### Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error |
+| 2 | Refused before anything ran: the scenario does not type-check, or an extra it asks for (`rerun`, `t4`) is not installed |
+| 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
+
+The same codes hold however the cases run: a single run, a glob batch, a
+`--multirun` (each case of the scenario's sweep in one batch,
+`hydra/sweeper=lanelet_constraint`, or Hydra's own sweeper over
+comma-separated values) and `launcher=slurm`, which waits for the array and
+collects it. A sweep runs every case before it exits, so 1 means at least
+one case failed; the summary names how many. A refusal ends a sweep at once
+with 2, since every case after it would be refused too. A run with no case
+to run (nothing expanded, or `--resume-from` past the last case) exits 1:
+exit 0 always means something ran and passed. The exceptions:
+
+- Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
+  `hydra/sweeper=`), a case that raises an exception ends the sweep at once
+  with 1, as Hydra does; a case that runs and fails does not.
+- `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
+  verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
+  Interrupted while it waits, it cancels the array and exits with the verdict
+  of what it collects (`slurm.cancel_on_interrupt`, the default), or exits 130
+  and leaves the array running.
 
 ---
 
@@ -643,6 +882,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 | `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
+| `hils` | ECUs under test drive the ego, through the resident HILS bridge `scenario-hils` (`hils.host`, `hils.port`; [HILS Bridge](hils.md)) |
 
 Common overrides:
 
@@ -690,6 +930,23 @@ nothing answers at `renderer.endpoint` and the file gives a
 carla_canvas is not an extra of this package: it needs protobuf 7, and the
 vendored alpasim modules are regenerated on protobuf 4. Under SLURM the file is
 the nodes' path.
+
+---
+
+## `scenario-hils` - Streaming the Ego to ECUs (HILS)
+
+A resident process on the HILS PC that follows a run's ego in CARLA, sends ECUs
+under test their sensors' and buses' traffic (CAN, GNSS, LiDAR packets, camera
+frames) through hilspy, initializes and finalizes them around each scenario,
+and hands their commands back to a run with `ego.entity=hils`; configured by
+one YAML file:
+
+```bash
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils --example > hils.yaml
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+```
+
+See [HILS Bridge](hils.md).
 
 ---
 
@@ -765,17 +1022,39 @@ Web UI for browsing and monitoring scenario test results. Starts a FastAPI serve
 ### Usage
 
 ```bash
-# Start with default settings (0.0.0.0:9000, current directory)
+# Start with default settings (127.0.0.1:9000, current directory)
 uv run viewer
 
 # Custom host and port
-VIEWER_HOST=127.0.0.1 VIEWER_PORT=8080 uv run viewer
+uv run viewer --host 127.0.0.1 --port 8080
 
-# Specify results directory
-VIEWER_BASE_PATH=/path/to/scenario/outputs uv run viewer
+# Scan another project: the directory containing outputs/ and multirun/
+uv run viewer --base-path /path/to/project
+
+# All options
+uv run viewer --help
 ```
 
 Then open `http://localhost:9000` (or the configured host/port) in a browser.
+
+| Option | Environment variable | Default |
+|--------|----------------------|---------|
+| `--host` | `VIEWER_HOST` | `127.0.0.1` |
+| `--port` | `VIEWER_PORT` | `9000` |
+| `--base-path` | `VIEWER_BASE_PATH` | the working directory |
+| `--fetch-rerun-web-viewer [--from TGZ] [--version V]` | — | fetch the Rerun web viewer and exit ([below](#seeing-a-run-in-the-viewer)) |
+
+Each option defaults to its environment variable, so a flag on the command line
+wins over the environment. An unknown option is an error (exit 2) and serves
+nothing.
+
+!!! warning "The viewer listens on this machine only by default"
+    The viewer has no authentication, and its API starts scenario runs
+    (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). It therefore
+    binds `127.0.0.1` unless told otherwise. It used to bind `0.0.0.0`, every
+    interface; to serve other machines as before, pass `--host 0.0.0.0` (or set
+    `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
+    when it listens on anything but a loopback address.
 
 ### Seeing a run in the viewer
 
@@ -885,9 +1164,9 @@ sync the environment).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files |
-| `VIEWER_HOST` | `0.0.0.0` | Server bind address |
-| `VIEWER_PORT` | `9000` | Server listen port |
+| `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files (`--base-path` wins) |
+| `VIEWER_HOST` | `127.0.0.1` | Server bind address (`--host` wins) |
+| `VIEWER_PORT` | `9000` | Server listen port (`--port` wins) |
 | `VIEWER_CACHE_DIR` | `~/.cache/autoware_carla_scenario/viewer` | The web viewer's copy, and recordings of sessions that cannot be written |
 | `VIEWER_RERUN_WEB_VIEWER` | the copy in the cache, else the CDN | Where the Rerun web viewer is loaded from: a directory, a URL, or `none` |
 | `VIEWER_RERUN_MAP_DIR` | `~/autoware_data/maps`, if it exists | Where the converter looks a map up by name when the log's own map file is not on this machine |
@@ -914,7 +1193,7 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/refresh` | Clear result cache and return updated session table HTML |
 | `GET` | `/api/scenarios` | List all available scenario config names |
 | `POST` | `/api/run/preview` | Preview the CLI command that would be executed |
-| `POST` | `/api/run` | Start a scenario execution in the background |
+| `POST` | `/api/run` | Start a scenario execution in the background (409 `{"status": "busy"}` while a local run is still in progress) |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
 | `GET` | `/api/launchers` | The launchers a run can use here (`slurm` only where `sbatch` is, with the partitions) |
@@ -939,8 +1218,9 @@ With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
 "time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
 "remote_cwd": "workspace/OnePlanner", "python": ".venv/bin/python",
 "setup": "source ~/env.sh", "env": {"NAME": "value"}}` (`setup`: a shell line
-per line, without `${...}` or backslashes; `env`: `NAME=value` lines, or a
-mapping).
+per line, without `${...}` or a backslash continuing it; `env`: `NAME=value`
+lines, or a mapping, each value exported as written, so without `${...}` either
+-- an OmegaConf interpolation in the override the viewer passes on).
 
 **Progress SSE event format:**
 
@@ -966,8 +1246,8 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `NISHISHINJUKU_XODR_PATH` | map config | Override default OpenDRIVE file path for nishishinjuku |
 | `NISHISHINJUKU_LANELET2_PATH` | map config | Override default Lanelet2 file path for nishishinjuku |
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |
-| `VIEWER_HOST` | viewer | Viewer server bind address |
-| `VIEWER_PORT` | viewer | Viewer server listen port |
+| `VIEWER_HOST` | viewer | Viewer server bind address (default `127.0.0.1`; `--host` wins) |
+| `VIEWER_PORT` | viewer | Viewer server listen port (`--port` wins) |
 | `VIEWER_CACHE_DIR` | viewer | The viewer's cache (the Rerun web viewer's copy, recordings it could not keep beside their logs) |
 | `VIEWER_RERUN_WEB_VIEWER` | viewer | Where the Rerun web viewer is loaded from (a directory, a URL, or `none`) |
 | `VIEWER_RERUN_MAP_DIR` | viewer | Where the Rerun converter looks maps up by name |
@@ -975,8 +1255,8 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
 | `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |
-| `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address |
-| `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port |
+| `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address (default `127.0.0.1`; `--host` wins) |
+| `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port (`--port` wins) |
 | `SCENARIO_EDITOR_MAP_VIEWER` | scenario editor | URL of a self-hosted `simple_lanelet2` map viewer |
 | `SCENARIO_EXPORT_FRAMEWORK_VERSION` | package export | Pin exported packages to a published framework release |
 | `SCENARIO_EXPORT_FRAMEWORK_REPOSITORY` | package export | Repository URL recorded for a commit pin |
@@ -1022,8 +1302,9 @@ uv run scenario scenario='intersection_passing/*' map=nishishinjuku
 # 1. Run scenarios
 uv run scenario scenario='*/*'
 
-# 2. Launch the viewer pointing to the outputs directory
-VIEWER_BASE_PATH=outputs uv run viewer
+# 2. Launch the viewer from the project directory: it scans outputs/ and
+#    multirun/ there (from elsewhere: --base-path <dir containing outputs/>)
+uv run viewer
 
 # 3. Open http://localhost:9000 in a browser
 ```

@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import math
 import re
+import threading
 import zipfile
 from pathlib import Path
 from typing import Any, TypeVar
@@ -1322,8 +1323,9 @@ class TestValidateSaveExport:
         """Only the wheelhouse outlives the request; the project it was built
         from is a build input and goes with the temporary directory."""
         client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
-        staged = sorted(p.name for p in (tmp_path / "packages").iterdir())
-        assert staged == ["cut_in-wheelhouse.zip"]
+        packages = tmp_path / "packages"
+        staged = sorted(str(p.relative_to(packages)) for p in packages.rglob("*"))
+        assert staged == [draft_id, f"{draft_id}/cut_in-wheelhouse.zip"]
 
     def test_downloading_before_an_export_is_an_error_not_a_traceback(
         self, client: TestClient, draft_id: str
@@ -1343,7 +1345,7 @@ class TestValidateSaveExport:
         store.save(draft)
         response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         assert "Export failed" in response.text
-        assert not (tmp_path / "packages" / "cut_in-wheelhouse.zip").exists()
+        assert not list((tmp_path / "packages").rglob("*.zip"))
 
 
 class TestServiceGuards:
@@ -1379,7 +1381,7 @@ class TestEnvironmentTrack:
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
         assert offers["ego"] == {
-            "follow_trajectory",
+            "communication_loss",
             "lane_change",
             "routing",
             "set_speed",
@@ -1389,13 +1391,15 @@ class TestEnvironmentTrack:
         assert offers[""] == {
             "adversarial_traffic",
             "construction_zone",
+            "despawn",
             "environment",
-            "prop",
+            "spawn",
             "traffic_signal",
             "traffic_parameters",
             "traffic_signal_controller",
             "traffic_sink",
             "traffic_source",
+            "urban_construction_zone",
         }
 
     def test_a_pedestrian_track_offers_walking_and_following_a_path(
@@ -1423,7 +1427,7 @@ class TestEnvironmentTrack:
             "stop_crossing",
             "walk_straight",
         }
-        assert offers["walker1"] == {"follow_trajectory"} | pedestrian_only
+        assert offers["walker1"] == {"despawn", "routing", "spawn"} | pedestrian_only
         assert not pedestrian_only & offers["ego"]
 
     def test_an_environment_action_needs_no_actor(
@@ -2399,3 +2403,214 @@ class TestDerivedLanelets:
             data={"spawn_heading_deg": "7.1", "spawn_t": "-1"},
         )
         assert _entity(store, draft_id, "npc1").spawn.heading == stored
+
+
+class TestDraftsDoNotShareAnExport:
+    """The staged wheelhouse belongs to a draft, not to a document id (#678).
+
+    Every draft made from one starter has the same document id -- ``cut_in``,
+    ``new_scenario`` -- so an archive keyed by it was one archive shared by all
+    of them: one draft's link served another's export.
+    """
+
+    def test_two_drafts_from_one_starter_are_staged_apart(self, tmp_path: Path) -> None:
+        app = create_app(tmp_path / "drafts", tmp_path / "packages")
+        service = app.state.service
+        a = service.create_draft("cut_in", title="Draft A")
+        b = service.create_draft("cut_in", title="Draft B")
+        assert a.document.id == b.document.id == "cut_in"
+        assert service.archive_path(a) != service.archive_path(b)
+
+        archive = service.archive_path(a)
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(b"PK-wheelhouse-of-draft-A")
+
+        client = TestClient(app)
+        other = client.get(f"/draft/{b.id}/wheelhouse.zip")
+        assert other.status_code == 404
+        assert "No exported wheelhouse" in other.text
+        own = client.get(f"/draft/{a.id}/wheelhouse.zip")
+        assert own.status_code == 200
+        assert own.content == b"PK-wheelhouse-of-draft-A"
+        assert 'filename="cut_in-wheelhouse.zip"' in own.headers["content-disposition"]
+
+    def test_exporting_one_draft_gives_the_other_nothing_to_download(
+        self, client: TestClient, offline_export: None
+    ) -> None:
+        ids = []
+        for title in ("Draft A", "Draft B"):
+            response = client.post(
+                "/new", data={"kind": "cut_in", "title": title}, follow_redirects=False
+            )
+            ids.append(response.headers["location"].rsplit("/", 1)[-1])
+        a, b = ids
+        client.post(f"/draft/{a}/export", data={"dev_mode": "on"})
+        assert client.get(f"/draft/{a}/wheelhouse.zip").status_code == 200
+        assert client.get(f"/draft/{b}/wheelhouse.zip").status_code == 404
+
+    def test_the_download_is_the_archive_the_export_staged(
+        self, client: TestClient, offline_export: None, store: DraftStore, draft_id: str
+    ) -> None:
+        """Renaming the scenario afterwards does not orphan the archive, and the
+        file keeps the name of the package it actually holds."""
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        draft = _draft(store, draft_id)
+        draft.document.id = "renamed"
+        store.save(draft)
+        download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        assert download.status_code == 200
+        assert (
+            'filename="cut_in-wheelhouse.zip"'
+            in download.headers["content-disposition"]
+        )
+
+        # A re-export under the new id replaces it rather than leaving both.
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        staged = client.app.state.service.export_dir / draft_id  # type: ignore[attr-defined]
+        assert sorted(p.name for p in staged.iterdir()) == ["renamed-wheelhouse.zip"]
+
+    def test_an_export_in_progress_never_exposes_a_partial_archive(
+        self,
+        client: TestClient,
+        offline_export: None,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+    ) -> None:
+        """The archive is written aside and renamed into place, so a download
+        while a second export is zipping gets the first export, whole."""
+        from autoware_carla_scenario.editor import service as service_module
+
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        first = client.get(f"/draft/{draft_id}/wheelhouse.zip").content
+        assert zipfile.ZipFile(io.BytesIO(first)).namelist()
+
+        zipping = threading.Event()
+        release = threading.Event()
+        real_zip = service_module._zip_directory
+
+        def _slow_zip(source: Path, archive: Path) -> None:
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(b"PK-half-written")
+            zipping.set()
+            assert release.wait(10)
+            real_zip(source, archive)
+
+        monkeypatch.setattr(service_module, "_zip_directory", _slow_zip)
+        exporter = threading.Thread(
+            target=lambda: client.post(
+                f"/draft/{draft_id}/export", data={"dev_mode": "on"}
+            )
+        )
+        exporter.start()
+        try:
+            assert zipping.wait(10)
+            during = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        finally:
+            release.set()
+            exporter.join(10)
+        assert during.status_code == 200
+        assert during.content == first
+        after = client.get(f"/draft/{draft_id}/wheelhouse.zip").content
+        assert zipfile.ZipFile(io.BytesIO(after)).namelist()
+
+
+class TestMapActionsKeepConcurrentEdits:
+    """A map operation runs for tens of seconds off the event loop (#679).
+
+    It used to load the draft, work on that copy, and save the whole copy back
+    -- reverting every edit made to the draft while it ran.
+    """
+
+    @staticmethod
+    def _blocking_fetch(
+        monkeypatch: pytest.MonkeyPatch, client: TestClient, name: str
+    ) -> tuple[threading.Event, threading.Event]:
+        """Replace ``fetch_map`` by one that waits to be released, as a git
+        clone would take its time, and then names the map *name*."""
+        service = client.app.state.service  # type: ignore[attr-defined]
+        started = threading.Event()
+        release = threading.Event()
+
+        def _fetch(document: ScenarioDocument, *, refresh: bool = False) -> str:
+            started.set()
+            assert release.wait(10)
+            document.map.name = name
+            return f"{name} cached."
+
+        monkeypatch.setattr(service, "fetch_map", _fetch)
+        return started, release
+
+    @staticmethod
+    def _in_background(call: Any) -> tuple[threading.Thread, list[Any]]:
+        results: list[Any] = []
+        thread = threading.Thread(target=lambda: results.append(call()))
+        thread.start()
+        return thread, results
+
+    def test_an_edit_made_during_a_fetch_survives_it(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+    ) -> None:
+        started, release = self._blocking_fetch(monkeypatch, client, "FetchedTown")
+        thread, results = self._in_background(
+            lambda: client.post(f"/draft/{draft_id}/map/fetch", data={})
+        )
+        try:
+            assert started.wait(10)
+            saved = client.post(
+                f"/draft/{draft_id}/save", data={"title": "Edited meanwhile"}
+            )
+            assert saved.status_code == 200
+            client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
+        finally:
+            release.set()
+            thread.join(10)
+
+        assert results and results[0].status_code == 200
+        assert "FetchedTown cached." in results[0].text
+        document = _document(store, draft_id)
+        # The edits made meanwhile are kept ...
+        assert document.title == "Edited meanwhile"
+        assert any(e.kind == "pedestrian" for e in document.entities)
+        # ... and the fetch applied what it computed.
+        assert document.map.name == "FetchedTown"
+
+    def test_a_map_edited_during_a_fetch_is_not_overwritten(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+    ) -> None:
+        """When the user changed the map itself meanwhile, the fetch's result
+        is about a map that is no longer the one chosen: it is refused, said
+        so, and the user's choice stands."""
+        started, release = self._blocking_fetch(monkeypatch, client, "FetchedTown")
+        thread, results = self._in_background(
+            lambda: client.post(f"/draft/{draft_id}/map/fetch", data={})
+        )
+        try:
+            assert started.wait(10)
+            client.post(f"/draft/{draft_id}/scenario", data={"map_name": "UserTown"})
+        finally:
+            release.set()
+            thread.join(10)
+
+        assert results and "changed while" in results[0].text
+        assert _document(store, draft_id).map.name == "UserTown"
+
+    def test_a_draft_lock_lives_only_while_it_is_used(self, tmp_path: Path) -> None:
+        """Lock keys come from URLs, so the table must not keep one per id
+        ever asked for; two edits of one draft still share one lock."""
+        service = create_app(tmp_path / "drafts", tmp_path / "packages").state.service
+        with service.editing("draft_a"):
+            assert service._lock("draft_a") is service._lock("draft_a")
+            assert "draft_a" in service._locks
+        for draft_id in ("draft_b", "draft_c"):
+            with service.editing(draft_id):
+                pass
+        assert "draft_a" not in service._locks
+        assert len(service._locks) == 0

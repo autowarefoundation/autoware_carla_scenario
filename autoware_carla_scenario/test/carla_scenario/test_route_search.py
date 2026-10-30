@@ -87,7 +87,7 @@ class TestParsing:
             ({"segments": []}, "at least one segment"),
             ({"segments": [{"kind": "road"}]}, "'lane' or 'junction'"),
             ({"segments": [_lane(turn="left")]}, "does not take"),
-            ({"segments": [_junction(length={"max": 3})]}, "does not take"),
+            ({"segments": [_junction(lanes_left={"max": 3})]}, "does not take"),
             ({"segments": [_lane(length={"min": 9, "max": 3})]}, "above its max"),
             ({"segments": [_lane(shape="wiggly")]}, "shape must be one of"),
             ({"segments": [_junction(traffic_light="maybe")]}, "traffic_light"),
@@ -644,3 +644,278 @@ class TestJunctionPaths:
             RouteFrame(match, *split),
         )
         assert (pose.lanelet_id, pose.s) == (rm.SPLIT_FIRST, pytest.approx(1.0))  # type: ignore[union-attr]
+
+
+class TestPathsOfTheEgosApproach:
+    """Other paths of the ego's own approach through its junction (``same``):
+    the ego's lane turning another way, and another lane of its road."""
+
+    @pytest.fixture(scope="class")
+    def side(self) -> tuple[Any, Any]:
+        lanelet_map = rm.crossroads(side_turn=True)
+        return lanelet_map, rm.routing_graph(lanelet_map)
+
+    @staticmethod
+    def _straight(**junction: Any) -> dict[str, Any]:
+        return {
+            "segments": [
+                _lane(length={"max": 50}),
+                _junction(turn="straight", traffic_light="yes", **junction),
+            ]
+        }
+
+    def test_members_of_the_egos_approach_are_same(
+        self, road: tuple[Any, Any], side: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        def members(at: tuple[Any, Any]) -> dict[int, tuple[str, str]]:
+            lanelet_map, graph = at
+            found = MapFeatures(lanelet_map, graph).junction_members(
+                [lanelet_map.laneletLayer[rm.J[("W", "E")]]]
+            )
+            return {int(m.lanelet.id): (m.approach, m.turn) for m in found}
+
+        # The ego's own lane turning right and left...
+        plain = members(road)
+        assert plain[rm.J[("W", "S")]] == ("same", "right")
+        assert plain[rm.J[("W", "N")]] == ("same", "left")
+        # ...and the lane beside it turning right.
+        assert members(side)[rm.SIDE_RIGHT] == ("same", "right")
+
+    def test_a_path_is_required_by_approach_and_turn(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        def ways(approach: str, turn: str) -> list[tuple[int, ...]]:
+            wanted = [{"approach": approach, "turn": turn}]
+            return [
+                m.segments[1].lanelet_ids
+                for m in _find(road, **self._straight(paths=wanted))
+            ]
+
+        assert ways("same", "right") == [(rm.J[("W", "E")],)]
+        # The S road (the ego's right) turns left onto the W road.
+        assert ways("right", "left") == [(rm.J[("W", "E")],)]
+        # The plain crossroads has no left turn from beside the ego's lane:
+        # the W road's own left turn leaves from the ego's lane.
+        assert ways("same", "left") == [(rm.J[("W", "E")],)]
+
+    def test_a_crossing_pose_from_the_egos_approach(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                self._straight(paths=[{"approach": "same", "turn": "right"}])
+            ),
+            *road,
+        )
+        frame = RouteFrame(match, *road)
+        inside = resolve_route_pose(
+            RouteCrossingPose(approach="same", turn="right", distance=1.0), frame
+        )
+        assert (inside.lanelet_id, inside.s) == (rm.J[("W", "S")], pytest.approx(1.0))  # type: ignore[union-attr]
+        before = resolve_route_pose(
+            RouteCrossingPose(approach="same", turn="right", distance=-5.0), frame
+        )
+        assert (before.lanelet_id, before.s) == (rm.W_IN2, pytest.approx(45.0))  # type: ignore[union-attr]
+
+    def test_a_second_path_is_required_by_its_number(
+        self, road: tuple[Any, Any], side: tuple[Any, Any]
+    ) -> None:
+        """``path: 2`` needs two right turns from the ego's approach: the side
+        lane's crossroads has them, the plain one only its own lane's."""
+        wanted = [{"approach": "same", "turn": "right", "path": 2}]
+        assert _find(side, **self._straight(paths=wanted))
+        assert not _find(road, **self._straight(paths=wanted))
+
+    def test_a_crossing_pose_names_one_of_two_paths_from_the_left(
+        self, side: tuple[Any, Any]
+    ) -> None:
+        """Two lanes of the ego's approach turn right: ``path`` 1 is the left
+        one (the ego's own lane), 2 the one beside it; a third is refused."""
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                self._straight(paths=[{"approach": "same", "turn": "right"}])
+            ),
+            *side,
+        )
+        frame = RouteFrame(match, *side)
+
+        def on(path: Any) -> int:
+            pose = RouteCrossingPose(
+                approach="same", turn="right", distance=1.0, path=path
+            )
+            return int(resolve_route_pose(pose, frame).lanelet_id)  # type: ignore[union-attr]
+
+        assert (on(1), on(2)) == (rm.J[("W", "S")], rm.SIDE_RIGHT)
+        with pytest.raises(ValueError, match="there is no path 3"):
+            on(3)
+        with pytest.raises(ValueError, match="counts from 1"):
+            RouteCrossingPose(approach="same", turn="right", path=0)
+        # The search counts the paths of one turn: a path names one.
+        with pytest.raises(ValueError, match="needs a turn"):
+            RouteCrossingPose(approach="same", path=1)
+
+    @pytest.mark.parametrize(
+        ("paths", "message"),
+        [
+            ("same", "paths must be a list"),
+            ([{"approach": "behind", "turn": "left"}], "approach must be one of"),
+            ([{"approach": "same", "turn": "u"}], "turn must be one of"),
+            ([{"approach": "same", "turn": "left", "lanes": 2}], "does not take"),
+            ([{"approach": "same", "turn": "left", "path": 0}], "counts paths from 1"),
+        ],
+    )
+    def test_a_malformed_path_is_refused(self, paths: Any, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            parse_route_search(self._straight(paths=paths))
+
+
+class TestPathReach:
+    """How far a path's road runs before and after its junction, and a
+    crossing pose on another lane of it."""
+
+    @pytest.fixture(scope="class")
+    def side(self) -> tuple[Any, Any]:
+        lanelet_map = rm.crossroads(side_turn=True)
+        return lanelet_map, rm.routing_graph(lanelet_map)
+
+    @staticmethod
+    def _straight(**junction: Any) -> dict[str, Any]:
+        return {
+            "segments": [
+                _lane(length={"max": 50}),
+                _junction(turn="straight", traffic_light="yes", **junction),
+            ]
+        }
+
+    def test_the_reach_of_a_path(self, road: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        lanelet_map, graph = road
+        features = MapFeatures(lanelet_map, graph)
+        # From the S road (100 m) turning left onto the W road (100 m back).
+        before, through, after = features.path_reach(
+            lanelet_map.laneletLayer[rm.J[("S", "W")]]
+        )
+        assert before == pytest.approx(100.0, abs=0.5)
+        assert through > 10.0
+        assert after == pytest.approx(100.0, abs=0.5)
+
+    @pytest.mark.parametrize(
+        ("reach", "found"),
+        [
+            ({"before": {"min": 90}}, True),
+            ({"before": {"min": 110}}, False),
+            ({"after": {"min": 90, "max": 110}}, True),
+            ({"after": {"max": 50}}, False),
+        ],
+    )
+    def test_a_path_is_required_with_its_reach(
+        self, road: tuple[Any, Any], reach: dict[str, Any], found: bool
+    ) -> None:
+        wanted = [{"approach": "right", "turn": "left", **reach}]
+        assert bool(_find(road, **self._straight(paths=wanted))) is found
+
+    def test_a_crossing_pose_on_another_lane_of_its_road(
+        self, side: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                self._straight(paths=[{"approach": "same", "turn": "right"}])
+            ),
+            *side,
+        )
+        frame = RouteFrame(match, *side)
+        # Five metres back from the W road's own right turn, one lane to its
+        # right: the outer lane.
+        pose = resolve_route_pose(
+            RouteCrossingPose(approach="same", turn="right", distance=-5.0, d_lane=-1),
+            frame,
+        )
+        assert (pose.lanelet_id, pose.s) == (rm.W_OUT_LANE2, pytest.approx(45.0))  # type: ignore[union-attr]
+
+    def test_a_malformed_reach_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="before"):
+            parse_route_search(
+                self._straight(
+                    paths=[
+                        {"approach": "same", "turn": "right", "before": {"min": "x"}}
+                    ]
+                )
+            )
+
+
+@pytest.mark.parametrize(
+    ("length", "found"),
+    [({"min": 15, "max": 25}, True), ({"min": 25}, False), ({"max": 15}, False)],
+)
+def test_a_junction_segment_bounds_the_length_of_the_egos_way(
+    road: tuple[Any, Any], length: dict[str, float], found: bool
+) -> None:
+    # The W road's straight way through the 20 m junction box.
+    matches = _find(
+        road,
+        segments=[
+            _lane(length={"max": 50}),
+            _junction(turn="straight", traffic_light="yes", length=length),
+        ],
+    )
+    assert bool(matches) is found
+
+
+class TestJunctionTrafficLights:
+    """The lights of a route junction's paths, on the map the run is on."""
+
+    @staticmethod
+    def _frame(road: tuple[Any, Any]) -> Any:
+        from autoware_carla_scenario.route.frame import RouteFrame
+
+        (match,) = _find(
+            road,
+            segments=[
+                _lane(length={"max": 50}),
+                _junction(turn="straight", traffic_light="yes"),
+            ],
+        )
+        return RouteFrame(match, *road)
+
+    @pytest.mark.parametrize(
+        ("approach", "turn", "lights"),
+        [
+            # The W road's light: on its approach and its junction lanelets.
+            ("same", None, [rm.TRAFFIC_LIGHT]),
+            ("same", "straight", [rm.TRAFFIC_LIGHT]),
+            ("same", "right", [rm.TRAFFIC_LIGHT]),
+            # The ego goes straight on: its own way is not a left turn, but
+            # its lane turning left is.
+            ("same", "left", [rm.TRAFFIC_LIGHT]),
+            # Nothing else is signalised.
+            ("right", None, []),
+            ("opposite", "straight", []),
+        ],
+    )
+    def test_the_lights_of_a_path(
+        self, road: tuple[Any, Any], approach: str, turn: Any, lights: list[int]
+    ) -> None:
+        from autoware_carla_scenario.route.positions import junction_traffic_lights
+
+        assert junction_traffic_lights(self._frame(road), 0, approach, turn) == lights
+
+    def test_a_junction_the_route_lacks(self, road: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.route.positions import junction_traffic_lights
+
+        with pytest.raises((ValueError, IndexError)):
+            junction_traffic_lights(self._frame(road), 3, "same", None)

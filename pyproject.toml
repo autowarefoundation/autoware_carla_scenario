@@ -2,6 +2,14 @@
 members = [
     "autoware_carla_scenario",
 ]
+# The STL policy, a simulated ego for tuning scenarios (stl_driver/README.md).
+# A project of its own, with its own lock, rather than a member: a virtual root
+# syncs every member, so a member's torch would reach every `uv sync` and
+# `uv run`. Add it to the framework's environment when wanted:
+# `uv run --with-editable ./stl_driver ...`.
+exclude = [
+    "stl_driver",
+]
 
 [tool.uv.sources]
 # The T4 dataset reader the tests load each written dataset with, at its
@@ -37,13 +45,15 @@ dev = [
     "sumolib>=1.23",
     "traci>=1.23",
     # ...and the `map` extra (driver map files) and its tests.
-    "roadgen>=0.41.1",
+    "roadgen>=0.41.2",
     # ...and the `ros2` extra (the DDS ego) and its tests, where it has wheels.
     "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
     "weasyprint>=68.0",
+    # ...and the `hils` extra (the HILS bridge) and its tests.
+    "hilspy>=0.16,<0.17",
     # ...and the `rerun` extra (Rerun recordings of the runs) and its tests.
     "autoware-carla-scenario-rerun>=0.1,<0.2",
     "hypothesis>=6.100",

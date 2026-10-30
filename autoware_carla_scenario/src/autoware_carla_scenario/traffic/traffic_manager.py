@@ -20,6 +20,7 @@ import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
+    FIXED_DELTA_SECONDS,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
@@ -34,6 +35,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from .final_approach import APPROACH_SPEED_MPS, FinalApproach, lane_changes
 from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
@@ -70,6 +72,18 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: Metres between the points of a route :meth:`TrafficManagerBackend.follow_route`
 #: sets as a vehicle's path.
 ROUTE_POINT_STEP_M: float = 5.0
+#: An actor this far down (m) is parked under the map, out of the scene.
+_HIDDEN_BELOW_M: float = 100.0
+#: How near (m) ahead of a junction a vehicle may start for the
+#: TrafficManager to take its route through it (from its route's start, which
+#: may lie a few metres short of where it appears).  It places a vehicle on its
+#: map's waypoint nearest it, and just past a junction's entry the nearest is
+#: on one of the junction's ways through, all starting there: whichever it is,
+#: the vehicle keeps to it, whatever its path (a car meant to turn left went
+#: right and off the map).  Such a vehicle is driven out of the junction
+#: along its route first (:class:`FinalApproach`, not stopping), then handed
+#: to the TrafficManager.
+_JUNCTION_MOUTH_M: float = 4.0
 
 #: Heading change, in degrees, that each turn amounts to.  CARLA's yaw is
 #: left-handed and clockwise-positive seen from above.
@@ -128,6 +142,22 @@ _DEAD_END_STEP_M: float = 5.0
 _DEAD_END_MAX_WAYPOINTS: int = 256
 
 
+#: How near (m) a point where its path crosses to the lane beside a vehicle is
+#: told to change lanes.
+_LANE_CHANGE_AHEAD_M = 8.0
+
+
+def _lane_change_marks(
+    path: List["carla.Location"],
+) -> List[tuple["carla.Location", bool]]:
+    """Where *path* crosses to the lane beside
+    (:func:`~.final_approach.lane_changes`), and whether to the right
+    (CARLA's world is left-handed: y points south)."""
+    xs = [float(p.x) for p in path]
+    ys = [float(p.y) for p in path]
+    return [(path[i], across > 0.0) for i, across in lane_changes(xs, ys)]
+
+
 class _Kept:
     """One vehicle the backend keeps from the TrafficManager's removal
     (:meth:`TrafficManagerBackend._keep_scenario_vehicles`)."""
@@ -142,6 +172,9 @@ class _Kept:
     checked_lookahead: float
     held: bool
     refreshed: bool
+    approach: Optional[FinalApproach]
+    leading_out: bool
+    lane_changes: List[tuple["carla.Location", bool]]
 
     def __init__(self, actor: "carla.Actor") -> None:
         self.actor = actor
@@ -163,6 +196,16 @@ class _Kept:
         self.held = False
         #: Re-registered at least once (logged at info once).
         self.refreshed = False
+        #: Driving the last of its path itself, off autopilot, before a dead
+        #: end the TrafficManager would plan into (:class:`FinalApproach`).
+        self.approach = None
+        #: The approach drives it out of the junction it started in, to be
+        #: handed back to the TrafficManager at its end.
+        self.leading_out = False
+        #: Where its path crosses to the lane beside, and whether to the
+        #: right, in order (:func:`_lane_change_marks`): it is told to change
+        #: lanes there, as its own lane changes are off.
+        self.lane_changes = []
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -218,6 +261,8 @@ class TrafficManagerBackend(TrafficBackend):
     _held: dict[int, float]
     _sight_due: float
     _kept: dict[int, _Kept]
+    _desired_mps: dict[int, float]
+    _given: dict[int, List["carla.Location"]]
 
     def __init__(
         self,
@@ -274,6 +319,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
+        #: The speed (m/s) each vehicle was last asked to hold, by actor id.
+        self._desired_mps = {}
+        #: The path each vehicle was last given, by actor id, kept or not yet.
+        self._given = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -458,6 +507,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         self._draws = None
         self._kept = {}
+        self._desired_mps = {}
+        self._given = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -675,6 +726,15 @@ class TrafficManagerBackend(TrafficBackend):
         logger.debug(
             "%s: desired speed set to %.1f km/h", _entity_name(entity), speed_kmh
         )
+        # Driven out of its junction off autopilot: at this speed too.
+        self._desired_mps[int(actor.id)] = speed_kmh / 3.6
+        found = self._kept.get(int(actor.id))
+        if found is not None:
+            kept: _Kept = found
+            approach = kept.approach
+            if kept.leading_out and approach is not None:
+                leading: FinalApproach = approach
+                leading.set_speed(speed_kmh / 3.6)
 
     def turn_at_junction(
         self,
@@ -754,15 +814,116 @@ class TrafficManagerBackend(TrafficBackend):
             return
         # Not the point it stands on: the TrafficManager waits for each point
         # to come within a few metres, and one behind the vehicle never does.
+        first = to_carla_location(poses[0])
         ahead = [to_carla_location(pose) for pose in poses[1:] or poses]
-        path = _clear_of_junctions(run_carla_map(world), ahead)
+        carla_map = run_carla_map(world)
+        path = _clear_of_junctions(carla_map, ahead)
+        if not path or _in_junction(carla_map, ahead[-1]):
+            # A route that ends in a junction (or is all junction) has no
+            # point on the road out to say which way: carry it on along the
+            # lanes after its goal until it is clear of the junction.
+            beyond = _beyond_goal(stops[-1], ROUTE_POINT_STEP_M)
+            path = _clear_of_junctions(
+                carla_map, ahead + [to_carla_location(pose) for pose in beyond]
+            )
         if not path:
-            logger.warning("%s: an empty route to follow", _entity_name(entity))
-            return
+            # Still nothing clear of a junction: the points themselves, which
+            # the TrafficManager follows less surely than none at all.
+            logger.warning(
+                "%s: its route runs through a junction only and leads nowhere "
+                "past it; given as it is (%d points)",
+                _entity_name(entity),
+                len(ahead),
+            )
+            path = ahead
+        # The route says where to change lane; the TrafficManager's own lane
+        # changes would take the vehicle off it.
+        tm.auto_lane_change(_vehicle(actor), False)
         tm.set_path(_vehicle(actor), path)
         self._remember_path(actor, path)
         self._drive_on(actor)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
+        if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
+            self._lead_out(actor, first, ahead, path)
+
+    def _lead_out(
+        self,
+        actor: "carla.Actor",
+        start: "carla.Location",
+        route: List["carla.Location"],
+        path: List["carla.Location"],
+    ) -> None:
+        """Drive *actor*, starting at *start* in a junction's mouth, along
+        *route* out of the junction to its *path*'s first point past it, off
+        autopilot; :meth:`_keep_scenario_vehicles` hands it to the
+        TrafficManager there (:data:`_JUNCTION_MOUTH_M`)."""
+        # To the first point of its path past the junction: the route's points
+        # up to its first one in a junction lie on the road it comes from.
+        carla_map = run_carla_map(actor.get_world())
+        out: List["carla.Location"] = []
+        through = False
+        for point in route:
+            out.append(point)
+            if not through:
+                through = _in_junction(carla_map, point)
+            elif any(point.distance(kept_point) < 0.1 for kept_point in path):
+                break
+        # From where it stands, if it is in the world already (brought in by
+        # a spawn, which may have put it on along its lane): the route's
+        # points behind it are passed, and a path starting behind it would
+        # steer it back (vehicle_129, wedged on the kerb).
+        standing = actor.get_location()
+        if standing.z > -_HIDDEN_BELOW_M:
+            start = standing
+            out = _from_here(out, standing)
+        kept = self._kept[actor.id]
+        actor.set_autopilot(False, self.port)
+        kept.held = True
+        approach = FinalApproach(
+            actor,
+            start,
+            out,
+            stop=False,
+            speed=self._desired_mps.get(int(actor.id), APPROACH_SPEED_MPS),
+        )
+        kept.approach = approach
+        kept.leading_out = True
+        logger.info(
+            "%s: starts in a junction's mouth, where the TrafficManager would "
+            "take any way through it; off autopilot, it drives the %.0f m of its "
+            "route out of the junction itself, then the TrafficManager takes it on",
+            _actor_name(actor),
+            approach.length,
+        )
+
+    def finish_at(
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        points: List["carla.Location"],
+    ) -> bool:
+        """Take *entity*'s vehicle off autopilot and drive it along *points* to
+        the last and stop it there (:class:`FinalApproach`): the TrafficManager
+        keeps a vehicle to the middle of its lane, and one that stopped beside
+        a cyclist in the recording would stop in the cyclist's way."""
+        actor = _require_actor(entity, "finish_at")
+        if actor is None or len(points) == 0:
+            return False
+        kept = self._kept.get(int(actor.id))
+        if kept is None:
+            return False
+        actor.set_autopilot(False, self.port)
+        kept.held = True
+        kept.leading_out = False
+        approach = FinalApproach(actor, actor.get_location(), list(points), stop=True)
+        kept.approach = approach
+        logger.info(
+            "%s: off autopilot, it drives the last %.0f m of its route to where "
+            "it is to stop, itself, and stops there",
+            _actor_name(actor),
+            approach.length,
+        )
+        return True
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
@@ -826,7 +987,11 @@ class TrafficManagerBackend(TrafficBackend):
         actor.set_autopilot(True, self.port)
         self._autopiloted[actor.id] = actor
         if keep and actor.id not in self._kept:
-            self._kept[actor.id] = _Kept(actor)
+            kept = _Kept(actor)
+            if actor.id in self._given:
+                # A path given before it was kept (the ego's, at its init).
+                kept.path = list(self._given[actor.id])
+            self._kept[actor.id] = kept
         if actor.id in self._drawn:
             return
         self._drawn.add(actor.id)
@@ -897,6 +1062,29 @@ class TrafficManagerBackend(TrafficBackend):
         TrafficManager's removal, each looked at every :data:`_CHECK_PERIOD_S`
         (``docs/traffic_backends.md``)."""
         for actor_id, kept in list(self._kept.items()):
+            approach = kept.approach
+            if approach is not None:
+                driving: FinalApproach = approach
+                try:
+                    driving.step(_tick_seconds(world), elapsed)
+                except RuntimeError as error:
+                    if not kept.actor.is_alive:
+                        del self._kept[actor_id]  # Destroyed under us.
+                        continue
+                    # Alive: not left standing off autopilot for the run.
+                    logger.warning(
+                        "%s: driving its path itself failed (%s); the "
+                        "TrafficManager takes it on",
+                        _actor_name(kept.actor),
+                        error,
+                    )
+                    self._hand_on(kept)
+                    continue
+                if kept.leading_out and driving.done:
+                    self._hand_on(kept)
+                continue
+            if not kept.held and len(kept.lane_changes) > 0:
+                self._change_lanes_on_path(kept)
             if kept.held or elapsed < kept.check_due:
                 continue
             actor = kept.actor
@@ -971,16 +1159,34 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is not None:
             tm.set_path(_vehicle(kept.actor), kept.path)
 
+    def _hand_on(self, kept: _Kept) -> None:
+        """Give a vehicle driven out of its junction back to the
+        TrafficManager, with the rest of its path."""
+        kept.approach = None
+        kept.leading_out = False
+        kept.held = False
+        kept.check_due = -1.0
+        self._autopilot(kept.actor)
+        self._give_path_again(kept)
+        logger.info(
+            "%s: out of its junction, back on autopilot along its path",
+            _actor_name(kept.actor),
+        )
+
     def _remember_path(
         self, actor: "carla.Actor", path: List["carla.Location"]
     ) -> None:
-        """Remember the path a kept vehicle was just given."""
+        """Remember the path a vehicle was just given: for the keeping, now
+        if it is kept, else from when it is put on autopilot."""
+        self._given[actor.id] = list(path)
         if actor.id not in self._kept:
             return
         kept = self._kept[actor.id]
         kept.path = list(path)
         kept.near_route_end = False
         kept.checked_lookahead = -1.0
+        kept.approach = None
+        kept.lane_changes = _lane_change_marks(path)
 
     def _drive_on(self, actor: "carla.Actor") -> None:
         """Put a vehicle held at a dead end back on autopilot: it was given a
@@ -994,6 +1200,30 @@ class TrafficManagerBackend(TrafficBackend):
         logger.info(
             "%s: given a new route, back on autopilot from where it was held",
             _actor_name(actor),
+        )
+
+    def _change_lanes_on_path(self, kept: _Kept) -> None:
+        """Tell a vehicle to change lanes where its path crosses to the lane
+        beside, once it is within :data:`_LANE_CHANGE_AHEAD_M` of that point
+        (or past it): the TrafficManager keeps to its lane on a path that
+        jumps across, and the vehicle would cross only at the path's end."""
+        tm = self._require_tm("force_lane_change")
+        if tm is None:
+            return
+        try:
+            location = kept.actor.get_location()
+        except RuntimeError:
+            return
+        mark, to_the_right = kept.lane_changes[0]
+        if location.distance(mark) > _LANE_CHANGE_AHEAD_M:
+            return
+        kept.lane_changes = kept.lane_changes[1:]
+        # CARLA's force_lane_change: True to the left.
+        tm.force_lane_change(_vehicle(kept.actor), not to_the_right)
+        logger.info(
+            "%s: changes lanes to the %s where its path crosses",
+            _actor_name(kept.actor),
+            "right" if to_the_right else "left",
         )
 
     def _keep_off_dead_ends(
@@ -1033,8 +1263,24 @@ class TrafficManagerBackend(TrafficBackend):
             kept.checked_lookahead = lookahead
             return
         actor.set_autopilot(False, self.port)
-        _vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
         kept.held = True
+        ahead = _ahead_of(kept.path, location)
+        if ahead:
+            # On a path it was given, which ends before the dead end: the
+            # TrafficManager would plan past its end into it.  The rest of the
+            # path is driven here instead, and the vehicle stopped on its end.
+            approach = FinalApproach(actor, location, ahead)
+            kept.approach = approach
+            logger.info(
+                "%s: its road ends within %.0f m, past the end of its path, "
+                "where the TrafficManager would destroy it; off autopilot, "
+                "it drives the last %.0f m of its path itself and stops there",
+                _actor_name(actor),
+                lookahead,
+                approach.length,
+            )
+            return
+        _vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
         logger.info(
             "%s: its road ends within %.0f m, where the TrafficManager would "
             "destroy it; taken off autopilot and held braking until it is "
@@ -1128,6 +1374,59 @@ def _actor_name(actor: "carla.Actor") -> str:
     return f"actor {actor.id}"
 
 
+def _in_junction(carla_map: "carla.Map", location: "carla.Location") -> bool:
+    """Whether *location* is on a junction's road."""
+    found = carla_map.get_waypoint(location)
+    return found is not None and found.is_junction
+
+
+def _at_junction_mouth(carla_map: "carla.Map", location: "carla.Location") -> bool:
+    """Whether *location* is in a junction or within :data:`_JUNCTION_MOUTH_M`
+    of one ahead along its lane."""
+    found = carla_map.get_waypoint(location)
+    if found is None:
+        return False
+    if found.is_junction:
+        return True
+    for following in found.next(_JUNCTION_MOUTH_M):
+        if following.is_junction:
+            return True
+    return False
+
+
+def _beyond_goal(
+    goal: "Lanelet2Pose", step: float, distance: float = 40.0
+) -> List["Lanelet2Pose"]:
+    """Poses every *step* metres along the lanes after *goal*, up to
+    *distance*: the first lanelet following each one (the routing graph's)."""
+    from lanelet2.core import ConstLanelet  # noqa: PLC0415
+
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.relative_lane import _length  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    if not layer.exists(int(goal.lanelet_id)):
+        return []
+    lanelet: ConstLanelet = layer[int(goal.lanelet_id)]
+    s = float(goal.s) + step
+    covered = 0.0
+    out: List[Lanelet2Pose] = []
+    while covered < distance:
+        length = _length(lanelet)
+        while s <= length and covered < distance:
+            out.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=s))
+            s += step
+            covered += step
+        following = mm.routing_graph.following(lanelet)
+        if not following:
+            break
+        lanelet = following[0]
+        s -= length
+    return out
+
+
 def _clear_of_junctions(
     carla_map: "carla.Map", path: List["carla.Location"]
 ) -> List["carla.Location"]:
@@ -1148,6 +1447,35 @@ def _clear_of_junctions(
         if not any(inside[max(0, i - 1) : i + 2]):
             clear.append(location)
     return clear
+
+
+def _tick_seconds(world: "carla.World") -> float:
+    """How much simulated time the last tick covered (the run's fixed step
+    when the world cannot say)."""
+    try:
+        return float(world.get_snapshot().timestamp.delta_seconds)
+    except (AttributeError, RuntimeError):
+        return FIXED_DELTA_SECONDS
+
+
+def _from_here(
+    path: List["carla.Location"], location: "carla.Location"
+) -> List["carla.Location"]:
+    """The points of *path* from *location* on: the one nearest it and those
+    after, less that nearest one where *location* is already past it (nearer
+    the next point than it is)."""
+    nearest = 0
+    best = float("inf")
+    for i, point in enumerate(path):
+        gap = location.distance(point)
+        if gap < best:
+            best = gap
+            nearest = i
+    if nearest + 1 < len(path) and location.distance(path[nearest + 1]) < path[
+        nearest
+    ].distance(path[nearest + 1]):
+        nearest += 1
+    return path[nearest:]
 
 
 def _ahead_of(

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twelve records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twenty records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -21,13 +21,22 @@
       "$ref": "#/definitions/ActorRecord"
     },
     {
+      "$ref": "#/definitions/RearAxleRecord"
+    },
+    {
       "$ref": "#/definitions/ActorGoneRecord"
     },
     {
       "$ref": "#/definitions/TickRecord"
     },
     {
+      "$ref": "#/definitions/TurnIndicatorsRecord"
+    },
+    {
       "$ref": "#/definitions/MarkersRecord"
+    },
+    {
+      "$ref": "#/definitions/PlanRecord"
     },
     {
       "$ref": "#/definitions/ConditionRecord"
@@ -37,6 +46,21 @@
     },
     {
       "$ref": "#/definitions/AdversityRecord"
+    },
+    {
+      "$ref": "#/definitions/WaypointArrivalRecord"
+    },
+    {
+      "$ref": "#/definitions/CollisionRecord"
+    },
+    {
+      "$ref": "#/definitions/WalkerFallenRecord"
+    },
+    {
+      "$ref": "#/definitions/SpawnRecord"
+    },
+    {
+      "$ref": "#/definitions/DespawnRecord"
     },
     {
       "$ref": "#/definitions/ResultRecord"
@@ -50,12 +74,20 @@
       "traffic_light": "#/$defs/TrafficLightRecord",
       "warmup": "#/$defs/WarmupRecord",
       "actor": "#/$defs/ActorRecord",
+      "rear_axle": "#/$defs/RearAxleRecord",
       "actor_gone": "#/$defs/ActorGoneRecord",
       "tick": "#/$defs/TickRecord",
+      "turn_indicators": "#/$defs/TurnIndicatorsRecord",
       "markers": "#/$defs/MarkersRecord",
+      "plan": "#/$defs/PlanRecord",
       "condition": "#/$defs/ConditionRecord",
       "action": "#/$defs/ActionRecord",
       "adversity": "#/$defs/AdversityRecord",
+      "waypoint_arrival": "#/$defs/WaypointArrivalRecord",
+      "collision": "#/$defs/CollisionRecord",
+      "walker_fallen": "#/$defs/WalkerFallenRecord",
+      "spawn": "#/$defs/SpawnRecord",
+      "despawn": "#/$defs/DespawnRecord",
       "result": "#/$defs/ResultRecord"
     }
   },
@@ -307,6 +339,29 @@
       ],
       "additionalProperties": false
     },
+    "RearAxleRecord": {
+      "title": "RearAxleRecord",
+      "description": "Where an ego's rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is on it, written right after its `actor` record (version 2, added after the records listed in `schema_version`). A reader that converts the ego's pose to its `base_link` takes it from here rather than guessing it from the box.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "rear_axle"
+        },
+        "id": {
+          "$ref": "#/definitions/ActorId"
+        },
+        "offset": {
+          "description": "The rear axle's offset from the actor origin along the actor's x axis, metres; negative when it is behind the origin. As the run took it: the driver policy's rig origin for an ego a driver policy drives, else from the vehicle's wheels, else half its bounding box behind the origin.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "offset"
+      ],
+      "additionalProperties": false
+    },
     "ActorGoneRecord": {
       "title": "ActorGoneRecord",
       "description": "A vehicle or walker that is no longer in the world (destroyed, or despawned by the traffic), written right before the first tick it is missing from (version 2). It is in no tick from then on.",
@@ -389,6 +444,47 @@
       ],
       "additionalProperties": false
     },
+    "TurnIndicatorsRecord": {
+      "title": "TurnIndicatorsRecord",
+      "description": "The turn indicators of the recorded vehicles that changed on a tick (every vehicle's on the first tick it is in), written right after that tick's record (version 2, added after the records listed in `schema_version`). A vehicle's indicators hold until the next `turn_indicators` record that names it; a walker has none.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "turn_indicators"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record.",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "states": {
+          "description": "What each vehicle's turn indicators show, by actor id: `off`, `left`, `right`, or `hazard` (both, as hazard lights show them) -- the blinker bits of its CARLA light state.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/definitions/ActorIdKey"
+          },
+          "additionalProperties": {
+            "enum": [
+              "off",
+              "left",
+              "right",
+              "hazard"
+            ]
+          },
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "states"
+      ],
+      "additionalProperties": false
+    },
     "MarkersRecord": {
       "title": "MarkersRecord",
       "description": "The ego's debug markers (`EgoVehicle.debug_markers()`: a driver policy's planned trajectory, say), written after a tick when they changed (version 2): they hold from that tick until the next `markers` record. No polylines: the ego shows none from then on. A viewer of the run draws them beside the path the ego drove.",
@@ -430,6 +526,100 @@
         "t",
         "actor",
         "polylines"
+      ],
+      "additionalProperties": false
+    },
+    "PlanRecord": {
+      "title": "PlanRecord",
+      "description": "A driver's plan, timed (a driver policy's, or an Autoware ego's trajectory command) (`autoware_carla_scenario.ego_plan.EgoPlan`), written right after the `markers` record that draws it (version 2, added after the records listed in `schema_version`): once per plan, holding until the next `plan` record. Where the `markers` record draws the plan, this one keeps what reading how it behaves needs -- when each point is planned for, its heading, and what the policy said with it.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "plan"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started. The plan was made on that tick, except one made before the first recorded tick (while the run waits for the ego to be ready), which is written on it: `planned_at_us` tells when.",
+          "type": "number"
+        },
+        "actor": {
+          "description": "The ego actor it belongs to, or null when there was no ego actor on that tick.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step": {
+          "description": "Which plan of the driver's session it is, from 1 (a driver policy's answer, or an Autoware ego's trajectory command).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "planned_at_us": {
+          "description": "When the plan was made, on the driver's clock: a driver policy's, microseconds since its session began; an Autoware ego's, its trajectory command's stamp. Two plans of one run are `planned_at_us` apart; the clock is not the scenario's `t`.",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "policy": {
+          "description": "The policy's name, when its answer said; empty otherwise.",
+          "type": "string"
+        },
+        "inference_seconds": {
+          "description": "How long the policy took to plan, when it said; 0 otherwise (an Autoware ego), null for a value JSON has no number for.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_indicator": {
+          "description": "The turn indicators the policy commanded with the plan, numbered as Autoware's TurnIndicatorsCommand: 0 no command, 1 off, 2 left, 3 right.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "debug_scalars": {
+          "description": "The diagnostics the policy surfaced with the plan, by name; null for a value JSON has no number for (NaN, infinity).",
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "points": {
+          "description": "The planned poses of the rig's origin, in order: `[dt, x, y, z, yaw]`, `dt` seconds after the plan was made (negative for a point before it), the position in CARLA's world frame (m) and the yaw in CARLA's (degrees). A point the driver gave a coordinate that is not a finite number is left out.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PlanPoint"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "actor",
+        "step",
+        "planned_at_us",
+        "policy",
+        "inference_seconds",
+        "turn_indicator",
+        "debug_scalars",
+        "points"
       ],
       "additionalProperties": false
     },
@@ -640,6 +830,297 @@
         "avoidable",
         "victims",
         "response"
+      ],
+      "additionalProperties": false
+    },
+    "WaypointArrivalRecord": {
+      "title": "WaypointArrivalRecord",
+      "description": "A routed entity reached a waypoint that carries an arrival time or a departure condition (`RoutingAction`, any mode): when it was due and when it arrived, so a run can be scored on its timing. Written on the tick the arrival is known: on arrival for a time, and once the condition has held for a condition. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "waypoint_arrival"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The routing action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity routed.",
+          "type": "string"
+        },
+        "vertex": {
+          "description": "The waypoint's index among the route's vertices, from 0.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "What timed the waypoint: `time`, its arrival time, or `condition`, its departure condition (the target is the moment it first held).",
+          "type": "string",
+          "enum": [
+            "time",
+            "condition"
+          ]
+        },
+        "mode": {
+          "description": "The routing mode: `driver` (the entity's own driver, paced by speed), `follow` or `position`.",
+          "type": "string",
+          "enum": [
+            "driver",
+            "follow",
+            "position"
+          ]
+        },
+        "target_t": {
+          "description": "Scenario time (s) the entity was due at the waypoint.",
+          "type": "number"
+        },
+        "actual_t": {
+          "description": "Scenario time (s) it arrived there.",
+          "type": "number"
+        },
+        "error_s": {
+          "description": "`actual_t - target_t`: positive late, negative early.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "vertex",
+        "kind",
+        "mode",
+        "target_t",
+        "actual_t",
+        "error_s"
+      ],
+      "additionalProperties": false
+    },
+    "CollisionRecord": {
+      "title": "CollisionRecord",
+      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. A contact is written when it begins (`phase: start`) and when it ends (`phase: end`, no event from the pair for a second), with how long it lasted. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "collision"
+        },
+        "frame": {
+          "description": "The CARLA frame the collision happened on.",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "actors": {
+          "description": "The `role_name` of each side (its type id when it has none): the vehicle that heard it first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "ids": {
+          "description": "The two actors' ids, in the order of `actors`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActorId"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "impulse": {
+          "description": "The magnitude of the collision's normal impulse (N*s); at a contact's end, the strongest during it.",
+          "type": "number",
+          "minimum": 0
+        },
+        "ego": {
+          "description": "Whether one side is the ego.",
+          "type": "boolean"
+        },
+        "phase": {
+          "description": "`start` when the contact began, `end` when it ended.",
+          "type": "string",
+          "enum": [
+            "start",
+            "end"
+          ]
+        },
+        "duration": {
+          "description": "How long (s) the contact lasted, at its end; null at its start.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "actors",
+        "ids",
+        "impulse",
+        "ego",
+        "phase",
+        "duration"
+      ],
+      "additionalProperties": false
+    },
+    "WalkerFallenRecord": {
+      "title": "WalkerFallenRecord",
+      "description": "A walker seen fallen over -- tipped beyond 50 degrees, or dropped more than half its height between two looks while barely moving sideways -- once per walker. It is left where it is. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "walker_fallen"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "id": {
+          "description": "The walker's actor id.",
+          "$ref": "#/definitions/ActorId"
+        },
+        "role": {
+          "description": "Its `role_name` (its type id when it has none).",
+          "type": "string"
+        },
+        "drop": {
+          "description": "How far (m) it dropped since the look before (0 when it tipped over without dropping).",
+          "type": "number"
+        },
+        "tilt": {
+          "description": "How far (deg) it is tipped over: the larger of its pitch and roll.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "id",
+        "role",
+        "drop",
+        "tilt"
+      ],
+      "additionalProperties": false
+    },
+    "SpawnRecord": {
+      "title": "SpawnRecord",
+      "description": "A `SpawnAction` brought an entity into the scene (one spawned hidden, as a rule): put on its place, physics on, moving at its speed. Written on the tick it fired; the entity's `actor` record came earlier, when it was first seen hidden. A prop the action adds is not an entity and has no record. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "spawn"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity brought in.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its actor's id; null if it is not known.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "DespawnRecord": {
+      "title": "DespawnRecord",
+      "description": "A `DespawnAction` (`reason: action`), or the run for a walker lying fallen 5 s (`reason: fallen`), took an entity out of the world: its traffic backend let go of it and its actor was destroyed. Written on the tick it fired. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "despawn"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity removed.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its actor's id; null if it had no actor.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "description": "What removed it: `action` a DespawnAction, `fallen` a walker that lay fallen.",
+          "type": "string",
+          "enum": [
+            "action",
+            "fallen"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "id",
+        "reason"
       ],
       "additionalProperties": false
     },
@@ -998,6 +1479,30 @@
         "message"
       ],
       "additionalProperties": false
+    },
+    "PlanPoint": {
+      "title": "PlanPoint",
+      "description": "`[dt, x, y, z, yaw]`: seconds after the plan was made, CARLA world position (m), CARLA yaw (degrees).",
+      "type": "array",
+      "items": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 5
     }
   }
 }
