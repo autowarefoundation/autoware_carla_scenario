@@ -538,7 +538,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ros2.cyclone": "imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds",
     "autoware_carla_scenario.ros2.messages": "imports cyclonedds (the IdlStruct base of every message, and the IDL field types `array[float64, 36]` and `sequence[TrajectoryPoint]`, which Codon cannot express)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (argparse, jinja2)",
-    "autoware_carla_scenario.scaffold.generator": "imports argparse, keyword, templating (jinja2) and, inside a function, authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked",
+    "autoware_carla_scenario.scaffold.generator": "imports argparse, ast, functools, keyword, templating (jinja2) and, inside a function, authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked",
     "autoware_carla_scenario.serve_cli": "imports argparse and ipaddress",
     "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked",
     "autoware_carla_scenario.slurm.collect": "imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (`dict[str, Any]`)",
