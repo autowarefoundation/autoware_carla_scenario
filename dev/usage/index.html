@@ -1228,6 +1228,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#a-t4scene-of-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A T4Scene of a run
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2902,6 +2913,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#a-t4scene-of-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A T4Scene of a run
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4136,6 +4158,11 @@ beside the log, and open that in the Rerun viewer. The conversion is the
 driver policy's sensors (<code>driver.lidars</code>, <code>driver.cameras</code>) at each policy
 step, and the box of every vehicle and pedestrian from CARLA's ground truth
 (the <code>t4</code> extra; <a href="../t4_dataset/">T4 Dataset</a>).</p>
+<h4 id="a-t4scene-of-a-run">A T4Scene of a run<a class="headerlink" href="#a-t4scene-of-a-run" title="Permanent link">&para;</a></h4>
+<p>With <code>t4scene.enabled=true</code> each run's trajectory log is also written as a
+T4Scene, <code>{ScenarioName}.t4scene.pb</code> with its map, <code>{ScenarioName}.t4scene.map.pb</code>,
+the scene tier4/e2e-devkit decodes, scores and draws (<a href="../t4_scene/">T4 Scene</a>);
+<code>scenario-t4scene &lt;output dir&gt;</code> does the same after a run.</p>
 <h3 id="sensors-in-the-recording">Sensors in the recording<a class="headerlink" href="#sensors-in-the-recording" title="Permanent link">&para;</a></h3>
 <p>The trajectory log holds no sensor data. With <code>rerun.enabled=true</code> and:</p>
 <ul>
@@ -4610,6 +4637,10 @@ in each bucket, and the buckets no route reaches
 <tr>
 <td><code>{ScenarioName}.rrd</code></td>
 <td>The Rerun recording of the trajectory log, with <code>rerun.enabled=true</code> (<a href="#seeing-a-run">Seeing a run</a>)</td>
+</tr>
+<tr>
+<td><code>{ScenarioName}.t4scene.pb</code>, <code>{ScenarioName}.t4scene.map.pb</code></td>
+<td>The trajectory log as a T4Scene and the map it names, with <code>t4scene.enabled=true</code> (<a href="../t4_scene/">T4 Scene</a>)</td>
 </tr>
 <tr>
 <td><code>batch_results.json</code></td>

@@ -4599,7 +4599,7 @@ method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 224 of
-the package's 329 modules (68%; about 66,800 of 116,900 lines) are <code>CHECKED</code>:
+the package's 330 modules (68%; about 66,800 of 116,950 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4722,9 +4722,9 @@ which takes a message of any shape (<code>hils.wire.encode()</code>, a
 <code>prctl(PR_SET_PDEATHSIG)</code> call through ctypes (<code>_request_pdeathsig()</code>) and
 what runs a case in the forked child (<code>_run_in_child()</code>, which takes the
 signal mask, a <code>set[int | signal.Signals]</code>); the first and the last are
-compiled through their callers. The 105 <code>EXCLUDED</code> modules fall in
+compiled through their callers. The 106 <code>EXCLUDED</code> modules fall in
 three groups. Many fit more than one (about 82 import what Codon cannot
-compile, 30 build on an excluded module and 19 hold values Codon has no type
+compile, 31 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
 <li><strong>82 import what Codon cannot compile</strong>:
@@ -4749,7 +4749,7 @@ for), so each is counted once, in the first group that fits it:</p>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; <code>test_typecheck_library.py</code> holds every
   reason to that.</li>
-<li><strong>20 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>21 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>, <code>t4_scene</code>,
@@ -4761,7 +4761,7 @@ for), so each is counted once, in the first group that fits it:</p>
   <code>dict[str, Any]</code>, which it hands to openodd, and finds a probe's
   <code>on_lanelet</code> reader on any callable) and
   <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
-  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 20
+  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
