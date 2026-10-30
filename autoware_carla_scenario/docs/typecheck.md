@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 232 of
-the package's 338 modules (69%; about 68,900 of 118,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 233 of
+the package's 339 modules (69%; about 69,000 of 119,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2381,7 +2381,9 @@ the sweeper's lanelet constraints and parameter bindings
 case in a forked child of its own process group, stops it and waits for the
 CARLA server it left (`sweeper.isolation`, #719), the SLURM launcher's
 settings and the job scripts and `sbatch` command lines it submits a batch
-with (`slurm`, `slurm.settings`, `slurm.scripts`, #732), and the route's map questions,
+with (`slurm`, `slurm.settings`, `slurm.scripts`, #732), the arithmetic of a
+task's port slots, the slot it tries first and its watchdog's command line
+(`slurm.port_slots`, #772), and the route's map questions,
 frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
