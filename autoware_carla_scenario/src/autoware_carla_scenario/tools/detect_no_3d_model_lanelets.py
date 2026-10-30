@@ -219,17 +219,25 @@ def _find_key(
     return matches[0] if matches else None
 
 
-def _content_end(node: yaml.Node) -> int:
+def _content_end(node: yaml.Node, text: str) -> int:
     """Return the index just past the last character of *node*'s own text.
 
     A block collection's ``end_mark`` lies at the next token, past any blank
     lines and comments that follow it, so for those the end of the last
-    child is used instead.
+    child is used instead.  A block scalar (``|`` or ``>``) ends past the
+    line breaks (and blank lines) after its last line, so those are left out.
     """
     if isinstance(node, yaml.CollectionNode) and not node.flow_style and node.value:
         last = node.value[-1]
-        return _content_end(last[1] if isinstance(node, yaml.MappingNode) else last)
-    return int(node.end_mark.index)
+        return _content_end(
+            last[1] if isinstance(node, yaml.MappingNode) else last, text
+        )
+    end = int(node.end_mark.index)
+    if isinstance(node, yaml.ScalarNode) and node.style in ("|", ">"):
+        start = int(node.start_mark.index)
+        while end > start and text[end - 1] in " \t\r\n":
+            end -= 1
+    return end
 
 
 def _format_value(
@@ -321,7 +329,7 @@ def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -
                 f"cannot set {label}: its value is an alias (*name); "
                 "replace it with a list"
             )
-        end = max(_content_end(value_node), int(key_node.end_mark.index))
+        end = max(_content_end(value_node, text), int(key_node.end_mark.index))
         # A non-empty flow list stays one; ``[]`` is only a placeholder.
         flow = bool(
             isinstance(value_node, yaml.SequenceNode)
@@ -332,7 +340,7 @@ def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -
         result = text[:start] + replacement + text[end:]
     else:
         # After the line holding the section's last value.
-        last_end = _content_end(section.value[-1][1])
+        last_end = _content_end(section.value[-1][1], text)
         line_end = text.find("\n", last_end)
         entry = indent + _format_value(ids, indent, newline, flow=False) + newline
         if line_end == -1:
@@ -363,8 +371,9 @@ def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
     """Set ``no_3d_model_lanelet_ids`` in the map configuration YAML.
 
     The file is edited as text (see :func:`update_no_3d_model_lanelet_ids_text`)
-    and replaced atomically; when the edit cannot be made safely,
-    :class:`YamlUpdateError` is raised and the file is left untouched.
+    and replaced atomically (a symlink's target, not the link itself); when
+    the edit cannot be made safely, :class:`YamlUpdateError` is raised and
+    the file is left untouched.
     """
     raw = yaml_path.read_bytes()
     try:
@@ -378,17 +387,37 @@ def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
     if updated == text:
         return
 
-    fd, tmp_name = tempfile.mkstemp(
-        dir=yaml_path.parent, prefix=f".{yaml_path.name}.", suffix=".tmp"
-    )
+    _write_atomically(Path(os.path.realpath(yaml_path)), updated.encode("utf-8"))
+
+
+def _write_atomically(path: Path, data: bytes) -> None:
+    """Replace *path*'s content with *data* through a temporary file.
+
+    *path* must already be resolved: replacing a symlink would turn it into
+    a regular file instead of writing through it.  The temporary file gets
+    *path*'s mode and, where permitted, its owner.  When the directory does
+    not allow creating it, *path* is written in place instead.
+    """
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+        )
+    except PermissionError:
+        path.write_bytes(data)
+        return
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
-            handle.write(updated.encode("utf-8"))
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        shutil.copymode(yaml_path, tmp_path)
-        os.replace(tmp_path, yaml_path)
+        shutil.copymode(path, tmp_path)
+        stat = path.stat()
+        try:
+            os.chown(tmp_path, stat.st_uid, stat.st_gid)
+        except OSError:
+            pass  # Only root (or the owner, for the group) may do this.
+        os.replace(tmp_path, path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise

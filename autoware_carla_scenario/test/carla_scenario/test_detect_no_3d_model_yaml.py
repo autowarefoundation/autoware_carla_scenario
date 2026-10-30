@@ -10,6 +10,7 @@ result is parsed again before anything is written.
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -253,3 +254,77 @@ def test_write_is_atomic_and_keeps_mode(tmp_path: Path) -> None:
     assert yaml.safe_load(path.read_text())["map"]["no_3d_model_lanelet_ids"] == _IDS
     assert path.stat().st_mode & 0o777 == 0o640
     assert sorted(p.name for p in tmp_path.iterdir()) == ["map.yaml"]
+
+
+def test_symlinked_yaml_is_written_through(tmp_path: Path) -> None:
+    # The old in-place write followed the link; os.replace on the link itself
+    # would turn it into a regular file and leave the target stale.
+    target_dir = tmp_path / "real"
+    target_dir.mkdir()
+    target = target_dir / "map.yaml"
+    target.write_text("map:\n  name: M\n")
+    link = tmp_path / "map.yaml"
+    link.symlink_to(target)
+    _update_yaml(link, _IDS)
+    assert link.is_symlink()
+    assert yaml.safe_load(target.read_text())["map"]["no_3d_model_lanelet_ids"] == _IDS
+    assert sorted(p.name for p in target_dir.iterdir()) == ["map.yaml"]
+
+
+# ---------------------------------------------------------------------------
+# Block scalars end past their trailing line breaks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("style", ["|", ">", "|-"])
+def test_block_scalar_last_in_section(style: str) -> None:
+    text = f"map:\n  name: {style}\n    foo\n\n  # c\nother: 1\n"
+    result, data = _update(text)
+    assert data == {
+        "map": {
+            "name": yaml.safe_load(text)["map"]["name"],
+            "no_3d_model_lanelet_ids": _IDS,
+        },
+        "other": 1,
+    }
+    assert result.startswith(
+        f"map:\n  name: {style}\n    foo\n  no_3d_model_lanelet_ids:\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Adding a line after it would give the value the line break it lacks.
+        "map:\n  name: >\n    foo",
+        # Its trailing blank lines are part of the value.
+        "map:\n  name: |+\n    foo\n\nother: 1\n",
+    ],
+)
+def test_block_scalar_whose_value_an_insert_would_change_is_refused(
+    text: str,
+) -> None:
+    with pytest.raises(YamlUpdateError, match="more than that value"):
+        update_no_3d_model_lanelet_ids_text(text, _IDS)
+
+
+def test_existing_list_of_block_scalars_is_replaced() -> None:
+    text = "map:\n  no_3d_model_lanelet_ids:\n    - |\n      foo\n\n  name: M\n"
+    result, data = _update(text)
+    assert data == {"map": {"no_3d_model_lanelet_ids": _IDS, "name": "M"}}
+    assert result == "map:\n  no_3d_model_lanelet_ids:\n    - 7\n    - 8\n\n  name: M\n"
+
+
+def test_unwritable_directory_falls_back_to_writing_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A writable file in a directory that allows no new files: the old code
+    # could update it, so the temporary file must not be a requirement.
+    def refuse(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise PermissionError("read-only directory")
+
+    monkeypatch.setattr(tempfile, "mkstemp", refuse)
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n")
+    _update_yaml(path, _IDS)
+    assert yaml.safe_load(path.read_text())["map"]["no_3d_model_lanelet_ids"] == _IDS

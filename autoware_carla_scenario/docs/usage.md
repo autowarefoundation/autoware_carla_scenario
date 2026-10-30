@@ -962,7 +962,7 @@ Detects lanelets that do not have a matching 3D ground model in CARLA. Useful fo
 4. Reports lanelets where the ray does not hit any 3D surface
 5. Writes the detected IDs to the YAML configuration's `no_3d_model_lanelet_ids` field
 
-The IDs go into `no_3d_model_lanelet_ids` in the YAML's `map:` section when it has one, and at the top level otherwise (the same place `name`, `xodr_path` and `lanelet2_path` are read from). An existing value is replaced whatever its style (a block list, a flow list such as `[1, 2]`, an empty value, `null`); a missing key is added after the section's last entry. The file is edited as text, so comments, `${...}` interpolations and line endings are kept, and it is replaced atomically. The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. `map: {name: X}` -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.
+The IDs go into `no_3d_model_lanelet_ids` in the YAML's `map:` section when it has one, and at the top level otherwise (the same place `name`, `xodr_path` and `lanelet2_path` are read from). An existing value is replaced whatever its style (a block list, a flow list such as `[1, 2]`, an empty value, `null`); a missing key is added after the section's last entry. The file is edited as text, so comments, `${...}` interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. `map: {name: X}` -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.
 
 ### Usage
 
