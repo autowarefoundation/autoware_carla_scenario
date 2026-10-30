@@ -277,6 +277,22 @@ def test_process_group_child_hears_sigint_from_a_background_run(
     assert result["code"] == -signal.SIGINT
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc")
+def test_process_group_child_starts_with_no_signal_ignored(tmp_path: Path) -> None:
+    """The Python wrapper hands the command no ignored signal of its own.
+
+    Python ignores ``SIGPIPE`` and ``SIGXFSZ`` as it starts; a command the
+    wrapper ``exec``s must not inherit that, any more than ``SIGINT``.
+    """
+    log = tmp_path / "status.log"
+    group = ProcessGroup(["grep", "SigIgn", "/proc/self/status"], log_path=log)
+    _wait_for(lambda: group.poll() is not None)
+    group.stop()
+    ignored = int(log.read_text().split()[-1], 16)
+    for sig in (signal.SIGINT, signal.SIGQUIT, signal.SIGPIPE, signal.SIGXFSZ):
+        assert not ignored & (1 << (sig - 1)), sig.name
+
+
 def test_process_group_logs_output(tmp_path: Path) -> None:
     log = tmp_path / "logs" / "out.log"
     group = ProcessGroup(["bash", "-c", "echo hello"], log_path=log)

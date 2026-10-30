@@ -178,6 +178,9 @@ class AutowareLauncher(Protocol):
 #: :meth:`ProcessGroup.stop` asks it to shut down with and be killed by the
 #: ``SIGTERM`` after it instead.  The run itself keeps ignoring them, as a
 #: background job should; only the stack it stops with ``SIGINT`` gets them.
+#: ``SIGPIPE`` and ``SIGXFSZ`` go back to their defaults too: ``Popen``
+#: restores them for the wrapper, but the wrapper is Python, which ignores
+#: them again as it starts, and would hand the command them ignored.
 _DIE_WITH_PARENT = (
     "import ctypes, os, signal, sys\n"
     "parent = int(sys.argv[1])\n"
@@ -187,8 +190,8 @@ _DIE_WITH_PARENT = (
     "    pass\n"
     "if os.getppid() != parent:\n"
     "    sys.exit(143)\n"
-    "signal.signal(signal.SIGINT, signal.SIG_DFL)\n"
-    "signal.signal(signal.SIGQUIT, signal.SIG_DFL)\n"
+    "for name in ('SIGINT', 'SIGQUIT', 'SIGPIPE', 'SIGXFSZ'):\n"
+    "    signal.signal(getattr(signal, name), signal.SIG_DFL)\n"
     "os.execvp(sys.argv[2], sys.argv[2:])\n"
 )
 
@@ -196,8 +199,8 @@ _DIE_WITH_PARENT = (
 def _dying_with_parent(argv: Sequence[str]) -> list[str]:
     """*argv*, run so that it is sent ``SIGTERM`` when this process dies (Linux).
 
-    On every platform it starts with ``SIGINT`` and ``SIGQUIT`` at their
-    defaults, whatever this process has them at (#759).
+    On every platform it starts with ``SIGINT``, ``SIGQUIT``, ``SIGPIPE`` and
+    ``SIGXFSZ`` at their defaults, whatever this process has them at (#759).
     """
     return [sys.executable, "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
 
