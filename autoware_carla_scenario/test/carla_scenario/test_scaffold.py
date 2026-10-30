@@ -64,6 +64,60 @@ class TestResolveNames:
             resolve_names(bad)
 
 
+class TestReservedScenarioNames:
+    """A scenario module may not take the name of another generated file (#761)."""
+
+    def test_reserved_names_follow_the_manifest(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _reserved_scenario_names,
+        )
+
+        assert _reserved_scenario_names() == {"__init__", "configs", "conf"}
+
+    @pytest.mark.parametrize("scenario", ["configs", "conf", "Configs", "configs-"])
+    def test_explicit_reserved_scenario_name_raises(self, scenario: str) -> None:
+        with pytest.raises(ValueError, match="is reserved"):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    @pytest.mark.parametrize("package", ["configs_package", "configs-pkg", "conf"])
+    def test_derived_reserved_scenario_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="is reserved"):
+            resolve_names(package)
+
+    def test_nothing_written(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="'configs' is reserved"):
+            create_scenario_package(
+                "my_pkg", output_dir=tmp_path, scenario_name="configs"
+            )
+        assert not (tmp_path / "my_pkg").exists()
+
+    @pytest.mark.parametrize("argv", [["my_pkg", "-s", "configs"], ["configs_package"]])
+    def test_cli_reports_cleanly(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        argv: list[str],
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main([*argv, "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'configs' is reserved")
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize("scenario", ["config", "configs_check", "my_configs"])
+    def test_near_misses_still_work(self, tmp_path: Path, scenario: str) -> None:
+        result = create_scenario_package(
+            "my_pkg", output_dir=tmp_path, scenario_name=scenario
+        )
+        pkg = result.root / "src" / "my_pkg"
+        configs = (pkg / "configs.py").read_text(encoding="utf-8")
+        assert f"class {result.names['config_class']}" in configs
+        module = (pkg / f"{scenario}.py").read_text(encoding="utf-8")
+        assert f"class {result.names['scenario_class']}" in module
+
+
 class TestCreateScenarioPackage:
     def test_generates_valid_package(self, tmp_path: Path) -> None:
         result = create_scenario_package("reach_goal_pkg", output_dir=tmp_path)

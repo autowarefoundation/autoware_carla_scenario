@@ -52,6 +52,37 @@ _FILE_MANIFEST: dict[str, str] = {
 }
 
 
+#: The template of the scenario module in :data:`_FILE_MANIFEST`.
+_SCENARIO_TEMPLATE = "scenario.py.jinja"
+
+#: The prefix of every manifest entry inside the generated import package.
+_PACKAGE_DIR = "src/{package_name}/"
+
+
+def _reserved_scenario_names() -> frozenset[str]:
+    """Return the names the scenario module may not take.
+
+    Every other entry :data:`_FILE_MANIFEST` writes inside the import package
+    claims its top-level name there: ``configs.py`` claims ``configs``,
+    ``__init__.py`` claims ``__init__`` and ``conf/...`` claims ``conf``.  A
+    scenario of that name would make two templates render to the same path
+    (one silently overwriting the other) or put a module beside a directory
+    of the same name.  Derived from the manifest so it follows the templates.
+    """
+    reserved: set[str] = set()
+    for template_name, out_template in _FILE_MANIFEST.items():
+        if template_name == _SCENARIO_TEMPLATE or not out_template.startswith(
+            _PACKAGE_DIR
+        ):
+            continue
+        top = out_template[len(_PACKAGE_DIR) :].split("/", 1)[0]
+        if "{" in top:
+            # Named after the scenario itself, so it cannot collide.
+            continue
+        reserved.add(top.removesuffix(".py"))
+    return frozenset(reserved)
+
+
 # ---------------------------------------------------------------------------
 # Name handling
 # ---------------------------------------------------------------------------
@@ -115,6 +146,14 @@ def resolve_names(
     else:
         scenario = _to_snake(scenario_name)
     scenario = _validate_identifier(scenario, kind="scenario name")
+    reserved = _reserved_scenario_names()
+    if scenario in reserved:
+        msg = (
+            f"scenario name {scenario!r} is reserved: the generated package "
+            f"already has a {scenario!r} module or directory (reserved names: "
+            f"{', '.join(sorted(reserved))}). Pass a different --scenario."
+        )
+        raise ValueError(msg)
 
     pascal = _to_pascal(scenario)
     # Avoid awkward doubling when the name already ends in "scenario".

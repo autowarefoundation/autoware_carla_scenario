@@ -416,6 +416,10 @@ reach_goal_pkg/
     └── conf/scenario/reach_goal/default.yaml
 ```
 
+The scenario module sits beside `__init__.py`, `configs.py` and `conf/`, so
+`configs` and `conf` cannot be scenario names; `scenario-new` refuses them
+(including when they come from the package name, as in `configs_package`).
+
 ```bash
 uv pip install -e reach_goal_pkg
 uv run scenario scenario=reach_goal/default map=nishishinjuku
