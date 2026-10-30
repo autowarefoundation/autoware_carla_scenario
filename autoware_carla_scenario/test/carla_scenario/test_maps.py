@@ -489,6 +489,24 @@ class TestOneEntryManyMaps:
         assert peeked is not None
         assert peeked.materialised == ("autoware_maps/TownA", "autoware_maps/TownB")
 
+    def test_a_lost_record_does_not_trim_the_checkout(
+        self, rooted_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Another process's record lost in a race: git, not meta.json, decides."""
+        root = resolve_map(self._root_uri(rooted_repo), cache=cache)
+        source = MapSource.parse(self._root_uri(rooted_repo)).at(root.commit)
+        meta = cache.entry_dir(source) / "meta.json"
+        document = json.loads(meta.read_text(encoding="utf-8"))
+        document["materialised"] = None
+        meta.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+        town_a = resolve_map(_uri(rooted_repo, "autoware_maps/TownA"), cache=cache)
+
+        assert town_a.lanelet2_path.read_text() == _OSM
+        assert root.lanelet2_path.read_text() == _OSM
+        assert (root.directory / "docs" / "README.md").is_file()
+        assert (root.directory / "autoware_maps" / "TownB").is_dir()
+
     def test_concurrent_resolves_of_two_maps_keep_both(
         self, rooted_repo: Path, cache: GitMapCache
     ) -> None:

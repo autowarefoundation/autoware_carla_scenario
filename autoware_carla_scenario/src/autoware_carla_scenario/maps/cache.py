@@ -30,8 +30,8 @@ One entry -- one repository at one commit -- serves every directory in it, and
 the sparse checkout only ever **grows**: a directory, once checked out, stays on
 disk for the life of the entry, so a :class:`CachedRepo` handed out for one map
 of a repository keeps pointing at real files while another map of the same
-repository is resolved.  The repository root (``path == ""``) turns the sparse
-checkout off, which checks the whole tree out.
+repository is resolved.  The repository root (``path == ""``) is the pattern
+``/*``, which checks the whole tree out.
 """
 
 from __future__ import annotations
@@ -95,12 +95,18 @@ TIP_SUFFIX = ".tip.json"
 _LOCKED_ATTEMPTS = 5
 _LOCKED_BACKOFF_SECONDS = 0.2
 
-#: Held while an entry's sparse checkout is changed, so that two threads of one
-#: process (the editor serves requests on several) neither race git's lock
-#: files nor drop each other's directory from ``meta.json``.  Another process
-#: is kept apart by git's own lock files, and :meth:`GitMapCache._materialise`
+#: One lock per cache entry (by its path), held while that entry's sparse
+#: checkout is changed, so that two threads of one process (the editor serves
+#: requests on several) neither race git's lock files nor drop each other's
+#: directory from ``meta.json``.  Per entry, so that a long LFS pull of one
+#: repository does not hold up a resolve from another.  Another process is
+#: kept apart by git's own lock files, and :meth:`GitMapCache._materialise`
 #: retries while one is held.
-_MATERIALISE_LOCK = threading.Lock()
+_ENTRY_LOCKS: dict[str, threading.Lock] = {}
+_ENTRY_LOCKS_GUARD = threading.Lock()
+
+#: The sparse-checkout pattern of the repository root: every path.
+_WHOLE_TREE = "/*"
 
 #: How long a git call may take before it is abandoned.  A clone of a map
 #: repository is seconds; anything approaching this is a hung transport.
@@ -491,10 +497,17 @@ class GitMapCache:
         """Check out *source*'s directory and pull the LFS content asked for.
 
         The sparse checkout only grows: the first directory is ``set``, every
-        later one ``add``-ed, and the root (``""``) turns sparse checkout off,
-        which checks the whole tree out.  A directory checked out for one map
+        later one ``add``-ed, and the root (``""``) is the pattern ``/*``, which
+        checks the whole tree out.  A directory checked out for one map
         therefore stays on disk while another map of the same repository is
         resolved, and the entry's ``meta.json`` records all of them.
+
+        Whether to ``set`` or ``add`` is read from git, not from ``meta.json``:
+        sparse checkout is never turned off again once on, so ``set`` -- the
+        one command that drops directories -- runs only on a checkout no
+        directory has been checked out in yet, even when another process's
+        record of one was lost.  The record only decides whether anything has
+        to run at all.
 
         Nothing runs when the directory is already checked out and its content
         is real rather than pointers.  That matters because this is on the
@@ -512,7 +525,7 @@ class GitMapCache:
         if include is not None:
             wanted = [pattern for pattern in include if pattern]
 
-        with _MATERIALISE_LOCK:
+        with _entry_lock(cached.root):
             # Re-read rather than trust *cached*: another thread may have
             # checked a directory out since it was peeked.
             done = self._read_meta(cached.root).materialised
@@ -522,15 +535,13 @@ class GitMapCache:
                 if not wanted or self._content_present(worktree, wanted):
                     return replace(cached, materialised=done)
 
-            if not path:
-                self._git_waiting(worktree, "sparse-checkout", "disable")
-            elif whole:
-                # The whole tree is checked out already, so the directory is.
-                pass
-            elif self._is_sparse(worktree):
-                self._git_waiting(worktree, "sparse-checkout", "add", path)
+            pattern = path or _WHOLE_TREE
+            if self._is_sparse(worktree):
+                self._git_waiting(worktree, "sparse-checkout", "add", pattern)
             else:
-                self._git_waiting(worktree, "sparse-checkout", "set", "--no-cone", path)
+                self._git_waiting(
+                    worktree, "sparse-checkout", "set", "--no-cone", pattern
+                )
             self._git_waiting(worktree, "checkout")
 
             if wanted and (refresh or not self._content_present(worktree, wanted)):
@@ -725,6 +736,15 @@ def _json_paths(raw: str, key: str) -> tuple[str, ...]:
 def _sorted_paths(paths: list[str]) -> tuple[str, ...]:
     """Return *paths* without repeats, sorted."""
     return tuple(sorted(set(paths)))
+
+
+def _entry_lock(entry: Path) -> threading.Lock:
+    """Return the lock that serialises changes to *entry*'s sparse checkout."""
+    key = str(entry)
+    with _ENTRY_LOCKS_GUARD:
+        if key not in _ENTRY_LOCKS:
+            _ENTRY_LOCKS[key] = threading.Lock()
+        return _ENTRY_LOCKS[key]
 
 
 def _git_locked(worktree: Path, message: str) -> bool:
