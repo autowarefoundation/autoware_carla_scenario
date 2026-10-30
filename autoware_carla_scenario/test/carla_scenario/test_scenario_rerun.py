@@ -360,6 +360,39 @@ class TestRunScenarioStartsFromACleanSlate:
         assert at_clock == [-1.4]
         assert ego_base_link() is None
 
+    def test_the_ego_s_base_link_is_gone_though_a_later_cleanup_step_raises(
+        self, tmp_path: Any
+    ) -> None:
+        """The run forgets its ego's base_link right after the ego's teardown,
+        so a cleanup step after it that raises does not leave it set (#739)."""
+        from autoware_carla_scenario.ego_base_link import (
+            ego_base_link,
+            set_ego_base_link,
+        )
+
+        runner = _runner(tmp_path)
+        ego = _fake_ego()
+        ego.on_scenario_start.side_effect = lambda world: set_ego_base_link(-1.4)
+        scenario = _Registers(ego_entity=ego)
+
+        def clock(world: Any) -> None:
+            raise _Stop("clock")
+
+        def clear_props() -> None:
+            if ego.on_scenario_end.called:
+                raise _Stop("cleanup")
+
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            patch("autoware_carla_scenario.scenario_runner._ScenarioClock", clock),
+            patch("autoware_carla_scenario.scenario_runner.clear_props", clear_props),
+        ):
+            with pytest.raises(_Stop, match="cleanup"):
+                runner.run_scenario(scenario, timeout_seconds=12.0, reset_world=False)
+
+        ego.on_scenario_end.assert_called_once()
+        assert ego_base_link() is None
+
     def test_a_queue_retry_sees_only_its_own_registrations(self, tmp_path: Any) -> None:
         """The first attempt raises after setup(); the retry runs the same
         object and sees one copy of each registration."""

@@ -1750,6 +1750,10 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # The ego's base_link was this run's: the ego forgets it in its
+            # on_scenario_end, which may have failed before it did.  Right
+            # here, before any later step of the cleanup can raise past it.
+            clear_ego_base_link()
 
             # Stop and destroy the sensors the conditions started listening,
             # through their own handles, while the world is still the run's:
@@ -1815,10 +1819,6 @@ class ScenarioRunner:
                     recording = converter.submit(trajectory.path, file_stem)
                     if result is not None:
                         result.rerun_recording = str(recording)
-            # The ego's base_link was this run's: the ego forgets it in its
-            # on_scenario_end, which may have failed before it did.
-            clear_ego_base_link()
-
             if TYPE_CHECKING:
                 # describe() and fidelity_census() are dicts of mixed value
                 # types, which Codon cannot express (UNCALLED in
