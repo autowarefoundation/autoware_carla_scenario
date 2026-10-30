@@ -98,6 +98,107 @@ def test_members_escaping_the_install_are_refused(home: Path, tmp_path: Path) ->
     assert not (home / "outside").exists()
 
 
+def _linked_package(links: dict[str, tuple[bytes, str]]) -> bytes:
+    """A gzipped tar of ``Top/Linux/a`` plus *links*: ``name -> (type, linkname)``."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        target = tarfile.TarInfo(f"{_TOP}/Linux/a")
+        target.size = 1
+        archive.addfile(target, io.BytesIO(b"x"))
+        for name, (kind, linkname) in links.items():
+            link = tarfile.TarInfo(name)
+            link.type = kind
+            link.linkname = linkname
+            archive.addfile(link)
+    return buffer.getvalue()
+
+
+def _unpack_as(mode: str, data: bytes, destination: Path) -> None:
+    """Unpack *data* as ``scenario-setup`` does (``stream``) or from a seekable file."""
+    if mode == "stream":
+        carla_install._unpack(io.BytesIO(data), destination)
+        return
+    destination.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        archive.extractall(destination, filter=carla_install._strip_top)
+
+
+_MODES = pytest.mark.parametrize("mode", ["stream", "seekable"])
+
+
+@_MODES
+def test_hard_links_lose_the_top_directory_too(mode: str, tmp_path: Path) -> None:
+    data = _linked_package(
+        {
+            f"{_TOP}/Linux/b": (tarfile.LNKTYPE, f"{_TOP}/Linux/a"),
+            f"{_TOP}/c": (tarfile.LNKTYPE, f"./{_TOP}/Linux/./a"),
+        }
+    )
+    _unpack_as(mode, data, tmp_path / "out")
+    a = tmp_path / "out" / "Linux" / "a"
+    for link in (tmp_path / "out" / "Linux" / "b", tmp_path / "out" / "c"):
+        assert link.read_bytes() == b"x"
+        assert os.path.samefile(link, a), "a hard link, not a copy"
+
+
+@_MODES
+def test_symbolic_links_keep_their_relative_target(mode: str, tmp_path: Path) -> None:
+    data = _linked_package(
+        {
+            f"{_TOP}/Linux/b": (tarfile.SYMTYPE, "a"),
+            f"{_TOP}/c": (tarfile.SYMTYPE, "Linux/a"),
+        }
+    )
+    _unpack_as(mode, data, tmp_path / "out")
+    out = tmp_path / "out"
+    # Relative to the link's own directory, which moved with it: not rewritten.
+    assert os.readlink(out / "Linux" / "b") == "a"
+    assert os.readlink(out / "c") == "Linux/a"
+    assert (out / "Linux" / "b").read_bytes() == (out / "c").read_bytes() == b"x"
+
+
+@_MODES
+@pytest.mark.parametrize(
+    "link",
+    [
+        (tarfile.LNKTYPE, "Elsewhere/Linux/a"),  # another top directory
+        (tarfile.LNKTYPE, "a"),  # a top-level member
+        (tarfile.LNKTYPE, _TOP),  # the top directory itself
+        (tarfile.LNKTYPE, f"{_TOP}/../secret"),  # outside the destination
+        (tarfile.LNKTYPE, f"{_TOP}/Linux/../../secret"),
+        (tarfile.LNKTYPE, "/etc/passwd"),
+        (tarfile.SYMTYPE, "../../secret"),
+        (tarfile.SYMTYPE, "/etc/passwd"),
+    ],
+)
+def test_links_escaping_the_tree_are_refused(
+    mode: str, link: tuple[bytes, str], tmp_path: Path
+) -> None:
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"secret")
+    data = _linked_package({f"{_TOP}/Linux/b": link})
+    with pytest.raises(tarfile.FilterError):
+        _unpack_as(mode, data, tmp_path / "out")
+    assert not os.path.lexists(tmp_path / "out" / "Linux" / "b")
+    assert secret.stat().st_nlink == 1
+
+
+def test_it_installs_a_package_with_hard_links(home: Path, tmp_path: Path) -> None:
+    archive = tmp_path / "carla.tar.gz"
+    with tarfile.open(archive, "w:gz") as packed:
+        launcher = tarfile.TarInfo(f"{_TOP}/{LAUNCHER}")
+        launcher.size = 10
+        launcher.mode = 0o755
+        packed.addfile(launcher, io.BytesIO(b"#!/bin/sh\n"))
+        link = tarfile.TarInfo(f"{_TOP}/Linux/CarlaUnreal-Linux-Shipping.sh")
+        link.type = tarfile.LNKTYPE
+        link.linkname = f"{_TOP}/{LAUNCHER}"
+        packed.addfile(link)
+    assert carla_install.main(["--url", archive.as_uri()]) == 0
+    installed = install_dir() / "Linux" / "CarlaUnreal-Linux-Shipping.sh"
+    assert os.path.samefile(installed, install_dir() / LAUNCHER)
+
+
 def test_it_refuses_a_disk_too_small(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
