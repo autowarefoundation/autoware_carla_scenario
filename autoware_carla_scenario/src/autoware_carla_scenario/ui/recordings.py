@@ -29,9 +29,12 @@ import io
 import json
 import logging
 import os
+import shutil
 import tarfile
+import tempfile
 import threading
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -332,19 +335,56 @@ def fetch_web_viewer(version: str | None = None, tarball: Path | None = None) ->
         if dist.get("integrity"):
             _check_integrity(data, str(dist["integrity"]))
     target = web_viewer_cache_dir(version)
-    target.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        members = {m.name: m for m in archive.getmembers() if m.isfile()}
-        for name in _WEB_VIEWER_FILES:
-            member = members.get(f"package/{name}")
-            if member is None:
-                raise RecordingError(f"The tarball has no package/{name}")
-            source = archive.extractfile(member)
-            assert source is not None  # noqa: S101 -- a regular file
-            tmp = target / f".{name}.tmp"
-            tmp.write_bytes(source.read())
-            os.replace(tmp, target / name)
-    found = _package_version(target)
-    if found != version:
-        raise RecordingError(f"The tarball is web viewer {found}, not {version}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Unpack beside the target (the same file system, for the renames) and
+    # check it there: a tarball that is refused leaves the copy already in the
+    # cache as it was.
+    staging = Path(tempfile.mkdtemp(prefix=f".{version}.", dir=target.parent))
+    try:
+        staging.chmod(0o755)  # mkdtemp makes it 0700, unlike a plain mkdir
+        _unpack_web_viewer(data, staging)
+        found = _package_version(staging)
+        if found != version:
+            raise RecordingError(f"The tarball is web viewer {found}, not {version}")
+        _swap_into_place(staging, target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return target
+
+
+def _unpack_web_viewer(data: bytes, directory: Path) -> None:
+    """Write the web viewer's files from the package tarball *data* into
+    *directory*, reading only the regular files it names."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            members = {m.name: m for m in archive.getmembers() if m.isfile()}
+            for name in _WEB_VIEWER_FILES:
+                member = members.get(f"package/{name}")
+                if member is None:
+                    raise RecordingError(f"The tarball has no package/{name}")
+                source = archive.extractfile(member)
+                assert source is not None  # noqa: S101 -- a regular file
+                (directory / name).write_bytes(source.read())
+    except (tarfile.TarError, EOFError, zlib.error) as error:
+        raise RecordingError(f"The tarball cannot be read: {error}") from error
+
+
+def _swap_into_place(staging: Path, target: Path) -> None:
+    """Move the directory *staging* to *target*, replacing a copy already
+    there; the old copy is moved aside first, and back if the move fails."""
+    old: Path | None = None
+    if target.exists():
+        old = Path(tempfile.mkdtemp(prefix=f".{target.name}.old.", dir=target.parent))
+        try:
+            os.replace(target, old)
+        except OSError:
+            old.rmdir()  # still the empty directory mkdtemp made
+            raise
+    try:
+        os.replace(staging, target)
+    except OSError:
+        if old is not None:
+            os.replace(old, target)
+        raise
+    if old is not None:
+        shutil.rmtree(old, ignore_errors=True)
