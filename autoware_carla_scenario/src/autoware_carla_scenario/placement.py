@@ -76,6 +76,10 @@ _STOP_LINE_SEARCH_M = 5.0
 _NUDGE_M = 0.5
 #: The fewest metres of ``s`` :func:`solve_along` narrows a crossing to.
 _MIN_INTERVAL_M = 1e-7
+#: How many times the tolerance the best point of a narrowed crossing may miss
+#: the target by and still be taken: one that misses by more sat on a jump of
+#: the measure, not on a crossing (:func:`_narrow`).
+_LOOSE_TOLERANCE_FACTOR = 10.0
 
 
 def _narrow(
@@ -88,7 +92,11 @@ def _narrow(
 ) -> Optional[float]:
     """Bisect ``[low, high]``, across which ``read_at`` crosses *target*.
 
-    ``None`` when a point inside reads nothing.
+    ``None`` when a point inside reads nothing, or when the bisection ends on
+    no point that reads within :data:`_LOOSE_TOLERANCE_FACTOR` times
+    *tolerance* of *target*: the measure jumps over the target there (the
+    vehicle ahead changes, a stop line is passed) rather than crossing it,
+    and :func:`solve_along` keeps scanning for a real crossing.
     """
     below = low_value < target
     best = low
@@ -107,6 +115,8 @@ def _narrow(
             low = mid
         else:
             high = mid
+    if best_error > _LOOSE_TOLERANCE_FACTOR * tolerance:
+        return None
     return best
 
 
