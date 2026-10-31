@@ -31,6 +31,11 @@ theme:
     - search.highlight
     - content.code.copy
 
+# Fills in docs/typecheck.md's counts of the library check from
+# typecheck/library.py when the docs are built (#789).
+hooks:
+  - mkdocs_hooks/typecheck_counts.py
+
 plugins:
   - search
   - git-revision-date-localized:

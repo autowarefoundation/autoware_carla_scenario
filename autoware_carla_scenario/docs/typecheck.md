@@ -2363,8 +2363,14 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 234 of
-the package's 340 modules (69%; about 69,100 of 119,300 lines) are `CHECKED`:
+<!-- The counts.* placeholders in this section are filled in from
+typecheck/library.py when the docs are built
+(mkdocs_hooks/typecheck_counts.py, #789): do not write the numbers here. -->
+
+Every module now has an entry other than `"not yet checked (#45)"`.
+{{ counts.checked_modules }} of the package's {{ counts.package_modules }}
+modules ({{ counts.checked_percent }}%; about {{ counts.checked_lines }} of
+{{ counts.package_lines }} lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2461,8 +2467,8 @@ protobuf enum, the payload, nor the `is_at_traffic_light()` fallback, which
 `driver.renderer` keeps), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 117
-functions and methods of those modules are `UNCALLED` (28 of them
+below). {{ counts.uncalled }}
+functions and methods of those modules are `UNCALLED` ({{ counts.uncalled_protected }} of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2509,12 +2515,11 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 106 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 82 import what Codon cannot
-compile, 31 build on an excluded module and 19 hold values Codon has no type
-for), so each is counted once, in the first group that fits it:
+compiled through their callers. The {{ counts.excluded }} `EXCLUDED` modules
+fall in three groups. Many fit more than one, so each is listed once, in the
+first group that fits it; most are in the first:
 
-- **82 import what Codon cannot compile**:
+- **Those that import what Codon cannot compile**:
   pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -2536,7 +2541,7 @@ for), so each is counted once, in the first group that fits it:
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **21 build on an excluded module**, and import nothing Codon lacks
+- **Those that build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`, `t4_scene`,
@@ -2548,9 +2553,9 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
-  also hold values Codon has no type for.
-- **3 hold values Codon has no type for**, and nothing else keeps them out:
+  holds its factories by, and the `registry` its plugin loader imports); a
+  few of them also hold values Codon has no type for.
+- **Those that hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults), or a class as a value
   (`utils.config`, which `traffic.config`,

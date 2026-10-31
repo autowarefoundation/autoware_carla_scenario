@@ -9,6 +9,7 @@ aarch64).
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import textwrap
 from pathlib import Path
@@ -16,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from mkdocs.exceptions import PluginError
 
 from autoware_carla_scenario.typecheck import (
     TypeCheckResult,
@@ -30,6 +32,11 @@ from autoware_carla_scenario.typecheck.check import (
     replaced_models,
 )
 from autoware_carla_scenario.typecheck.cli import main as scenario_check
+from autoware_carla_scenario.typecheck.doc_counts import (
+    PLACEHOLDER,
+    doc_counts,
+    render_counts,
+)
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
     EXCLUDED,
@@ -203,38 +210,104 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
 
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
+_HOOK = Path(__file__).resolve().parents[2] / "mkdocs_hooks" / "typecheck_counts.py"
+
+
+def _docs_text() -> str:
+    return " ".join(_DOCS.read_text(encoding="utf-8").split())
+
+
+def _hook() -> Any:
+    spec = importlib.util.spec_from_file_location("_typecheck_counts_hook", _HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _page(src_uri: str) -> SimpleNamespace:
+    return SimpleNamespace(file=SimpleNamespace(src_uri=src_uri))
 
 
 def test_the_docs_count_the_checked_modules_and_the_uncalled_functions() -> None:
     # docs/typecheck.md's "What is checked of the framework" counts what this
-    # manifest lists; computed here, so they cannot drift again (#240).
-    text = " ".join(_DOCS.read_text(encoding="utf-8").split())
-    modules = len(package_modules())
-    percent = round(100 * len(CHECKED) / modules)
-    assert (
-        f"{len(CHECKED)} of the package's {modules} modules ({percent}%;" in text
-    ), "update the module counts in docs/typecheck.md"
+    # manifest lists. The numbers are filled in when the docs are built
+    # (#789), so moving a module into CHECKED does not edit the page; what is
+    # pinned here is that the sentences keep their placeholders (#240).
+    text = _docs_text()
+    for sentence in (
+        "{{ counts.checked_modules }} of the package's {{ counts.package_modules }} "
+        "modules ({{ counts.checked_percent }}%; about {{ counts.checked_lines }} "
+        "of {{ counts.package_lines }} lines) are `CHECKED`",
+        "{{ counts.uncalled }} functions and methods of those modules are "
+        "`UNCALLED` ({{ counts.uncalled_protected }} of them protected helpers",
+        "The {{ counts.excluded }} `EXCLUDED` modules fall in three groups.",
+    ):
+        assert sentence in text, f"docs/typecheck.md lost {sentence!r}"
+    # The EXCLUDED groups name no counts of their own, which nothing computes
+    # and every move out of EXCLUDED would have to edit (#269, #789).
+    total = "The {{ counts.excluded }} `EXCLUDED` modules fall in"
+    breakdown = text[
+        text.index(total) : text.index("The scenario check is not limited")
+    ]
+    groups = re.findall(r"- \*\*([^*]+)\*\*", breakdown)
+    assert len(groups) == 3, groups
+    assert not [g for g in groups if re.search(r"\d", g)], groups
+
+
+def test_the_docs_counts_are_computed_from_the_manifest() -> None:
+    modules = package_modules()
+    lines = {
+        name: len(path.read_text(encoding="utf-8").splitlines())
+        for name, path in modules.items()
+    }
     protected = [
         name
         for name in UNCALLED
         if name.rsplit(".", 1)[-1].startswith("_")
         and not name.rsplit(".", 1)[-1].startswith("__")
     ]
+    assert doc_counts() == {
+        "checked_modules": str(len(CHECKED)),
+        "package_modules": str(len(modules)),
+        "checked_percent": str(round(100 * len(CHECKED) / len(modules))),
+        "checked_lines": f"{round(sum(lines[m] for m in CHECKED), -2):,}",
+        "package_lines": f"{round(sum(lines.values()), -2):,}",
+        "uncalled": str(len(UNCALLED)),
+        "uncalled_protected": str(len(protected)),
+        "excluded": str(len(EXCLUDED)),
+    }
+    assert len(CHECKED) + len(EXCLUDED) == len(modules)
+
+
+def test_the_docs_hook_fills_in_every_count_on_the_typecheck_page() -> None:
+    markdown = _DOCS.read_text(encoding="utf-8")
+    rendered = " ".join(
+        _hook().on_page_markdown(markdown, _page("typecheck.md")).split()
+    )
+    assert not PLACEHOLDER.search(rendered)
+    assert "{{ counts." not in rendered, "a placeholder the hook did not fill in"
+    counts = doc_counts()
+    assert (
+        f"{counts['checked_modules']} of the package's {counts['package_modules']} "
+        f"modules ({counts['checked_percent']}%; about {counts['checked_lines']} "
+        f"of {counts['package_lines']} lines) are `CHECKED`" in rendered
+    )
     assert (
         f"{len(UNCALLED)} functions and methods of those modules are `UNCALLED` "
-        f"({len(protected)} of them protected helpers" in text
-    ), "update the UNCALLED counts in docs/typecheck.md"
-    # The breakdown of EXCLUDED: its total, and its groups adding up to it (#269).
-    total = f"The {len(EXCLUDED)} `EXCLUDED` modules fall in"
-    assert total in text, "update the EXCLUDED count in docs/typecheck.md"
-    breakdown = text[
-        text.index(total) : text.index("The scenario check is not limited")
-    ]
-    groups = [int(n) for n in re.findall(r"- \*\*(\d+) ", breakdown)]
-    assert len(groups) == 3 and sum(groups) == len(EXCLUDED), (
-        f"the EXCLUDED groups in docs/typecheck.md add up to {sum(groups)}, "
-        f"not {len(EXCLUDED)}"
+        f"({counts['uncalled_protected']} of them protected helpers" in rendered
     )
+    assert f"The {len(EXCLUDED)} `EXCLUDED` modules fall in three groups." in rendered
+
+
+def test_the_docs_hook_leaves_other_pages_and_refuses_an_unknown_count() -> None:
+    hook = _hook()
+    other = "{{ counts.checked_modules }} and {{ counts.nonsense }}"
+    assert hook.on_page_markdown(other, _page("index.md")) == other
+    with pytest.raises(PluginError, match=r"counts\.nonsense"):
+        hook.on_page_markdown(other, _page("typecheck.md"))
+    # The page's quoted code keeps its braces.
+    assert render_counts('f"{name} {{x}}"', {}) == 'f"{name} {{x}}"'
 
 
 def test_every_uncalled_function_is_one_of_a_checked_module() -> None:
@@ -1094,8 +1167,7 @@ def test_an_abstract_or_raising_method_is_called_but_not_bound_as_a_hook() -> No
     assert "_acs_value(Base).create_ego()" in lines
     assert "_acs_value(Base).ego_requires_goal" in lines
     assert [line for line in lines if "_acs_hook_return(" in line] == [
-        '_acs_hook_return(Base, "measure", '
-        "_acs_value(Base).measure(_acs_value(str)))",
+        '_acs_hook_return(Base, "measure", _acs_value(Base).measure(_acs_value(str)))',
     ]
 
 
