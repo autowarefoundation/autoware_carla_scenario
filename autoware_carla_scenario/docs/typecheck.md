@@ -141,6 +141,25 @@ its file's times touched, so the directory can be pruned by access time.
 The test suite shares such a directory between its xdist workers. CI keeps
 one from run to run, so a run compiles only the programs whose inputs changed.
 
+### Builds wait for their memory
+
+Codon's peak memory grows with what it compiles: about 1.9 GB for a scenario
+or a module of the framework, about 9.3 GB for the whole library check
+(2.8 million characters of source). Builds started side by side -- the xdist
+workers of the test suite, the checker's own pool of four -- would otherwise
+together outgrow a 16 GB machine, and the out-of-memory killer would take a
+build (a SIGKILL, above) or, on a CI runner, the runner itself ("The runner has
+received a shutdown signal").
+
+So each build first waits for its share (`typecheck/memory_gate.py`). The
+builds of a machine record what they hold in one directory
+(`$TMPDIR/acs-codon-gate-<uid>`), and one is started when what the running
+builds hold plus its own estimate fits the machine's memory (or its cgroup's
+limit) less 1.5 GB, or when none is running: a build too large for the machine
+still runs, alone. The holds of a process that died are forgotten. Set
+`AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another directory to share it
+differently, or to `0` to start every build at once.
+
 ### Installing Codon and typesafe_carla
 
 The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and

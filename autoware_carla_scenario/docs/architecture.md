@@ -626,6 +626,7 @@ lateral together are its movement (`MOVEMENT`).
 | `RoutingAction`, `follow` / `position` | longitudinal, lateral |
 | `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |
 | The adversarial actions | longitudinal, lateral |
+| `PlayMotionAction` | animation; longitudinal and lateral too with `upper_body_only=False` |
 
 The domains are taken as the action fires, before `execute` runs. An action
 that runs on (it has an `until`, or reissues its command) holds them until its

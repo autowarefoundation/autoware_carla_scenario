@@ -75,11 +75,26 @@ rather than replayed joint for joint:
 When the motion ends (with `loop`, when `duration_s` is up) the walker is
 handed back to its animation (`blend_pose(0.0)`).
 
-!!! warning "A walker stands while it plays a motion"
+!!! warning "A walker plays a motion standing"
     CARLA's custom pose is the whole skeleton: the bones the motion does not
-    drive hold the animation frame the motion began on. A walking pedestrian
-    would glide with frozen legs, so stop it first (`WalkStraightAction` at
-    speed 0).
+    drive hold the animation frame the motion began on, so a walking
+    pedestrian would glide with frozen legs. The action therefore fires only
+    while the pedestrian stands (no faster than `STANDING_SPEED_MS`, 0.1 m/s)
+    *and* its trigger holds: stop it first (`WalkStraightAction` at speed 0).
+    A walking pedestrian's motion waits until it stands.
+
+## Who controls the pedestrian
+
+The motion takes the pedestrian's **animation**
+[control domain](architecture.md): a second motion on it while one plays ends
+the run in error, unless that one is built with `overrides=True` (*Override a
+running action* on its card), which stops the first.
+
+Driving the whole body (`upper_body_only=False`), the motion takes the
+pedestrian's **movement** (longitudinal and lateral) too, since its legs are
+the motion's: a `WalkStraightAction` or a route on it while it plays is an
+error. With `upper_body_only=True` the movement stays free; a walk started
+under the motion would glide the pedestrian with its legs frozen.
 
 A bone the walker's skeleton lacks is left to the animation, with a warning
 naming it; the bone names are those of CARLA's walkers (`crl_arm__L`,
@@ -94,4 +109,5 @@ naming it; the bone names are those of CARLA's walkers (`crl_arm__L`,
 | `fps` | the file's, else 30 | Frames per second |
 | `loop` | `False` | Play the motion over again when it ends |
 | `duration_s` | `None` | Stop after this long; `None`: when the motion ends, or, looping, at the scenario's end |
-| `upper_body_only` | `True` | Drive the spine, neck and arms only |
+| `upper_body_only` | `True` | Drive the spine, neck and arms only (animation domain); `False`: the whole body (animation and movement) |
+| `overrides` | `False` | Take over a domain another action holds, stopping it |
