@@ -99,6 +99,17 @@ class TestRoundTrip:
         with pytest.raises(ValueError, match="not a draft"):
             store.get("notes")
 
+    @pytest.mark.parametrize(
+        "text", ["{}\n", "name: x\nversion: 3\n", "document: [a, b]\n"]
+    )
+    def test_a_mapping_without_a_document_is_not_a_draft(self, tmp_path, text) -> None:
+        # Other YAML is mostly a mapping too (#820).
+        (tmp_path / "config.yaml").write_text(text, encoding="utf-8")
+        store = DraftStore(tmp_path)
+        with pytest.raises(ValueError, match="not a draft"):
+            store.get("config")
+        assert store.list() == []
+
     def test_malformed_yaml_is_not_a_draft(self, tmp_path) -> None:
         (tmp_path / "broken.yaml").write_text("a: [\n", encoding="utf-8")
         store = DraftStore(tmp_path)

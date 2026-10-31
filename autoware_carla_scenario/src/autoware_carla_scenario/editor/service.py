@@ -373,7 +373,8 @@ class EditorService:
         """Delete a draft.  Returns whether anything was removed.
 
         Raises:
-            EditorError: If *draft_id* is not a valid draft id.
+            EditorError: If *draft_id* is not a valid draft id, or names a
+                file that is not a draft.
         """
         with self.editing(draft_id):
             try:

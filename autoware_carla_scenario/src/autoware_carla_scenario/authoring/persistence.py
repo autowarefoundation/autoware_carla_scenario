@@ -164,10 +164,16 @@ class DraftStore:
     def get(self, draft_id: str) -> Optional[Draft]:
         """Return the draft, or ``None`` when it does not exist.
 
+        The draft's id is *draft_id*, the file's name, whatever id the file
+        stores: a draft saves back to the file it was read from, and a stored
+        id that differs (or is not a valid id at all) would otherwise send the
+        save to another file, or fail it.
+
         Raises:
-            ValueError: If the file is not YAML or does not hold a mapping, so
-                is not a draft (the drafts directory may hold other YAML;
-                :meth:`list` skips such files).
+            ValueError: If the file is not YAML, or not a mapping with a
+                ``document`` mapping (what :meth:`save` writes), so is not a
+                draft (the drafts directory may hold other YAML; :meth:`list`
+                skips such files).
         """
         path = self.path_for(draft_id)
         if not path.is_file():
@@ -178,9 +184,11 @@ class DraftStore:
             # A ValueError like the rest, so the editor answers a draft id
             # naming a broken file with "not found" rather than a 500.
             raise ValueError(f"{path}: not a draft ({exc})") from exc
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) or not isinstance(raw.get("document"), dict):
+            # Other YAML is mostly a mapping too (a config, notes): without a
+            # document it is not a draft, so not the store's to show or delete.
             raise ValueError(f"{path}: not a draft")
-        raw.setdefault("id", draft_id)
+        raw["id"] = draft_id
         return Draft.from_dict(raw)
 
     def list(self) -> list[Draft]:
@@ -220,11 +228,16 @@ class DraftStore:
         return draft
 
     def delete(self, draft_id: str) -> bool:
-        """Remove a draft.  Returns whether anything was deleted."""
-        path = self.path_for(draft_id)
-        if not path.is_file():
+        """Remove a draft.  Returns whether anything was deleted.
+
+        Raises:
+            ValueError: If *draft_id* is not a valid id, or its file is not a
+                draft (:meth:`get` refuses it): the drafts directory may hold
+                other YAML, which is not the store's to delete.
+        """
+        if self.get(draft_id) is None:
             return False
-        path.unlink()
+        self.path_for(draft_id).unlink()
         return True
 
     def _write(self, draft: Draft) -> None:
