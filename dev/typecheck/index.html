@@ -4656,9 +4656,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-252 of the package's 363
-modules (69%; about 72,800 of
-125,500 lines) are <code>CHECKED</code>: the kinematics, the
+253 of the package's 364
+modules (70%; about 73,000 of
+125,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4670,7 +4670,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 252 CHECKED modules</summary>
+<summary>The 253 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5294,6 +5294,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>kinematics.velocity</code></td>
 <td>Velocity types with coordinate-frame safety and affine-space semantics.</td>
+</tr>
+<tr>
+<td><code>kinematics.walker_motion</code></td>
+<td>A walker's velocity, measured from where it stands.</td>
 </tr>
 <tr>
 <td><code>maps</code></td>
