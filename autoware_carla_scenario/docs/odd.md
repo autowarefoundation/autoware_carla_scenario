@@ -266,7 +266,7 @@ generically around the ego:
 | `vehicle_ahead_relative_speed_kph` | km/h | 2 | That vehicle's speed along the ego's lane less the ego's |
 | `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
 | `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
-| `stop_line_distance_m` | m | 1 | Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's or a road marking's, as a `stop_line_offset` binding finds them -- up to `AHEAD_RANGE_M`, on any branch of the lane where it forks (the measure does not know the route); nothing without a lane to read along |
+| `stop_line_distance_m` | m | 1 | Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's, a detection area's or a road marking's, as a `stop_line_offset` binding finds them -- up to `AHEAD_RANGE_M`, on any branch of the lane where it forks (the measure does not know the route); nothing without a lane to read along |
 
 The pedestrian measures read in the ego's frame: ahead along its heading,
 within `PEDESTRIAN_LATERAL_M` of its centre line.
