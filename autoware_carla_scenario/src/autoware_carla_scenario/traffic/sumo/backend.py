@@ -129,6 +129,7 @@ from .geometry import (
     box_centre_to_origin,
     carla_to_sumo,
     carla_xy_to_sumo,
+    origin_to_box_centre,
     sumo_to_carla,
     sumo_xy_to_carla,
 )
@@ -2217,11 +2218,17 @@ class SumoTrafficBackend(TrafficBackend):
         self._background_count += 1
         sumo_id = f"bg{self._background_count}"
         location, rotation = transform.location, transform.rotation
-        pose = carla_to_sumo(
+        # *transform* is where the vehicle's origin goes, as the
+        # TrafficManager backend spawns it and as background_vehicles gives
+        # it back; SUMO's bumper is half a length ahead of the box centre,
+        # which the blueprint's last mirror's box offset puts ahead (#887).
+        centre = origin_to_box_centre(
             Pose2D(location.x, location.y, location.z, rotation.yaw),
-            _BACKGROUND_LENGTH_M,
-            self._offset,
+            self._blueprint_offsets.get(
+                blueprint or self._config.blueprint, (0.0, 0.0)
+            ),
         )
+        pose = carla_to_sumo(centre, _BACKGROUND_LENGTH_M, self._offset)
         place = self._road_position(pose, sumo_id)
         if place is None:
             return None
@@ -2744,9 +2751,13 @@ class SumoTrafficBackend(TrafficBackend):
 
         # From the bounding box unless CARLA reports the wheels: CARLA 0.10's
         # wheel locations read as zero.  A passenger car's wheelbase is about
-        # 0.58 of its length (a Lincoln MKZ's: 2.85 m of 4.9 m).
+        # 0.58 of its length (a Lincoln MKZ's: 2.85 m of 4.9 m).  The rear
+        # axle's offset is from the actor's origin, as the wheels' is and as
+        # pure pursuit takes it: half a wheelbase behind the box centre, which
+        # sits bounding_box.location ahead of the origin (#887).
         length = 2.0 * float(actor.bounding_box.extent.x)
-        wheel_base, rear_offset, max_steer = 0.58 * length, -0.29 * length, 70.0
+        wheel_base, max_steer = 0.58 * length, 70.0
+        rear_offset = self._box_offset(actor)[0] - 0.29 * length
         try:
             import typesafe_carla.carla as carla  # noqa: PLC0415
 

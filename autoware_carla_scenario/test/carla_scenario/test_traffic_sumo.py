@@ -1798,6 +1798,57 @@ def test_background_vehicles_are_where_their_mirrors_origins_are(
         backend.close()
 
 
+@needs_sumo
+@pytest.mark.parametrize("box_offset", [(0.0, 0.0), (1.3, 0.0)])
+def test_a_background_vehicle_is_spawned_with_its_origin_at_the_transform(
+    crossroads: Path, tmp_path: Path, box_offset: tuple[float, float]
+) -> None:
+    """The transform is the vehicle's origin, as the TrafficManager backend
+    spawns it and as background_vehicles gives it back: SUMO is asked for the
+    bumper half a length ahead of the box centre its blueprint's offset puts
+    ahead of that origin."""
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    asked: list[Pose2D] = []
+    road_position = backend._road_position
+
+    def record(pose: Pose2D, *args: Any, **kwargs: Any) -> Any:
+        asked.append(pose)
+        return road_position(pose, *args, **kwargs)
+
+    backend._road_position = record
+    backend._blueprint_offsets[backend._config.blueprint] = box_offset
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert handle is not None
+        half = backend_module._BACKGROUND_LENGTH_M / 2.0
+        assert carla_xy_to_sumo(-60.0 + box_offset[0] + half, 5.25) == pytest.approx(
+            (asked[0].x, asked[0].y)
+        )
+    finally:
+        backend.close()
+
+
+@pytest.mark.parametrize("box_location", [None, _BOX_LOCATION])
+def test_the_estimated_rear_axle_is_measured_from_the_origin(
+    box_location: Any,
+) -> None:
+    """Without CARLA's wheels, the rear axle is half a wheelbase behind the
+    box centre -- from the origin pure pursuit steers by, that is the box's
+    offset further forward."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    actor = _FakeActor(_carla_transform(0.0, 0.0, 0.0), box_location=box_location)
+    state = backend._geometry(actor)
+    forward = box_location[0] if box_location else 0.0
+    assert state["rear_offset"] == pytest.approx(forward - 0.29 * 4.6)
+    assert state["wheel_base"] == pytest.approx(0.58 * 4.6)
+
+
 def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     """typesafe_carla's ``TrafficLight.get_state()`` gives a plain int."""
     import typesafe_carla.carla as carla
