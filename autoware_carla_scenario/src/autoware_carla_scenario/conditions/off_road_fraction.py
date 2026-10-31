@@ -85,6 +85,13 @@ class OffRoadFractionCondition(BaseCondition):
         self._carla_map: Optional[carla.Map] = None
         self._last_fraction: Optional[float] = None
 
+    def reset(self) -> None:
+        """Forget the fraction measured and the map held
+        (:meth:`BaseCondition.reset`): the next run's world is its own."""
+        super().reset()
+        self._carla_map = None
+        self._last_fraction = None
+
     @property
     def off_road_fraction(self) -> Optional[float]:
         """The fraction of sample points off the driving lanes when last

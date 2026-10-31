@@ -434,12 +434,17 @@ class BaseCondition:
             _acs_expect_return(r, Optional[ScenarioResult], "BaseCondition.check() returns Optional[ScenarioResult]")
         elif name == "failure_category":
             _acs_expect_return(r, Optional[FailureCategory], "BaseCondition.failure_category() returns Optional[FailureCategory]")
+        elif name == "reset":
+            _acs_expect_return(r, NoneType, "BaseCondition.reset() returns None")
 
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         raise NotImplementedError()
 
     def failure_category(self) -> Optional[FailureCategory]:
         return None
+
+    def reset(self) -> None:
+        pass
 
 
 def _expect_optional_condition(condition) -> Optional[BaseCondition]:

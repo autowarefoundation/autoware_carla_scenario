@@ -306,7 +306,9 @@ class CollisionCondition(BaseCondition):
         A sensor already gone (destroyed by someone else, its episode
         reloaded) is let go: LibCarla raises ``RuntimeError`` for it, and
         there is nothing left to release.  The condition attaches no sensor
-        after this, and closing it again does nothing.
+        after this in the run, and closing it again does nothing; the
+        collision it saw stays for the run's report.  :meth:`reset` opens it
+        for the next run, which attaches a sensor of its own.
         """
         self._closed = True
         if self._sensor is None:
@@ -324,3 +326,18 @@ class CollisionCondition(BaseCondition):
             sensor.destroy()
         except RuntimeError:
             pass
+
+    def reset(self) -> None:
+        """Forget the collision seen and open the condition again, before a
+        run (:meth:`BaseCondition.reset`): the run attaches a sensor of its
+        own to its ego.  A sensor still held -- the condition was not closed
+        -- is released first, as :meth:`close` does."""
+        super().reset()
+        self.close()
+        with self._lock:
+            self._collided = False
+            self._other_type_id = None
+            self._other_is_actor = True
+        self._cached_result = None
+        self._last_attach_attempt = -math.inf
+        self._closed = False

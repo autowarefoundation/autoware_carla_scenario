@@ -83,6 +83,9 @@ class AdversarialTrafficAction(BaseAction):
     # Declared for the static check (docs/typecheck.md).
     _adversities: list[NadeAdversity]
     _sampler: ImportanceSampler
+    _seed: int
+    _settings: NadeSettings
+    _thresholds: TriggerThresholds
     _following_mode: TrajectoryFollowingMode
     _executions: list[AdversarialExecution]
     _choices: list[NadeChoice]
@@ -121,7 +124,10 @@ class AdversarialTrafficAction(BaseAction):
             until=forever,
         )
         self._adversities = list(adversities)
-        self._sampler = ImportanceSampler(resolve_seed(seed), settings, thresholds)
+        self._seed = resolve_seed(seed)
+        self._settings = settings
+        self._thresholds = thresholds
+        self._sampler = ImportanceSampler(self._seed, settings, thresholds)
         self._following_mode = following_mode
         self._executions = []
         self._choices = []
@@ -130,6 +136,18 @@ class AdversarialTrafficAction(BaseAction):
         self._elapsed = 0.0
         self._drive_background = drive_background
         self._backend = None
+        self._background = {}
+
+    def reset(self) -> None:
+        """Sample the next run as the first (:meth:`BaseAction.reset`): its
+        weight from 1, no cooldown, the same draws from the seed."""
+        super().reset()
+        self._sampler = ImportanceSampler(self._seed, self._settings, self._thresholds)
+        self._executions = []
+        self._choices = []
+        self._events = []
+        self._sampled_now = None
+        self._elapsed = 0.0
         self._background = {}
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:

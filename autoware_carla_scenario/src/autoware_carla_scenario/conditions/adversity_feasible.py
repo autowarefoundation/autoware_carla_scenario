@@ -60,6 +60,7 @@ class AdversityFeasibleCondition(BaseCondition):
     _entity_name: str
     _kind: AdversityKind
     _location: AdversityLocation
+    _seed: int
     _rng: random.Random
     _thresholds: TriggerThresholds
     _command: Optional[AdversarialCommand]
@@ -79,10 +80,19 @@ class AdversityFeasibleCondition(BaseCondition):
         self._entity_name = str(entity_name)
         self._kind = kind
         self._location = location
-        self._rng = random.Random(resolve_seed(seed))
+        self._seed = resolve_seed(seed)
+        self._rng = random.Random(self._seed)
         self._thresholds = thresholds
         self._command = None
         self._scene = None
+
+    def reset(self) -> None:
+        """Forget the command found, and draw the run's numbers afresh from
+        the seed (:meth:`BaseCondition.reset`), as the first run did."""
+        super().reset()
+        self._command = None
+        self._scene = None
+        self._rng = random.Random(self._seed)
 
     @property
     def kind(self) -> AdversityKind:

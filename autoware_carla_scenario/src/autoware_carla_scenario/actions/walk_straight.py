@@ -189,6 +189,21 @@ class WalkStraightAction(BaseAction):
         """Where and how fast the pedestrian walks: its movement."""
         return movement_of(str(self._entity_name))
 
+    def reset(self) -> None:
+        """Forget the earlier runs' walk and the map held
+        (:meth:`BaseAction.reset`)."""
+        super().reset()
+        self._carla_map = None
+        self._phase = _SETTLED
+        self._yaw_deg = 0.0
+        self._has_kerb = False
+        self._kerb_x = 0.0
+        self._kerb_y = 0.0
+        self._start_x = 0.0
+        self._start_y = 0.0
+        self._target_x = 0.0
+        self._target_y = 0.0
+
     def execute(self, world: "carla.World") -> None:
         """Tell the named pedestrian to start walking, then, for a walk that
         may turn back, watch the vehicles every tick."""

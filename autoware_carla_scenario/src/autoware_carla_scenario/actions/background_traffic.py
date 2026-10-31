@@ -221,6 +221,7 @@ class TrafficSourceAction(_BackendAction):
     _speed_kmh: float
     _min_gap: float
     _blueprint: Optional[str]
+    _seed: int
     _rng: random.Random
     _handles: set[str]
     _started: bool
@@ -264,10 +265,23 @@ class TrafficSourceAction(_BackendAction):
         self._speed_kmh = speed_kmh
         self._min_gap = min_gap_m
         self._blueprint = blueprint
-        self._rng = random.Random(resolve_seed(seed))
+        self._seed = resolve_seed(seed)
+        self._rng = random.Random(self._seed)
         self._handles: set[str] = set()
         self._started = False
         self._last_time: Optional[float] = None
+        self._owed = 0.0
+
+    def reset(self) -> None:
+        """Start the next run as the first (:meth:`BaseAction.reset`): its
+        initial vehicles placed again, the same draws from the seed."""
+        BaseAction.reset(
+            self
+        )  # named: Codon 0.19 cannot dispatch super() two classes up
+        self._rng = random.Random(self._seed)
+        self._handles = set()
+        self._started = False
+        self._last_time = None
         self._owed = 0.0
 
     @property
@@ -392,6 +406,13 @@ class TrafficSinkAction(_BackendAction):
             reissue=reissue,
         )
         self._region = LaneletRegion(constraints)
+        self.removed = 0
+
+    def reset(self) -> None:
+        """Count the next run's removals from nothing (:meth:`BaseAction.reset`)."""
+        BaseAction.reset(
+            self
+        )  # named: Codon 0.19 cannot dispatch super() two classes up
         self.removed = 0
 
     def execute(self, world: "carla.World") -> None:

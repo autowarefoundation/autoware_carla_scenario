@@ -949,9 +949,24 @@ class BaseScenario(ABC):
         per-run registry is reset here, so a new one is added here too.
         Constructor arguments and the ego config are not registrations and
         are kept.  An action or condition registered in ``__init__`` is the
-        same object on every run, so it keeps whatever state an earlier run
-        left in it.
+        same object on every run, so each one restored is reset
+        (:meth:`BaseCondition.reset`, :meth:`BaseAction.reset`, which reset
+        the conditions they hold): it starts the run as it was built, not
+        with what an earlier run left in it -- a latch, a timer, a collision
+        seen, a ``once`` action that fired.
         """
+        self._restore_registrations()
+        for condition in self._pass_conditions + self._fail_conditions:
+            condition.reset()
+        # Concatenated rather than unpacked into a tuple, which Codon cannot.
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            action.reset()
+
+    def _restore_registrations(self) -> None:
+        """:meth:`_reset_registrations`'s registries: remembered on the first
+        call, restored on every later one."""
         initial = self._initial_registrations
         if initial is None:
             taken = _Registrations()

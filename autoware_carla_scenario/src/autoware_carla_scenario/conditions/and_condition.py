@@ -60,6 +60,12 @@ class AndCondition(BaseCondition):
         for condition in self._conditions:
             condition.close()
 
+    def reset(self) -> None:
+        """Reset every child (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        for condition in self._conditions:
+            condition.reset()
+
     def get_details(self) -> dict[str, Any]:
         return {
             "operator": "AND",

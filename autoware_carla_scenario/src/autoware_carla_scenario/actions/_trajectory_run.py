@@ -219,6 +219,7 @@ class TrajectoryRun(BaseAction):
     _time_reference: Optional[TrajectoryTiming]
     _following_mode: TrajectoryFollowingMode
     _initial_distance_offset: float
+    _given_offset: float
     _control_config: Optional[ControlConfig]
     _hidden_outside: bool
     _stop_at_end: bool
@@ -298,6 +299,8 @@ class TrajectoryRun(BaseAction):
         self._time_reference = time_reference
         self._following_mode = following_mode
         self._initial_distance_offset = float(initial_distance_offset)
+        # As given: a run may move the offset to where its entity stands.
+        self._given_offset = self._initial_distance_offset
         self._control_config = control_config
         self._hidden_outside = hidden_outside_trajectory
         self._stop_at_end = stop_at_end
@@ -313,6 +316,31 @@ class TrajectoryRun(BaseAction):
         self._resolved = None
         self._elapsed = 0.0
         # Per run.
+        self._finished = False
+        self._warned_missing = False
+        self._warned_absent = False
+        self._start_time = 0.0
+        self._clock_shift = 0.0
+        self._distance = 0.0
+        self._speed = 0.0
+        self._follower = None
+        self._released = False
+        self._hidden = False
+        self._begun = False
+
+    def reset(self) -> None:
+        """Forget the earlier runs (:meth:`BaseAction.reset`): the trajectory
+        is placed, and the entity -- the run's own, spawned anew -- taken
+        from its driver, afresh."""
+        super().reset()
+        self._initial_distance_offset = self._given_offset
+        self._timeline = None
+        self._waiting = False
+        self._held_at = None
+        self._progress = 0.0
+        self._last_here = 0.0
+        self._resolved = None
+        self._elapsed = 0.0
         self._finished = False
         self._warned_missing = False
         self._warned_absent = False

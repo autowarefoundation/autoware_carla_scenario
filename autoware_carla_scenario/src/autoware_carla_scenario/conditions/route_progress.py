@@ -135,6 +135,13 @@ class RouteProgressCondition(BaseCondition):
         self._last: Optional[float] = None
         self._target: Optional[float] = None
 
+    def reset(self) -> None:
+        """Forget the progress measured (:meth:`BaseCondition.reset`): the
+        run's entity starts from wherever it is placed."""
+        super().reset()
+        self._last = None
+        self._target = None
+
     @property
     def entity_name(self) -> str:
         """``role_name`` of the entity measured."""

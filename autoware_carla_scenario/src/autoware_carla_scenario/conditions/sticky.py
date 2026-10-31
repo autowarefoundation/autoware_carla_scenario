@@ -58,8 +58,16 @@ class StickyCondition(BaseCondition):
         self._latched_result: Optional[ScenarioResult] = None
 
     def close(self) -> None:
-        """Close the child (:meth:`BaseCondition.close`)."""
+        """Close the child (:meth:`BaseCondition.close`).  The latched
+        result stays for the run's report; :meth:`reset` lets it go."""
         self._condition.close()
+
+    def reset(self) -> None:
+        """Unlatch, and reset the child (:meth:`BaseCondition.reset`): a
+        result latched in an earlier run does not decide this one."""
+        super().reset()
+        self._latched_result = None
+        self._condition.reset()
 
     def failure_category(self) -> Optional[FailureCategory]:
         """What the wrapped condition says."""

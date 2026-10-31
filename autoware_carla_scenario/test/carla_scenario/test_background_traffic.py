@@ -111,6 +111,23 @@ class TestSource:
         source.tick(world, 0.0)
         assert len(backend.vehicles) == 5
 
+    def test_a_rerun_places_the_initial_vehicles_again_where_the_first_did(
+        self,
+    ) -> None:
+        """A source registered in a scenario's __init__ is the same object on
+        the next run: reset, it places its initial vehicles again, drawn
+        from its seed as the first run's were (#928)."""
+        source = TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=3, seed=11)
+        placed = []
+        for _ in range(2):
+            backend = _Backend()
+            source.reset()
+            source.set_traffic_backend(backend)
+            source.tick(_World(), 0.0)
+            placed.append(sorted(backend.vehicles.values()))
+        assert len(placed[0]) == 3
+        assert placed[1] == placed[0]
+
     def test_registered_for_initialization_it_places_them_once_and_stops(self) -> None:
         """What register_init does: one tick, at elapsed 0, never again."""
         backend, world = _Backend(), _World()

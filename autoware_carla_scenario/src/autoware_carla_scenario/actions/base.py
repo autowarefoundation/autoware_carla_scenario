@@ -317,6 +317,25 @@ class BaseAction(ABC):
             until: BaseCondition = self._until
             until.close()
 
+    def reset(self) -> None:
+        """Back to standby, never fired, before a run begins, and reset the
+        trigger and the *until* condition (:meth:`BaseCondition.reset`).
+
+        An action a scenario registers in ``__init__`` is the same object on
+        every run of it -- a retry, or a second ``run_all()``
+        (:meth:`~autoware_carla_scenario.BaseScenario._reset_registrations`)
+        -- so the runner resets it before each one: a ``once`` action that
+        fired in an earlier run fires again in this one.  An action that
+        keeps state of its own across ticks clears it here too.
+        """
+        self._done = False
+        self._lifecycle = ActionState.STANDBY
+        self._condition.reset()
+        if self._until is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            until: BaseCondition = self._until
+            until.reset()
+
     @abstractmethod
     def execute(self, world: "carla.World") -> None:
         """Perform the action.

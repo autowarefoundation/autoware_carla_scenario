@@ -201,6 +201,14 @@ class AdversarialAction(BaseAction):
             execution: AdversarialExecution = self._execution
             execution.hand_back(world)
 
+    def reset(self) -> None:
+        """Forget the earlier runs' path (:meth:`BaseAction.reset`), and
+        reset the feasibility check, which draws from its seed afresh."""
+        super().reset()
+        self._feasible.reset()
+        self._execution = None
+        self._elapsed = 0.0
+
     def close(self) -> None:
         """Close the conditions, the trigger's and the path's."""
         super().close()

@@ -82,6 +82,11 @@ class EntityExistenceCondition(BaseCondition):
         self._quiet = quiet
         self._said_absent = False
 
+    def reset(self) -> None:
+        """Say an absence again in the next run (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        self._said_absent = False
+
     def failure_category(self) -> Optional[FailureCategory]:
         """An entity that vanished: :attr:`~FailureCategory.INFRASTRUCTURE`."""
         return FailureCategory.INFRASTRUCTURE

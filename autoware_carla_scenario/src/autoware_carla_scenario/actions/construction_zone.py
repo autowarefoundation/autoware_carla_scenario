@@ -197,6 +197,16 @@ class ConstructionZoneAction(_BackendAction):
         self._props = []
         self._reopen(None)
 
+    def reset(self) -> None:
+        """Place the zone afresh in the next run (:meth:`BaseAction.reset`);
+        a lane still closed is reopened first, as :meth:`close` does."""
+        BaseAction.reset(self)  # named, as in tick
+        self._props = []
+        self._reopen(None)
+        self._placed = False
+        self._cleared = False
+        self._elapsed = 0.0
+
     # -- placing -------------------------------------------------------------
 
     def _place(self, world: "carla.World") -> None:

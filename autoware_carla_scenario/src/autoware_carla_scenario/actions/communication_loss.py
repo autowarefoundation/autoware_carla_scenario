@@ -214,6 +214,14 @@ class CommunicationLossAction(BaseAction):
         self.restore()
         super().close()
 
+    def reset(self) -> None:
+        """Forget the earlier runs' loss (:meth:`BaseAction.reset`); one still
+        cut is restored first, as :meth:`close` does."""
+        self.restore()
+        super().reset()
+        self._now = 0.0
+        self._started_at = 0.0
+
 
 class _LossEnds(BaseCondition):
     """Satisfied once a :class:`CommunicationLossAction`'s *until* fires or its
@@ -258,3 +266,9 @@ class _LossEnds(BaseCondition):
         if self._until is not None:
             until: BaseCondition = self._until
             until.close()
+
+    def reset(self) -> None:
+        super().reset()
+        if self._until is not None:
+            until: BaseCondition = self._until
+            until.reset()

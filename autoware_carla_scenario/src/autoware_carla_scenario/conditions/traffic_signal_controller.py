@@ -53,6 +53,12 @@ class TrafficSignalControllerCondition(BaseCondition):
         #: between them, so an unguarded warning would print at the tick rate.
         self._warned_missing = False
 
+    def reset(self) -> None:
+        """Report a missing controller again in the next run
+        (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        self._warned_missing = False
+
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result while the named phase is the one showing.
 

@@ -59,6 +59,12 @@ class WaypointCondition(CompositionCondition):
         self._check_type = check_type
         self._carla_map: Optional[carla.Map] = None
 
+    def reset(self) -> None:
+        """Forget the map held (:meth:`CompositionCondition.reset`): the next
+        run's world is its own."""
+        super().reset()
+        self._carla_map = None
+
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
         details.update(

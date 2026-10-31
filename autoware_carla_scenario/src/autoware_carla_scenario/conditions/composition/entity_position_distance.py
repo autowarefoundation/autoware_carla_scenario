@@ -82,6 +82,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
     _at: TrajectoryVertex
     _target: Optional[Vector3]
     _unplaced: bool
+    _placed_on_build: bool
     _vertical: bool
     _comparison: ScalarComparisonRule
 
@@ -126,6 +127,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
         elif isinstance(held, CarlaWorldPose):
             world_pose: CarlaWorldPose = held
             self._target = self._located(to_carla_location(world_pose))
+        self._placed_on_build = self._target is not None
         self._vertical = vertical
         self._comparison = ScalarComparisonRule(
             field="distance", rule=rule, value=value, tolerance=tolerance
@@ -152,6 +154,15 @@ class EntityPositionDistanceCondition(CompositionCondition):
             }
         )
         return details
+
+    def reset(self) -> None:
+        """Place a position that is not a map pose afresh next time it is
+        measured to (:meth:`CompositionCondition.reset`): a route pose is
+        placed on the run's route, which may be another."""
+        super().reset()
+        self._unplaced = False
+        if not self._placed_on_build:
+            self._target = None
 
     def _place(self) -> Optional[Vector3]:
         """The place in CARLA's world, placed the first time it is asked for;
