@@ -2954,7 +2954,10 @@ class SumoTrafficBackend(TrafficBackend):
         actor's id, or ``None`` with nothing there.  Along the path, not
         straight ahead: turning, a car standing beside the curve is not in
         the way."""
-        from ...utils.clearance import first_box_in_way  # noqa: PLC0415
+        from ...utils.clearance import (  # noqa: PLC0415
+            actor_box_centre,
+            first_box_in_way,
+        )
 
         extent = actor.bounding_box.extent
         half_length = float(extent.x)
@@ -2964,8 +2967,9 @@ class SumoTrafficBackend(TrafficBackend):
             + _GUARD_GAP_M
             + max(_GUARD_LOOK_M, speed * speed / (2.0 * _GUARD_DECEL) + speed)
         )
-        # From its middle; SUMO's points from its front bumper on.
-        points = [(tf.location.x, tf.location.y)]
+        # From its middle -- its bounding box's centre, ahead of its origin
+        # on a car -- SUMO's points from its front bumper on.
+        points = [actor_box_centre(actor, tf)]
         pieces = max(math.ceil((reach - half_length) / _GUARD_PIECE_M), 1)
         for point in self._lookahead_points(
             sumo_id, [_GUARD_PIECE_M * (k + 1) for k in range(pieces)]

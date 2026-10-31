@@ -17,6 +17,7 @@ import math
 from typing import TYPE_CHECKING, List, Optional
 
 from ..trajectory.model import ResolvedTrajectory
+from ..utils.clearance import actor_box_centre as _box_centre
 from ..utils.vehicles import as_vehicle
 
 if TYPE_CHECKING:
@@ -327,20 +328,31 @@ class FinalApproach:
 
     def _in_way(self, kind: str, reach: float, half_width: float) -> bool:
         """Whether a *kind* (``"vehicle"`` or ``"walker"``) actor stands on the
-        path from where the vehicle is to *reach* m on, within *half_width* of
-        it (its own size added); straight on past the path's end."""
+        path from where the vehicle is to *reach* m past its bounding box's
+        centre, within *half_width* of it (its own size added); straight on
+        past the path's end."""
         path = self._path
         try:
             world = self._actor.get_world()
             own = int(self._actor.id)
             transform = self._actor.get_transform()
+            centre = _box_centre(self._actor, transform)
+            # How far its box's centre is ahead of its origin, whose place
+            # along the path _here is: *reach* and its front half are
+            # measured from the centre, as _walker_in_way and _vehicle_in_way
+            # measure them (#884).
+            facing = math.radians(float(transform.rotation.yaw))
+            forward = (centre[0] - float(transform.location.x)) * math.cos(facing) + (
+                centre[1] - float(transform.location.y)
+            ) * math.sin(facing)
             behind = (
-                float(transform.location.x),
-                float(transform.location.y),
+                centre[0],
+                centre[1],
                 float(transform.rotation.yaw),
-                # Its centre: one whose centre is behind its own is not in
-                # its way going on, however near its corner (vehicle_56 at
-                # vehicle_58's rear, each waiting on the other).
+                # Its centre -- its bounding box's, as the other's is: one
+                # whose centre is behind its own is not in its way going on,
+                # however near its corner (vehicle_56 at vehicle_58's rear,
+                # each waiting on the other).
                 0.0,
             )
         except (AttributeError, RuntimeError):
@@ -352,7 +364,7 @@ class FinalApproach:
             body = 0.0
             half_length = 0.0
         distance = self._here
-        end = self._here + reach
+        end = self._here + forward + reach
         while distance < end - 1e-6:
             on_path = distance < path.length - 1e-6
             span = end - distance
@@ -371,7 +383,7 @@ class FinalApproach:
             # across into the lane beside, caught a lorry's corner).
             # Only along its own front half: further on it faces along its path.
             looked = half_width
-            if distance - self._here < half_length:
+            if distance - self._here < forward + half_length:
                 swing = abs(math.sin(math.radians(heading - behind[2])))
                 looked += swing * half_length
             if TYPE_CHECKING:
