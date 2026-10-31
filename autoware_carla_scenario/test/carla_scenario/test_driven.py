@@ -283,6 +283,139 @@ class TestLaneChangeFinished:
         assert _Vehicle().lane_change_finished(_World(_Map(None))) is False
 
 
+class _RoadWaypoint:
+    """A waypoint on :class:`_TwoRoadMap`: a lane centre that knows what follows."""
+
+    def __init__(self, x: float, lane_id: int) -> None:
+        self.road_id = _TwoRoadMap.road_at(x)
+        self.section_id = 0
+        self.lane_id = lane_id
+        self.s = x - _TwoRoadMap.road_start(self.road_id)
+        self.transform = _Transform(_Location(x, _TwoRoadMap.lane_y(lane_id)), 0.0)
+        self._x = x
+
+    def next(self, distance: float) -> list["_RoadWaypoint"]:
+        x = self._x + distance
+        if x > _TwoRoadMap.END_X:
+            return []
+        return [_RoadWaypoint(x, self.lane_id)]
+
+    def get_left_lane(self) -> Optional["_RoadWaypoint"]:
+        if self.lane_id == -1:
+            return None
+        return _RoadWaypoint(self._x, self.lane_id + 1)
+
+    def get_right_lane(self) -> Optional["_RoadWaypoint"]:
+        if self.lane_id == -2:
+            return None
+        return _RoadWaypoint(self._x, self.lane_id - 1)
+
+
+class _TwoRoadMap:
+    """Two lanes along +x, on road 10 before x = 30 and on road 11 after it.
+
+    Lane -1 is centred on y = 0 and lane -2, to its right, on y = -3.5; lane
+    ids carry over from road 10 to road 11 as OpenDRIVE numbers them, but
+    ``(10, -2)`` and ``(11, -2)`` are different lanes to a key.
+    """
+
+    SPLIT_X = 30.0
+    END_X = 300.0
+
+    @staticmethod
+    def road_at(x: float) -> int:
+        if x < _TwoRoadMap.SPLIT_X:
+            return 10
+        return 11
+
+    @staticmethod
+    def road_start(road_id: int) -> float:
+        if road_id == 10:
+            return 0.0
+        return _TwoRoadMap.SPLIT_X
+
+    @staticmethod
+    def lane_y(lane_id: int) -> float:
+        return -3.5 * (-lane_id - 1)
+
+    def get_waypoint(self, location, project_to_road=True):  # noqa: ANN001, ARG002
+        lane_id = -1
+        if location.y < -1.75:
+            lane_id = -2
+        return _RoadWaypoint(location.x, lane_id)
+
+
+class TestLaneChangeOntoTheNextRoad:
+    """A lane change that settles after the target lane has run onto the next
+    road still finishes (#821): lane ids are scoped to a road."""
+
+    @staticmethod
+    def _changed_right_at(x: float):
+        actor = _Actor(_Transform(_Location(x, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        world = _World(_TwoRoadMap())  # type: ignore[arg-type]
+        vehicle.change_lane(world, LaneChangeDirection.RIGHT)
+        return vehicle, actor, world
+
+    @pytest.mark.parametrize("x", [28.0, 45.0, 200.0])
+    def test_centred_and_aligned_on_the_target_lane_is_finished(self, x: float) -> None:
+        vehicle, actor, world = self._changed_right_at(25.0)
+        assert vehicle._lane_change_target == (10, -2)
+
+        actor._transform = _Transform(_Location(x, -3.5), 0.0)
+
+        assert vehicle.lane_change_finished(world) is True
+
+    def test_the_lane_left_on_the_next_road_is_not_the_target(self) -> None:
+        vehicle, actor, world = self._changed_right_at(25.0)
+
+        actor._transform = _Transform(_Location(45.0, 0.0), 0.0)
+
+        assert vehicle.lane_change_finished(world) is False
+
+    def test_the_next_road_still_needs_centre_and_heading(self) -> None:
+        vehicle, actor, world = self._changed_right_at(25.0)
+
+        actor._transform = _Transform(_Location(45.0, -2.5), 0.0)
+        assert vehicle.lane_change_finished(world) is False
+        actor._transform = _Transform(_Location(45.0, -3.5), 30.0)
+        assert vehicle.lane_change_finished(world) is False
+
+    def test_the_lanes_ahead_are_walked_again_only_further_on(self) -> None:
+        vehicle, actor, world = self._changed_right_at(25.0)
+        actor._transform = _Transform(_Location(45.0, -3.5), 0.0)
+        assert vehicle.lane_change_finished(world) is True
+        assert vehicle._lane_change_ahead == {(10, -2), (11, -2)}
+        # 20 m on from the target waypoint: twice that and the margin.
+        assert vehicle._lane_change_horizon_m == pytest.approx(90.0)
+
+        # Further than that walk covers: walked again, twice as far.
+        actor._transform = _Transform(_Location(50.0, -3.5), 0.0)
+        assert vehicle.lane_change_finished(world) is True
+        assert vehicle._lane_change_horizon_m == pytest.approx(180.0)
+        ahead = vehicle._lane_change_ahead
+
+        # Within it: the lanes walked are kept.
+        actor._transform = _Transform(_Location(60.0, -3.5), 0.0)
+        assert vehicle.lane_change_finished(world) is True
+        assert vehicle._lane_change_ahead is ahead
+        assert vehicle._lane_change_horizon_m == pytest.approx(180.0)
+
+    def test_forgetting_the_lane_change_drops_the_lanes_ahead(self) -> None:
+        vehicle, actor, world = self._changed_right_at(25.0)
+        actor._transform = _Transform(_Location(45.0, -3.5), 0.0)
+        assert vehicle.lane_change_finished(world) is True
+
+        vehicle.forget_lane_change()
+
+        assert vehicle._lane_change_waypoint is None
+        assert vehicle._lane_change_ahead is None
+        assert vehicle._lane_change_horizon_m == 0.0
+        assert vehicle.lane_change_finished(world) is False
+
+
 class TestEntitiesThatAreNotBackendDriven:
     """They refuse rather than sending a command that would do nothing."""
 
