@@ -433,3 +433,25 @@ def test_a_vehicle_reads_what_carla_reports() -> None:
     agent = snapshot.snapshot_world(world)[0]
     assert agent.speed == pytest.approx(5.0)
     assert agent.speed_limit == 40.0
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_snapshot_actor_on_a_fresh_world_wrapper_keeps_the_walkers() -> None:
+    # Actor.get_world() makes a new World on every call: snapshot_actor must
+    # not take that for another world and forget what scene_at measured.
+    world = _Clocked([])
+    walker = _walker(world)
+    world.actors.append(walker)
+
+    def fresh() -> _Clocked:
+        copy = _Clocked(world.actors)
+        copy.elapsed, copy.frame = world.elapsed, world.frame
+        return copy
+
+    walker.get_world = fresh
+    _speeds(world)
+    for _ in range(3):
+        world.tick()
+        walker.at[0] += 0.14
+        assert snapshot.snapshot_actor(walker, "p").speed == pytest.approx(1.4)
+        assert _speeds(world)["p"] == pytest.approx(1.4)

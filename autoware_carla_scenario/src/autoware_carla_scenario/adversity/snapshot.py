@@ -69,13 +69,15 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
 
     A walker's velocity is measured from where it stood when last read, on
     its world's clock (:func:`_velocity`); with no world to ask, it is what
-    CARLA reports.
+    CARLA reports.  The world is only asked the time: ``get_world()`` makes
+    a new wrapper on every call, which is no other world (unlike the one
+    :func:`snapshot_world` is handed), so the walkers measured are kept.
     """
     transform = actor.get_transform()
     elapsed: Optional[float] = None
     if is_walker(actor):
         try:
-            elapsed = _walker_clock(actor.get_world())
+            elapsed = simulated_seconds(actor.get_world())
         except (AttributeError, RuntimeError):
             elapsed = None  # no world to ask (a test double)
     return _snapshot(
