@@ -37,6 +37,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from autoware_carla_scenario.conditions import ConditionStatus, ScenarioResult
+from autoware_carla_scenario.rerun import recording_path
 from autoware_carla_scenario.scenario_runner import _run_file_stem
 
 
@@ -191,10 +192,11 @@ class FakeQueue:
                         "type": "world",
                         "schema_version": 2,
                         "map": "Carla/Maps/M",
-                        # The Rerun converter requires the world's episode;
-                        # without it no case's log converts, and only the
-                        # cases that raise (an empty log) make a recording.
-                        "episode": value,
+                        # The Rerun converter requires the world's episode
+                        # (a CARLA episode id: small); without it no case's
+                        # log converts, and only the cases that raise (an
+                        # empty log) make a recording.
+                        "episode": 1,
                         # What tells the cases' logs apart (and an unknown
                         # field to the Rerun converter: skipped, with a warning).
                         "digest": scenario.digest,
@@ -202,15 +204,17 @@ class FakeQueue:
                 )
                 + "\n"
             )
+            trajectory = self.output_dir / f"{stem}.trajectory.jsonl"
             if self.rerun is not None:
-                result.rerun_recording = str(
-                    self.rerun.submit(
-                        self.output_dir / f"{stem}.trajectory.jsonl", stem
-                    )
-                )
+                result.rerun_recording = str(recording_path(trajectory))
+            # Written before the log is handed to the converter, which reads
+            # the result beside it: handed first, it can read the file while
+            # it is written (an empty document) and fail.
             (self.output_dir / f"{stem}_result.json").write_text(
                 result.to_json(indent=2)
             )
+            if self.rerun is not None:
+                self.rerun.submit(trajectory, stem)
             _record_stem(stem, scenario)
             results.append(result)
         return results
