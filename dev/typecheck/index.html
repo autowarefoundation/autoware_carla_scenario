@@ -4657,7 +4657,7 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 251 of the package's 362
-modules (69%; about 72,300 of
+modules (69%; about 72,400 of
 125,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -5865,13 +5865,13 @@ the first:</p>
 <li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes</li>
 <li><code>authoring.starter</code>: reaches pydantic models through authoring.models</li>
 <li><code>authoring.validator</code>: reaches pydantic models through authoring.models</li>
-<li><code>authoring.wheelhouse</code>: imports jinja2, packaging, tomllib, tomli, platform; its requirements pinning is checked as authoring.requirements_pin</li>
+<li><code>authoring.wheelhouse</code>: imports jinja2, packaging, tomllib, tomli, platform and, at module level, <code>ThreadPoolExecutor</code> from concurrent.futures; its requirements pinning is checked as authoring.requirements_pin</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2</code>: imports google.protobuf</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2_grpc</code>: imports grpc</li>
 <li><code>autoware_bridge.grpc_server</code>: imports grpc, concurrent.futures</li>
 <li><code>autoware_bridge.ros_bridge.__main__</code>: runs the scenario_bridge node: imports autoware_bridge.ros_bridge.node (rclpy), which is neither checked nor modelled</li>
 <li><code>autoware_bridge.ros_bridge.client</code>: imports grpc</li>
-<li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc</li>
+<li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, autoware_vehicle_msgs, geometry_msgs, grpc</li>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>)</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
@@ -5907,7 +5907,7 @@ the first:</p>
 <li><code>maps.road_network_cache</code>: imports pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
-<li><code>odd.cli</code>: imports argparse, and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
+<li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
 <li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics'</li>
 <li><code>odd.model</code>: re-exports openodd's model (a Rust extension)</li>
 <li><code>odd.openodd</code>: re-exports openodd's reader (a Rust extension)</li>
@@ -5948,7 +5948,7 @@ the first:</p>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse</li>
 <li><code>traffic.registry</code>: holds backend factories behind the alias <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> (registry.py:44, "expected type expression") and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package</li>
 <li><code>traffic.sumo.backend</code>: imports traci, sumolib, libsumo; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states'</li>
-<li><code>traffic.sumo.network</code>: imports roadgen, sumo</li>
+<li><code>traffic.sumo.network</code>: imports, inside its functions, roadgen, sumo and xml.etree.ElementTree</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
