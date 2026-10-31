@@ -38,9 +38,9 @@ class _Actor:
 class _ActorSnapshot:
     """An actor's state on one tick, facing CARLA's +y (yaw 90)."""
 
-    def __init__(self, actor_id: int, x: float, vx: float) -> None:
+    def __init__(self, actor_id: int, x: float, vx: float, wz: float = 0.0) -> None:
         self.id = actor_id
-        self._x, self._vx = x, vx
+        self._x, self._vx, self._wz = x, vx, wz
 
     def get_transform(self) -> SimpleNamespace:
         return SimpleNamespace(
@@ -50,6 +50,9 @@ class _ActorSnapshot:
 
     def get_velocity(self) -> SimpleNamespace:
         return _vec(self._vx)
+
+    def get_angular_velocity(self) -> SimpleNamespace:
+        return _vec(0.0, 0.0, self._wz)
 
 
 class _World:
@@ -92,14 +95,17 @@ def _numeric(array: pb.NumericArray) -> np.ndarray:
     return np.frombuffer(array.data, dtype=dtype).reshape(tuple(array.shape))
 
 
-def _run(ticks: int, history_rows: int = 3, extras: bool = True) -> LiveT4Scene:
-    """The ego driving +x at 10 m/s, a tick (0.05 s) at a time."""
+def _run(
+    ticks: int, history_rows: int = 3, extras: bool = True, wz: float = 0.0
+) -> LiveT4Scene:
+    """The ego driving +x at 10 m/s, a tick (0.05 s) at a time, turning at
+    *wz* (CARLA's deg/s)."""
     world = _World()
     live = LiveT4Scene(history_rows, wheel_base_m=2.85)
     live.start(world)
     for tick in range(ticks):
         world.frame = 100 + tick
-        world.snapshot = [_ActorSnapshot(1, 0.5 * tick, 10.0)]
+        world.snapshot = [_ActorSnapshot(1, 0.5 * tick, 10.0, wz)]
         live.record(
             world,
             0.05 * tick,
@@ -168,6 +174,15 @@ def test_without_extras_they_are_masked_not_zero() -> None:
     for array in (scene.ego.accelerations, scene.ego.tire_steering_angles):
         assert array.HasField("mask")
         assert np.frombuffer(array.mask, dtype="?").all()
+
+
+def test_without_extras_the_angular_velocity_is_the_logs() -> None:
+    scene = _run(ticks=5, extras=False, wz=-math.degrees(0.2)).scene("run")
+    assert scene is not None
+    array = scene.ego.angular_velocities
+    assert not np.frombuffer(array.mask, dtype="?").any()
+    # CARLA's clockwise -z is the right-handed frame's counter-clockwise +z.
+    np.testing.assert_allclose(_numeric(array), [[0.0, 0.0, 0.2]] * 3, atol=1e-3)
 
 
 def test_the_current_sweep_route_and_goal_ride_along() -> None:

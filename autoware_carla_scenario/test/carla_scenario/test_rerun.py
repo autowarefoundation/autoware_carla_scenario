@@ -318,7 +318,9 @@ def test_a_strict_conversion_fails_on_a_field_it_does_not_know(
         lenient.submit(log, "S")
     [ok] = lenient.close()
     assert ok.ok and ok.stats is not None
-    assert ok.stats["unknown_fields"] == {"world.from_the_future": 1}
+    # Among them: a converter older than the log may not know the fields
+    # added within version 2 either (a tick's ``angular_velocity``).
+    assert ok.stats["unknown_fields"]["world.from_the_future"] == 1
 
     with RerunConverter(strict=True) as strict:
         strict.submit(log, "S")

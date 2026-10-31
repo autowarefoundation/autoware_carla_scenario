@@ -163,6 +163,112 @@ def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> 
     assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(5.0)
 
 
+#: A kinematic bicycle turning left: its rear axle (``base_link``) moves along
+#: its heading at _SPEED, turning at _YAW_RATE (rad/s, the map's
+#: counter-clockwise); its actor origin is _AXLE_TO_ORIGIN ahead of it.
+_SPEED, _WHEEL_BASE, _STEER = 8.0, 2.8, 0.1
+_YAW_RATE = _SPEED * math.tan(_STEER) / _WHEEL_BASE
+_AXLE_TO_ORIGIN = 1.4
+
+
+def _bicycle_turn(
+    frames: int, yaw_rate: float = _YAW_RATE, *, with_angular: bool = True
+) -> tuple[list[dict], list[np.ndarray]]:
+    """The turn's ticks, as the recorder writes them (CARLA's frame: ``y``
+    and the yaw flip, the angular velocity an axial vector in deg/s), and
+    each tick's base_link velocity in the map frame."""
+    ticks: list[dict] = []
+    truths: list[np.ndarray] = []
+    rear = np.array([0.0, 0.0])
+    for k in range(frames):
+        yaw = 0.3 + yaw_rate * 0.05 * k
+        heading = np.array([math.cos(yaw), math.sin(yaw)])
+        left = np.array([-math.sin(yaw), math.cos(yaw)])
+        origin = rear + _AXLE_TO_ORIGIN * heading
+        # v_origin = v_rear + w x (d * heading) = v_rear + w * d * left.
+        v_origin = _SPEED * heading + yaw_rate * _AXLE_TO_ORIGIN * left
+        tick = _tick(
+            100 + k,
+            _state(
+                1,
+                float(origin[0]),
+                -float(origin[1]),
+                yaw=-math.degrees(yaw),
+                vx=float(v_origin[0]),
+                vy=-float(v_origin[1]),
+            ),
+        )
+        if with_angular:
+            tick["angular_velocity"] = {"1": [0.0, 0.0, -math.degrees(yaw_rate)]}
+        ticks.append(tick)
+        truths.append(_SPEED * heading)
+        rear = rear + _SPEED * heading * 0.05
+    return ticks, truths
+
+
+def _turn_scene(tmp_path: Path, ticks: list[dict]) -> pb.T4Scene:
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        {"type": "rear_axle", "id": 1, "offset": -_AXLE_TO_ORIGIN},
+        *ticks,
+    )
+    return trajectory_log_to_t4_scene(log, with_map=False).scene
+
+
+def test_a_turning_egos_velocity_is_its_rear_axles(tmp_path: Path) -> None:
+    ticks, truths = _bicycle_turn(11)
+    scene = _turn_scene(tmp_path, ticks)
+    velocities = _numeric(scene.ego.velocities)
+    headings = _numeric(scene.ego.poses)[:, 2]
+    assert len(velocities) == 6 and not velocities.mask.any()
+    for row, velocity in enumerate(velocities):
+        left = np.array([-math.sin(headings[row]), math.cos(headings[row])])
+        # base_link does not slide sideways, and moves at the rear axle's speed.
+        assert float(velocity @ left) == pytest.approx(0.0, abs=1e-9)
+        assert float(np.linalg.norm(velocity)) == pytest.approx(_SPEED)
+        np.testing.assert_allclose(velocity, truths[2 * row], atol=1e-9)
+    np.testing.assert_allclose(
+        _numeric(scene.ego.longitudinal_speeds), _SPEED, atol=1e-9
+    )
+    # The body angular velocity, counter-clockwise in the right-handed frame.
+    np.testing.assert_allclose(
+        _numeric(scene.ego.angular_velocities),
+        np.tile([0.0, 0.0, _YAW_RATE], (6, 1)),
+        atol=1e-12,
+    )
+
+
+def test_a_straight_egos_velocity_is_unchanged(tmp_path: Path) -> None:
+    ticks, truths = _bicycle_turn(3, yaw_rate=0.0)
+    scene = _turn_scene(tmp_path, ticks)
+    np.testing.assert_allclose(_numeric(scene.ego.velocities)[0], truths[0], atol=1e-12)
+    assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(_SPEED)
+
+
+def test_a_log_without_angular_velocity_keeps_the_origins_velocity(
+    tmp_path: Path,
+) -> None:
+    ticks, _ = _bicycle_turn(3, with_angular=False)
+    scene = _turn_scene(tmp_path, ticks)
+    origin = ticks[0]["actors"][0]
+    np.testing.assert_allclose(
+        _numeric(scene.ego.velocities)[0], [origin[7], -origin[8]], atol=1e-12
+    )
+    assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(_SPEED)
+    assert not scene.ego.HasField("angular_velocities")
+
+
+def test_the_axial_flip_is_the_driver_observations() -> None:
+    from autoware_carla_scenario.driver.observation import _to_local_axial
+    from autoware_carla_scenario.t4_scene.convert import _FLIP_AXIAL
+
+    vector = (1.5, -2.0, 3.25)
+    np.testing.assert_array_equal(
+        np.array(vector) * _FLIP_AXIAL, _to_local_axial(*vector)
+    )
+
+
 def test_rear_axle_offset_can_be_given(tmp_path: Path) -> None:
     log = _write_log(
         tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))

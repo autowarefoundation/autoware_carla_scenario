@@ -9,8 +9,12 @@ road user near it as a box, and the lights' states on the lanelets they
 govern, on one uniform time grid, in Autoware's ``map`` frame, with the
 Lanelet2 map the run was on as a separate ``MapResource``.
 
-What the log does not hold is left out, not invented: the ego's acceleration,
-angular velocity and steering, a route and a goal; a vehicle's
+The ego's velocity is its ``base_link``'s, like its pose: the actor origin's
+the log records plus the lever arm ``w x r`` of its angular velocity, which
+the log records from version 2's ``angular_velocity`` field (a log written
+before it keeps the origin's velocity, and has no angular velocity to write).
+What the log does not hold is left out, not invented: the ego's acceleration
+and steering, a route and a goal; a vehicle's
 class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``);
 a light's bulbs beyond its one round lamp's colour.
 A tick the log does not have (it skips a tick without road users) is a row
@@ -89,6 +93,10 @@ _DTYPES = {
 }
 #: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
 _FLIP_Y = np.array([1.0, -1.0, 1.0])
+#: The same reflection of an *axial* vector (an angular velocity): ``x`` and
+#: ``z`` flip, as ``driver.observation._to_local_axial`` turns one (the driver
+#: package, gRPC and all, is not imported for it; a test keeps the two equal).
+_FLIP_AXIAL = np.array([-1.0, 1.0, -1.0])
 _NO_STATES = np.zeros((0, 10))
 
 
@@ -129,6 +137,11 @@ class _Log:
     spawned: dict[int, int] = field(default_factory=dict)
     #: The frame an entity was taken out, by actor id.
     despawned: dict[int, int] = field(default_factory=dict)
+    #: Each grid frame's egos' angular velocities (CARLA's axes, deg/s), by
+    #: actor id: the ticks' ``angular_velocity``, absent from an older log.
+    angular_velocities: dict[int, dict[int, tuple[float, float, float]]] = field(
+        default_factory=dict
+    )
     #: Where an ego's rear axle is along its x axis, by actor id (``rear_axle``).
     rear_axles: dict[int, float] = field(default_factory=dict)
     #: Each vehicle's turn indicators as they changed, by actor id: the
@@ -161,6 +174,11 @@ class _Log:
             if (frame - self.first_frame) % self.step_frames == 0:
                 states = np.asarray(record["actors"], dtype=np.float64).reshape(-1, 10)
                 self.rows[frame] = (states, self.current_lights)
+                angular = record.get("angular_velocity")
+                if angular:
+                    self.angular_velocities[frame] = {
+                        int(i): _xyz(w) for i, w in angular.items()
+                    }
         elif kind == "actor":
             self.actors[int(record["id"])] = _Actor(
                 type_id=str(record["type_id"]),
@@ -192,6 +210,7 @@ class _Log:
         """Drop the rows before *frame*: a live log keeps only a window."""
         for old in [f for f in self.rows if f < frame]:
             del self.rows[old]
+            self.angular_velocities.pop(old, None)
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
         """The (N, 10) actor states of the tick on *frame*; none without one."""
@@ -629,12 +648,23 @@ def _fill_ego(
     rear_axle: float,
 ) -> list[Optional[npt.NDArray[np.float64]]]:
     """Write the ego's rows; return its origin (map-frame x, y) on each row,
-    ``None`` on a row it is not on."""
+    ``None`` on a row it is not on.
+
+    The pose and the velocity are both ``base_link``'s, *rear_axle* along the
+    ego's x axis from its origin.  The log has the origin's velocity, so the
+    rigid-body lever arm is added where the tick has the ego's angular
+    velocity: ``v_base_link = v_origin + w x r``, ``r`` the rotated
+    ``(rear_axle, 0, 0)``, all in the map frame (``driver.observation``'s
+    ``ego_observation`` does the same in the rig frame).  Without it a turning
+    ego's ``base_link`` would slide sideways at ``yaw_rate * rear_axle``.
+    """
     count = len(frames)
     poses = np.zeros((count, 3))
     poses_3d = np.tile(np.eye(4), (count, 1, 1))
     velocities = np.zeros((count, 2))
     speeds = np.zeros(count)
+    angular = np.zeros((count, 3))
+    spun = np.zeros(count, dtype=bool)
     origins: list[Optional[npt.NDArray[np.float64]]] = [None] * count
     for row, carla_frame in enumerate(frames):
         states = log.states(carla_frame)
@@ -646,6 +676,12 @@ def _fill_ego(
         origin = frame.positions(state[1:4])
         base_link = origin + rotation[:, 0] * rear_axle
         velocity = state[7:10] * _FLIP_Y
+        carla_angular = log.angular_velocities.get(carla_frame, {}).get(ego_id)
+        if carla_angular is not None:
+            omega = np.radians(np.array(carla_angular) * _FLIP_AXIAL)
+            velocity = velocity + np.cross(omega, rotation[:, 0] * rear_axle)
+            angular[row] = rotation.T @ omega
+            spun[row] = True
         poses[row] = (
             base_link[0],
             base_link[1],
@@ -663,6 +699,8 @@ def _fill_ego(
     message.poses_3d.CopyFrom(_array(poses_3d, "f8", missing[:, None, None]))
     message.velocities.CopyFrom(_array(velocities, "f8", missing[:, None]))
     message.longitudinal_speeds.CopyFrom(_array(speeds, "f8", missing))
+    if spun.any():
+        message.angular_velocities.CopyFrom(_array(angular, "f8", ~spun[:, None]))
     message.available.CopyFrom(_array(available, "?"))
     changes = log.turn_indicators.get(ego_id)
     if changes is not None:

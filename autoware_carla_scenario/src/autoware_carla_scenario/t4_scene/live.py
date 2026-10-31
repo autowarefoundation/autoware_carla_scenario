@@ -355,7 +355,23 @@ class LiveT4Scene:
             else np.zeros((rows, 2), dtype=bool)
         )
         accelerations = np.zeros((rows, 2))
-        angular = np.zeros((rows, 3))
+        # The log's angular velocity where it has one; the policy's over it.
+        if ego.HasField("angular_velocities"):
+            angular = (
+                np.frombuffer(ego.angular_velocities.data, dtype="<f8")
+                .reshape(rows, 3)
+                .copy()
+            )
+            angular_mask = (
+                np.frombuffer(ego.angular_velocities.mask, dtype=bool)
+                .reshape(rows, 3)
+                .copy()
+                if ego.angular_velocities.HasField("mask")
+                else np.zeros((rows, 3), dtype=bool)
+            )
+        else:
+            angular = np.zeros((rows, 3))
+            angular_mask = np.ones((rows, 3), dtype=bool)
         steering = np.zeros(rows)
         told = np.zeros(rows, dtype=bool)
         steered = np.zeros(rows, dtype=bool)
@@ -373,12 +389,13 @@ class LiveT4Scene:
                 velocities[row] = (c * vx - s * vy, s * vx + c * vy)
                 velocity_mask[row] = False
             angular[row] = extras.angular_velocity[:3]
+            angular_mask[row] = False
             if extras.tire_steering_angle is not None:
                 steering[row] = extras.tire_steering_angle
                 steered[row] = True
         ego.velocities.CopyFrom(_array(velocities, "f8", velocity_mask))
         ego.accelerations.CopyFrom(_array(accelerations, "f8", ~told[:, None]))
-        ego.angular_velocities.CopyFrom(_array(angular, "f8", ~told[:, None]))
+        ego.angular_velocities.CopyFrom(_array(angular, "f8", angular_mask))
         ego.tire_steering_angles.CopyFrom(_array(steering, "f8", ~steered))
         ego.odometry_timestamps_ns.CopyFrom(
             _array([(f - self._log.first_frame) * _TICK_NS for f in frames], "i8")
