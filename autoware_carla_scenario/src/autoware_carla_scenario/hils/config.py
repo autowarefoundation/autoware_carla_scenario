@@ -57,6 +57,10 @@ from ..constants import EGO_ROLE_NAME
 from .measurements import CAMERA_ENCODINGS
 from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT, command_value
 from .signals import SIGNALS
+from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
+from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
+from .yaml11 import YAML_INT as _YAML_INT  # noqa: F401 - re-exported
+from .yaml11 import yaml11_reading as _yaml11_reading
 
 logger = logging.getLogger(__name__)
 
@@ -846,39 +850,9 @@ def load_config(path: Union[str, Path]) -> HilsConfig:
     return parse_config(document, path.resolve().parent)
 
 
-_YAML_INT = "tag:yaml.org,2002:int"
-_YAML_FLOAT = "tag:yaml.org,2002:float"
-_YAML_BOOL = "tag:yaml.org,2002:bool"
-
-
-def _yaml11_reading(tag: str, text: str) -> Optional[str]:
-    """What YAML 1.1 makes of the plain scalar *text* (resolved to *tag*) when
-    that is not what it looks like, and how to write it instead; else None.
-
-    These are the forms YAML 1.2 reads differently: ``0102`` (octal 66),
-    ``1:30`` (sexagesimal 90) and ``yes``/``no``/``on``/``off`` (booleans).
-    ``0x7DF``, ``1_000``, ``1.5`` and ``true`` mean what they say.
-    """
-    digits = text.lstrip("+-").replace("_", "")
-    if tag == _YAML_BOOL and text.lower() in ("yes", "no", "on", "off"):
-        truth = text.lower() in ("yes", "on")
-        return f"the boolean {truth}; write {str(truth).lower()}"
-    if tag in (_YAML_INT, _YAML_FLOAT) and ":" in digits:
-        return "a sexagesimal (base 60) number; write it in decimal"
-    if (
-        tag == _YAML_INT
-        and len(digits) > 1
-        and digits[0] == "0"
-        and digits[1] in "01234567"
-    ):
-        value = int(digits, 8) * (-1 if text.startswith("-") else 1)
-        return f"the octal number {value}; write {value} or {value:#x}"
-    return None
-
-
 def _refuse_yaml11_scalars(node: Any, file: Path) -> None:
     """Refuse the plain scalars under *node* that YAML 1.1 reads as something
-    other than what they look like (:func:`_yaml11_reading`), naming each one's
+    other than what they look like (:func:`.yaml11.yaml11_reading`), naming each one's
     place in the configuration and the file.
 
     ``yaml.safe_load`` is YAML 1.1: unquoted, ``Gear: Off`` is ``False`` and
