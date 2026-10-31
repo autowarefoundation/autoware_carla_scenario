@@ -4139,6 +4139,9 @@ class SumoTrafficBackend(TrafficBackend):
 
         Read off SUMO's programs before anything sets a light's state: once
         :meth:`_signals_to_sumo` has, the state SUMO reports is the one it set.
+        A link that is ``G`` in one phase and ``g`` in another (a protected,
+        then permissive turn) counts as permissive: a CARLA Green does not say
+        which of the two phases it is, and ``g`` only has the turn yield.
         """
         indices: dict[str, set[int]] = {}
         for tls, index in self._signals:
