@@ -217,7 +217,8 @@ class AutowareBridge(ABC):
     Concrete implementations back these calls with a transport the interface
     node connects to - a gRPC server the interface node dials as a client (see
     the topology note in the proto).  :meth:`configure` records the mission for
-    the client to pull; :meth:`is_ready` returns the readiness the client last
+    the client to pull; :meth:`reroute` changes its goal and waypoints part-way
+    through the run; :meth:`is_ready` returns the readiness the client last
     reported.  The contract is intentionally tiny: hand Autoware the mission,
     then poll a single readiness flag.
     """
@@ -245,6 +246,35 @@ class AutowareBridge(ABC):
                 where leaving that road means leaving the rendered world --
                 names them.
         """
+
+    def reroute(
+        self,
+        goal: BridgePose,
+        waypoints: Optional[list[BridgePose]] = None,
+    ) -> None:
+        """Send the running stack to a new *goal*, through new *waypoints*.
+
+        A re-route part-way through the run, after :meth:`configure`: the
+        mission's initial pose stays as it was, since localization is already
+        running, and the stack changes the route it drives
+        (``/api/routing/change_route_points``) rather than planning a first one.
+        A transport hands it over as a new version of the mission, which the
+        interface node keeps polling for.
+
+        Args:
+            goal: Map-frame goal pose to route to now.
+            waypoints: Map-frame poses the new route must pass through, in
+                order.  ``None`` or empty leaves the way there to the stack.
+
+        Raises:
+            NotImplementedError: For a bridge that cannot re-route.  The default:
+                a bridge written before re-routing existed says so rather than
+                leaving the stack on its old route without a word.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot re-route a running stack: "
+            "it does not implement AutowareBridge.reroute()"
+        )
 
     @abstractmethod
     def is_ready(self) -> bool:

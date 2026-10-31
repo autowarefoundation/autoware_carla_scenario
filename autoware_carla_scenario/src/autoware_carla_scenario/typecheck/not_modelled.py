@@ -560,7 +560,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "GitMapCache": _members("entry_dir remember_tip tip_file", _MAP_CACHE),
     "GrpcAutowareBridgeServer": _members(
         "client_address client_connected close config configure is_ready port "
-        "start take_turn_indicators",
+        "reroute start take_turn_indicators",
         _BY_NAME,
     ),
     "HilsEgoEntity": _members(

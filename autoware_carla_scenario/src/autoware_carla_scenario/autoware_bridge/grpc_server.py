@@ -6,9 +6,12 @@ that dials it (see the topology note in
 ``proto/autoware_bridge/v0/autoware_bridge.proto``).  Because only the client
 initiates, the two RPCs are direction-inverted from a "framework pushes" model:
 
-* ``GetMission`` - the client pulls the scenario's mission (initial pose + goal).
-  It returns ``available=False`` until :meth:`configure` has been called, so the
-  interface node can start polling before the scenario hands over the mission.
+* ``GetMission`` - the client pulls the scenario's mission (initial pose, goal,
+  waypoints).  It returns ``available=False`` until :meth:`configure` has been
+  called, so the interface node can start polling before the scenario hands over
+  the mission.  Each :meth:`configure` and :meth:`reroute` bumps the response's
+  ``mission_version``, which is how the client, still polling once Autoware is
+  driving, tells a re-route from the route it already set.
 * ``ReportReadiness`` - the client pushes its readiness once Autoware is
   initialized, routed, engaged, and driving.  The value is latched so
   :meth:`is_ready` can be polled once per world tick by
@@ -123,6 +126,9 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self._mission: Optional[
             Tuple[BridgePose, BridgePose, Tuple[BridgePose, ...]]
         ] = None
+        #: Bumped by every configure() and reroute(); never reset, so a version
+        #: is never handed out twice by one bridge, even across a restart.
+        self._mission_version: int = 0
         self._ready: bool = False
         self._contacted: bool = False
         #: The newest turn-indicator command not yet taken.
@@ -221,6 +227,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         """Build the ``GetMission`` response from the current mission state."""
         with self._lock:
             mission = self._mission
+            version = self._mission_version
             self._contacted = True
         if mission is None:
             return pb2.GetMissionResponse(available=False)
@@ -230,6 +237,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             initial_pose=_pose_to_proto(initial),
             goal=_pose_to_proto(goal),
             waypoints=[_pose_to_proto(pose) for pose in waypoints],
+            mission_version=version,
         )
 
     def _record_readiness(self, ready: bool) -> None:
@@ -271,9 +279,42 @@ class GrpcAutowareBridgeServer(AutowareBridge):
                 goal,
                 tuple(waypoints) if waypoints is not None else (),
             )
+            self._mission_version += 1
+            count, version = len(self._mission[2]), self._mission_version
         logger.info(
-            "AutowareBridge mission configured (%d waypoint(s)); awaiting Autoware readiness",
-            len(self._mission[2]),
+            "AutowareBridge mission %d configured (%d waypoint(s)); "
+            "awaiting Autoware readiness",
+            version,
+            count,
+        )
+
+    def reroute(
+        self,
+        goal: BridgePose,
+        waypoints: Optional[Sequence[BridgePose]] = None,
+    ) -> None:
+        """Serve a new goal and waypoints as the next mission version.
+
+        The initial pose stays the one :meth:`configure` was given.
+
+        Raises:
+            RuntimeError: If no mission was configured to re-route.
+        """
+        with self._lock:
+            if self._mission is None:
+                raise RuntimeError(
+                    "AutowareBridge.reroute() before configure(): there is no "
+                    "mission to re-route"
+                )
+            self._mission = (
+                self._mission[0],
+                goal,
+                tuple(waypoints) if waypoints is not None else (),
+            )
+            self._mission_version += 1
+            count, version = len(self._mission[2]), self._mission_version
+        logger.info(
+            "AutowareBridge mission %d: re-routed (%d waypoint(s))", version, count
         )
 
     def is_ready(self) -> bool:

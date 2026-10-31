@@ -145,3 +145,45 @@ def test_a_message_during_a_report_in_flight_is_skipped(server):
     finally:
         forwarder._lock.release()  # noqa: SLF001
     assert server.turn_indicators == []
+
+
+def test_the_mission_carries_the_framework_servers_waypoints_and_version():
+    """The scenario's waypoints reach the node's Mission, in order (#872)."""
+    from autoware_carla_scenario.autoware_bridge import (
+        AutowareBridgeConfig,
+        BridgePose,
+        GrpcAutowareBridgeServer,
+    )
+
+    bridge = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    client = ScenarioBridgeClient(
+        channel=grpc.insecure_channel(f"localhost:{bridge.port}")
+    )
+    try:
+        bridge.configure(
+            BridgePose.from_yaw(1.0, 2.0, 0.0, 0.0),
+            BridgePose.from_yaw(9.0, 0.0, 0.0, 0.0),
+            [BridgePose.from_yaw(x, 0.0, 0.0, 0.0) for x in (3.0, 5.0, 7.0)],
+        )
+        mission = client.get_mission(timeout=5.0)
+        assert mission is not None
+        assert [p.position.x for p in mission.waypoints] == [3.0, 5.0, 7.0]
+        assert mission.goal.position.x == pytest.approx(9.0)
+
+        bridge.reroute(BridgePose.from_yaw(20.0, 0.0, 0.0, 0.0))
+        rerouted = client.get_mission(timeout=5.0)
+        assert rerouted is not None
+        assert rerouted.version > mission.version
+        assert rerouted.waypoints == ()
+        assert rerouted.goal.position.x == pytest.approx(20.0)
+        assert rerouted.initial_pose == mission.initial_pose
+    finally:
+        bridge.close()
+
+
+def test_a_server_without_mission_versions_reads_as_version_zero(server):
+    server.mission = (_pose(1.0, 2.0, 3.0), _pose(10.0, 20.0, 30.0))
+    mission = _client(server).get_mission(timeout=5.0)
+    assert mission is not None
+    assert mission.version == 0
+    assert mission.waypoints == ()
