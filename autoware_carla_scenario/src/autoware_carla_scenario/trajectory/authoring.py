@@ -48,6 +48,18 @@ from .model import (
     TrajectoryTiming,
     TrajectoryVertex,
 )
+from .vertex_text import (
+    RelativeVertexRow,
+    VertexRow,
+    cell_text,
+    no_time,
+    relative_vertices_summary,
+    route_tokens,
+    text_number,
+    text_rows,
+    vertex_count_problems,
+    vertices_summary,
+)
 
 if TYPE_CHECKING:
     from ..conditions.base import BaseCondition
@@ -92,25 +104,13 @@ PATH_SOURCES: tuple[str, ...] = (
 #: A document's time reference: ``none`` ignores the vertex times.
 TIME_DOMAINS: tuple[str, ...] = ("none", "relative", "absolute")
 
-#: One vertex: ``(x, y, yaw)`` in the ``map`` frame, the yaw optional.
-VertexRow = tuple[float, float, Optional[float]]
-
-#: One lane-relative vertex: ``(ds, offset, d_lane, yaw)``, the yaw optional
-#: (see :class:`~.model.RelativeLanePose`).
-RelativeVertexRow = tuple[float, float, int, Optional[float]]
-
 #: How far apart (m) the vertices of a lanelet path are.
 LANELET_PATH_STEP_M = 2.0
 
 
 def _no_time(index: int, time: Any) -> ValueError:
     """The error for a row that still states a time, saying how to write it now."""
-    return ValueError(
-        f"vertex {index}: a vertex row has no time cell any more; give vertex "
-        f"{index} a Trajectory time waypoint condition instead "
-        f"(advance_conditions: - vertex: {index}, condition: {{type: "
-        f"trajectory_time, params: {{time: {time}}}}})"
-    )
+    return no_time(index, f"{time}")
 
 
 def _rows(value: Any) -> list[Any]:
@@ -118,19 +118,15 @@ def _rows(value: Any) -> list[Any]:
     if value is None:
         return []
     if isinstance(value, str):
-        rows: list[Any] = []
-        for line in value.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            rows.append([cell.strip() for cell in line.split(",")])
-        return rows
+        return text_rows(value)
     return list(value)
 
 
 def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]:
     """*cell* as a finite number; ``None`` for an empty optional one."""
-    if cell is None or (isinstance(cell, str) and not cell.strip()):
+    if isinstance(cell, str):
+        return text_number(index, cell, name, required)
+    if cell is None:
         if required:
             raise ValueError(f"vertex {index}: {name} is required")
         return None
@@ -143,10 +139,6 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
     if not math.isfinite(number):
         raise ValueError(f"vertex {index}: {cell!r} is not a finite number")
     return number
-
-
-def _cell(value: Optional[float]) -> str:
-    return "" if value is None else f"{value:.10g}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +196,7 @@ def format_vertices(rows: Any) -> str:
         return rows
     lines = []
     for x, y, yaw in parse_vertices(rows):
-        cells = [_cell(x), _cell(y), _cell(yaw)]
+        cells = [cell_text(x), cell_text(y), cell_text(yaw)]
         while cells and not cells[-1]:
             cells.pop()
         lines.append(", ".join(cells))
@@ -218,9 +210,7 @@ def vertex_problems(rows: Sequence[Any]) -> list[str]:
     without building one, so a document can be checked where the runtime is
     not importable.  The timing rules are the waypoint conditions'.
     """
-    if len(rows) < 2:
-        return [f"needs at least two vertices, has {len(rows)}"]
-    return []
+    return vertex_count_problems(len(rows))
 
 
 def trajectory_summary(value: Any) -> str:
@@ -229,10 +219,7 @@ def trajectory_summary(value: Any) -> str:
         rows = parse_vertices(value)
     except ValueError as exc:
         return str(exc)
-    if not rows:
-        return "no vertices"
-    length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(rows, rows[1:]))
-    return f"{len(rows)} vertices, {length:.1f} m"
+    return vertices_summary(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +296,7 @@ def format_relative_vertices(rows: Any) -> str:
     for ds, offset, d_lane, yaw in parse_relative_vertices(rows):
         # ds, offset and d_lane are always written out, so a line reads the
         # same whichever cells follow; only an unstated yaw is dropped.
-        cells = [_cell(ds), _cell(offset), str(d_lane), _cell(yaw)]
+        cells = [cell_text(ds), cell_text(offset), str(d_lane), cell_text(yaw)]
         if not cells[-1]:
             cells.pop()
         lines.append(", ".join(cells))
@@ -332,14 +319,7 @@ def relative_trajectory_summary(value: Any) -> str:
         rows = parse_relative_vertices(value)
     except ValueError as exc:
         return str(exc)
-    if not rows:
-        return "no vertices"
-    first, last = rows[0], rows[-1]
-    lanes = sorted({row[2] for row in rows})
-    text = f"{len(rows)} vertices, ds {first[0]:g} to {last[0]:g} m"
-    if lanes != [0]:
-        text += ", lanes " + ", ".join(f"{lane:+d}" for lane in lanes)
-    return text
+    return relative_vertices_summary(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -392,18 +372,10 @@ def _route_value(index: int, kind: str, key: str, raw: Any) -> Any:
 
 def _route_row(index: int, row: Any) -> dict[str, Any]:
     if isinstance(row, str):
-        tokens = row.replace(",", " ").split()
-        if not tokens:
-            raise ValueError(f"vertex {index}: empty")
-        mapping: dict[str, Any] = {"kind": tokens[0]}
-        for token in tokens[1:]:
-            key, sep, value = token.partition("=")
-            if not sep:
-                raise ValueError(
-                    f"vertex {index}: {token!r} is not key=value (write e.g. "
-                    "'lane ds=10 d_lane=1')"
-                )
-            mapping[key.strip()] = value.strip()
+        kind, pairs = route_tokens(index, row)
+        mapping: dict[str, Any] = {"kind": kind}
+        for key, value in pairs:
+            mapping[key] = value
         row = mapping
     if not isinstance(row, Mapping):
         raise ValueError(f"vertex {index}: expected a mapping with a kind, got {row!r}")
@@ -471,7 +443,9 @@ def format_route_vertices(rows: Any) -> str:
             value = row[key]
             if value == getattr(defaults, key) and key not in _ALWAYS_WRITTEN:
                 continue
-            cells.append(f"{key}={_cell(value) if isinstance(value, float) else value}")
+            cells.append(
+                f"{key}={cell_text(value) if isinstance(value, float) else value}"
+            )
         lines.append(" ".join(cells))
     return "\n".join(lines)
 
