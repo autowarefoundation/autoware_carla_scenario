@@ -13,6 +13,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,6 +28,7 @@ _SWEEPER_APP = """
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
 
@@ -303,6 +305,60 @@ def test_main_does_not_exit_for_an_earlier_calls_failed_cases(
     monkeypatch.setattr(run, "_hydra_main", lambda: None)
     monkeypatch.setattr(sys, "argv", ["scenario", "--multirun", "+verdict=pass"])
     run.main()  # no SystemExit
+
+
+def _stub_main(monkeypatch: pytest.MonkeyPatch, hydra_main: Any) -> Any:
+    """``examples.run`` with main()'s single-run path calling *hydra_main*."""
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(run, "_multirun_failed", [])
+    monkeypatch.setattr(run, "_multirun_ran", [])
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: False)
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_hydra_main", hydra_main)
+    return run
+
+
+def test_resume_from_is_this_main_calls_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--resume-from reaches the sweeper of its own run, not a later one's (#797)."""
+    seen: list[str | None] = []
+    run = _stub_main(
+        monkeypatch, lambda: seen.append(os.environ.get("SWEEP_RESUME_FROM"))
+    )
+    monkeypatch.delenv("SWEEP_RESUME_FROM", raising=False)
+    argv = ["scenario", "--multirun", "scenario=a/b"]
+    monkeypatch.setattr(sys, "argv", [*argv, "--resume-from", "3"])
+    run.main()
+    monkeypatch.setattr(sys, "argv", list(argv))
+    run.main()
+    assert seen == ["3", None]
+    assert "SWEEP_RESUME_FROM" not in os.environ
+
+
+def test_resume_from_puts_back_the_value_it_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value the user set stands for the runs without the flag, and comes
+    back after one with it, even one that exits."""
+
+    def hydra_main() -> None:
+        seen.append(os.environ.get("SWEEP_RESUME_FROM"))
+        raise SystemExit(1)
+
+    seen: list[str | None] = []
+    run = _stub_main(monkeypatch, hydra_main)
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "5")
+    argv = ["scenario", "--multirun", "scenario=a/b"]
+    monkeypatch.setattr(sys, "argv", [*argv, "--resume-from", "3"])
+    with pytest.raises(SystemExit):
+        run.main()
+    assert os.environ["SWEEP_RESUME_FROM"] == "5"
+    monkeypatch.setattr(sys, "argv", list(argv))
+    with pytest.raises(SystemExit):
+        run.main()
+    assert seen == ["3", "5"]
 
 
 @pytest.mark.parametrize(("owned", "retries"), [(False, 2), (True, 0)])
