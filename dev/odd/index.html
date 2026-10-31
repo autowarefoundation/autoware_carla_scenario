@@ -1988,6 +1988,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#weather-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weather rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#traffic-parameters-from-the-odd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2586,6 +2597,17 @@
     <span class="md-ellipsis">
       
         Visibility follows the weather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#weather-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weather rules
       
     </span>
   </a>
@@ -3913,8 +3935,8 @@ it grips a dry one. So an <code>EnvironmentAction</code> that sets the road's wa
 <code>rain</code>, <code>wetness</code> or <code>precipitation_deposits</code> -- also scales every vehicle's
 wheel friction (<code>friction_force_multiplier</code>) to a share of the dry road's
 grip, within the range the resulting weather leaves
-(<code>tire_friction_range</code>), by the larger of <code>wetness</code> and
-<code>precipitation_deposits</code>:</p>
+(<code>tire_friction_range</code>). The default <a href="#weather-rules">weather rules</a> give it
+by the larger of <code>wetness</code> and <code>precipitation_deposits</code>:</p>
 <table>
 <thead>
 <tr>
@@ -3941,7 +3963,8 @@ grip, within the range the resulting weather leaves
 </tr>
 </tbody>
 </table>
-<p>Between the rows the bounds are interpolated. Measured tire-road friction
+<p>Between the rows the bounds are interpolated (the rules' terms overlap so
+that they read as this table). Measured tire-road friction
 is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
 film; each range spans what tires, their wear and the asphalt make of the
 same water, and a dry road's is centred on CARLA's own grip, so a dry run
@@ -4017,8 +4040,9 @@ the measures read what it then drives, which is what coverage counts.</p>
 TrafficManager's vehicles know where every actor is, fog or not. A driver
 does not, and drives so as to stop within the road they see. So how far
 drivers see is a quantity of the run, in metres, which the weather bounds
-(<code>visibility_range</code>, in <code>autoware_carla_scenario.visibility</code>): each of the
-fog, the rain and the light gives a range, and the shortest holds.</p>
+(<code>visibility_range</code>, in <code>autoware_carla_scenario.visibility</code>). By the default
+<a href="#weather-rules">weather rules</a>, each of the fog, the rain and the light
+gives a range, and the shortest holds.</p>
 <table>
 <thead>
 <tr>
@@ -4067,6 +4091,83 @@ backend holds every vehicle it drives to it with <code>follow_visibility: true</
 under its road's speed limit
 (<a href="../traffic_backends/#weather-and-the-trafficmanager">Weather and the TrafficManager</a>),
 and otherwise only logs the speed it would hold traffic to.</p>
+<h3 id="weather-rules">Weather rules<a class="headerlink" href="#weather-rules" title="Permanent link">&para;</a></h3>
+<p>The ranges of the grip and of the visibility are fuzzy rules, not code:
+<code>weather_rules.yaml</code> in the package (<code>autoware_carla_scenario.weather_rules</code>),
+the CARLA backend's own rules (<code>CarlaBackend.rules</code>), which openodd reads and
+infers in its Rust core (Sugeno, zero order;
+<a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/rules.md">its rules docs</a>
+have the file format in full). A <strong>quantity</strong> (<code>tire_friction</code>, <code>visibility</code>)
+is one or more <strong>rule bases</strong>; each reads some of the weather's fields, sorts
+each into fuzzy terms, and its rules give the <code>low</code> and <code>high</code> ends of the
+range per combination of terms:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nt">quantities</span><span class="p">:</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">tire_friction</span><span class="p">:</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span><span class="nt">rule_bases</span><span class="p">:</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">      </span><span class="nt">water</span><span class="p">:</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">        </span><span class="nt">inputs</span><span class="p">:</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">          </span><span class="nt">water</span><span class="p">:</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">            </span><span class="nt">universe</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="w">            </span><span class="nt">terms</span><span class="p">:</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="w">              </span><span class="nt">dry</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">trapezoid</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">]}</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">              </span><span class="nt">wet</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">triangle</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">]}</span>
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="w">              </span><span class="nt">flooded</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">trapezoid</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">]}</span>
+<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a><span class="w">        </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">(water IS dry)</span>
+<a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="w">            </span><span class="nt">then</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">low</span><span class="p">:</span><span class="w"> </span><span class="nv">0.90</span><span class="p p-Indicator">,</span><span class="nt"> high</span><span class="p">:</span><span class="w"> </span><span class="nv">1.10</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">(water IS wet)</span>
+<a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a><span class="w">            </span><span class="nt">then</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">low</span><span class="p">:</span><span class="w"> </span><span class="nv">0.65</span><span class="p p-Indicator">,</span><span class="nt"> high</span><span class="p">:</span><span class="w"> </span><span class="nv">0.85</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">(water IS flooded)</span>
+<a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a><span class="w">            </span><span class="nt">then</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">low</span><span class="p">:</span><span class="w"> </span><span class="nv">0.45</span><span class="p p-Indicator">,</span><span class="nt"> high</span><span class="p">:</span><span class="w"> </span><span class="nv">0.65</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<ul>
+<li>A rule base's range is its rules' ends, averaged by how strongly each rule
+  fires. Triangles that peak where their neighbours end split every value
+  between two terms, so one-term rules read linearly between the peaks: the
+  default rules give exactly the tables above.</li>
+<li>An antecedent is clauses <code>(input IS term)</code> joined by <code>AND</code>, <code>OR</code> and
+  <code>NOT</code>, so a rule may read more than one input --
+  <code>(water IS wet) AND (sun_altitude_angle IS night)</code>.</li>
+<li>The inputs a rule base may read are the weather's <code>cloudiness</code>,
+  <code>precipitation</code>, <code>precipitation_deposits</code>, <code>wetness</code>, <code>wind_intensity</code>,
+  <code>fog_density</code>, <code>fog_distance</code>, <code>sun_altitude_angle</code> and
+  <code>sun_azimuth_angle</code>, and <code>water</code>, the larger of <code>wetness</code> and
+  <code>precipitation_deposits</code> (<code>weather_rules.WEATHER_INPUTS</code>). A value outside
+  an input's <code>universe</code> is clamped to it. An <code>EnvironmentAction</code> hands the
+  rules every field of the weather it leaves; <code>tire_friction_range()</code> and
+  <code>visibility_range()</code> hand only their own arguments, so an input they do not
+  take needs a <code>default</code>.</li>
+<li>With more than one rule base, <code>combine</code> (<code>min</code>, the default, or <code>max</code>)
+  joins their ranges end by end: the visibility's fog, rain and light are
+  three rule bases, and the shortest bound holds.</li>
+</ul>
+<p>A rule file is checked when it is read: every term and rule well formed,
+every input's universe covered by its terms, and some rule firing wherever
+the inputs can be (<code>openodd.RulesError</code> says where).</p>
+<p><strong>A run's rules.</strong> <code>environment.rules</code> names a rule file -- a path, absolute
+or relative to the directory the run starts in, or an <code>https://</code> URL --
+merged over the default rules: it names only what it changes (a rule base's
+<code>rules</code> without its <code>inputs</code>, say), and may <code>extends</code> other files, by path,
+URL (pinned with <code>{url, sha256}</code>) or git source. A sweep sets it like any
+other key (<code>environment.rules=/data/grip_measured.yaml</code>); every run sets the
+rules it names, or the default ones, so one run's do not reach the next.</p>
+<p><strong>Rules by vehicle.</strong> Tyres differ by vehicle; the weather does not:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nt">environment</span><span class="p">:</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">rules</span><span class="p">:</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">    </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">weather/measured.yaml</span><span class="w">          </span><span class="c1"># every vehicle no entry names</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span><span class="nt">vehicles</span><span class="p">:</span><span class="w">                               </span><span class="c1"># the first entry a vehicle matches</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">      </span><span class="nt">ego</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">weather/ego_measured.yaml</span><span class="w">        </span><span class="c1"># the ego (role_name "Ego")</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">      </span><span class="s">"vehicle.mini.*"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">weather/mini.yaml</span><span class="w">   </span><span class="c1"># a blueprint pattern</span>
+</code></pre></div>
+<p>Each vehicle's file is read over the run's default rules. An
+<code>EnvironmentAction</code> that sets the road's water gives each vehicle the grip of
+its own rules, all at the same <code>tire_friction_quantile</code> (a case draws one),
+and a vehicle spawned later its own too; the ODD's <code>tire_friction</code> probe
+reads the ego's. <code>tire_friction</code>, the grip named outright, is every
+vehicle's. How far drivers see is the default rules'.</p>
+<p><code>weather_rules.weather_rule_files()</code> lists every rule file a run follows,
+with the SHA-256 of each.</p>
 <h3 id="traffic-parameters-from-the-odd">Traffic parameters from the ODD<a class="headerlink" href="#traffic-parameters-from-the-odd" title="Permanent link">&para;</a></h3>
 <p>How the traffic behaves -- how fast drivers go against the limit, how they
 react, how often they run a red light, how fast pedestrians walk -- is the
@@ -4256,11 +4357,11 @@ simulates bicycles, so an ODD that draws them is an ODD for the <code>sumo</code
 backend.</p>
 <p>A bucket of the ODD's attribute narrows the range, as for any knob. In a
 binding file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># binding.yaml</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nt">behaviour.speed_factor</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_speed_factor_mean</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="nt">behaviour.speed_spread</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_speed_factor_std</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="nt">behaviour.reaction_time</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_reaction_time_s_mean</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="nt">behaviour.walking_speed</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">pedestrian_walking_speed_mps_mean</span><span class="p p-Indicator">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># binding.yaml</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="nt">behaviour.speed_factor</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_speed_factor_mean</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="nt">behaviour.speed_spread</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_speed_factor_std</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="nt">behaviour.reaction_time</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">vehicle_reaction_time_s_mean</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="nt">behaviour.walking_speed</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">probe</span><span class="p">:</span><span class="w"> </span><span class="nv">pedestrian_walking_speed_mps_mean</span><span class="p p-Indicator">}</span>
 </code></pre></div>
 <p>A case drawn with <code>behaviour.speed_factor</code> in <code>[0.8, 0.9)</code> and
 <code>behaviour.speed_spread</code> in <code>[0.05, 0.1)</code> writes
@@ -4327,28 +4428,28 @@ from. Coverage is read when the sweep is expanded: to resume a sweep
 (<code>sweep.resume_from</code>) into the same cases, read the same coverage -- point
 <code>coverage_from</code> at the earlier runs, not at the sweep's own output.</p>
 <p>From Python:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coverage.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_and_merge</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddKnob</span><span class="p">,</span> <span class="n">OddSampler</span><span class="p">,</span> <span class="n">resolve_odd</span>
-<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>
-<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
-<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
-<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_gap_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
-<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
-<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
-<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
-<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="p">)</span>
-<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
-<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">case</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">buckets</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">situation</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coverage.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_and_merge</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddKnob</span><span class="p">,</span> <span class="n">OddSampler</span><span class="p">,</span> <span class="n">resolve_odd</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_gap_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="p">)</span>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">case</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">buckets</span><span class="p">,</span> <span class="n">case</span><span class="o">.</span><span class="n">situation</span><span class="p">)</span>
 </code></pre></div>
 <p>To go on from cases drawn before -- another scenario's, on the same ODD --
 pass them as <code>drawn</code>; <code>OddDraws</code> keeps them per ODD, as a batch does:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddDraws</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">draws</span> <span class="o">=</span> <span class="n">OddDraws</span><span class="p">()</span>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="n">draws</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="n">later</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span> <span class="n">drawn</span><span class="o">=</span><span class="n">draws</span><span class="o">.</span><span class="n">of</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="n">OddDraws</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">draws</span> <span class="o">=</span> <span class="n">OddDraws</span><span class="p">()</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="n">draws</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="n">later</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span> <span class="n">drawn</span><span class="o">=</span><span class="n">draws</span><span class="o">.</span><span class="n">of</span><span class="p">(</span><span class="n">sampler</span><span class="o">.</span><span class="n">odd</span><span class="p">))</span>
 </code></pre></div>
 <h3 id="sampling-by-shares-of-the-odd">Sampling by shares of the ODD<a class="headerlink" href="#sampling-by-shares-of-the-odd" title="Permanent link">&para;</a></h3>
 <p><code>weights</code> gives chosen parts of the ODD a share of the cases, and draws the
@@ -4356,26 +4457,26 @@ rest as <code>strategy: uniform</code> would (it implies <code>strategy: weighte
 parts are the ODD's <strong>modules</strong>, named in its OpenODD files, of one condition
 or of several -- so the sweep names no attribute of the taxonomy, and a module
 redefined in the ODD needs no change to the sweep:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># regions.yaml: parts of the ODD, in plain OpenODD</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="nt">IMPORT</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">urban.yaml</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="nt">MODULES</span><span class="p">:</span>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">  </span><span class="nt">heavy_rain</span><span class="p">:</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">    </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">      </span><span class="nt">environment.rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">heavy</span>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">  </span><span class="nt">rainy_night_merge</span><span class="p">:</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">    </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">      </span><span class="nt">environment.rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">heavy</span>
-<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">      </span><span class="nt">environment.illumination</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">night</span>
-<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">      </span><span class="nt">scenery.road_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">merge</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># regions.yaml: parts of the ODD, in plain OpenODD</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nt">IMPORT</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">urban.yaml</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="nt">MODULES</span><span class="p">:</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span><span class="nt">heavy_rain</span><span class="p">:</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="w">    </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="w">      </span><span class="nt">environment.rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">heavy</span>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="w">  </span><span class="nt">rainy_night_merge</span><span class="p">:</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="w">    </span><span class="nt">INCLUDE_AND</span><span class="p">:</span>
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="w">      </span><span class="nt">environment.rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">heavy</span>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="w">      </span><span class="nt">environment.illumination</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">night</span>
+<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a><span class="w">      </span><span class="nt">scenery.road_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">merge</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># shares/rainy.yaml</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="nt">heavy_rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">            </span><span class="c1"># 30% of the cases in heavy rain</span>
-<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="nt">rainy_night_merge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span><span class="w">     </span><span class="c1"># 10% in heavy rain at night in a merge</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># shares/rainy.yaml</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="nt">heavy_rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">            </span><span class="c1"># 30% of the cases in heavy rain</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="nt">rainy_night_merge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span><span class="w">     </span><span class="c1"># 10% in heavy rain at night in a merge</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.binding.yaml<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">50</span><span class="w"> </span>+sweep.odd_sample.weights<span class="o">=</span>shares/rainy.yaml
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="c1"># or inline, for one module</span>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span><span class="s1">'+sweep.odd_sample.weights={heavy_rain: 0.5}'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.binding.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">50</span><span class="w"> </span>+sweep.odd_sample.weights<span class="o">=</span>shares/rainy.yaml
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="c1"># or inline, for one module</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">  </span><span class="s1">'+sweep.odd_sample.weights={heavy_rain: 0.5}'</span>
 </code></pre></div>
 <p>The binding file names the regions file with the ODD's
 (<code>openodd: [urban.yaml, regions.yaml]</code>), and the ODD names its roots under
@@ -4415,14 +4516,14 @@ classification), and draws part of each batch where a small change would flip
 the outcome -- after the sampler has covered every bucket, the rest of the
 batch still sweeping the ODD (openodd's
 <a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/flaky.md">docs/flaky.md</a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nt">sweep</span><span class="p">:</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span>
-<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">coverage</span>
-<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">    </span><span class="nt">coverage_from</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">outputs</span><span class="p p-Indicator">]</span><span class="w">       </span><span class="c1"># the earlier sweeps' runs: what the search learns from</span>
-<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span>
-<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="w">      </span><span class="nt">explore_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.8</span><span class="w">        </span><span class="c1"># of each batch, once every bucket is covered</span>
-<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="w">      </span><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CutInScenario</span><span class="w">      </span><span class="c1"># learn from this scenario's runs only (all, when left out)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">odd_sample</span><span class="p">:</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">    </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">    </span><span class="nt">strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">coverage</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="w">    </span><span class="nt">coverage_from</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">outputs</span><span class="p p-Indicator">]</span><span class="w">       </span><span class="c1"># the earlier sweeps' runs: what the search learns from</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="w">      </span><span class="nt">explore_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.8</span><span class="w">        </span><span class="c1"># of each batch, once every bucket is covered</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="w">      </span><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CutInScenario</span><span class="w">      </span><span class="c1"># learn from this scenario's runs only (all, when left out)</span>
 </code></pre></div>
 <p><code>flaky: true</code> takes the defaults. Its other fields are <code>FlakySearch</code>'s:
 <code>pool</code>, <code>coverage_depth</code>, <code>threshold</code>, <code>epsilon</code>, <code>perturbations</code>, <code>draws</code>
@@ -4433,10 +4534,10 @@ its instability records the flakiness predicted for it, beside the one the
 report assesses. Run the sweeps one after another, each reading the earlier
 ones' outputs, and every sweep looks where the last left the outcome unsure.</p>
 <h2 id="checking-an-odd">Checking an ODD<a class="headerlink" href="#checking-an-odd" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>my_package.odds:urban_odd<span class="w">   </span><span class="c1"># compile with Codon</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>path/to/urban.yaml<span class="w">          </span><span class="c1"># read the binding and OpenODD files</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>show<span class="w"> </span>path/to/urban.yaml<span class="w">           </span><span class="c1"># attributes, buckets in and out</span>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>list<span class="w">                              </span><span class="c1"># ODDs known by name</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>my_package.odds:urban_odd<span class="w">   </span><span class="c1"># compile with Codon</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>check<span class="w"> </span>path/to/urban.yaml<span class="w">          </span><span class="c1"># read the binding and OpenODD files</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>show<span class="w"> </span>path/to/urban.yaml<span class="w">           </span><span class="c1"># attributes, buckets in and out</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>list<span class="w">                              </span><span class="c1"># ODDs known by name</span>
 </code></pre></div>
 <p><code>check</code> compiles a Python ODD with Codon, the same way a scenario is
 compiled. It catches the following:</p>
@@ -4450,9 +4551,9 @@ key. OpenODD YAML is checked as it is read (see <a href="#what-is-read">What is 
 <h2 id="checking-a-planned-route">Checking a planned route<a class="headerlink" href="#checking-a-planned-route" title="Permanent link">&para;</a></h2>
 <p>Before a scenario runs, its ego route can be checked against the ODD on the
 Lanelet2 map alone, with no CARLA server:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span>intersection_passing/left_turn
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
-<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'lane_change/*'</span><span class="w"> </span>--json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span>intersection_passing/left_turn
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>urban<span class="w"> </span><span class="s1">'lane_change/*'</span><span class="w"> </span>--json
 </code></pre></div>
 <p>Each scenario config is composed as a run composes it. Name it as
 <code>scenario=</code> does (a glob works too); arguments with an <code>=</code> are Hydra
@@ -4551,15 +4652,15 @@ is called unreached.</p>
 when a route could not be planned (no goal, no path, a lanelet the map does
 not have, no Lanelet2 map) or the ODD could not be read.</p>
 <p>From Python:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>    <span class="n">PlannedRoute</span><span class="p">,</span> <span class="n">combine_route_coverage</span><span class="p">,</span> <span class="n">plan_route_coverage</span><span class="p">,</span>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="p">)</span>
-<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coordinate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span>
-<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>
-<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="n">route</span> <span class="o">=</span> <span class="n">PlannedRoute</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">203</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span> <span class="n">goal</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">207</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">))</span>
-<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a><span class="n">coverage</span> <span class="o">=</span> <span class="n">plan_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="o">=</span><span class="n">lanelet_map</span><span class="p">)</span>
-<a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a><span class="n">coverage</span><span class="o">.</span><span class="n">leaves_odd</span><span class="p">,</span> <span class="n">coverage</span><span class="o">.</span><span class="n">outside</span><span class="p">(),</span> <span class="n">coverage</span><span class="o">.</span><span class="n">expected_m</span>
-<a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a><span class="n">combine_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="p">[</span><span class="n">coverage</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">unreached</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.odd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>    <span class="n">PlannedRoute</span><span class="p">,</span> <span class="n">combine_route_coverage</span><span class="p">,</span> <span class="n">plan_route_coverage</span><span class="p">,</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="p">)</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.coordinate</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="n">route</span> <span class="o">=</span> <span class="n">PlannedRoute</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">203</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span> <span class="n">goal</span><span class="o">=</span><span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">207</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">))</span>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="n">coverage</span> <span class="o">=</span> <span class="n">plan_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="o">=</span><span class="n">lanelet_map</span><span class="p">)</span>
+<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="n">coverage</span><span class="o">.</span><span class="n">leaves_odd</span><span class="p">,</span> <span class="n">coverage</span><span class="o">.</span><span class="n">outside</span><span class="p">(),</span> <span class="n">coverage</span><span class="o">.</span><span class="n">expected_m</span>
+<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="n">combine_route_coverage</span><span class="p">(</span><span class="s2">"urban"</span><span class="p">,</span> <span class="p">[</span><span class="n">coverage</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span><span class="o">.</span><span class="n">unreached</span>
 </code></pre></div>
 <p><code>plan_route_coverage</code> also takes a scenario (its spawn pose, waypoints and
 goal) or a list of lanelet ids. Without <code>lanelet_map</code> it uses the map the
