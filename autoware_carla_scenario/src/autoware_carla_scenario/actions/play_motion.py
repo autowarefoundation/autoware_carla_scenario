@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Optional, Union
 import typesafe_carla.carla as carla
 
 from ..action_state import ActionState
+from ..conditions.and_condition import AndCondition
 from ..conditions.base import BaseCondition, ScenarioResult
+from ..conditions.composition.speed import walker_velocity
+from ..control_domain import ControlDomain, movement_of
 from ..entity._soma_motion import SomaMotion, WalkerRetarget, load_soma_motion
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
@@ -18,7 +21,10 @@ from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PlayMotionAction"]
+__all__ = ["STANDING_SPEED_MS", "PlayMotionAction"]
+
+#: The speed (m/s) at or under which a pedestrian stands, and may play a motion.
+STANDING_SPEED_MS: float = 0.1
 
 
 class PlayMotionAction(BaseAction):
@@ -36,11 +42,18 @@ class PlayMotionAction(BaseAction):
 
     The custom pose is the whole skeleton: the bones the motion does not drive
     hold the frame of the walker's animation the motion began on.  So a walker
-    playing one stands -- with *upper_body_only* its legs are frozen in that
-    frame, and without, they follow the motion -- and a pedestrian should be
-    stopped (``WalkStraightAction`` at speed 0) before it waves.  The hips are
-    never driven: where the walker stands and faces stays CARLA's, and the
-    motion is turned to face the way the walker does.
+    plays a motion standing, and the action fires only while the pedestrian
+    stands (no faster than :data:`STANDING_SPEED_MS`), as well as its
+    *condition* holds: stop it first (``WalkStraightAction`` at speed 0).  The
+    hips are never driven: where the walker stands and faces stays CARLA's,
+    and the motion is turned to face the way the walker does.
+
+    **Control domains** (:mod:`~autoware_carla_scenario.control_domain`).  The
+    motion takes the pedestrian's *animation* domain; driving the whole body
+    (``upper_body_only=False``), its legs too, it takes its movement as well,
+    so nothing may walk it while it plays.  With *upper_body_only* its
+    movement stays free -- but a pedestrian walked under a motion glides,
+    its legs frozen.
 
     The action runs until the motion has played (each loop of it, with
     *loop*, until *duration_s*), then hands the walker back to its animation.
@@ -61,6 +74,8 @@ class PlayMotionAction(BaseAction):
             until the scenario ends.
         upper_body_only: Drive the spine, neck and arms only (default); the
             legs keep the animation's pose.
+        overrides: Take over a control domain of the pedestrian another
+            action holds (:attr:`~BaseAction.overrides`).
 
     Raises:
         FileNotFoundError: If there is no file at *motion_path*.
@@ -95,14 +110,26 @@ class PlayMotionAction(BaseAction):
         loop: bool = False,
         duration_s: Optional[float] = None,
         upper_body_only: bool = True,
+        overrides: bool = False,
     ) -> None:
         if fps is not None and fps <= 0:
             raise ValueError("fps must be positive")
         if duration_s is not None and duration_s <= 0:
             raise ValueError("duration_s must be positive")
         finished: BaseCondition = _MotionPlayed(self, label)
+        standing: BaseCondition = _Standing(str(entity_name), label)
+        trigger = standing
+        if condition is not None:
+            given: BaseCondition = condition
+            both: BaseCondition = AndCondition([given, standing], label=given.label)
+            trigger = both
         super().__init__(
-            label=label, condition=condition, timing=timing, once=once, until=finished
+            label=label,
+            condition=trigger,
+            timing=timing,
+            once=once,
+            until=finished,
+            overrides=overrides,
         )
         self._entity_name = str(entity_name)
         self._motion_path = str(motion_path)
@@ -119,6 +146,13 @@ class PlayMotionAction(BaseAction):
     def playing(self) -> bool:
         """Whether the motion is showing on the walker."""
         return self._playing
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The pedestrian's animation; its movement too for the whole body."""
+        claims = [(self._entity_name, ControlDomain.ANIMATION)]
+        if not self._upper_body_only:
+            claims.extend(movement_of(self._entity_name))
+        return claims
 
     def execute(self, world: carla.World) -> None:
         """Begin the motion on the trigger's call, then show its next frame on
@@ -262,4 +296,32 @@ class _MotionPlayed(BaseCondition):
             return None
         return ScenarioResult(
             passed=True, message="the motion has played", elapsed_seconds=elapsed
+        )
+
+
+class _Standing(BaseCondition):
+    """Satisfied while the pedestrian stands: no faster than
+    :data:`STANDING_SPEED_MS`, measured as a walker moves (``walker_velocity``)."""
+
+    _entity_name: str
+
+    def __init__(self, entity_name: str, label: str) -> None:
+        super().__init__(label=f"{label}_standing")
+        self._entity_name = entity_name
+
+    def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
+        entity = find_pedestrian_entity(self._entity_name)
+        if entity is None:
+            return None
+        actor = entity.actor
+        if actor is None:
+            return None
+        walker: carla.Actor = actor
+        speed = walker_velocity(walker, elapsed).magnitude()
+        if speed > STANDING_SPEED_MS:
+            return None
+        return ScenarioResult(
+            passed=True,
+            message=f"'{self._entity_name}' stands ({speed:.2f} m/s)",
+            elapsed_seconds=elapsed,
         )

@@ -9,6 +9,7 @@ was given.
 
 from __future__ import annotations
 
+import itertools
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,12 +21,16 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
+    ElapsedTimeCondition,
     PedestrianEntity,
     PedestrianEntityConfig,
     PlayMotionAction,
     SpawnTransform,
+    WalkStraightAction,
 )
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions.base import control_holder
+from autoware_carla_scenario.control_domain import ControlConflictError, ControlDomain
 from autoware_carla_scenario.entity._soma_motion import (
     CARLA_BONES,
     SOMA_JOINTS,
@@ -407,11 +412,18 @@ class TestRetarget:
 # ----------------------------------------------------------------------
 
 
+_WALKER_IDS = itertools.count(1000)
+
+
 class _Walker:
     """A walker that keeps the custom pose it is given."""
 
     def __init__(self) -> None:
+        # Its own: walker_velocity remembers a walker's last place by id.
+        self.id = next(_WALKER_IDS)
         self.type_id = "walker.pedestrian.0001"
+        self.x = 0.0
+        self.vx = 0.0
         self.blend: float = 0.0
         self.poses: list[dict[str, carla.Transform]] = []
         self.from_animation = 0
@@ -420,7 +432,13 @@ class _Walker:
         return SimpleNamespace(bone_transforms=_bones())
 
     def get_transform(self) -> carla.Transform:
-        return carla.Transform(carla.Location(), carla.Rotation())
+        return carla.Transform(self.get_location(), carla.Rotation())
+
+    def get_location(self) -> carla.Location:
+        return carla.Location(x=self.x)
+
+    def get_velocity(self) -> carla.Vector3D:
+        return carla.Vector3D(self.vx, 0.0, 0.0)
 
     def get_pose_from_animation(self) -> None:
         self.from_animation += 1
@@ -505,7 +523,62 @@ class TestPlayMotionAction:
         action.tick(world, 0.0)
         action.tick(world, DT)
         assert not action.playing
-        assert action.state is not ActionState.RUNNING
+        assert action.state is ActionState.STANDBY
+
+    def test_a_walking_pedestrian_waits_until_it_stands(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        action = PlayMotionAction("walker1", wave)
+        scene.walker.vx = 1.4
+        for _ in range(4):
+            scene.walker.x += 1.4 * DT  # walking at 1.4 m/s
+            scene.run(action, DT)
+        scene.walker.vx = 0.0
+        assert action.state is ActionState.STANDBY
+        assert not scene.walker.poses
+        scene.run(action, 2 * DT)  # stands
+        assert action.playing
+
+    def test_its_trigger_and_standing_must_both_hold(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        action = PlayMotionAction(
+            "walker1", wave, condition=ElapsedTimeCondition(0.2, label="later")
+        )
+        scene.run(action, 0.15)
+        assert action.state is ActionState.STANDBY
+        scene.run(action, 0.1)
+        assert action.playing
+
+    def test_the_upper_body_takes_the_animation_alone(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        PlayMotionAction("walker1", wave, loop=True).tick(scene.world, 0.0)
+        assert control_holder("walker1", ControlDomain.ANIMATION, 0.0) is not None
+        assert control_holder("walker1", ControlDomain.LONGITUDINAL, 0.0) is None
+        # Another motion is refused; a walk is not.
+        with pytest.raises(ControlConflictError):
+            PlayMotionAction("walker1", wave).tick(scene.world, DT)
+
+    def test_the_whole_body_takes_the_movement_too(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        PlayMotionAction("walker1", wave, loop=True, upper_body_only=False).tick(
+            scene.world, 0.0
+        )
+        walk = WalkStraightAction("walker1", speed_ms=1.0)
+        with pytest.raises(ControlConflictError):
+            walk.tick(scene.world, DT)
+
+    def test_an_overriding_motion_stops_the_one_playing(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        first = PlayMotionAction("walker1", wave, loop=True)
+        first.tick(scene.world, 0.0)
+        second = PlayMotionAction("walker1", wave, overrides=True)
+        second.tick(scene.world, DT)
+        assert first.state is ActionState.COMPLETE
+        assert second.playing
 
     def test_a_bad_file_fails_when_the_scenario_is_built(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):

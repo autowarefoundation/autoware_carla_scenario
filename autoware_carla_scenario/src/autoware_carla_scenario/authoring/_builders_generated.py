@@ -113,6 +113,7 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "run_traffic_rule",
         "stalled_object",
         "stop_crossing",
+        "play_motion",
         "walk_straight",
         "turn_indicator",
         "lane_change",
@@ -1406,6 +1407,7 @@ def build_play_motion_action(
         loop=params["loop"],
         duration_s=params["duration_s"],
         upper_body_only=params["upper_body_only"],
+        overrides=compiled.node.overrides,
     )
 
 
