@@ -244,7 +244,7 @@ class TestPlanRoute:
         route = PlannedRoute(
             start=LEFT_TURN.start,
             goal=LEFT_TURN.goal,
-            via=(Lanelet2Pose(lanelet_id=203, s=0.0), Lanelet2Pose(411, 0.0)),
+            via=(Lanelet2Pose(lanelet_id=203, s=30.0), Lanelet2Pose(411, 0.0)),
         )
         assert [i for i, _ in plan_route(route, *nishishinjuku)] == [203, 411, 207]
 
@@ -308,6 +308,128 @@ class TestPlanRoute:
         scenario._spawn_pose = None
         with pytest.raises(RouteError, match="spawn"):
             _cover(default_odd(), scenario, nishishinjuku)
+
+
+#: 285 is on a block the fixture map routes round: 285, 299, 130, a lane
+#: change to 131, 305, and 285 again.
+LOOP = [285, 299, 130, 131, 305, 285]
+
+
+class TestALegBehindItsStart:
+    """A stop behind the one before it on the same lanelet is reached round a
+    loop, not by driving backwards along it (#917)."""
+
+    def test_no_loop_back_is_no_path(self, nishishinjuku: tuple[Any, Any]) -> None:
+        # 203's followers, 411 and 415, have no path back to it.
+        route = PlannedRoute(start=Lanelet2Pose(203, 25.0), goal=Lanelet2Pose(203, 5.0))
+        from autoware_carla_scenario.odd.route_plan import route_lanelets, route_poses
+
+        with pytest.raises(RouteError, match="no route from lanelet 203"):
+            plan_route(route, *nishishinjuku)
+        with pytest.raises(RouteError):
+            route_lanelets(route, *nishishinjuku)
+        with pytest.raises(RouteError):
+            route_poses(route, *nishishinjuku, 5.0)
+
+    def test_straight_legs_go_straight_to_it(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        route = PlannedRoute(start=Lanelet2Pose(203, 25.0), goal=Lanelet2Pose(203, 5.0))
+        poses = route_poses(route, *nishishinjuku, 5.0, straight_legs=True)
+        assert poses == [Lanelet2Pose(203, 5.0)]
+
+    def test_round_the_loop(self, nishishinjuku: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_lanelets, route_poses
+
+        route = PlannedRoute(
+            start=Lanelet2Pose(285, 40.0), goal=Lanelet2Pose(285, 10.0)
+        )
+        assert [int(ll.id) for ll in route_lanelets(route, *nishishinjuku)] == LOOP
+        planned = plan_route(route, *nishishinjuku)
+        assert [i for i, _ in planned] == LOOP
+        # The first time from the start to the end of 285, the last from its
+        # beginning to the goal.
+        assert planned[0][1] == pytest.approx(_length(nishishinjuku, 285) - 40.0)
+        assert planned[-1][1] == pytest.approx(10.0)
+        assert planned[1][1] == pytest.approx(_length(nishishinjuku, 299))
+
+        poses = route_poses(route, *nishishinjuku, 5.0)
+        assert poses[0] == Lanelet2Pose(285, 40.0)
+        assert poses[-1] == Lanelet2Pose(285, 10.0)
+        ids = [p.lanelet_id for p in poses]
+        assert [i for n, i in enumerate(ids) if n == 0 or ids[n - 1] != i] == LOOP
+        first = [p.s for p in poses[: ids.index(299)]]
+        last = [p.s for p in poses[len(ids) - ids[::-1].index(305) :]]
+        assert first[0] == 40.0 and first == sorted(first)
+        assert last[0] == 0.0 and last[-1] == 10.0 and last == sorted(last)
+
+    def test_the_loop_may_start_with_a_lane_change(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_lanelets
+
+        # None of 157's own followers leads back to it; the lane beside it,
+        # 158, does, as any other leg could change to it.
+        lanelet_map, graph = nishishinjuku
+        lanelet = lanelet_map.laneletLayer[157]
+        assert 158 not in [int(ll.id) for ll in graph.following(lanelet)]
+        length = _length(nishishinjuku, 157)
+        route = PlannedRoute(
+            start=Lanelet2Pose(157, 0.8 * length),
+            goal=Lanelet2Pose(157, 0.2 * length),
+        )
+        ids = [int(ll.id) for ll in route_lanelets(route, *nishishinjuku)]
+        assert ids[:2] == [157, 158] and ids[-1] == 157 and ids.count(157) == 2
+        planned = plan_route(route, *nishishinjuku)
+        # Left by a lane change: half of it to the start's end, as plan_route
+        # splits one, and to the goal on its way back round.
+        assert planned[0][1] == pytest.approx(0.1 * length)
+        assert planned[-1][1] == pytest.approx(0.2 * length)
+
+    def test_a_waypoint_behind_the_one_before(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        route = PlannedRoute(
+            start=Lanelet2Pose(285, 10.0),
+            via=(Lanelet2Pose(285, 40.0),),
+            goal=Lanelet2Pose(285, 30.0),
+        )
+        planned = plan_route(route, *nishishinjuku)
+        assert [i for i, _ in planned] == LOOP
+        assert planned[0][1] == pytest.approx(_length(nishishinjuku, 285) - 10.0)
+        assert planned[-1][1] == pytest.approx(30.0)
+        poses = route_poses(route, *nishishinjuku, 5.0)
+        assert Lanelet2Pose(285, 40.0) in poses
+        assert poses[0] == Lanelet2Pose(285, 10.0)
+        assert poses[-1] == Lanelet2Pose(285, 30.0)
+
+    def test_ahead_on_the_lanelet_is_along_it(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        route = PlannedRoute(
+            start=Lanelet2Pose(285, 10.0), goal=Lanelet2Pose(285, 40.0)
+        )
+        assert plan_route(route, *nishishinjuku) == [(285, pytest.approx(30.0))]
+
+    def test_the_goal_at_the_start_is_no_way(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        route = PlannedRoute(
+            start=Lanelet2Pose(285, 10.0), goal=Lanelet2Pose(285, 10.0)
+        )
+        assert plan_route(route, *nishishinjuku) == [(285, 0.0)]
+
+    def test_a_walker_turns_round_on_the_lanelet(self) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = _walkway_pair()
+        route = PlannedRoute(start=Lanelet2Pose(1, 8.0), goal=Lanelet2Pose(1, 2.0))
+        poses = route_poses(route, lanelet_map, graph, 2.0, bidirectional=True)
+        assert [p.s for p in poses] == [8.0, 6.0, 4.0, 2.0]
 
 
 # ---------------------------------------------------------------------------
