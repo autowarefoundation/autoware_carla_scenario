@@ -11,6 +11,7 @@ from ...entity_role import EntityRole
 from ...kinematics import Vector3
 from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
+from ..entity_existence import find_present_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import _box_centre, half_extent_along
@@ -216,7 +217,7 @@ class TimeToCollisionCondition(CompositionCondition):
         assert self._entity_name is not None  # noqa: S101
         target = None
         if self._target is not None:
-            target = find_actor_by_role_name(world, self._target)
+            target = find_present_actor_by_role_name(world, self._target)
             if target is None:
                 return None
         source = find_actor_by_role_name(world, self._entity_name)

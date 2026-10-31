@@ -13,6 +13,7 @@ from ...kinematics import (
 )
 from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
+from ..entity_existence import find_present_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 from .speed import SpeedDirection
@@ -119,7 +120,7 @@ class RelativeSpeedCondition(CompositionCondition):
         """
         assert self._entity_name is not None  # noqa: S101
         entity = find_actor_by_role_name(world, self._entity_name)
-        reference = find_actor_by_role_name(world, self._reference_entity_name)
+        reference = find_present_actor_by_role_name(world, self._reference_entity_name)
         if entity is None or reference is None:
             return None
 

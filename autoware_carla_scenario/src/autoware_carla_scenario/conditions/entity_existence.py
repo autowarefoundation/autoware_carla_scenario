@@ -18,6 +18,32 @@ logger = logging.getLogger(__name__)
 HIDDEN_BELOW_M = -100.0
 
 
+def find_present_actor_by_role_name(
+    world: "carla.World", role_name: Union[EntityRole, str]
+) -> Optional["carla.Actor"]:
+    """Find the actor with *role_name*, or ``None`` when it is not in the scene.
+
+    Like :func:`~.base.find_actor_by_role_name`, but an actor parked under the
+    map (below :data:`HIDDEN_BELOW_M`: spawned out of sight and not yet brought
+    in, or taken out again) counts as absent.  What a condition measures
+    against such an actor -- a gap, a closing speed, a heading -- is measured
+    against a point under the road, not against anything a driver could see.
+    The guard of a composition condition reads its own entity this way
+    (:class:`EntityExistenceCondition` with ``quiet=True``); a condition that
+    measures against a second entity (a target, a reference) reads that one
+    this way too, so swapping the two gives the same answer.
+
+    A trigger meant as "the ego is near where a hidden entity will appear"
+    therefore never fires on that entity: name the place instead, with a
+    position condition
+    (:class:`~.composition.entity_position_distance.EntityPositionDistanceCondition`).
+    """
+    actor = find_actor_by_role_name(world, role_name)
+    if actor is None or float(actor.get_location().z) < HIDDEN_BELOW_M:
+        return None
+    return actor
+
+
 class EntityExistenceCondition(BaseCondition):
     """Fail condition that triggers whenever a named actor is absent from the world.
 
@@ -77,11 +103,13 @@ class EntityExistenceCondition(BaseCondition):
             :class:`ScenarioResult` with ``passed=False`` if the actor
             is not found, ``None`` otherwise.
         """
-        actor = find_actor_by_role_name(world, self._entity_name)
+        actor = (
+            find_present_actor_by_role_name(world, self._entity_name)
+            if self._quiet
+            else find_actor_by_role_name(world, self._entity_name)
+        )
 
-        if actor is not None and not (
-            self._quiet and float(actor.get_location().z) < HIDDEN_BELOW_M
-        ):
+        if actor is not None:
             self._said_absent = False
             return None
 
