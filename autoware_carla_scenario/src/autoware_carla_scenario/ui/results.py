@@ -14,6 +14,10 @@ documents. Comparing sessions matches their cases by what they ran -- the
 case's overrides, else the ODD values it was drawn at -- not by position, so a
 case keeps its match when a sweep's order or size changes; and tallies each
 ODD cell (the buckets a case was drawn in, along two attributes) per session.
+The comparison itself is ``ui.comparison``'s, which the library check
+compiles: it reads each case as a ``ComparedCase``
+(:meth:`CaseResult.compared`), whose buckets and key are read off the
+coverage document here.
 """
 
 from __future__ import annotations
@@ -25,6 +29,19 @@ from pathlib import Path
 from typing import Any
 
 from .cases import CaseFiles, case_files, job_dir, session_dir
+
+# The comparison of sessions, compiled by the library check; the names it
+# had here stay importable from here.
+from .comparison import METRICS as METRICS
+from .comparison import CellComparison as CellComparison
+from .comparison import ComparedCase as ComparedCase
+from .comparison import Comparison as Comparison
+from .comparison import MatchedCase as MatchedCase
+from .comparison import _bucket_order as _bucket_order
+from .comparison import _case_number as _case_number
+from .comparison import compare as _compare
+from .comparison import default_axes as _default_axes
+from .comparison import varying_attributes as _varying_attributes
 
 # The box geometry and the running metrics of the ego's ticks, compiled by the
 # library check; the names case_metrics used stay importable from here.
@@ -62,6 +79,23 @@ def _read_json(path: Path | None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _passed(value: Any) -> bool | None:
+    """A verdict: *value* when it is a boolean, else ``None``."""
+    return value if isinstance(value, bool) else None
+
+
+def _seconds(value: Any) -> float | None:
+    """A duration: *value* when it is a number (not a boolean), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _strings(value: Any) -> list[str]:
+    """A list of overrides: each item as a string, empty unless a list."""
+    return [str(o) for o in value] if isinstance(value, list) else []
 
 
 @dataclass
@@ -132,6 +166,22 @@ class CaseResult:
         if self.passed is None:
             return "none"
         return "pass" if self.passed else "fail"
+
+    def compared(self) -> ComparedCase:
+        """The case as the comparison reads it: its buckets and key read off
+        the coverage document here (``ui.comparison`` compiles without
+        one)."""
+        return ComparedCase(
+            index=self.index,
+            label=self.label,
+            passed=self.passed,
+            errored=self.errored,
+            message=self.message,
+            overrides=self.overrides,
+            buckets=self.buckets,
+            metrics=self.metrics,
+            key=self.key,
+        )
 
 
 # ── Metrics off the trajectory log ──────────────────────────────────────────
@@ -215,19 +265,6 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
     return metrics
 
 
-#: How each metric reads: its label, and whether more is better (``None``:
-#: neither), for the comparison's colours.
-METRICS: dict[str, tuple[str, bool | None]] = {
-    "elapsed_s": ("elapsed (s)", None),
-    "min_gap_m": ("min gap (m)", True),
-    "max_decel_ms2": ("max decel (m/s²)", False),
-    "stop_time_s": ("stopped at (s)", None),
-    "distance_m": ("distance (m)", None),
-    "max_speed_kmh": ("max speed (km/h)", None),
-    "final_speed_kmh": ("final speed (km/h)", None),
-}
-
-
 # ── A session's cases ───────────────────────────────────────────────────────
 
 
@@ -262,15 +299,18 @@ def load_results(
             if not isinstance(entry, dict):
                 continue
             files = case_files(base, session_type, date, time, index)
+            scenario = entry.get("scenario")
             out.append(
                 CaseResult(
                     index=index,
-                    label=str(entry.get("scenario") or "unknown"),
-                    passed=entry.get("passed"),
+                    label=scenario
+                    if isinstance(scenario, str) and scenario
+                    else "unknown",
+                    passed=_passed(entry.get("passed")),
                     errored=bool(entry.get("error")),
-                    elapsed_seconds=entry.get("elapsed_seconds"),
+                    elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
                     message=str(entry.get("message") or ""),
-                    overrides=[str(o) for o in entry.get("overrides") or []],
+                    overrides=_strings(entry.get("overrides")),
                     files=files,
                     coverage=_read_json(files.coverage) if files else None,
                 )
@@ -303,9 +343,9 @@ def load_results(
                 CaseResult(
                     index=index,
                     label=label,
-                    passed=result.get("passed"),
+                    passed=_passed(result.get("passed")),
                     errored=files is None or not result,
-                    elapsed_seconds=result.get("elapsed_seconds"),
+                    elapsed_seconds=_seconds(result.get("elapsed_seconds")),
                     message=str(result.get("message") or ""),
                     overrides=[o for o in overrides if not o.startswith("scenario=")],
                     files=files,
@@ -322,11 +362,7 @@ def load_results(
 
 def varying_attributes(results: list[CaseResult]) -> list[str]:
     """The attributes the cases were drawn in different buckets of."""
-    seen: dict[str, set[str]] = {}
-    for result in results:
-        for name, bucket in result.buckets.items():
-            seen.setdefault(name, set()).add(bucket)
-    return [name for name, buckets in seen.items() if len(buckets) > 1]
+    return _varying_attributes([r.compared() for r in results])
 
 
 def coverage_documents(results: list[CaseResult]) -> list[dict[str, Any]]:
@@ -337,14 +373,7 @@ def coverage_documents(results: list[CaseResult]) -> list[dict[str, Any]]:
 def default_axes(results: list[CaseResult]) -> tuple[str | None, str | None]:
     """The two attributes the cases were drawn over that tell them apart
     most (the most distinct buckets), else ``None`` (openodd's choice)."""
-    seen: dict[str, set[str]] = {}
-    for result in results:
-        for name, bucket in result.buckets.items():
-            seen.setdefault(name, set()).add(bucket)
-    ranked = sorted((n for n in seen if len(seen[n]) > 1), key=lambda n: -len(seen[n]))
-    x = ranked[0] if ranked else None
-    y = ranked[1] if len(ranked) > 1 else None
-    return x, y
+    return _default_axes([r.compared() for r in results])
 
 
 def _seconds_in(coverage: dict[str, Any], attribute: str, bucket: str) -> float:
@@ -377,126 +406,6 @@ def cases_in_cell(
 # ── Comparing sessions ──────────────────────────────────────────────────────
 
 
-@dataclass
-class MatchedCase:
-    """One case as each compared session ran it (``None``: did not)."""
-
-    key: str
-    runs: list[CaseResult | None]
-
-    @property
-    def first(self) -> CaseResult:
-        return next(r for r in self.runs if r is not None)
-
-    @property
-    def ran(self) -> list[CaseResult]:
-        """The runs of the sessions that ran it, oldest first."""
-        return [r for r in self.runs if r is not None]
-
-    def change(self) -> str:
-        """Between the first session that ran it and the last: ``regression``
-        (passed, then not), ``fixed`` (the other way), ``flaky`` (passed at
-        both ends and not in between, or the other way), ``same`` (a fail and
-        an error are both not passing); ``new`` or
-        ``gone`` when one session alone ran it (not the baseline, or only
-        the baseline)."""
-        ran = self.ran
-        if len(ran) == 1:
-            return "gone" if self.runs[0] is not None else "new"
-        before, after = ran[0].outcome, ran[-1].outcome
-        if before == "pass" and after != "pass":
-            return "regression"
-        if before != "pass" and after == "pass":
-            return "fixed"
-        # The same at both ends, and passed (or not) in between.
-        if any((r.outcome == "pass") != (before == "pass") for r in ran):
-            return "flaky"
-        return "same"
-
-    def delta(self, metric: str) -> float | None:
-        """*metric* of the last session that ran it less the first's."""
-        ran = [r for r in self.ran if metric in r.metrics]
-        if len(ran) < 2:
-            return None
-        return round(ran[-1].metrics[metric] - ran[0].metrics[metric], 3)
-
-    def significant(self, metric: str) -> bool:
-        """Whether the delta is more than noise: over 5% of the first value
-        and over 0.05."""
-        delta = self.delta(metric)
-        if delta is None:
-            return False
-        base = next(r.metrics[metric] for r in self.ran if metric in r.metrics)
-        return abs(delta) > max(0.05, 0.05 * abs(base))
-
-
-@dataclass
-class CellComparison:
-    """An ODD cell (a bucket of *x*, and of *y*), per session."""
-
-    x: str
-    y: str
-    #: Per session: (passed, runs) of its cases drawn in the cell.
-    tallies: list[tuple[int, int]]
-    keys: list[str]
-
-    def rate(self, i: int) -> float | None:
-        passed, runs = self.tallies[i]
-        return None if runs == 0 else passed / runs
-
-    @property
-    def delta(self) -> float | None:
-        """The pass rate of the last session with runs in the cell less the
-        first's."""
-        rates = [
-            r for r in (self.rate(i) for i in range(len(self.tallies))) if r is not None
-        ]
-        return None if len(rates) < 2 else rates[-1] - rates[0]
-
-
-@dataclass
-class Comparison:
-    sessions: list[str]
-    cases: list[MatchedCase]
-    x: str | None
-    y: str | None
-    x_labels: list[str]
-    y_labels: list[str]
-    cells: dict[tuple[str, str], CellComparison]
-    #: Per session: (passed, runs).
-    totals: list[tuple[int, int]]
-
-    def count(self, change: str) -> int:
-        return sum(1 for c in self.cases if c.change() == change)
-
-    def rate(self, i: int) -> float | None:
-        passed, runs = self.totals[i]
-        return None if runs == 0 else passed / runs
-
-    @property
-    def metrics(self) -> list[str]:
-        present = {m for c in self.cases for r in c.runs if r for m in r.metrics}
-        return [m for m in METRICS if m in present]
-
-
-def _bucket_order(labels: set[str]) -> list[str]:
-    """Buckets in reading order: numeric ranges by their lower bound."""
-
-    def key(label: str) -> tuple[int, float, str]:
-        head = label.lstrip("[(").split(",", 1)[0].strip()
-        try:
-            return 0, float(head), label
-        except ValueError:
-            return 1, 0.0, label
-
-    return sorted(labels, key=key)
-
-
-def _case_number(label: str) -> tuple[int, str]:
-    number = label.rpartition("#")[2]
-    return (int(number), label) if number.isdigit() else (0, label)
-
-
 def compare(
     sessions: list[tuple[str, list[CaseResult]]],
     *,
@@ -505,57 +414,10 @@ def compare(
 ) -> Comparison:
     """Compare sessions (oldest first: the first is the baseline) case by case
     and ODD cell by cell, the cells along *x* and *y* (the attributes the
-    cases were drawn over, :func:`default_axes` when not given)."""
-    every = [r for _, results in sessions for r in results]
-    if x is None and y is None:
-        x, y = default_axes(every)
-    matched: dict[str, MatchedCase] = {}
-    for i, (_, results) in enumerate(sessions):
-        for result in results:
-            case = matched.setdefault(
-                result.key, MatchedCase(result.key, [None] * len(sessions))
-            )
-            # A key run twice in one session (a repeated case): the last run.
-            case.runs[i] = result
-    order = {"regression": 0, "fixed": 1, "flaky": 2, "new": 3, "gone": 4, "same": 5}
-    cases = sorted(
-        matched.values(),
-        key=lambda c: (
-            order[c.change()],
-            c.first.scenario,
-            _case_number(c.first.label),
-        ),
-    )
-    cells: dict[tuple[str, str], CellComparison] = {}
-    x_labels: set[str] = set()
-    y_labels: set[str] = set()
-    for case in matched.values():
-        buckets = case.first.buckets
-        bx = buckets.get(x, "") if x else ""
-        by = buckets.get(y, "") if y else ""
-        if (x and not bx) or (y and not by):
-            continue
-        x_labels.add(bx)
-        y_labels.add(by)
-        cell = cells.setdefault(
-            (bx, by), CellComparison(bx, by, [(0, 0)] * len(sessions), [])
-        )
-        cell.keys.append(case.key)
-        for i, run in enumerate(case.runs):
-            if run is not None:
-                passed, runs = cell.tallies[i]
-                cell.tallies[i] = (passed + (run.outcome == "pass"), runs + 1)
-    totals = [
-        (sum(1 for r in results if r.outcome == "pass"), len(results))
-        for _, results in sessions
-    ]
-    return Comparison(
-        sessions=[name for name, _ in sessions],
-        cases=cases,
+    cases were drawn over, :func:`default_axes` when not given): the checked
+    ``ui.comparison``'s, fed each case's :meth:`CaseResult.compared`."""
+    return _compare(
+        [(name, [r.compared() for r in found]) for name, found in sessions],
         x=x,
         y=y,
-        x_labels=_bucket_order(x_labels),
-        y_labels=_bucket_order(y_labels),
-        cells=cells,
-        totals=totals,
     )

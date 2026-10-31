@@ -176,11 +176,131 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
             "unknown key",
         ),
         ({**_messages({"a": 1}), "clock": "fast"}, "'fast'"),
+        # The CARLA port is an integer port number, never truncated or wrapped.
+        ({**_messages({}), "carla": {"port": 2000.7}}, "carla.port: expected an"),
+        ({**_messages({}), "carla": {"port": True}}, "carla.port: expected an"),
+        ({**_messages({}), "carla": {"port": "2000"}}, "carla.port: expected an"),
+        ({**_messages({}), "carla": {"port": math.inf}}, "carla.port: expected an"),
+        ({**_messages({}), "carla": {"port": math.nan}}, "carla.port: expected an"),
+        ({**_messages({}), "carla": {"port": -5}}, "carla.port: must be within"),
+        ({**_messages({}), "carla": {"port": 0}}, "carla.port: must be within"),
+        ({**_messages({}), "carla": {"port": 70000}}, "carla.port: must be within"),
+        # Every duration is a finite number of the right sign.
+        ({**_messages({}), "carla": {"timeout": -1.0}}, "carla.timeout: must be"),
+        ({**_messages({}), "carla": {"timeout": 0}}, "carla.timeout: must be"),
+        ({**_messages({}), "carla": {"timeout": math.nan}}, "carla.timeout: .*finite"),
+        ({**_messages({}), "carla": {"timeout": math.inf}}, "carla.timeout: .*finite"),
+        ({**_messages({}), "ego": {"wait": -3.0}}, "ego.wait: must not be negative"),
+        ({**_messages({}), "ego": {"wait": math.inf}}, "ego.wait: .*finite"),
+        ({**_messages({}), "ego": {"wait": math.nan}}, "ego.wait: .*finite"),
+        (
+            _device(codec="nmea", messages=[{"name": "GGA", "period": math.nan}]),
+            r"messages\[0\].period: .*finite",
+        ),
+        (
+            _device(codec="nmea", messages=[{"name": "GGA", "period": math.inf}]),
+            r"messages\[0\].period: .*finite",
+        ),
+        (
+            _device(codec="nmea", messages=[{"name": "GGA", "period": 0.0}]),
+            r"messages\[0\].period: must be positive",
+        ),
+        (
+            {**_messages({}), "lifecycle": {"startup": [{"sleep": math.nan}]}},
+            r"startup\[0\].sleep: .*finite",
+        ),
+        (
+            {**_messages({}), "lifecycle": {"startup": [{"sleep": -0.5}]}},
+            r"startup\[0\].sleep: must not be negative",
+        ),
+        (
+            {
+                **_messages({}),
+                "lifecycle": {
+                    "startup": [{"wait": "d", "name": "M", "timeout": math.nan}]
+                },
+            },
+            r"startup\[0\].timeout: .*finite",
+        ),
+        (
+            {
+                **_messages({}),
+                "lifecycle": {"startup": [{"wait": "d", "name": "M", "timeout": 0}]},
+            },
+            r"startup\[0\].timeout: must be positive",
+        ),
+        # The other numbers are finite too.
+        (_messages({"a": {"signal": "speed", "scale": math.nan}}), "scale: .*finite"),
+        (_messages({"a": {"signal": "speed", "offset": math.inf}}), "offset: .*finite"),
+        (
+            _device(
+                codec="raw",
+                sensor={"blueprint": "sensor.camera.rgb", "transform": {"z": math.nan}},
+            ),
+            "transform.z: .*finite",
+        ),
+        (
+            _device(
+                codec="lidar:vlp16",
+                sensor={
+                    "blueprint": "sensor.lidar.ray_cast",
+                    "intensity_scale": math.inf,
+                },
+            ),
+            "intensity_scale: .*finite",
+        ),
     ],
 )
 def test_a_bad_configuration_is_refused(document: Any, message: str) -> None:
     with pytest.raises(HilsConfigError, match=message):
         parse_config(document)
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("carla: {port: .inf}", "carla.port: expected an"),
+        ("carla: {port: .nan}", "carla.port: expected an"),
+        ("carla: {port: 2000.7}", "carla.port: expected an"),
+        ("carla: {port: 70000}", "carla.port: must be within"),
+        ("carla: {timeout: .nan}", "carla.timeout: .*finite"),
+        ("carla: {timeout: -.inf}", "carla.timeout: .*finite"),
+        ("ego: {wait: .inf}", "ego.wait: .*finite"),
+        ("lifecycle: {startup: [{sleep: .nan}]}", "sleep: .*finite"),
+        (
+            "lifecycle: {startup: [{wait: d, name: M, timeout: .inf}]}",
+            "timeout: .*finite",
+        ),
+    ],
+)
+def test_a_bad_number_in_the_file_is_refused(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(f"{line}\ndevices: {{d: {{url: mem://x, codec: nmea}}}}\n")
+    with pytest.raises(HilsConfigError, match=message):
+        load_config(path)
+
+
+def test_the_port_and_durations_in_range_are_read() -> None:
+    config = parse_config(
+        {
+            **_messages({}),
+            "carla": {"port": 65535, "timeout": 2},
+            "ego": {"wait": 0},
+            "lifecycle": {"startup": [{"sleep": 0}]},
+        }
+    )
+    assert (config.port, config.timeout, config.ego_wait) == (65535, 2.0, 0.0)
+    assert config.steps("startup")[0].seconds == 0.0
+
+
+def test_the_command_refuses_a_bad_port_override(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    for port in ("0", "70000", "2000.7"):
+        with pytest.raises(SystemExit):
+            main([str(path), "--check", "--port", port])
 
 
 def test_relative_files_are_relative_to_the_configuration(tmp_path: Path) -> None:

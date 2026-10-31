@@ -413,6 +413,31 @@ def test_the_checked_patterns_are_ones_codon_s_re_compiles() -> None:
         assert not re.search(r"\\Z|\(\?[=!<]|\\[1-9]", pattern), pattern
 
 
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, float("1e400")])
+def test_check_at_least_refuses_a_number_that_is_not_finite(value: float) -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_at_least
+
+    # The run panel wrote launcher.start_stagger_seconds=inf (or nan) (#784).
+    with pytest.raises(ValueError, match="start_stagger_seconds must be a finite"):
+        check_at_least("start_stagger_seconds", value, 0)
+
+
+@pytest.mark.parametrize("text", ["inf", "-inf", "nan", "1e400", "Infinity"])
+def test_run_panel_refuses_a_stagger_that_is_not_finite(text: str) -> None:
+    with pytest.raises(ValueError, match="must be a finite number"):
+        SlurmOptions.from_request({"start_stagger_seconds": text})
+
+
+def test_check_at_least_takes_a_finite_number_from_the_minimum() -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_at_least
+
+    check_at_least("start_stagger_seconds", 0.0, 0)
+    check_at_least("start_stagger_seconds", 1e300, 0)
+    check_at_least("cases_per_task", 1, 1)
+    with pytest.raises(ValueError, match="at least 1"):
+        check_at_least("cases_per_task", 0, 1)
+
+
 if __name__ == "__main__":
     with pytest.MonkeyPatch.context() as patch:
         _GOLDEN.parent.mkdir(parents=True, exist_ok=True)

@@ -337,8 +337,9 @@ class DriverClientConfig:
     actor_horizon_m: float = 150.0
     """Radius within which other vehicles are reported to the policy."""
 
-    random_seed: int = 0
-    """Seed handed to the policy in ``start_session``."""
+    random_seed: Optional[int] = None
+    """Seed handed to the policy in ``start_session``; ``None`` hands it the run's
+    seed (:mod:`~autoware_carla_scenario.seed`)."""
 
     map_dir: Optional[str] = None
     """Where the world's map is written at scenario start, as ``<map_dir>/<map_id>/``.

@@ -2339,12 +2339,9 @@ the two, which the test suite checks, so **a new module needs an entry**.
 `UNCALLED` names the few functions and methods of a checked module the
 check leaves out (`module.Class.method`, or `module._helper` for a protected
 one), each with its reason: one whose job Codon cannot express, in a module
-that otherwise compiles. Today that is
-what builds a condition's details (`get_details()`, `to_summary_dict()`,
-`to_dict()`: a `dict[str, Any]` of mixed value types) and what serialises
-them (`ScenarioResult.to_json()`, which forwards `**kwargs: Any`), and what reads the
-authoring package's pydantic specs, typed `Any`
-(`signals.build_controllers()`). Codon compiles a function
+that otherwise compiles, such as what builds a condition's details (a
+`dict[str, Any]` of mixed value types) or reads a config node of any type
+(*What is checked of the framework* below lists every entry). Codon compiles a function
 only when something calls it, so neither its body nor an import made inside
 it is compiled: a module that needs a package or a standard module Codon
 lacks for one function imports it inside that function (`import yaml` in
@@ -2355,207 +2352,90 @@ method of a checked module.
 
 To check one more module:
 
-1. Move its entry from `EXCLUDED` to `CHECKED`.
+1. Move its entry from `EXCLUDED` to `CHECKED`. `CHECKED` holds one module a
+   line, sorted (a test keeps it so), so the move is one line removed and one
+   added, each where no other pull request's lines are.
 2. Run `uv run scenario-check --library` and fix what it reports, in the
    module. Only annotations and Codon-friendly rewrites: the module must
-   behave exactly as it did.
+   behave exactly as it did. A function that cannot compile gets an
+   `UNCALLED` entry, one line, with its reason.
 3. Run `uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py`.
+
+This page needs no edit: the counts and the lists of *What is checked of the
+framework* are generated from `typecheck/library.py` when the docs are built
+(`mkdocs_hooks/typecheck_library.py`, #789). A checked module is listed with
+the first paragraph of its docstring, so give it one that says what the
+module is.
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 234 of
-the package's 342 modules (68%; about 69,400 of 120,800 lines) are `CHECKED`:
-the kinematics, the coordinate frames and poses, the conversions between
-Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
-lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
-and the lane arithmetic of a relative lane pose (`trajectory.relative_lane`),
-the map manager that loads the Lanelet2 map and the OpenDRIVE road network
-(`coordinate.map_manager`) and the sweeper's lighter loader of the Lanelet2
-map (`sweeper.map_loader`), with the projection and origin both read a map
-with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
-whose YAML values are of any type, nor how it moves a `Local` map's points to
-their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
-world coordinates (`trajectory.resolve`), what a scenario document's
-trajectory does with the editor's text and with parsed rows (the rows and
-numbers of the text, a route vertex's `kind key=value` pairs, the vertex count
-rule and the inspector's summaries: `trajectory.vertex_text`, #774; not the
-document values of any type, which `trajectory.authoring` keeps),
-the sweeper's lanelet constraints and parameter bindings
-(`sweeper.constraints`, `sweeper.bindings`), how the Hydra sweeper runs each
-case in a forked child of its own process group, stops it and waits for the
-CARLA server it left (`sweeper.isolation`, #719), the SLURM launcher's
-settings and the job scripts and `sbatch` command lines it submits a batch
-with (`slurm`, `slurm.settings`, `slurm.scripts`, #732), and the route's map questions,
-frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
-`route.search`), all against the lanelet2 model, the condition base and
-every condition, the action base with the environment, follow-trajectory,
-traffic-signal, signal-controller, lane-change, routing, set-speed, traffic-parameters, turn and
-walk-straight actions, the routing action's matching of a track to the lanes
-(`traffic.route_match`), the test of what stands on a place or in a road
-user's way (`utils.clearance`), which the spawn action, the place-clear
-condition, the trajectory run and the final approach call, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
-(`actions.background_traffic`), the communication loss on a HILS ego
-(`actions.communication_loss`, over a model of the HILS ego entity) with the
-socket-free half of the HILS bridge's protocol (`hils.wire`), the logical scenario's route search and matches (`route.model`) and
-the scenario's route (`route.active`),
-the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
-controller included, `entity._walker_ai`), the base of the externally driven egos
-(`entity.externally_driven`), the vehicle blueprint nearest a size that
-plays an entity of `vehicle_type: auto` (`entity.fit`, #728), the ego that takes its mission over the bridge
-(`entity.bridged_ego`) and the Autoware ego on it (`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
-(`entity.ros2_entity`) with its configs, commands, arbitration and transport
-interface (`ros2`, `ros2.config`, `ros2.commands`, `ros2.transport`), the entity registry and the policy
-warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
-runner's run loop and the queue that runs scenarios one after another
-(`scenario_runner`, `scenario_queue`), the UI's runner, which runs them in
-a subprocess on a thread (`ui.runner`, over a model of the pydantic
-`ui.models`), the viewer's guard on every path it builds from a request and
-the stems of a session's cases (`ui.case_paths`, #741), the box gaps and
-metrics it reads off a trajectory log's ticks (`ui.drive_metrics`), what
-the viewer's SLURM run panel may set, the Hydra overrides it becomes and the
-`scenario` command line that submits the batch (`ui.slurm_options`, #742;
-not how it reads the panel's fields, values of any type, nor how it splits
-`VIEWER_SCENARIO_COMMAND`, which `ui.slurm_launch` keeps),
-the traffic backend interface and its run context with the TrafficManager
-backend and the SUMO backend's options, the map source URIs and what
-resolves them to files on disk (`maps.resolver`, with the repository listing
-of `maps.catalogue`, the `map` config's paths of `maps.config`, the clone
-cache of map repositories, `maps.cache`, and the
-OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
-package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
-`authoring.uv_tool`), the CARLA server manager (`server`), the summary a batch prints and
-writes to `batch_results.json` (`batch_report`), the markers an ego
-entity hands the runner for the trajectory log (`debug_markers`), the log of
-the other road users' collisions and falls (`npc_collisions`), the Autoware
-launcher that runs a stack as a process group (`autoware_stack.launcher`),
-the `scenario_bridge` node's command and Python root beside it
-(`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
-container with Docker (`autoware_stack.docker`, over a model of
-`autoware_stack.devcontainer`, which reads JSON and YAML; its text
-parsers -- JSONC's comments and trailing commas, Compose's `${VAR}`
-interpolation and a `workspaceMount`'s target -- are checked:
-`autoware_stack.devcontainer_text`, #763), the Autoware
-bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
-(`adversity`, NADE and its avoidance included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
-unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
-the world and, for those the Lanelet2 map decides, off a lanelet
-(`odd.probes`), the placement of a road user so a scenario
-measure reads a given value (`placement`), the planning of a scenario's route on the
-Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
-lookups included, what a run's T4 dataset holds (its settings, channels
-and categories and the OpenCV model fitted to an F-theta camera,
-`t4_settings`, #731), and the scenario configs (`scenario_config`, `examples.configs`), what the
-`scenario` command reads off its command line and environment
-(`--resume-from`, the `scenario=` override and whether it is a glob, the
-summary's case labels and whether the malloc arenas are already capped:
-`examples.argv`, #752), the escaping of a scenario's free-form title and
-description for the generated `pyproject.toml` and `__init__.py` docstring
-(`text_escape`, #773; the Jinja filters `templating` registers wrap it), the camera
-and LiDAR sensors (`sensor`), the six example scenarios, and the external
-driver's configs and client interface, trajectory follower and observations
-(`driver.base`, `driver.control`, `driver.observation`, over
-`driver.geometry`) with which traffic light governs the ego and where it
-stops for it (`driver.stop_lines`, #751; not the light's state as the
-protobuf enum, the payload, nor the `is_at_traffic_light()` fallback, which
-`driver.renderer` keeps), and the `autoware_bridge`, `autoware_stack`, `entity`,
-`driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
-through models of it (see *A class a checked package only re-exports*
-below). 117
-functions and methods of those modules are `UNCALLED` (28 of them
-protected helpers, see *What is compiled* below): most of them a
-condition's `get_details()` or a backend's `describe()`, what takes a traffic
-backend's options node (`Mapping[str, Any]`), what reads a route search, a
-match, a constraint or a binding from YAML values of any type
-(`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
-`parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
-framework pin, a dict of str and bool values (`Pin.uv_source()`), the T4
-dataset's settings from the driver config and the `t4` config section
-(`T4Settings.from_driver()`, a `Mapping[str, Any]`), what reads
-the SLURM launcher's settings off a config (`launcher_type()`,
-`SlurmSettings.from_mapping()`: a `Mapping[str, Any]`, with its helpers
-`_optional_str()` and `_optional_int()`, which take a value of any type) and
-what gives them back as the manifest's `dict[str, Any]`
-(`SlurmSettings.to_dict()`, `replace()`), the two members of
-`BaseScenario` built on the ego's class (`create_ego()`, which instantiates
-`ego_type`, a `type[EgoVehicle]`) or on cover expressions of any value (`register_cover()`),
-the run-time wrapper of `TrajectoryVertex.__init__`
-(`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
-parameter (any of lanelet2's primitives) as a line string
-(`utils.stop_line._road_marking_stop_lines()`),
-`signals.build_controllers()`, which reads
-the authoring package's pydantic specs, what builds the `scenario_bridge`
-node's command from its ROS parameters (`bridge_ros_args()`,
-`bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
-values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
-already sealed`, so the checker drops one and the check has nothing to call
-with), what the runner does with values of mixed types or a condition's
-details (merging the traffic and environment records into the result
-document, `_write_result()`; collecting the condition
-statuses, `_collect_condition_statuses()`), the queue's pytest fixture
-(`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
-which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`),
-`encode_frame_jpeg()` (cv2), and protected helpers of the same kinds: what
-reads a `map` setting, a route search's segment, a signal group or phase, or
-a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
-binds a sweeper constraint of any kind, builds a condition's status (its
-details), or takes the list a plain tick callback goes into
-(`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of), the line a HILS message goes out as,
-which takes a message of any shape (`hils.wire.encode()`, a
-`Mapping[str, Any]`), and three of `sweeper.isolation`: its
-`SIGTERM` handler (`_raise_interrupted()`, whose frame is `Any`), the
-`prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
-what runs a case in the forked child (`_run_in_child()`, which takes the
-signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 108 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 84 import what Codon cannot
-compile, 31 build on an excluded module and 19 hold values Codon has no type
-for), so each is counted once, in the first group that fits it:
+<!-- The library.* placeholders in this section are filled in from
+typecheck/library.py when the docs are built
+(mkdocs_hooks/typecheck_library.py, #789): do not write counts or module
+lists here. -->
 
-- **84 import what Codon cannot compile**:
-  pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
-  cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
-  transport and its message types), or
-  a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
-  `importlib`
-  beyond `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
-  `signal`, `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
-  or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
-  the tooling around a run (the editor, the UI and the command line they
-  share (`serve_cli`), authoring, the sweeper's
-  expansion and Hydra sweeper, the patch that lets Hydra's command-line
-  parser build on Python 3.14 (`hydra_compat`), the pyxodr road network cache, the Autoware
-  stack's dev container, the
-  record of a run's environment, the SLURM launcher's submitting side,
-  its worker and its manifest, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the T4Scene
-  export of its log (`t4_scene`), and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
-  openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
-  only where the module uses more of it than the shim declares, and the
-  other shimmed modules likewise; `test_typecheck_library.py` holds every
-  reason to that.
-- **21 build on an excluded module**, and import nothing Codon lacks
+Every module now has an entry other than `"not yet checked (#45)"`.
+{{ library.checked_modules }} of the package's {{ library.package_modules }}
+modules ({{ library.checked_percent }}%; about {{ library.checked_lines }} of
+{{ library.package_lines }} lines) are `CHECKED`: the kinematics, the
+coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
+and CARLA world poses, the map manager and the map sources, the route search,
+the trajectories, the conditions, the actions and the entities, the scenario
+base, its runner and its queue, the traffic backends' interface, the signal
+controllers, the adversity math, the measures, the metrics and the ODD's
+probes, the example scenarios and their configs, and the parts of the tooling
+around a run that need nothing Codon lacks. A checked package's `__init__`
+re-exports what is not checked through models of it (see *A class a checked
+package only re-exports* below). Each checked module is listed here with the
+first paragraph of its docstring:
+
+{{ library.checked_table }}
+
+{{ library.uncalled }} functions and methods of those modules are `UNCALLED`
+({{ library.uncalled_protected }} of them protected helpers, see *What is
+compiled* below). Most of them build or read values of mixed or unknown
+types: a condition's `get_details()` or a backend's `describe()` (a
+`dict[str, Any]`), what reads a Hydra config node or a parsed YAML or JSON
+document (`Mapping[str, Any]`, `Any`), what writes a manifest or a result
+document of mixed values, and protected helpers of the same kinds. The rest
+need what Codon has nothing for (ctypes, cv2, a signal handler's frame), hold
+a class or a list of callbacks the check has no value of, or take a parameter
+Codon 0.19 cannot call them with (it fails on a `Union` in a parameter
+annotation, `union already sealed`, so the checker drops one). Some are
+compiled through their callers all the same. Each is listed with its reason:
+
+{{ library.uncalled_list }}
+
+The {{ library.excluded }} `EXCLUDED` modules fall in three groups. Many fit
+more than one, so each belongs to the first group that fits it; most are in
+the first:
+
+- **Those that import what Codon cannot compile**: a package (pydantic,
+  pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
+  cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
+  Codon lacks (`socket`, `inspect`, `concurrent.futures`, `importlib` beyond
+  `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
+  `signal`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
+  `importlib.metadata` or `urllib.parse` than their shims declare), at module
+  level or inside a function the check calls. This is most of the tooling
+  around a run (the editor, the UI, authoring, the sweeper's expansion and
+  Hydra sweeper, the SLURM launcher's submitting side, the recordings and
+  exports of a run, the HILS bridge), the ODD and coverage modules that wrap
+  openodd, and the rest of what reads Lanelet2. A reason names `pathlib` only
+  where the module uses more of it than the shim declares, and the other
+  shimmed modules likewise; `test_typecheck_library.py` holds every reason to
+  that.
+- **Those that build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
-  names that its package's model does not declare. Among them are the
-  packages that re-export one (`authoring`, `odd`, `sweeper`, `t4_scene`,
-  `examples`, `scaffold`, `hils`), `slurm.collect`, the
-  authoring compiler, builders and validator, `odd.route`, the coverage
-  half of the route check (names of `odd.model` and `coverage.items` that
-  the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
-  and `value_label()`; it also holds each lanelet's attribute values,
-  `dict[str, Any]`, which it hands to openodd, and finds a probe's
-  `on_lanelet` reader on any callable) and
-  `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
-  also hold values Codon has no type for.
-- **3 hold values Codon has no type for**, and nothing else keeps them out:
-  `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults), or a class as a value
-  (`utils.config`, which `traffic.config`,
-  `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
-  `from_mapping()`).
+  names that its package's model does not declare. Among them are packages
+  that only re-export such a module. Some of them also hold values Codon has
+  no type for.
+- **Those that hold values Codon has no type for**, and nothing else keeps
+  them out: `Any`, or a class as a value.
+
+Each is listed with its reason:
+
+{{ library.excluded_list }}
 
 The scenario check is not limited by this: it compiles every scenario against
 the model. The model does not declare the whole public API: what

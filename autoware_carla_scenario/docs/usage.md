@@ -363,6 +363,40 @@ uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=
 uv run scenario scenario=intersection_passing/straight traffic_manager.port=8200
 ```
 
+### One Seed for the Whole Run
+
+`seed` (top level, `0` by default) is the one number every random draw of a run
+follows, so the same seed runs the same scenario again:
+
+```bash
+uv run scenario scenario=intersection_passing/straight seed=42
+```
+
+It is the seed of:
+
+| What draws | Its own seed, which wins when set |
+| --- | --- |
+| The cases a sweep draws from the ODD (`sweep.odd_sample`), and the grip and visibility drawn for each | `sweep.odd_sample.seed` |
+| The scenario: `BaseScenario.random_seed` | -- |
+| The traffic backend: CARLA's TrafficManager (`set_random_device_seed`, each vehicle's parameter draws), SUMO (`--seed`, `netconvert --seed`, its own draws) | -- (the scenario's) |
+| CARLA's pedestrian navigation (`World.set_pedestrians_seed`) | -- (the scenario's) |
+| Background traffic | `background_traffic.seed` |
+| The adversarial actions, `AdversarialTrafficAction`, `AdversityFeasibleCondition`, `TrafficSourceAction` | their `seed` argument (`Seed` in the editor) |
+| The driver policy's session (`DriveSessionRequest.random_seed`) | `driver.random_seed` |
+| A LiDAR's weather noise | `driver.lidars[].noise_seed` |
+
+Every one of those seeds is `null` (`None` in Python) by default, and a null seed
+is the run's. In Python the run's seed lives in `autoware_carla_scenario.seed`:
+the runner sets it from the scenario's `random_seed` before `setup()` (and
+`scenario` sets it from the config before it builds the scenario), and a
+component built with `seed=None` takes it when it is built. A scenario that
+draws for itself seeds its own generator from `self.random_seed`.
+
+A route search's `seed` (`sweep.route.seed`) is not one of them: unset, the
+matches are not shuffled at all. A config with no `seed` key (a scenario
+package's own `config.yaml` written before it existed) leaves the scenario the
+`random_seed` it was built with.
+
 ### Hydra Configuration System
 
 Configuration files are located in `src/autoware_carla_scenario/examples/conf/`:
