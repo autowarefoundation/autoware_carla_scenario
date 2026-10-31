@@ -18,8 +18,11 @@ from autoware_carla_scenario.typecheck import available_toolchain, typecheck_sce
 
 from .test_typecheck_codon import _CONFIG, _HEADER, _line_of, _only_error
 
+# The checker's own tests: a pull request runs them only when the checker may
+# have changed (.github/actions/codon-selftests).
 pytestmark = [
     pytest.mark.codon,
+    pytest.mark.codon_selftest,
     pytest.mark.skipif(available_toolchain() is None, reason="no Codon compiler"),
 ]
 

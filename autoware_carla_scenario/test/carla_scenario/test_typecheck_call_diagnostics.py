@@ -24,7 +24,9 @@ _HEADER_WITH_ACTION = _HEADER.replace(
     "    BaseScenario,\n", "    BaseScenario,\n    SetSpeedAction,\n", 1
 )
 
-pytestmark = pytest.mark.codon
+# The checker's own tests: a pull request runs them only when the checker may
+# have changed (.github/actions/codon-selftests).
+pytestmark = [pytest.mark.codon, pytest.mark.codon_selftest]
 
 needs_codon = pytest.mark.skipif(
     available_toolchain() is None, reason="no Codon compiler"

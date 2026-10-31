@@ -53,6 +53,28 @@ runs:
       # environment covers every uv invocation -- sync, run, build -- and an
       # explicit '--python' still wins where a step needs a different one.
 
+    # setup-uv keys its cache on a hash of the lockfile and restores only an
+    # exact match. uv.lock records the workspace package's own version, which
+    # release.yml bumps on every merge, so the key changed with every merge
+    # and a pull request hardly ever found master's cache: on aarch64 each job
+    # compiled libsass (under mkdocs-with-pdf, which has no aarch64 wheel)
+    # from its sdist again, two minutes a job. The key is the lockfile without
+    # that line, which changes only with the dependencies. setup-uv still
+    # prunes the cache before saving it ('uv cache prune --ci'), which drops
+    # the wheels PyPI serves and keeps the ones built from source, such as
+    # libsass: a small cache that holds what is slow to rebuild.
+    - name: Key the uv cache on the locked dependencies
+      id: uv-lock
+      if: inputs.install-dev-deps == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        digest=$(awk '
+          previous == "name = \"autoware-carla-scenario\"" && /^version = / { previous = ""; next }
+          { print; previous = $0 }
+        ' uv.lock | sha256sum | cut -c1-16)
+        echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
@@ -63,13 +85,14 @@ runs:
         # never runs, the cache dir stays empty, and setup-uv@v4's post-step
         # save fails the job with 'Cache path ... does not exist on disk'.
         enable-cache: ${{ inputs.install-dev-deps }}
-        cache-dependency-glob: "**/uv.lock"
+        # Keyed by the previous step's digest instead (cache-suffix).
+        cache-dependency-glob: ""
         # setup-uv keys the cache on the lockfile hash and nothing else, so
         # without this every job in a matrix computes the same key: one save
         # wins and the rest restore a cache full of another interpreter's
         # wheels, then re-download most of the closure. uv's cache is per wheel
         # tag, so the interpreter is the part that has to be in the key.
-        cache-suffix: ${{ inputs.python-version }}
+        cache-suffix: ${{ inputs.python-version }}-${{ steps.uv-lock.outputs.digest }}
 
     - name: Install Python dependencies
       if: inputs.install-dev-deps == 'true'

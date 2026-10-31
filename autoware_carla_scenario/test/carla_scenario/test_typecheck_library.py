@@ -57,6 +57,11 @@ from autoware_carla_scenario.typecheck.transform import redirect_imports
 
 _PACKAGE = "autoware_carla_scenario"
 
+# Every test here is a Codon test. Those marked `codon_selftest` test the
+# checker itself, on code of their own or the shims: a pull request runs them
+# only when the checker may have changed (.github/actions/codon-selftests).
+# The others check this package's own modules and the manifest, and run on
+# every pull request.
 pytestmark = pytest.mark.codon
 
 needs_codon = pytest.mark.skipif(
@@ -473,6 +478,7 @@ def _redirect(source: str, module: str = f"{_PACKAGE}.kinematics.velocity"):
     )
 
 
+@pytest.mark.codon_selftest
 def test_an_import_of_a_checked_module_names_its_workspace_module() -> None:
     out, problems = _redirect(
         """
@@ -498,6 +504,7 @@ def test_an_import_of_a_checked_module_names_its_workspace_module() -> None:
     assert len(lines) == 7  # every statement kept its line
 
 
+@pytest.mark.codon_selftest
 def test_an_import_of_an_unchecked_module_names_its_model() -> None:
     out, problems = _redirect(
         """
@@ -514,6 +521,7 @@ def test_an_import_of_an_unchecked_module_names_its_model() -> None:
     ) in out
 
 
+@pytest.mark.codon_selftest
 def test_an_import_with_nothing_to_stand_in_is_reported() -> None:
     out, problems = _redirect(
         """
@@ -785,6 +793,7 @@ def generic(x: Any, y) -> None:
 """
 
 
+@pytest.mark.codon_selftest
 def test_every_public_function_and_method_is_called_with_typed_values() -> None:
     checks = render_library_checks(ast.parse(_MODULE))
     calls = checks.source.splitlines()
@@ -831,6 +840,7 @@ class Bridge:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_function_with_defaults_is_called_without_them_too() -> None:
     # Every call passes every argument, so no default would be compiled: one
     # call more leaves out each argument that has one (#183).
@@ -877,6 +887,7 @@ def spread(first: Any = None, *rest: int) -> None:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_defaulted_parameter_codon_cannot_express_is_left_to_its_default() -> None:
     # Each parameter Codon cannot express has a default: the function is
     # called leaving them out, and only so, instead of being a problem (#199).
@@ -935,6 +946,7 @@ class Gauge:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_property_setter_is_called_by_assigning_the_property() -> None:
     # Codon compiles a setter only where the property is assigned: the check
     # assigns it, once per member of the value's annotation (#200).
@@ -980,6 +992,7 @@ class Gauge:
 """
 
 
+@pytest.mark.codon_selftest
 def test_the_type_an_optional_function_returns_is_realized_before_the_call() -> None:
     # Its `return None` becomes `return Optional[X]()`, which Codon 0.19 fails
     # to generate code for when nothing else realizes X (#202).
@@ -1029,6 +1042,7 @@ class Defaults:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_dataclass_is_constructed_without_its_field_defaults_too() -> None:
     # Every constructor call passes every field, so no field default would
     # be compiled: one call more passes only the fields without one (#188).
@@ -1116,6 +1130,7 @@ class Color(Enum):
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
     # Codon makes `x: T = v` of a class with a constructor a field and drops
     # `v`: the check assigns it to a local of type T, so it is compiled (#190).
@@ -1168,6 +1183,7 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
     assert "from autoware_carla_scenario._tc import _acs_value, _expect_bool" in lines
 
 
+@pytest.mark.codon_selftest
 def test_the_scenario_check_binds_each_method_result_as_a_hook() -> None:
     # With `hook_returns` (the scenario check, #238), each call of a method
     # or a property passes its result to the model's `_acs_hook_return`,
@@ -1227,6 +1243,7 @@ def test_the_scenario_check_binds_each_method_result_as_a_hook() -> None:
     assert "(_acs_value(Gap) == _acs_value(Gap))" in lines
 
 
+@pytest.mark.codon_selftest
 def test_an_abstract_or_raising_method_is_called_but_not_bound_as_a_hook() -> None:
     # Such a method returns no value, which Codon types None whatever its
     # annotation says, so binding it as a hook refused a valid override.
@@ -1265,6 +1282,7 @@ def test_an_abstract_or_raising_method_is_called_but_not_bound_as_a_hook() -> No
     ]
 
 
+@pytest.mark.codon_selftest
 def test_a_generic_function_and_one_returning_any_are_problems() -> None:
     # `_acs_value(list[T])` does not compile: a TypeVar parameter is a
     # problem.  A function returning `Any` builds what Codon cannot express
@@ -1309,6 +1327,7 @@ def test_a_generic_function_and_one_returning_any_are_problems() -> None:
     assert "_acs_value(Probe).speed()" in checks.source
 
 
+@pytest.mark.codon_selftest
 def test_each_appended_line_names_the_line_it_compiles() -> None:
     # The scenario check reports an error on an appended line at the line of
     # what it compiles (#192): a function's `def`, a class-level default.
@@ -1329,6 +1348,7 @@ def test_each_appended_line_names_the_line_it_compiles() -> None:
             ), (label, line)
 
 
+@pytest.mark.codon_selftest
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
@@ -1352,6 +1372,7 @@ def test_protected_functions_and_methods_are_called_too() -> None:
     assert not render_library_checks(tree, ["_anything"]).problems
 
 
+@pytest.mark.codon_selftest
 def test_an_optional_union_parameter_is_called_with_each_member() -> None:
     source = """
 def lookup(ref: Optional[Union[EntityRole, str]]) -> None:
@@ -1370,6 +1391,7 @@ def override(value: Optional[float | str]) -> None:
     assert "    override(_acs_value(str))" in calls
 
 
+@pytest.mark.codon_selftest
 def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> None:
     checks = render_library_checks(ast.parse(_MODULE))
     lines = _MODULE.splitlines()
@@ -1425,6 +1447,7 @@ def unknown(f: Callable[[Union[Straight, Any]], float]) -> None:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_callable_is_called_with_a_value_of_its_codon_type() -> None:
     checks = render_library_checks(ast.parse(_CALLABLES))
     calls = checks.source.splitlines()
@@ -1469,6 +1492,7 @@ class Required:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_dataclass_is_constructed_with_each_member_of_a_union_field() -> None:
     checks = render_library_checks(ast.parse(_DATACLASS_FIELDS))
     calls = [c.strip() for c in checks.source.splitlines() if "Run(" in c]
@@ -1537,6 +1561,7 @@ class CameraConfig:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_dataclass_is_constructed_with_the_fields_of_its_bases_first() -> None:
     base = ast.parse(_DATACLASS_BASE)
     classes = {n.name: n for n in base.body if isinstance(n, ast.ClassDef)}
@@ -1594,6 +1619,7 @@ class Both(Size, Name):
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_dataclass_takes_its_base_fields_as_python_does() -> None:
     import dataclasses
 
@@ -1615,6 +1641,7 @@ def test_a_dataclass_takes_its_base_fields_as_python_does() -> None:
     assert [n for n, message in checks.problems if "Both" in message] == [line]
 
 
+@pytest.mark.codon_selftest
 def test_an_uncalled_function_is_left_out() -> None:
     checks = render_library_checks(
         ast.parse(_MODULE), ["angle", "Vector.norm", "Config.__init__", "generic"]
@@ -1670,6 +1697,7 @@ def update(**kw: float) -> float:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_variadic_function_its_module_calls_is_left_to_those_calls() -> None:
     # The appended calls pass a `**kwargs` no keyword and a `*args: T` one T:
     # Codon would refuse kw["speed"] and xs[1] for what every caller passes
@@ -1871,6 +1899,7 @@ def _check_case(
     )
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_enums_exceptions_classmethods_and_unions_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1879,6 +1908,7 @@ def test_enums_exceptions_classmethods_and_unions_compile(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("wrong", "right"),
@@ -1936,6 +1966,7 @@ class _Meter:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_protected_functions_and_methods_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1944,6 +1975,7 @@ def test_protected_functions_and_methods_compile(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong", "realized"),
@@ -2031,6 +2063,7 @@ def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The calls without the defaults compile a `()` of a Sequence[T] (an empty
@@ -2042,6 +2075,7 @@ def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_default_of_the_wrong_type_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2073,6 +2107,7 @@ def halved(x: float) -> float:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_none_misused_in_a_checked_module_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2088,6 +2123,7 @@ def test_a_none_misused_in_a_checked_module_is_reported(
     assert "test the value for None" in located[0].message
 
 
+@pytest.mark.codon_selftest
 def test_a_none_check_that_did_not_run_warns_and_is_not_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2162,6 +2198,7 @@ class Gauge:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_constructor_left_to_its_default_and_a_setter_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2170,6 +2207,7 @@ def test_a_constructor_left_to_its_default_and_a_setter_compile(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong", "label"),
@@ -2230,6 +2268,7 @@ class Launch:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_field_defaults_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2241,6 +2280,7 @@ def test_field_defaults_compile(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_field_default_of_the_wrong_type_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2296,6 +2336,7 @@ def tuples(xs: List[int]) -> tuple[int, ...]:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_class_level_defaults_and_tuple_returns_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2307,6 +2348,7 @@ def test_class_level_defaults_and_tuple_returns_compile(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @pytest.mark.parametrize(
     ("right", "wrong", "reported"),
     [
@@ -2348,6 +2390,7 @@ def test_a_wrong_class_level_default_or_tuple_return_is_reported(
     assert reported in result.format(), result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_an_abstract_base_class_and_its_subclass_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2378,6 +2421,7 @@ class Fake(Bridge):
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_pyxodrs_road_network_is_the_one_map_manager_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2442,6 +2486,7 @@ def length(
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_singleton_and_a_callable_of_a_union_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2461,6 +2506,7 @@ def test_a_singleton_and_a_callable_of_a_union_compile(
     assert not _check_case(arity, tmp_path, monkeypatch).ok
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_module_importing_what_codon_cannot_compile_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2473,6 +2519,7 @@ def test_a_module_importing_what_codon_cannot_compile_is_named(
     assert "yaml has no Codon model" in result.diagnostics[0].message
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_an_unknown_module_is_refused() -> None:
     result = typecheck_library([f"{_PACKAGE}.no_such_module"])
@@ -2512,6 +2559,7 @@ def total(shape: Shape) -> float:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_abc_and_an_uncalled_method_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2550,6 +2598,7 @@ def wait(steps: int) -> None:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_an_import_in_the_else_branch_of_type_checking_is_not_compiled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2560,6 +2609,7 @@ def test_an_import_in_the_else_branch_of_type_checking_is_not_compiled(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 def test_an_import_in_the_first_branch_of_type_checking_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2595,6 +2645,7 @@ def wait(steps: int) -> None:
 """
 
 
+@pytest.mark.codon_selftest
 def test_the_body_of_not_type_checking_is_run_time_only() -> None:
     # `if not TYPE_CHECKING:` is the `else` branch of `if TYPE_CHECKING:`
     # written the other way round: Codon compiles its `else`, not its body.
@@ -2617,6 +2668,7 @@ def test_the_body_of_not_type_checking_is_run_time_only() -> None:
     assert len(compiled - run_time_only) == 1
 
 
+@pytest.mark.codon_selftest
 @pytest.mark.parametrize(
     ("source", "run_time_only"),
     [
@@ -2662,6 +2714,7 @@ def test_only_code_codon_never_compiles_is_run_time_only(
     assert skipped == run_time_only
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_an_import_in_the_body_of_not_type_checking_is_not_compiled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2670,6 +2723,7 @@ def test_an_import_in_the_body_of_not_type_checking_is_not_compiled(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 def test_an_import_in_the_else_branch_of_not_type_checking_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2706,6 +2760,7 @@ class Backend:
 """
 
 
+@pytest.mark.codon_selftest
 def test_a_method_with_keyword_only_parameters_is_called_through_its_class() -> None:
     # Codon 0.19 calls a method a subclass may override through a dispatch
     # thunk, which takes neither a keyword argument nor **kwargs.
@@ -2718,6 +2773,7 @@ def test_a_method_with_keyword_only_parameters_is_called_through_its_class() -> 
     assert "    _acs_value(Backend).tick(_acs_value(int))" in calls
 
 
+@pytest.mark.codon_selftest
 def test_an_import_inside_an_uncalled_function_is_left_as_written() -> None:
     source = """
         def build(options: dict) -> None:
@@ -2780,6 +2836,7 @@ def vehicle(actor: carla.Actor) -> carla.Vehicle:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_overridden_methods_protocols_and_type_checking_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2848,6 +2905,7 @@ class Frames:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_queue_shim_takes_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2856,6 +2914,7 @@ def test_the_queue_shim_takes_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -2933,6 +2992,7 @@ def is_default(run: Run, configured: str) -> bool:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_pathlib_shim_builds_joins_and_prints_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2981,6 +3041,7 @@ def host(url: str) -> Optional[str]:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_urllib_parse_shim_splits_and_joins_urls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3041,6 +3102,7 @@ def digest(text: str) -> str:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_file_system_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3050,6 +3112,7 @@ def test_the_file_system_shims_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -3114,6 +3177,7 @@ def numbered(path: Path, counter: int) -> Path:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -3209,6 +3273,7 @@ def guarded(path: Path) -> str:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_os_and_shutil_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3219,6 +3284,7 @@ def test_the_os_and_shutil_shims_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -3280,6 +3346,7 @@ def test_the_os_and_shutil_shims_refuse_what_cpython_refuses(
     assert located[0].line == line, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_what_shutil_returns_for_a_path_is_only_a_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3376,6 +3443,7 @@ def copying(source: Path, destination: Path) -> str:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_file_helpers_of_pathlib_os_and_shutil_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3384,6 +3452,7 @@ def test_the_file_helpers_of_pathlib_os_and_shutil_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -3453,6 +3522,7 @@ def test_the_file_helpers_refuse_what_cpython_refuses(
     assert not result.ok, wrong
 
 
+@pytest.mark.codon_selftest
 def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() -> None:
     # The shims' parameter names, in order, are CPython's: the positional ones
     # first, then (after `*_kw`) the keyword-only ones. A name that CPython
@@ -3607,6 +3677,7 @@ def checked() -> subprocess.CompletedProcess[str]:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3617,6 +3688,7 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -3678,6 +3750,7 @@ def test_the_subprocess_and_metadata_shims_refuse_what_cpython_refuses(
     assert located[0].line == line, result.format()
 
 
+@pytest.mark.codon_selftest
 def test_a_typed_star_args_is_called_with_one_value() -> None:
     checks = render_library_checks(
         ast.parse(
@@ -3783,6 +3856,7 @@ def _check_signals_case(
     return _check_case(source, tmp_path, monkeypatch)
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3793,6 +3867,7 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong", "at"),
@@ -3920,6 +3995,7 @@ def logged(directory: Path) -> Optional[int]:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_a_checked_module_has_its_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3953,6 +4029,7 @@ def _top_level_names(path: Path) -> set[str]:
     return names
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
     # The shim replaces the sys module Codon ships, which Codon's own modules
@@ -3968,6 +4045,7 @@ def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
     assert {"platform", "executable"} <= shim
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3978,6 +4056,7 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong", "at"),
@@ -4083,6 +4162,7 @@ def used() -> float:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_json_contextlib_and_path_stat_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4093,6 +4173,7 @@ def test_the_json_contextlib_and_path_stat_shims_take_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -4180,6 +4261,7 @@ def streamed(argv: list[str]) -> int:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_os_pathlib_and_popen_shims_take_what_docker_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4188,6 +4270,7 @@ def test_the_os_pathlib_and_popen_shims_take_what_docker_reads(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -4309,6 +4392,7 @@ def _check_forking_case(
     return _check_case(source, tmp_path, monkeypatch)
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_os_and_signal_shims_take_what_a_forking_parent_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4317,6 +4401,7 @@ def test_the_os_and_signal_shims_take_what_a_forking_parent_calls(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -4368,6 +4453,7 @@ def test_the_os_and_signal_shims_refuse_what_cpython_refuses_of_a_fork(
     assert located[0].line == line, result.format()
 
 
+@pytest.mark.codon_selftest
 def test_the_process_shims_are_declared_with_the_parameters_cpython_has() -> None:
     # As for the file helpers: the parameter names CPython takes by keyword
     # (`os._exit(status)`, `signal.pthread_sigmask(how, mask)`) are the
@@ -4440,6 +4526,7 @@ def candidate(name: str) -> bool:
 """
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 def test_the_fnmatch_shim_takes_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4449,6 +4536,7 @@ def test_the_fnmatch_shim_takes_what_cpython_takes(
     assert result.ok, result.format()
 
 
+@pytest.mark.codon_selftest
 @needs_codon
 @pytest.mark.parametrize(
     ("right", "wrong"),
@@ -4493,6 +4581,7 @@ def test_the_fnmatch_shim_refuses_what_cpython_refuses(
     assert located[0].line == line, result.format()
 
 
+@pytest.mark.codon_selftest
 def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
     # The shim is plain Python too: run under CPython, its match (written
     # without a regular expression) gives what fnmatch's does, for its
@@ -4565,6 +4654,7 @@ def _shim_modules() -> set[str]:
     return names
 
 
+@pytest.mark.codon_selftest
 def test_shim_list() -> None:
     # The docs list every standard-library shim of codon/ (#472), so a new
     # one cannot go undocumented, nor a removed one stay listed.

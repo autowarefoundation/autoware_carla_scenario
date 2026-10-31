@@ -73,11 +73,23 @@ uv run pytest -v -m "not integration" autoware_carla_scenario/test/
 uv run pytest -v autoware_carla_scenario/test/
 ```
 
-The repository defines a single custom pytest marker in the workspace
-`pyproject.toml`:
+The workspace `pyproject.toml` defines these custom pytest markers:
 
-- `integration` — tests that need a live CARLA server. The CI `test` job
-  runs with `-m "not integration"`.
+- `integration` — tests that need a live CARLA server; they skip themselves
+  without one.
+- `slow` — tests that export a package and build a wheelhouse over the
+  network. CI runs them in jobs of their own (`-m slow`).
+- `codon` — tests that compile with Codon, some 1,240 of them. A pull
+  request runs them in one leg per architecture, split into two shards
+  (`AUTOWARE_CARLA_SCENARIO_TEST_SHARD=K/N` runs the K-th of N shards of a
+  selection; the conftest hashes each test's node id into one).
+- `codon_selftest` — the `codon` tests of the checker itself, on code of
+  their own. A pull request runs them only when it changes something they
+  read (the checker, the locked dependencies, the tests, CI; the list is in
+  `.github/actions/codon-selftests/action.yml`); the nightly run and every
+  other event run them. The compile checks of the package's own code (the
+  library check, the built-in scenarios, the template) run on every pull
+  request.
 
 Local verification is the same command CI runs — no container involved:
 
@@ -110,8 +122,8 @@ at the repository root and runs the following hooks:
 - `mypy` (local hook over `src/` and `test/`, run when a commit touches
   Python or the project configuration)
 
-pre-commit runs no tests: the fast suite compiles some 260 scenarios with
-Codon, which took minutes on every commit. Run `uv run pytest` yourself; CI
+pre-commit runs no tests: the fast suite runs some 1,240 Codon compiles,
+which took minutes on every commit. Run `uv run pytest` yourself; CI
 runs it on every pull request.
 
 ## Building Documentation Locally
