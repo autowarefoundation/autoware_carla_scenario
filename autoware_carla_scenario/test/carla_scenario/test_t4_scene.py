@@ -452,7 +452,7 @@ def test_a_second_ego_role_actor_is_a_road_user(tmp_path: Path) -> None:
 def fixture_map() -> tuple[Any, tuple[float, float]]:
     """The nishishinjuku map as the run reads it, and its MGRS offset."""
     (lat, lon, alt), _ = map_origin(OSM, XODR)
-    lanelet_map, projector, _ = load_lanelet2(OSM, lanelet2.io.Origin(lat, lon))
+    lanelet_map, projector, _ = load_lanelet2(OSM, lanelet2.io.Origin(lat, lon, alt))
     offset = projector.forward(lanelet2.core.GPSPoint(lat, lon, alt))
     return lanelet_map, (offset.x, offset.y)
 

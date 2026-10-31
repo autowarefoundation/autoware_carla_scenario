@@ -236,12 +236,14 @@ class TestLocalCartesianOriginAltitude:
     ALTITUDE = 40.0
 
     @classmethod
-    def _map(cls, tmp_path):
+    def _map(cls, tmp_path, altitude=None):
         """The fixture map beside a LocalCartesian descriptor; (osm, origin)."""
         import shutil
 
         import lanelet2.io
 
+        if altitude is None:
+            altitude = cls.ALTITUDE
         map_path = tmp_path / "lanelet2_map.osm"
         shutil.copyfile(OSM_PATH, map_path)
         lat, lon, _ = _parse_geo_reference(XODR_PATH.read_text(encoding="utf-8"))
@@ -251,10 +253,10 @@ class TestLocalCartesianOriginAltitude:
             "map_origin:\n"
             f"  latitude: {lat}\n"
             f"  longitude: {lon}\n"
-            f"  altitude: {cls.ALTITUDE}\n",
+            f"  altitude: {altitude}\n",
             encoding="utf-8",
         )
-        return map_path, lanelet2.io.Origin(lat, lon, cls.ALTITUDE)
+        return map_path, lanelet2.io.Origin(lat, lon, altitude)
 
     @staticmethod
     def _autoware(map_path, origin):
@@ -310,6 +312,45 @@ class TestLocalCartesianOriginAltitude:
             mm._geo_origin = None
             mm._mgrs_offset = None
             MapManager.reset()
+
+    def test_the_carla_side_does_not_move(self, tmp_path):
+        """The altitude moves the map frame's z, never CARLA's: the z offset
+        takes it up, so a lanelet pose lands at the same CARLA height, and
+        back on the same lanelet, whatever the altitude."""
+        pose = Lanelet2Pose(lanelet_id=0, s=1.0)
+        seen = {}
+        for altitude in (0.0, self.ALTITUDE):
+            directory = tmp_path / f"alt{altitude:g}"
+            directory.mkdir()
+            map_path, _ = self._map(directory, altitude)
+            MapManager.reset()
+            mm = MapManager.get_instance()
+            try:
+                mm.initialize(XODR_PATH, map_path)
+                if pose.lanelet_id == 0:
+                    lanelet = next(iter(mm.lanelet_map.laneletLayer))
+                    pose = Lanelet2Pose(lanelet_id=lanelet.id, s=1.0)
+                carla = to_carla_world(pose)
+                seen[altitude] = (
+                    mm.z_offset,
+                    to_map_frame(pose).position.z,
+                    carla,
+                    to_lanelet2(carla).lanelet_id,
+                )
+            finally:
+                mm._lanelet_map = None
+                mm._road_network = None
+                mm._geo_origin = None
+                mm._mgrs_offset = None
+                MapManager.reset()
+
+        low, high = seen[0.0], seen[self.ALTITUDE]
+        assert low[0] - high[0] == pytest.approx(self.ALTITUDE, abs=1e-6)
+        assert low[1] - high[1] == pytest.approx(self.ALTITUDE, abs=1e-6)
+        for a, b in ((low[2].x, high[2].x), (low[2].y, high[2].y)):
+            assert a == pytest.approx(b, abs=1e-6)
+        assert low[2].z == pytest.approx(high[2].z, abs=1e-6)
+        assert low[3] == high[3] == pose.lanelet_id
 
 
 # ---------------------------------------------------------------------------
