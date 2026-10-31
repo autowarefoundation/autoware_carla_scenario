@@ -102,6 +102,22 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     )
 
 
+def road_traffic_rule(road_id: str) -> str:
+    """The traffic rule of an OpenDRIVE road: ``"RHT"`` or ``"LHT"``.
+
+    The road's ``rule`` attribute, ``"RHT"`` (right-hand traffic) where the
+    road does not set one, as the OpenDRIVE standard defaults it.  It says
+    which side of the reference line drives along it: the right (negative
+    lane ids) in right-hand traffic, the left (positive ids) in left-hand.
+
+    Raises:
+        KeyError: If the loaded road network has no road *road_id*.
+        RuntimeError: If :class:`MapManager` is not initialized.
+    """
+    road = MapManager.get_instance().road_network.road_ids_to_object[road_id]
+    return road.road_xml.get("rule", "RHT")
+
+
 def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     """Project a CARLA world position onto a specific lanelet's centerline.
 

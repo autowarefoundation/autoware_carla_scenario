@@ -871,11 +871,17 @@ class EntityLanePositionCondition(BaseCondition):
                                            label=_required_str(label, "EntityLanePositionCondition.anywhere_on_road(): label"))
 
 
-def beside_lane_id(lane_id: int, side: str) -> int:
+def beside_lane_id(lane_id: int, side: str, traffic_rule: str = "RHT") -> int:
     if side != "left" and side != "right":
         raise ValueError("beside_lane_id(): side must be 'left' or 'right'")
-    delta = 1 if side == "left" else -1
-    return lane_id + delta if lane_id < 0 else lane_id - delta
+    if traffic_rule != "RHT" and traffic_rule != "LHT":
+        raise ValueError("beside_lane_id(): traffic_rule must be 'RHT' or 'LHT'")
+    if lane_id == 0:
+        raise ValueError("beside_lane_id(): lane 0 is the centre lane")
+    along_reference_line = (lane_id < 0) == (traffic_rule == "RHT")
+    step = 1 if (side == "left") == along_reference_line else -1
+    beside = lane_id + step
+    return beside + step if beside == 0 else beside
 
 
 class EntityLaneOfCondition(EntityLanePositionCondition):

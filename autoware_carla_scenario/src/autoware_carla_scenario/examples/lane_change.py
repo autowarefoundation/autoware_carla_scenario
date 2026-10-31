@@ -7,13 +7,13 @@ via TrafficManager when the trigger condition is met.
 
 The pass condition is derived automatically from the spawn pose and the
 requested direction.  A lane change stays on the same OpenDRIVE road and
-shifts the lane ID by one, towards the centre line for a left change under
-right-hand traffic.  Which way that is depends on the side of the reference
-line the lane is on: negative IDs (right of it, driving along it) count up to
-the centre, positive IDs (left of it, driving against it) count down:
+shifts the lane ID by one (:func:`~autoware_carla_scenario.conditions.beside_lane_id`).
+Which way depends on whether the lane is driven along the road's reference
+line -- its negative lanes under right-hand traffic, its positive lanes under
+left-hand traffic (the road's ``rule``, as on the nishishinjuku map):
 
-- **LEFT**  → ``lane_id + 1`` on a negative lane, ``lane_id - 1`` on a positive one
-- **RIGHT** → ``lane_id - 1`` on a negative lane, ``lane_id + 1`` on a positive one
+- **LEFT**  → ``lane_id + 1`` on a lane driven along it, ``lane_id - 1`` against it
+- **RIGHT** → ``lane_id - 1`` on a lane driven along it, ``lane_id + 1`` against it
 
 The scenario checks that the ego's lane ID changes as expected.
 
@@ -56,6 +56,7 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.failure import FailureCategory
 
 from autoware_carla_scenario.conditions import beside_lane_id
+from autoware_carla_scenario.coordinate import road_traffic_rule
 
 from .configs import LaneChangeConfig
 
@@ -121,8 +122,10 @@ class LaneChangeScenario(BaseScenario):
         logger.info("Registered LaneChangeAction: %s", cfg.direction)
 
         # --- Conditions based on expected outcome ---
-        # Target lane ID is derived from spawn lane ID + direction delta.
-        target_lane_id = beside_lane_id(od_pose.lane_id, cfg.direction)
+        # The lane beside the spawn lane, by the road's traffic rule.
+        target_lane_id = beside_lane_id(
+            od_pose.lane_id, cfg.direction, road_traffic_rule(od_pose.road_id)
+        )
         expect_fail = cfg.expect == "fail"
         logger.info(
             "Expecting lane change: road='%s' lane %d -> %d (%s) [expect=%s]",
