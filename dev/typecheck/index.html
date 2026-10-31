@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-243 of the package's 351
-modules (69%; about 70,600 of
-121,900 lines) are <code>CHECKED</code>: the kinematics, the
+245 of the package's 353
+modules (69%; about 70,900 of
+122,200 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 243 CHECKED modules</summary>
+<summary>The 245 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5061,6 +5061,10 @@ first paragraph of its docstring:</p>
 <td>ODD and scenario coverage, after <code>cover()</code> in ASAM OpenSCENARIO DSL.</td>
 </tr>
 <tr>
+<td><code>coverage.item_names</code></td>
+<td>The names a versioned measure's cover items are written under, and what a merged item's name splits into.</td>
+</tr>
+<tr>
 <td><code>debug_markers</code></td>
 <td>Debug markers: what an ego entity knows that the world does not show.</td>
 </tr>
@@ -5151,6 +5155,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>entity_role</code></td>
 <td>Validated entity role names for CARLA actors.</td>
+</tr>
+<tr>
+<td><code>environment_pin</code></td>
+<td>The requirement a run's lock pins a distribution to, from where it was installed from.</td>
 </tr>
 <tr>
 <td><code>examples.argv</code></td>
@@ -5676,7 +5684,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>failure.Failure.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it</li>
-<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it</li>
+<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it</li>
 <li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express</li>
 <li><code>ros2.config.CommandSourceConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
 <li><code>ros2.config.Ros2CameraConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
@@ -5795,7 +5803,7 @@ the first:</p>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>)</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
-<li><code>coverage.collector</code>: derives openodd's collector (a Rust extension)</li>
+<li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
 <li><code>coverage.report</code>: re-exports openodd's coverage merge and report (a Rust extension)</li>
 <li><code>declarative</code>: imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model</li>
@@ -5811,7 +5819,7 @@ the first:</p>
 <li><code>editor.service</code>: imports yaml, zipfile, <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports socket, and hils.protocol (socket), which is neither checked nor modelled</li>
-<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>, <code>unquote()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express</li>
+<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>, <code>unquote()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's</li>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it</li>
 <li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib) and, inside a function, sweeper.expand (omegaconf), which are neither checked nor modelled; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code>, <code>AutowareEgoEntity</code>, <code>GrpcAutowareBridgeServer</code> and <code>CarlaDriverEntity</code>) from the package, and <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code> and <code>decode_case()</code> from odd.route and odd.sampler, which the package and odd models do not declare; what it reads off the command line and the environment is the checked examples.argv's</li>
