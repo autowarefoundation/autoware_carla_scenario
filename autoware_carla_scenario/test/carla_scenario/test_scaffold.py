@@ -131,6 +131,67 @@ class TestReservedScenarioNames:
         assert f"class {result.names['scenario_class']}" in module
 
 
+class TestScenarioModuleShadowing:
+    """A generated class may not replace a name ``scenario.py`` imports (#809)."""
+
+    def test_the_imports_are_read_off_the_template(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _scenario_module_globals,
+        )
+
+        taken = _scenario_module_globals()
+        assert {"BaseScenario", "EgoConfig", "GroundProjectionConfig"} <= taken
+        assert "logger" in taken
+        assert "PlaceholderScenario" not in taken
+        assert "PlaceholderConfig" not in taken
+
+    @pytest.mark.parametrize(
+        ("scenario", "shadowed"),
+        [
+            ("ego", "EgoConfig"),
+            ("ground_projection", "GroundProjectionConfig"),
+            ("GroundProjection", "GroundProjectionConfig"),
+            ("base", "BaseScenario"),
+            ("base_scenario", "BaseScenario"),
+        ],
+    )
+    def test_shadowing_scenario_name_raises(self, scenario: str, shadowed: str) -> None:
+        with pytest.raises(ValueError, match=f"is reserved: its class '{shadowed}'"):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_derived_shadowing_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="'EgoConfig'"):
+            resolve_names("ego_package")
+
+    def test_nothing_written(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="is reserved"):
+            create_scenario_package("my_pkg", output_dir=tmp_path, scenario_name="ego")
+        assert not (tmp_path / "my_pkg").exists()
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["my_pkg", "-s", "ego", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'ego' is reserved")
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "scenario", ["ego_follow", "my_ego", "baseline", "ground", "and_condition"]
+    )
+    def test_near_misses_still_work(self, tmp_path: Path, scenario: str) -> None:
+        result = create_scenario_package(
+            "my_pkg", output_dir=tmp_path, scenario_name=scenario
+        )
+        module = (result.root / "src" / "my_pkg" / f"{scenario}.py").read_text(
+            encoding="utf-8"
+        )
+        assert f"class {result.names['scenario_class']}(BaseScenario)" in module
+
+
 class TestCreateScenarioPackage:
     def test_generates_valid_package(self, tmp_path: Path) -> None:
         result = create_scenario_package("reach_goal_pkg", output_dir=tmp_path)
