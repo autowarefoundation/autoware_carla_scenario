@@ -416,6 +416,79 @@ class TestLaneChangeOntoTheNextRoad:
         assert vehicle.lane_change_finished(world) is False
 
 
+class _MergeWaypoint:
+    """A waypoint on :class:`_MergeMap`."""
+
+    def __init__(self, x: float, lane_id: int) -> None:
+        self.road_id = 10 if x < _MergeMap.MERGE_X else 11
+        self.section_id = 0
+        self.lane_id = lane_id if self.road_id == 10 else -1
+        self.s = x
+        y = _TwoRoadMap.lane_y(self.lane_id) if self.road_id == 10 else -1.75
+        self.transform = _Transform(_Location(x, y), 0.0)
+        self._x = x
+
+    def next(self, distance: float) -> list["_MergeWaypoint"]:
+        x = self._x + distance
+        if x > _TwoRoadMap.END_X:
+            return []
+        return [_MergeWaypoint(x, self.lane_id)]
+
+    def get_left_lane(self) -> Optional["_MergeWaypoint"]:
+        if self.road_id == 11 or self.lane_id == -1:
+            return None
+        return _MergeWaypoint(self._x, self.lane_id + 1)
+
+    def get_right_lane(self) -> Optional["_MergeWaypoint"]:
+        if self.road_id == 11 or self.lane_id == -2:
+            return None
+        return _MergeWaypoint(self._x, self.lane_id - 1)
+
+
+class _MergeMap:
+    """Lanes -1 and -2 of road 10 both run on into road 11's one lane, at
+    y = -1.75, from x = 30."""
+
+    MERGE_X = 30.0
+
+    def get_waypoint(self, location, project_to_road=True):  # noqa: ANN001, ARG002
+        lane_id = -1
+        if location.y < -1.75:
+            lane_id = -2
+        return _MergeWaypoint(location.x, lane_id)
+
+
+class TestLaneChangeWhereTheLanesMerge:
+    """A lane both the original and the target lane lead to is no sign the
+    vehicle changed lane: it counts only once it has been seen across."""
+
+    @staticmethod
+    def _changed_right_at(x: float):
+        actor = _Actor(_Transform(_Location(x, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        vehicle.set_client(_Client(_TrafficManager()))
+        world = _World(_MergeMap())  # type: ignore[arg-type]
+        vehicle.change_lane(world, LaneChangeDirection.RIGHT)
+        return vehicle, actor, world
+
+    def test_a_vehicle_that_never_left_its_lane_is_not_finished(self) -> None:
+        vehicle, actor, world = self._changed_right_at(10.0)
+
+        actor._transform = _Transform(_Location(20.0, 0.0), 0.0)
+        assert vehicle.lane_change_finished(world) is False
+        actor._transform = _Transform(_Location(45.0, -1.75), 0.0)
+        assert vehicle.lane_change_finished(world) is False
+
+    def test_a_vehicle_seen_on_the_target_lane_first_is_finished(self) -> None:
+        vehicle, actor, world = self._changed_right_at(10.0)
+
+        # Across the boundary, not yet centred.
+        actor._transform = _Transform(_Location(25.0, -2.0), 20.0)
+        assert vehicle.lane_change_finished(world) is False
+        actor._transform = _Transform(_Location(45.0, -1.75), 0.0)
+        assert vehicle.lane_change_finished(world) is True
+
+
 class TestEntitiesThatAreNotBackendDriven:
     """They refuse rather than sending a command that would do nothing."""
 
