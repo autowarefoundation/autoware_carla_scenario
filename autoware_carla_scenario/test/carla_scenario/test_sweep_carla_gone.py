@@ -36,6 +36,8 @@ from autoware_carla_scenario.server import (
 )
 from autoware_carla_scenario.sweeper import isolation
 
+from ._stale_pids import signal_group, signal_process, signal_unreaped_group
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="the sweeper forks its cases (Linux)"
 )
@@ -43,7 +45,8 @@ pytestmark = pytest.mark.skipif(
 #: How long the fake CARLA holds its port after ``SIGTERM``.
 _LINGER_S = 3.0
 
-#: The fake "UE5 binary": writes "pid pgid" to argv[1], waits
+#: The fake "UE5 binary": writes "pid pgid", and the start times of itself and
+#: of its group's leader, to argv[1], waits
 #: ``FAKE_UE5_BIND_DELAY`` s (a server still loading), then listens on
 #: ``-carla-rpc-port`` until ``SIGTERM`` and holds the port ``argv[2]`` s more.
 _FAKE_UE5 = """
@@ -57,8 +60,17 @@ port = next(
 )
 stopping = []
 signal.signal(signal.SIGTERM, lambda signum, frame: stopping.append(signum))
+def started(pid):
+    # Field 22 of stat: with the pid, names the process even once it is gone.
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            return stat.read().rsplit(")", 1)[1].split()[19]
+    except OSError:
+        return "0"
+
 tmp = pid_file.with_suffix(".tmp")
-tmp.write_text(f"{os.getpid()} {os.getpgid(0)}")
+pgid = os.getpgid(0)
+tmp.write_text(f"{os.getpid()} {pgid} {started(os.getpid())} {started(pgid)}")
 tmp.rename(pid_file)
 time.sleep(float(os.environ.get("FAKE_UE5_BIND_DELAY", "0")))
 server = socket.socket()
@@ -133,7 +145,9 @@ def group_runs(pgid):
 @hydra.main(version_base=None, config_path=None, config_name=None)
 def task(cfg: DictConfig) -> None:
     work = Path(cfg.work)
-    (work / f"case{os.getpid()}.pid").write_text(str(os.getpid()))
+    with open("/proc/self/stat") as stat:
+        started = stat.read().rsplit(")", 1)[1].split()[19]
+    (work / f"case{os.getpid()}.pid").write_text(f"{os.getpid()} {started}")
     counter = work / f"attempts{cfg.case}"
     attempt = int(counter.read_text()) + 1 if counter.exists() else 1
     counter.write_text(str(attempt))
@@ -209,25 +223,33 @@ class _FakeCarla:
             start_new_session=True,
         )
 
-    def pids(self) -> tuple[int, int] | None:
-        """The fake UE5's pid and process group, once it has written them."""
+    def _written(self) -> tuple[int, int, int, int] | None:
+        """What the fake UE5 wrote: pid, pgid and the start times of both."""
         try:
-            pid, pgid = (int(field) for field in self.ue5_pid.read_text().split())
+            pid, pgid, started, leader_started = (
+                int(field) for field in self.ue5_pid.read_text().split()
+            )
         except (FileNotFoundError, ValueError):
             return None
-        return pid, pgid
+        return pid, pgid, started, leader_started
+
+    def pids(self) -> tuple[int, int] | None:
+        """The fake UE5's pid and process group, once it has written them."""
+        written = self._written()
+        return None if written is None else written[:2]
 
     def kill(self) -> None:
-        """Kill the fake, its launcher and the watchdog that leads its group."""
-        pids = self.pids()
-        if pids is None:
+        """Kill the fake, its launcher and the watchdog that leads its group.
+
+        Only while they are still the processes the fake named: by now most
+        have exited, and their pids may be another test's (#812).
+        """
+        written = self._written()
+        if written is None:
             return
-        pid, pgid = pids
-        for kill, target in ((os.killpg, pgid), (os.kill, pid)):
-            try:
-                kill(target, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+        pid, pgid, started, leader_started = written
+        signal_group(pgid, (pgid, leader_started), (pid, started))
+        signal_process(pid, started)
 
 
 @pytest.fixture
@@ -271,16 +293,16 @@ def _sweep(tmp_path: Path, port: int, *extra: str) -> subprocess.CompletedProces
     try:
         output, _ = sweeper.communicate(timeout=240)
     finally:
-        try:
-            os.killpg(sweeper.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        # Not once communicate() has reaped the sweeper, nor a case that has
+        # exited: their pids may be another test's by now (#812).
+        signal_unreaped_group(sweeper)
         sweeper.wait()
         for case in tmp_path.glob("case*.pid"):
             try:
-                os.kill(int(case.read_text()), signal.SIGKILL)
-            except (ProcessLookupError, ValueError):
-                pass
+                pid, started = (int(field) for field in case.read_text().split())
+            except ValueError:
+                continue
+            signal_process(pid, started)
     return subprocess.CompletedProcess(sweeper.args, sweeper.returncode, output, "")
 
 
@@ -365,10 +387,7 @@ def watched() -> Iterator[list[subprocess.Popen[bytes]]]:
     started: list[subprocess.Popen[bytes]] = []
     yield started
     for process in started:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        signal_unreaped_group(process)
         process.wait()
 
 
@@ -399,8 +418,9 @@ def test_wait_until_carla_gone_returns_once_the_server_exits(
     watched: list[subprocess.Popen[bytes]],
 ) -> None:
     group = _watchdog(watched, "plain")
-    # The group is stopped as the watchdog does once its parent is gone.
-    stopper = threading.Timer(0.5, os.killpg, (group, signal.SIGTERM))
+    # The group is stopped as the watchdog does once its parent is gone; by
+    # its unreaped leader, so never a group that reused its id (#812).
+    stopper = threading.Timer(0.5, signal_unreaped_group, (watched[-1], signal.SIGTERM))
     stopper.start()
     try:
         started = time.monotonic()

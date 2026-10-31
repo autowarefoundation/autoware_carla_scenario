@@ -35,6 +35,8 @@ from autoware_carla_scenario.autoware_stack import (
     read_devcontainer,
 )
 
+from ._stale_pids import signal_group, signal_unreaped_group
+
 
 def _wait_for(predicate, timeout_s: float = 10.0) -> None:
     deadline = time.monotonic() + timeout_s
@@ -214,7 +216,13 @@ child = (
     "time.sleep(120)\\n"
 )
 group = ProcessGroup([sys.executable, "-c", child, str(child_out)], stop_timeout_s=60.0)
-out.with_suffix(".pid").write_text(str(group.pid))
+# The pid and its start time (field 22 of stat), so the test's teardown can
+# tell the group from one that reused its id once it is gone (#812).
+with open(f"/proc/{group.pid}/stat") as stat:
+    started = stat.read().rsplit(")", 1)[1].split()[19]
+pid_tmp = out.with_suffix(".pid.tmp")
+pid_tmp.write_text(f"{group.pid} {started}")
+pid_tmp.replace(out.with_suffix(".pid"))
 deadline = time.monotonic() + 60.0
 while not child_out.exists():
     if time.monotonic() > deadline:
@@ -260,14 +268,15 @@ def test_process_group_child_hears_sigint_from_a_background_run(
         # and the stop fell through to SIGTERM after stop_timeout_s (60 s).
         parent.wait(timeout=120)
     finally:
-        for pgid in (
-            parent.pid,
-            *([int(pid_file.read_text())] if pid_file.exists() else []),
-        ):
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        # Neither group is signalled once its leader is gone and its id may
+        # belong to another test's process (#812).
+        signal_unreaped_group(parent)
+        try:
+            pgid, started = (int(field) for field in pid_file.read_text().split())
+        except (FileNotFoundError, ValueError):
+            pass
+        else:
+            signal_group(pgid, (pgid, started))
         parent.wait()
 
     result = json.loads(out.read_text())

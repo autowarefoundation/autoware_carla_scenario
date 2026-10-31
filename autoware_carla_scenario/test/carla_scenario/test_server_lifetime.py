@@ -11,6 +11,7 @@ killed when it ends, whatever happened.
 from __future__ import annotations
 
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -25,6 +26,8 @@ import pytest
 from autoware_carla_scenario.examples import run as run_module
 from autoware_carla_scenario.server import CarlaServerManager
 from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as sweeper
+
+from ._stale_pids import signal_process
 
 #: How long a dead run's CARLA may take to go: the watchdog notices within a
 #: second, and the fake's sleep ends on the SIGTERM it then sends.
@@ -59,17 +62,40 @@ def _kill(pid: int) -> None:
         pass
 
 
+def _read_pid(path: Path) -> tuple[int, int] | None:
+    """The pid and start time a fake wrote to *path*, or ``None`` until it has."""
+    try:
+        pid, started = (int(field) for field in path.read_text().split())
+    except (FileNotFoundError, ValueError):
+        return None
+    return pid, started
+
+
 def _wait_for(path: Path, timeout: float = 30.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            text = path.read_text().strip()
-        except FileNotFoundError:
-            text = ""
-        if text:
-            return int(text)
+        written = _read_pid(path)
+        if written is not None:
+            return written[0]
         time.sleep(0.05)
     raise AssertionError(f"{path} was not written within {timeout} s")
+
+
+#: The first argument of ``sh -c``, as a shell word.
+_ARG0 = '"$0"'
+
+
+def _write_pid(target: str) -> str:
+    """Shell that writes "$$ <start time>" (field 22 of stat) to *target*.
+
+    With the pid, the start time names the process even once it is gone, so
+    the teardown never kills a process that reused the pid (#812).  *target*
+    is a shell word; the file is written aside and renamed into place.
+    """
+    return (
+        's=$(cat /proc/$$/stat); s=${s##*") "}; set -- $s; '
+        f'echo "$$ ${{20}}" > {target}.tmp && mv {target}.tmp {target}'
+    )
 
 
 class _FakeCarla:
@@ -82,10 +108,10 @@ class _FakeCarla:
         self.exe = directory / "CarlaUnreal.sh"
         self.exe.write_text(
             "#!/bin/sh\n"
-            f"echo $$ > '{self.launcher_pid}'\n"
+            f"{_write_pid(shlex.quote(str(self.launcher_pid)))}\n"
             # A child, not exec: the real launcher runs UE5 the same way.
-            f'/bin/sh -c \'echo $$ > "$0.tmp" && mv "$0.tmp" "$0" && '
-            f"exec sleep 600' '{self.ue5_pid}'\n"
+            f"/bin/sh -c '{_write_pid(_ARG0)} && exec sleep 600' "
+            f"'{self.ue5_pid}'\n"
         )
         self.exe.chmod(0o755)
 
@@ -93,11 +119,15 @@ class _FakeCarla:
         return [_wait_for(self.launcher_pid), _wait_for(self.ue5_pid)]
 
     def kill(self) -> None:
+        """Kill the launcher and UE5, if they are still the processes they were.
+
+        Most tests have seen them go by now, and their pids may be another
+        test's (#812).
+        """
         for path in (self.launcher_pid, self.ue5_pid):
-            try:
-                _kill(int(path.read_text().strip()))
-            except (FileNotFoundError, ValueError):
-                pass
+            written = _read_pid(path)
+            if written is not None:
+                signal_process(*written)
 
 
 @pytest.fixture
