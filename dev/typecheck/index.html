@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-241 of the package's 347
-modules (69%; about 70,300 of
-120,400 lines) are <code>CHECKED</code>: the kinematics, the
+242 of the package's 348
+modules (70%; about 70,400 of
+120,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 241 CHECKED modules</summary>
+<summary>The 242 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5509,6 +5509,10 @@ first paragraph of its docstring:</p>
 <td>Driving a CARLA vehicle along its SUMO vehicle's trajectory, with physics.</td>
 </tr>
 <tr>
+<td><code>traffic.sumo.signal_states</code></td>
+<td>The signal states the SUMO backend sets, from CARLA's lights and SUMO's programs.</td>
+</tr>
+<tr>
 <td><code>traffic.traffic_manager</code></td>
 <td>CARLA's TrafficManager as a traffic backend.</td>
 </tr>
@@ -5856,7 +5860,7 @@ the first:</p>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse</li>
 <li><code>traffic.registry</code>: holds backend factories behind the alias <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> (registry.py:44, "expected type expression") and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package</li>
-<li><code>traffic.sumo.backend</code>: imports traci, sumolib, libsumo</li>
+<li><code>traffic.sumo.backend</code>: imports traci, sumolib, libsumo; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states'</li>
 <li><code>traffic.sumo.network</code>: imports roadgen, sumo</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
