@@ -14,6 +14,9 @@ failure with the case it belongs to.
     convert_outputs("outputs/2026-10-18/15-58-45")
 
 or, from a shell, ``python -m autoware_carla_scenario.rerun <output dir>``.
+It keeps the sensors a run recorded (:mod:`.rerun_lidar`): a
+``{stem}.sensors.rrd`` beside a log is merged into its new recording, and the
+sensors in a recording it replaces are carried over into the new one.
 Neither needs CARLA.  Both need the extra:
 ``pip install 'autoware-carla-scenario[rerun]'``.
 """
@@ -21,6 +24,9 @@ Neither needs CARLA.  Both need the extra:
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,6 +110,9 @@ class RerunConversion:
             ``None`` when it did not.
         stats: What the converter returned (``Stats``): ticks, actors, the
             record types and fields it skipped, ...; ``None`` on failure.
+        skipped: The log converted, but the recording was not replaced
+            (:func:`convert_outputs`: it holds sensors that could not be
+            kept); *error* says why.
     """
 
     label: str
@@ -111,6 +120,7 @@ class RerunConversion:
     recording: Path
     error: Optional[str] = None
     stats: Optional[dict[str, Any]] = field(default=None, compare=False)
+    skipped: bool = False
 
     @property
     def ok(self) -> bool:
@@ -332,8 +342,80 @@ def report(conversions: list[RerunConversion]) -> str:
         f"Rerun recordings: {len(conversions) - len(failed)}/{len(conversions)} "
         "written (open one with: rerun <file.rrd>)"
     ]
-    lines.extend(f"  [FAILED] {c.label}: {c.error}" for c in failed)
+    lines.extend(
+        f"  [{'SKIPPED' if c.skipped else 'FAILED'}] {c.label}: {c.error}"
+        for c in failed
+    )
     return "\n".join(lines)
+
+
+def _install(
+    label: str,
+    trajectory: Path,
+    converted: Path,
+    stats: Optional[dict[str, Any]],
+    *,
+    overwrite: bool,
+) -> RerunConversion:
+    """Move the recording *converted* (in a scratch directory) to where
+    *trajectory*'s goes, keeping the run's sensors (:mod:`.rerun_lidar`).
+
+    The sensors are ``{label}.sensors.rrd`` beside the log -- left by a run
+    whose merge failed, or taken out of the recording replaced here when it
+    holds them -- and are merged into the new recording, then removed, as a
+    run does.  A merge that fails keeps them in that file.  When the
+    recording replaced holds sensors that cannot be taken out (no Rerun SDK,
+    or it fails), it is kept and the new one dropped, unless *overwrite*.
+    """
+    from . import rerun_lidar  # noqa: PLC0415
+
+    recording = recording_path(trajectory)
+    sensors = rerun_lidar.lidar_recording_path(trajectory.parent, label)
+    if (
+        not sensors.exists()
+        and recording.is_file()
+        and rerun_lidar.carries_sensors(recording)
+    ):
+        try:
+            rerun_lidar.extract_sensors(recording, sensors)
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            reason = (
+                f"{recording.name} holds sensor data that could not be kept "
+                f"({type(exc).__name__}: {exc}); it is left as it was "
+                "(--overwrite / overwrite=True replaces it without them)"
+            )
+            if not overwrite:
+                logger.warning("[%s] %s", label, reason)
+                return RerunConversion(
+                    label,
+                    trajectory,
+                    recording,
+                    error=reason,
+                    stats=stats,
+                    skipped=True,
+                )
+            logger.warning(
+                "[%s] Replacing %s, and the sensor data in it: %s: %s",
+                label,
+                recording,
+                type(exc).__name__,
+                exc,
+            )
+    os.replace(converted, recording)
+    if sensors.is_file():
+        try:
+            rerun_lidar.merge_into(recording, sensors)
+        except Exception:  # noqa: BLE001 - the sensors stay in their own file
+            logger.exception(
+                "merging the sensors %s into %s failed", sensors, recording
+            )
+    logger.info("[%s] Rerun recording written to %s", label, recording)
+    return RerunConversion(label, trajectory, recording, stats=stats)
+
+
+def _failed(label: str, trajectory: Path, error: str) -> RerunConversion:
+    logger.error("[%s] Rerun recording of %s failed: %s", label, trajectory, error)
+    return RerunConversion(label, trajectory, recording_path(trajectory), error=error)
 
 
 def convert_outputs(
@@ -341,56 +423,88 @@ def convert_outputs(
     *,
     strict: bool = False,
     jobs: Optional[int] = None,
+    overwrite: bool = False,
 ) -> list[RerunConversion]:
     """Convert every trajectory log under *output_dir* (recursively) into a
     recording beside it, *jobs* at a time (all cores when ``None``); or, when
     *output_dir* is a log itself, that log.
 
-    For a run made with ``rerun.enabled=false``, or by a version without it.
-    A log that fails does not stop the others; each failure is logged.
+    For a run made with ``rerun.enabled=false``, or by a version without it,
+    or to convert again (``strict``, a newer converter).  A log that fails
+    does not stop the others; each failure is logged, and the recording it
+    would have replaced is kept.
+
+    The run's sensors (``rerun.lidar``, ``rerun.cameras``) are kept: a
+    ``{stem}.sensors.rrd`` beside a log is merged into the new recording and
+    removed, and the sensors in a recording that is replaced are carried over
+    into the new one (with the Rerun SDK).  When they cannot be, the
+    recording is left as it was and its conversion is ``skipped``, unless
+    *overwrite*.
 
     Raises:
         RerunUnavailableError: The converter is not installed.
     """
     module = require_converter()
     path = Path(output_dir)
-    if path.is_file():
-        with RerunConverter(strict=strict, converter=module) as converter:
-            converter.submit(path, _label(path))
-            return converter.close()
-    entries = module.convert_dir(str(path), jobs=jobs, strict=strict)
+    scratch = Path(
+        tempfile.mkdtemp(
+            prefix=".rerun-convert-", dir=path.parent if path.is_file() else path
+        )
+    )
     conversions: list[RerunConversion] = []
-    for entry in entries:
-        trajectory = Path(entry["input"])
-        label = _label(trajectory)
-        if entry.get("ok"):
-            conversions.append(
-                RerunConversion(
-                    label,
-                    trajectory,
-                    Path(entry["output"]),
-                    stats=dict(entry),
+    try:
+        if path.is_file():
+            label = _label(path)
+            converted = scratch / (label + RECORDING_SUFFIX)
+            try:
+                stats = module.convert(str(path), str(converted), strict=strict)
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                conversions.append(_failed(label, path, f"{type(exc).__name__}: {exc}"))
+            else:
+                conversions.append(
+                    _install(
+                        label,
+                        path,
+                        converted,
+                        dict(stats) if isinstance(stats, dict) else None,
+                        overwrite=overwrite,
+                    )
                 )
-            )
-        else:
-            error = (
-                f"{entry.get('error_type', 'ConversionError')}: {entry.get('error')}"
-            )
-            logger.error(
-                "[%s] Rerun recording of %s failed: %s", label, trajectory, error
-            )
-            conversions.append(
-                RerunConversion(
-                    label, trajectory, recording_path(trajectory), error=error
+            return conversions
+        entries = module.convert_dir(
+            str(path), jobs=jobs, strict=strict, out_dir=str(scratch)
+        )
+        for entry in entries:
+            trajectory = Path(entry["input"])
+            label = _label(trajectory)
+            if entry.get("ok"):
+                conversions.append(
+                    _install(
+                        label,
+                        trajectory,
+                        Path(entry["output"]),
+                        dict(entry),
+                        overwrite=overwrite,
+                    )
                 )
-            )
-    return conversions
+            else:
+                conversions.append(
+                    _failed(
+                        label,
+                        trajectory,
+                        f"{entry.get('error_type', 'ConversionError')}: "
+                        f"{entry.get('error')}",
+                    )
+                )
+        return conversions
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     """``python -m autoware_carla_scenario.rerun PATH...``: convert the
     trajectory logs of finished runs (each PATH an output directory or a
-    log); exit 1 if any failed, 2 without the converter."""
+    log); exit 1 if any failed or was skipped, 2 without the converter."""
     import argparse  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
@@ -409,6 +523,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--jobs", type=int, default=None, help="logs at a time (all cores by default)"
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace a recording holding sensor data (LiDAR, cameras) even "
+        "when that data cannot be carried over into the new one",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
@@ -417,7 +537,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         conversions = [
             conversion
             for path in args.path
-            for conversion in convert_outputs(path, strict=args.strict, jobs=args.jobs)
+            for conversion in convert_outputs(
+                path, strict=args.strict, jobs=args.jobs, overwrite=args.overwrite
+            )
         ]
     except RerunUnavailableError as exc:
         print(exc, file=sys.stderr)  # noqa: T201

@@ -375,6 +375,219 @@ def test_convert_outputs_converts_a_finished_run(
 
 
 # ---------------------------------------------------------------------------
+# Converting again keeps the run's sensors (#913)
+# ---------------------------------------------------------------------------
+
+
+def _real_sdk() -> None:
+    pytest.importorskip("autoware_carla_scenario_rerun")
+    pytest.importorskip("rerun")
+    pytest.importorskip("rerun_cli")
+
+
+def _record_sensors(log: Path, label: str) -> Path:
+    """Write ``{label}.sensors.rrd`` beside *log* as a run with
+    ``rerun.lidar`` and ``rerun.cameras`` does: a sweep and a camera frame."""
+    import numpy as np
+
+    from autoware_carla_scenario.rerun_lidar import CameraMount, SensorRecorder
+
+    recorder = SensorRecorder(
+        log.with_name(f"{label}.sensors.rrd"), label, 0, cameras=True
+    )
+    recorder.log_sweep("top", 1, np.ones((8, 3), np.float32), np.eye(3), np.zeros(3))
+    recorder.log_camera_frame("front", 1, b"\xff\xd8\xff\xd9", CameraMount(4, 4, 90.0))
+    return recorder.close()
+
+
+def _entities(recording: Path) -> list[str]:
+    """The entity of each chunk of *recording*, as ``rerun rrd print`` lists them."""
+    import importlib.util
+    import re
+    import subprocess
+
+    spec = importlib.util.find_spec("rerun_cli")
+    assert spec is not None and spec.origin is not None
+    printed = subprocess.run(
+        [str(Path(spec.origin).parent / "rerun"), "rrd", "print", str(recording)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return sorted(re.findall(r"^Chunk\(.*? - (/\S*) - data columns", printed, re.M))
+
+
+_SENSOR_CHUNKS = [
+    "/world/ego/pose/cameras/front",
+    "/world/ego/pose/cameras/front",
+    "/world/lidar/top",
+]
+
+
+def _sensor_chunks(recording: Path) -> list[str]:
+    return [
+        e
+        for e in _entities(recording)
+        if e.startswith(("/world/lidar/", "/world/ego/pose/cameras/"))
+    ]
+
+
+def _in_run(directory: Path, stem: str) -> Path:
+    """A run made with ``rerun.lidar`` and ``rerun.cameras``: its log, and its
+    recording with the sensors merged in."""
+    log = _log(directory, stem)
+    _record_sensors(log, stem)
+    with RerunConverter(lidar_max_points=0, cameras=True) as converter:
+        converter.submit(log, stem)
+    [conversion] = converter.close()
+    assert conversion.ok, conversion.error
+    assert not log.with_name(f"{stem}.sensors.rrd").exists()
+    assert _sensor_chunks(recording_path(log)) == _SENSOR_CHUNKS
+    return log
+
+
+def test_converting_a_run_again_keeps_its_sensors(tmp_path: Path) -> None:
+    _real_sdk()
+    log = _in_run(tmp_path / "session", "S")
+    recording = recording_path(log)
+    trajectory_only = tmp_path / "plain.rrd"
+    require_converter().convert(str(log), str(trajectory_only))
+    expected = sorted(_entities(trajectory_only) + _SENSOR_CHUNKS)
+
+    [conversion] = convert_outputs(tmp_path / "session")
+    assert conversion.ok, conversion.error
+    assert _sensor_chunks(recording) == _SENSOR_CHUNKS
+    # Carried over once, beside a recording made anew.
+    assert _entities(recording) == expected
+    # Again, a single log, and from the command line: nothing piles up.
+    [conversion] = convert_outputs(log)
+    assert conversion.ok, conversion.error
+    assert main([str(tmp_path / "session")]) == 0
+    assert _entities(recording) == expected
+    assert sorted(p.name for p in log.parent.iterdir()) == [
+        "S.rrd",
+        "S.trajectory.jsonl",
+    ]
+
+
+def test_a_sensor_recording_left_beside_a_log_is_merged_and_removed(
+    tmp_path: Path,
+) -> None:
+    """A run whose merge failed keeps ``{stem}.sensors.rrd``; converting it
+    again merges it, in a directory and a single log alike."""
+    _real_sdk()
+    for directory, convert in (
+        (tmp_path / "dir", lambda log: convert_outputs(log.parent)),
+        (tmp_path / "one", lambda log: convert_outputs(log)),
+    ):
+        log = _log(directory, "S")
+        sensors = _record_sensors(log, "S")
+        # The recording the run made before its merge failed.
+        require_converter().convert(str(log), str(recording_path(log)))
+        [conversion] = convert(log)
+        assert conversion.ok, conversion.error
+        assert not sensors.exists()
+        assert _sensor_chunks(recording_path(log)) == _SENSOR_CHUNKS
+
+
+def test_converting_a_run_without_sensors_again_is_unchanged(tmp_path: Path) -> None:
+    _real_sdk()
+    log = _log(tmp_path / "session", "S")
+    plain = tmp_path / "plain.rrd"
+    require_converter().convert(str(log), str(plain))
+    for _ in range(2):
+        [conversion] = convert_outputs(tmp_path / "session")
+        assert conversion.ok, conversion.error
+        assert _entities(recording_path(log)) == _entities(plain)
+    assert sorted(p.name for p in log.parent.iterdir()) == [
+        "S.rrd",
+        "S.trajectory.jsonl",
+    ]
+
+
+class _FakeModule(_FakeConverter):
+    """The converter package, ``convert_dir`` included."""
+
+    def convert_dir(
+        self, output_dir: str, *, jobs: Any = None, strict: bool = False, out_dir: str
+    ) -> list[dict]:
+        entries = []
+        for log in sorted(Path(output_dir).rglob("*.trajectory.jsonl")):
+            out = Path(out_dir) / log.relative_to(output_dir)
+            out = out.with_name(log.name[: -len(".trajectory.jsonl")] + ".rrd")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            entries.append({**self.convert(str(log), str(out)), "input": str(log)})
+        return entries
+
+
+@pytest.fixture
+def no_sdk_cli(monkeypatch: pytest.MonkeyPatch) -> _FakeModule:
+    """A converter, but not the Rerun SDK's CLI: sensors cannot be carried over."""
+    import importlib.util
+
+    real = importlib.util.find_spec
+
+    def find_spec(name: str, *args: Any) -> Any:
+        return None if name == "rerun_cli" else real(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    fake = _FakeModule()
+    monkeypatch.setitem(sys.modules, "autoware_carla_scenario_rerun", fake)
+    return fake
+
+
+def test_a_recording_whose_sensors_cannot_be_kept_is_left_as_it_was(
+    tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.rerun_lidar import carries_sensors
+
+    for stem in ("A", "B"):
+        (tmp_path / f"{stem}.trajectory.jsonl").write_text("{}\n")
+    old = b"RRD ... /world/lidar/top ..."
+    (tmp_path / "A.rrd").write_bytes(old)
+    (tmp_path / "B.rrd").write_bytes(b"RRD ... /world/actors ...")
+    assert carries_sensors(tmp_path / "A.rrd")
+    assert not carries_sensors(tmp_path / "B.rrd")
+
+    a, b = convert_outputs(tmp_path)
+    assert a.skipped and not a.ok and a.error is not None
+    assert "A.rrd holds sensor data" in a.error and "--overwrite" in a.error
+    assert (tmp_path / "A.rrd").read_bytes() == old
+    # A recording without sensors is replaced, as before.
+    assert b.ok and (tmp_path / "B.rrd").read_bytes() == b"RRD"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "A.rrd",
+        "A.trajectory.jsonl",
+        "B.rrd",
+        "B.trajectory.jsonl",
+    ]
+
+    # The command line reports it, and fails.
+    assert main([str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 1/2 written" in out and "[SKIPPED] A:" in out
+    [one] = convert_outputs(tmp_path / "A.trajectory.jsonl")
+    assert one.skipped and (tmp_path / "A.rrd").read_bytes() == old
+
+    # --overwrite replaces it.
+    assert main([str(tmp_path / "A.trajectory.jsonl"), "--overwrite"]) == 0
+    assert (tmp_path / "A.rrd").read_bytes() == b"RRD"
+
+
+def test_a_failed_conversion_keeps_the_recording_it_would_replace(
+    tmp_path: Path, no_sdk_cli: _FakeModule
+) -> None:
+    no_sdk_cli.fail = ("A.trajectory.jsonl",)
+    log = tmp_path / "A.trajectory.jsonl"
+    log.write_text("{}\n")
+    (tmp_path / "A.rrd").write_bytes(b"OLD")
+    [failed] = convert_outputs(log)
+    assert not failed.ok and not failed.skipped
+    assert failed.error == "ValueError: cannot read A.trajectory.jsonl"
+    assert (tmp_path / "A.rrd").read_bytes() == b"OLD"
+
+
+# ---------------------------------------------------------------------------
 # The runner and the queue
 # ---------------------------------------------------------------------------
 
