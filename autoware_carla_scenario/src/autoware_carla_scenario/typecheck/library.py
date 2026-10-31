@@ -177,6 +177,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity._policy_warmup",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity._walker_ai",
+    "autoware_carla_scenario.entity._walker_retarget",
     "autoware_carla_scenario.entity.autoware_entity",
     "autoware_carla_scenario.entity.bridged_ego",
     "autoware_carla_scenario.entity.ego",

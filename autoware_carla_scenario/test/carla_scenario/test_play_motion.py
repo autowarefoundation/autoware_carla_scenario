@@ -256,6 +256,26 @@ def test_a_swing_takes_one_direction_onto_the_other(a: Vector, b: Vector) -> Non
     assert _close(turned, b)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CARLA_BONES",
+        "CarlaBone",
+        "Matrix",
+        "Vector",
+        "WalkerRetarget",
+        "rotation_matrix",
+        "rotator",
+        "swing",
+    ],
+)
+def test_the_soma_motion_module_re_exports_the_walker_retarget(name: str) -> None:
+    from autoware_carla_scenario.entity import _soma_motion, _walker_retarget
+
+    assert name in _walker_retarget.__all__
+    assert getattr(_soma_motion, name) is getattr(_walker_retarget, name)
+
+
 # ----------------------------------------------------------------------
 # A CARLA walker
 # ----------------------------------------------------------------------
