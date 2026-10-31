@@ -58,7 +58,13 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
     along its heading; a vehicle's speed limit is CARLA's for it.  A ``vehicle.*`` blueprint is a vehicle, anything else
     (a ``walker.*``) is approximated by one circle.
     """
-    transform = actor.get_transform()
+    return _snapshot(actor, actor.get_transform(), name)
+
+
+def _snapshot(
+    actor: carla.Actor, transform: carla.Transform, name: str
+) -> AgentSnapshot:
+    """:func:`snapshot_actor`, with *actor*'s transform already read."""
     x, y, yaw = _carla_to_lanelet2_frame(CarlaWorldPose.from_carla_transform(transform))
     box = actor.bounding_box
     ahead = float(box.location.x)
@@ -128,11 +134,13 @@ def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
     agents: list[AgentSnapshot] = []
     for pattern in ("vehicle.*", "walker.*"):
         for actor in world.get_actors().filter(pattern):
-            if float(actor.get_transform().location.z) < _HIDDEN_BELOW_M:
+            # One RPC for the transform, shared with the snapshot itself.
+            transform = actor.get_transform()
+            if float(transform.location.z) < _HIDDEN_BELOW_M:
                 continue
             role = _role_name(actor)
             name = str(actor.id) if role is None else str(role)
-            agents.append(snapshot_actor(actor, name))
+            agents.append(_snapshot(actor, transform, name))
     return agents
 
 
