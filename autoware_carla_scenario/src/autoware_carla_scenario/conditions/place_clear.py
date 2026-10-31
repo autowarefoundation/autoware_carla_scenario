@@ -94,6 +94,14 @@ class PlaceClearCondition(BaseCondition):
         self._unplaced = False
         self._said_blocker = -1
 
+    def reset(self) -> None:
+        """Place it afresh next time it is looked at (:meth:`BaseCondition.reset`):
+        a route pose is placed on the run's route, which may be another."""
+        super().reset()
+        self._spot = None
+        self._unplaced = False
+        self._said_blocker = -1
+
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {
             "length": self._length,

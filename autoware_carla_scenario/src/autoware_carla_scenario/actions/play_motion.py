@@ -154,6 +154,14 @@ class PlayMotionAction(BaseAction):
             claims.extend(movement_of(self._entity_name))
         return claims
 
+    def reset(self) -> None:
+        """Forget the earlier runs' walker (:meth:`BaseAction.reset`)."""
+        super().reset()
+        self._retarget = None
+        self._walker = None
+        self._started_at = 0.0
+        self._playing = False
+
     def execute(self, world: carla.World) -> None:
         """Begin the motion on the trigger's call, then show its next frame on
         every tick of the run."""
@@ -318,6 +326,11 @@ class _Standing(BaseCondition):
         """Forget the pedestrian measured (the run is over)."""
         self._velocities.clear()
         super().close()
+
+    def reset(self) -> None:
+        """Forget the pedestrian measured (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        self._velocities.clear()
 
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         entity = find_pedestrian_entity(self._entity_name)

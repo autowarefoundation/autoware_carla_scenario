@@ -89,6 +89,11 @@ class DespawnAction(BaseAction):
         """``role_name`` of the entity removed."""
         return self._entity_name
 
+    def reset(self) -> None:
+        """Forget what earlier runs removed (:meth:`BaseAction.reset`)."""
+        super().reset()
+        self._despawned = []
+
     def take_despawns(self) -> list[tuple[str, int]]:
         """The ``(role, actor id)`` removed since the last call, for the log."""
         out = self._despawned

@@ -27,6 +27,7 @@ from autoware_carla_scenario import (
     SpawnTransform,
     StickyCondition,
 )
+from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.environment import follow_tire_friction
 
 
@@ -414,3 +415,287 @@ class TestRunScenarioStartsFromACleanSlate:
         assert seen[1]["pass"] == ["reached"]
         assert seen[1]["entities"] == ["npc1"]
         assert results[0].passed is False  # errored after every attempt
+
+
+# ---------------------------------------------------------------------------
+# What __init__ registered starts every run as it was built (#928)
+# ---------------------------------------------------------------------------
+
+
+class _Scripted(BaseCondition):
+    """Passes while *holds* says so at the run's time: the world's script."""
+
+    def __init__(self, label: str, holds: Any) -> None:
+        super().__init__(label=label)
+        self._holds = holds
+
+    def check(self, world: Any, elapsed: float) -> Optional[ScenarioResult]:
+        if not self._holds(elapsed):
+            return None
+        return ScenarioResult(passed=True, message=self.label, elapsed_seconds=elapsed)
+
+
+class _Counted(BaseAction):
+    """A ``once`` action counting the times it was executed."""
+
+    def __init__(self) -> None:
+        super().__init__("counted", condition=_Scripted("at_1s", lambda t: t >= 1.0))
+        self.executions = 0
+
+    def execute(self, world: Any) -> None:
+        self.executions += 1
+
+
+class _Sensor:
+    """A collision sensor's client handle."""
+
+    def __init__(self) -> None:
+        self.listener: Any = None
+        self.destroyed = False
+
+    def listen(self, callback: Any) -> None:
+        self.listener = callback
+
+    def stop(self) -> None:
+        self.listener = None
+
+    def destroy(self) -> bool:
+        self.destroyed = True
+        return True
+
+
+class _World:
+    """The run's world: an ego, and the collision sensors attached to it."""
+
+    def __init__(self) -> None:
+        from autoware_carla_scenario.constants import EGO_ROLE_NAME
+
+        self.ego = MagicMock()
+        self.ego.attributes = {"role_name": str(EGO_ROLE_NAME)}
+        self.sensors: list[_Sensor] = []
+
+    def get_actors(self) -> MagicMock:
+        actors = MagicMock()
+        actors.filter.return_value = [self.ego]
+        return actors
+
+    def get_blueprint_library(self) -> MagicMock:
+        return MagicMock()
+
+    def spawn_actor(self, blueprint: Any, transform: Any, attach_to: Any) -> _Sensor:
+        sensor = _Sensor()
+        self.sensors.append(sensor)
+        return sensor
+
+    def collide(self) -> None:
+        """The ego hits a vehicle: every listening sensor hears it."""
+        from types import SimpleNamespace
+
+        event = SimpleNamespace(
+            normal_impulse=SimpleNamespace(x=500.0, y=0.0, z=0.0),
+            other_actor=SimpleNamespace(type_id="vehicle.audi.tt", attributes={}),
+        )
+        for sensor in self.sensors:
+            if sensor.listener is not None:
+                sensor.listener(event)
+
+
+class _RegistersInInit(BaseScenario):
+    """Registers its conditions and a ``once`` action in ``__init__`` only."""
+
+    STABILIZE_TICKS = 0
+
+    def __init__(self) -> None:
+        from autoware_carla_scenario import (
+            CollisionCondition,
+            PersistentCondition,
+            PlaceClearCondition,
+        )
+        from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+        super().__init__(_ego_config())
+        # Visits its goal from 0.5 s to 1 s, and stops for good at 2 s.
+        self.sticky = StickyCondition(
+            _Scripted("at_goal", lambda t: 0.5 <= t < 1.0), label="visited_goal"
+        )
+        self.persistent = PersistentCondition(
+            _Scripted("stopped", lambda t: t >= 2.0), duration=1.0, label="stopped"
+        )
+        self.collision = CollisionCondition(label="collided")
+        self.place = PlaceClearCondition(
+            RouteLanePose(ds=5.0, anchor="start"), 4.0, 2.0, label="clear"
+        )
+        self.action = _Counted()
+        self.register_pass_condition(self.sticky)
+        self.register_pass_condition(self.persistent)
+        self.register_pass_condition(self.place)
+        self.register_fail_condition(self.collision)
+        self.register_post_tick(self.action)
+
+    def setup(self) -> None:
+        pass
+
+    def is_done(self) -> bool:
+        return False
+
+
+def _run(scenario: _RegistersInInit, world: _World) -> dict[str, Any]:
+    """One run as the runner drives it: reset, setup, the ticks (the ego
+    collides at 3.5 s), the conditions closed.  What it saw, by condition."""
+    first: dict[str, float] = {}
+    scenario._reset_registrations()
+    scenario.setup()
+    for step in range(1, 101):
+        t = step * 0.05
+        if abs(t - 3.5) < 1e-9:
+            world.collide()
+        for action in scenario._post_tick_actions:
+            action.tick(world, t)  # type: ignore[arg-type]
+        for condition in scenario._pass_conditions + scenario._fail_conditions:
+            result = condition.check(world, t)  # type: ignore[arg-type]
+            if result is not None and condition.label not in first:
+                first[condition.label] = round(result.elapsed_seconds, 2)
+    scenario.close_conditions()
+    return {
+        "first": first,
+        "executions": scenario.action.executions,
+        "state": scenario.action.state,
+        "sensors": [(s.destroyed, s.listener is None) for s in world.sensors],
+    }
+
+
+class TestInitRegistrationsStartEveryRunAsBuilt:
+    def test_a_second_run_behaves_like_the_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sticky, Persistent, Collision, PlaceClear and a once action
+        registered in __init__: the second run of the same object sees what
+        the first saw, each of them deciding it afresh (#928)."""
+        from autoware_carla_scenario.conditions import place_clear as place_module
+        from autoware_carla_scenario.trajectory import resolve as resolve_module
+
+        # Each run's route puts the place somewhere of its own.
+        route_start = {"x": 10.0}
+        monkeypatch.setattr(
+            resolve_module,
+            "resolve_position",
+            lambda position, reference=None: (route_start["x"], 0.0, 0.0, 0.0),
+        )
+        looked_at: list[float] = []
+
+        def occupant(world: Any, x: float, *rest: float) -> int:
+            looked_at.append(x)
+            return -1
+
+        monkeypatch.setattr(place_module, "_occupant", occupant)
+        scenario = _RegistersInInit()
+
+        first = _run(scenario, _World())
+        executions = scenario.action.executions
+        route_start["x"] = 20.0
+        looked_at.clear()
+        second = _run(scenario, _World())
+
+        assert first["first"] == {
+            "visited_goal": 0.5,
+            "stopped": 3.0,
+            "clear": 0.05,
+            "collided": 3.5,
+        }
+        assert second["first"] == first["first"]
+        assert executions == 1
+        assert second["executions"] == 2  # once in each run
+        assert second["state"] is first["state"]
+        # A sensor of its own in each run, released at its end.
+        assert first["sensors"] == [(True, True)]
+        assert second["sensors"] == [(True, True)]
+        assert set(looked_at) == {20.0}  # placed on the second run's route
+
+    def test_a_retry_after_a_latched_attempt_is_not_decided_by_it(self) -> None:
+        """The first attempt latched the sticky condition, collided and fired
+        the action, then raised: the retry starts with none of it."""
+        scenario = _RegistersInInit()
+        world = _World()
+        scenario._reset_registrations()
+        scenario.setup()
+        for t in (0.5, 1.0, 2.0, 3.0):
+            scenario.action.tick(world, t)  # type: ignore[arg-type]
+            for condition in scenario._pass_conditions:
+                condition.check(world, t)  # type: ignore[arg-type]
+        scenario.collision.check(world, 3.0)  # type: ignore[arg-type]
+        world.collide()
+        assert scenario.collision.check(world, 3.05) is not None  # type: ignore[arg-type]
+        scenario.close_conditions()
+
+        scenario._reset_registrations()
+
+        assert scenario.sticky.check(None, 0.05) is None  # type: ignore[arg-type]
+        assert scenario.persistent.check(None, 2.5) is None  # type: ignore[arg-type]
+        assert scenario.collision.check(world, 0.05) is None  # type: ignore[arg-type]
+        assert scenario.action.state is ActionState.STANDBY
+        assert not scenario.action.done
+        assert scenario.sticky.to_summary_dict()["satisfied"] is False
+
+
+class TestCollisionClosedWithinARun:
+    def test_a_closed_condition_attaches_no_sensor_until_reset(self) -> None:
+        """Closed, the condition is not checked again in that run -- it
+        attaches no sensor -- and reset() opens it for the next one, which
+        attaches its own (#928)."""
+        from autoware_carla_scenario import CollisionCondition
+
+        world = _World()
+        condition = CollisionCondition(label="collided")
+        condition.check(world, 0.0)  # type: ignore[arg-type]
+        world.collide()
+        latched = condition.check(world, 0.05)  # type: ignore[arg-type]
+        assert latched is not None
+        condition.close()
+
+        for step in range(1, 60):
+            condition.check(world, 0.05 * step)  # type: ignore[arg-type]
+        assert len(world.sensors) == 1
+        # What the run saw stays for its report.
+        assert condition.get_details()["collision_elapsed_seconds"] == 0.05
+
+        condition.reset()
+
+        assert condition.check(world, 0.0) is None  # type: ignore[arg-type]
+        assert len(world.sensors) == 2
+        assert world.sensors[1].listener is not None
+        assert "other_actor_type" not in condition.get_details()
+
+
+class TestActionsStartEveryRunAsBuilt:
+    def test_a_spawn_enters_at_its_given_speed_again(self) -> None:
+        from autoware_carla_scenario.actions.spawn import SpawnAction
+
+        action = SpawnAction(entity_name="npc1", speed=8.0, label="spawn")
+        action._speed = 3.0  # slowed behind a road user of the earlier run
+        action.reset()
+        assert action._speed == 8.0
+
+    def test_nade_samples_each_run_from_a_weight_of_one(self) -> None:
+        from autoware_carla_scenario.actions.adversarial_traffic import (
+            AdversarialTrafficAction,
+        )
+
+        action = AdversarialTrafficAction([], seed=5)
+        action._sampler.weight = 0.25
+        action._sampler._sampled_at = 30.0
+        action.reset()
+        assert action.weight == 1.0
+        assert not action._sampler.cooling(0.0)
+
+    def test_a_route_starts_from_its_given_offset_again(self) -> None:
+        from autoware_carla_scenario.actions.routing import RoutingAction
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        action = RoutingAction("npc1", goal=Lanelet2Pose(1, 5.0), label="route")
+        action._initial_distance_offset = 12.0  # where the last run's spawn stood
+        action._begun = True
+        action._released = True
+        action.reset()
+        assert action._initial_distance_offset == 0.0
+        assert not action._begun
+        assert not action._released

@@ -139,6 +139,17 @@ class CompositionCondition(BaseCondition):
             guard: EntityExistenceCondition = self._entity_existence
             guard.close()
 
+    def reset(self) -> None:
+        """Reset the child and the entity guard (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        if self._child is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            child: BaseCondition = self._child
+            child.reset()
+        if self._entity_existence is not None:
+            guard: EntityExistenceCondition = self._entity_existence
+            guard.reset()
+
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {}
         if self._entity_name is not None:

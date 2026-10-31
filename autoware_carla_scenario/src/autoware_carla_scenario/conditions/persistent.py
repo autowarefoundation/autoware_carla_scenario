@@ -48,6 +48,14 @@ class PersistentCondition(BaseCondition):
         """Close the child (:meth:`BaseCondition.close`)."""
         self._condition.close()
 
+    def reset(self) -> None:
+        """Stop the timer, and reset the child (:meth:`BaseCondition.reset`):
+        a child that held when an earlier run ended has not held since this
+        run's start."""
+        super().reset()
+        self._true_start = None
+        self._condition.reset()
+
     def failure_category(self) -> Optional[FailureCategory]:
         """What the wrapped condition says."""
         return self._condition.failure_category()

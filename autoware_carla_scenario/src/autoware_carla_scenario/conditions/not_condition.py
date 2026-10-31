@@ -68,6 +68,11 @@ class NotCondition(BaseCondition):
         """Close the child (:meth:`BaseCondition.close`)."""
         self._condition.close()
 
+    def reset(self) -> None:
+        """Reset the child (:meth:`BaseCondition.reset`)."""
+        super().reset()
+        self._condition.reset()
+
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {
             "operator": "NOT",

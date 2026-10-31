@@ -86,7 +86,13 @@ All conditions inherit from `BaseCondition` and return a
 condition that holds something in the simulator -- `CollisionCondition`'s
 listening sensor -- stops and destroys it there, through its own handle.
 `close()` does nothing by default, and composite conditions close their
-children.
+children. What a run left in a condition (a latched result, a collision
+seen) stays readable after `close()`; before every run the runner calls
+`reset()` on the conditions and actions the scenario's `__init__`
+registered, which are the same objects on a retry or a second `run_all()`,
+so each starts the run as it was built. A condition or action that keeps
+state between ticks clears it in `reset()` (calling `super().reset()`),
+and composite conditions reset their children.
 
 | Symbol | Description |
 |--------|-------------|

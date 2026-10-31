@@ -469,6 +469,26 @@ class RoutingAction(TrajectoryRun):
         self._warned_off = False
         self._route_start = None
 
+    def reset(self) -> None:
+        """Forget the earlier runs' routes (:meth:`TrajectoryRun.reset`)."""
+        super().reset()
+        self._finishing = False
+        self._finish_m = None
+        self._from_where_it_stands = False
+        self._walking = False
+        self._stepping = False
+        self._pacer = None
+        self._path = None
+        self._here = 0.0
+        self._sent = -1.0
+        self._arrivals = []
+        self._stop_vertices = []
+        self._mark_points = []
+        self._mark_lanes = []
+        self._start_pose = None
+        self._warned_off = False
+        self._route_start = None
+
     # ------------------------------------------------------------------
     # Public state
     # ------------------------------------------------------------------

@@ -221,8 +221,28 @@ class BaseCondition(ABC):
         through its own handle: only that handle unsubscribes the sensor's
         stream on the client (``CollisionCondition``).  A composite condition
         closes its children.  Nothing by default; a closed condition is not
-        checked again, and closing one twice does nothing.
+        checked again in that run, and closing one twice does nothing.
+
+        What the run left in the condition -- a latched result, a timer, the
+        collision seen -- stays readable after it for the run's report:
+        :meth:`reset` clears it before the next run.
         """
+
+    def reset(self) -> None:
+        """Forget what earlier runs left, before a run begins.
+
+        A condition a scenario registers in ``__init__`` is the same object
+        on every run of it -- a retry, or a second ``run_all()``
+        (:meth:`~autoware_carla_scenario.BaseScenario._reset_registrations`)
+        -- so the runner resets it before each one, and that run sees it as
+        it was built: a sticky condition that latched in a failed attempt
+        cannot decide the retry, and a closed one can be checked again.
+        A condition that keeps state between ticks clears it here, and a
+        composite condition resets its children.  The default forgets the
+        latest result shown in the UI.
+        """
+        self._last_satisfied = False
+        self._last_message = ""
 
     def failure_category(self) -> Optional[FailureCategory]:
         """What a run this condition fails is a failure of

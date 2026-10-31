@@ -71,6 +71,17 @@ class TrafficSignalCondition(BaseCondition):
         self._warned_unresolved = False
         self._warned_no_actors = False
 
+    def reset(self) -> None:
+        """Resolve the lights afresh in the next run, and warn again
+        (:meth:`BaseCondition.reset`): a reloaded world numbers its actors
+        anew."""
+        super().reset()
+        self._cached_actor_ids = None
+        self._cached_signal_ids = None
+        self._last_mismatch = None
+        self._warned_unresolved = False
+        self._warned_no_actors = False
+
     # ------------------------------------------------------------------
     # Light resolution (lazy + cached)
     # ------------------------------------------------------------------

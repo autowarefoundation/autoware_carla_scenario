@@ -196,6 +196,8 @@ class BaseAction:
             _acs_expect_return(r, NoneType, "BaseAction.execute() returns None")
         elif name == "tick":
             _acs_expect_return(r, NoneType, "BaseAction.tick() returns None")
+        elif name == "reset":
+            _acs_expect_return(r, NoneType, "BaseAction.reset() returns None")
 
     @property
     def timing(self) -> TickTiming:
@@ -250,6 +252,9 @@ class BaseAction:
 
     def tick(self, world: carla.World, elapsed: float) -> None:
         raise NotImplementedError()
+
+    def reset(self) -> None:
+        pass
 
 
 def _expect_action(action: BaseAction) -> BaseAction:

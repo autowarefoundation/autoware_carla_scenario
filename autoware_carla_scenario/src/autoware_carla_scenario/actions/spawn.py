@@ -192,6 +192,7 @@ class SpawnAction(BaseAction):
     _at: Optional[TrajectoryVertex]
     _shift_max: float
     _speed: float
+    _given_speed: float
     _blueprint: str
     _on_ground: bool
     _ahead: float
@@ -254,6 +255,8 @@ class SpawnAction(BaseAction):
         self._at = at
         self._shift_max = float(shift_max)
         self._speed = float(speed)
+        # As given: a run may slow the entry behind a slower road user.
+        self._given_speed = self._speed
         self._blueprint = blueprint
         self._on_ground = on_ground
         self._ahead = 0.0
@@ -271,6 +274,14 @@ class SpawnAction(BaseAction):
     def entity_name(self) -> str:
         """``role_name`` of the entity brought in; ``""`` for a prop."""
         return self._entity_name
+
+    def reset(self) -> None:
+        """Enter at the speed given again (:meth:`BaseAction.reset`): an
+        earlier run may have slowed it behind a road user of its own."""
+        super().reset()
+        self._speed = self._given_speed
+        self._ahead = 0.0
+        self._spawned = []
 
     def take_spawns(self) -> list[tuple[str, int]]:
         """The ``(role, actor id)`` brought in since the last call, for the log."""
