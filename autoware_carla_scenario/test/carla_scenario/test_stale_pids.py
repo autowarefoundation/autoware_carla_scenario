@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from ._stale_pids import (
+    _stat,
     is_same_process,
     signal_group,
     signal_process,
@@ -73,6 +76,29 @@ def test_a_process_is_named_by_its_pid_and_start_time(
     assert started is not None
     assert is_same_process(sleeper.pid, started)
     assert not is_same_process(sleeper.pid, started + 1)
+
+
+def test_a_command_name_with_parentheses_and_spaces_is_parsed(
+    tmp_path: Path,
+) -> None:
+    """The fields are counted after the last ')', not the first space."""
+    sleep = shutil.which("sleep")
+    assert sleep is not None
+    named = tmp_path / ") 1 2 (x) y"
+    shutil.copy(sleep, named)
+    process = subprocess.Popen([str(named), "60"], start_new_session=True)
+    try:
+        fields = _stat(process.pid)
+        assert fields is not None
+        # ppid (field 4) and pgrp (field 5) land where they belong ...
+        assert (int(fields[1]), int(fields[2])) == (os.getpid(), process.pid)
+        # ... and so does the start time (field 22): not before this test's.
+        started, own = start_time(process.pid), start_time(os.getpid())
+        assert started is not None and own is not None
+        assert started >= own
+    finally:
+        process.kill()
+        process.wait()
 
 
 def test_a_pid_now_held_by_another_process_is_not_signalled(
