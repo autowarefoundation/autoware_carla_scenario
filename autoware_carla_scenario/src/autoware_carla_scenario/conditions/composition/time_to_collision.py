@@ -146,6 +146,13 @@ class TimeToCollisionCondition(CompositionCondition):
         # A walker's velocity, measured from where it stood when last checked.
         self._velocities = WalkerVelocities()
 
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
@@ -176,6 +183,28 @@ class TimeToCollisionCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
+    def _velocities_of(
+        self,
+        source: "carla.Actor",
+        target: Optional["carla.Actor"],
+        elapsed: float,
+    ) -> Optional[tuple[Vector3, Vector3]]:
+        """The source's and the target's velocities (a place's zero), or
+        ``None`` while a walker among them is not measured yet.  Both are
+        read either way, so each walker is measured from this tick on."""
+        src_read = self._velocities.velocity(source, elapsed)
+        tgt_read: Optional[Vector3] = Vector3.zero()
+        if target is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            found: "carla.Actor" = target
+            tgt_read = self._velocities.velocity(found, elapsed)
+        if src_read is None or tgt_read is None:
+            return None
+        # Annotated, so Codon unwraps the Optionals (docs/typecheck.md).
+        src_vel: Vector3 = src_read
+        tgt_vel: Vector3 = tgt_read
+        return src_vel, tgt_vel
+
     def _measure(self, world: "carla.World", elapsed: float = 0.0) -> Optional[float]:
         """Return the source-to-target TTC in seconds (*elapsed* the
         scenario's time, to measure a walker's velocity by).
@@ -205,13 +234,12 @@ class TimeToCollisionCondition(CompositionCondition):
             tgt = Vector3(self._place.x, self._place.y, src_loc.z)
 
         if self._coordinate_system is DistanceCoordinateSystem.LANE:
-            src_vel = self._velocities.velocity(source, elapsed)
-            # A place does not move, and neither does the road under it.
-            tgt_vel = (
-                self._velocities.velocity(target, elapsed)
-                if target is not None
-                else Vector3.zero()
-            )
+            moving = self._velocities_of(source, target, elapsed)
+            if moving is None:
+                return None  # a walker not measured yet
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            pair: tuple[Vector3, Vector3] = moving
+            src_vel, tgt_vel = pair
             return self._lane_ttc(src_loc, tgt, src_vel, tgt_vel)
 
         # Edge to edge runs between the box centres, not the origins: a box
@@ -235,15 +263,16 @@ class TimeToCollisionCondition(CompositionCondition):
             if target is not None:
                 distance = max(0.0, distance - half_extent_along(target, direction))
 
-        src_vel = self._velocities.velocity(source, elapsed)
-        if target is not None:
-            tgt_vel = self._velocities.velocity(target, elapsed)
-        else:
-            # A place does not move, so the closing speed is the source's own
-            # speed along the line of sight.  Written as a zero velocity rather
-            # than as a separate branch: the two are the same expression, and a
-            # second one would be a second place for the sign to go wrong.
-            tgt_vel = Vector3.zero()
+        # A place does not move, so the closing speed is the source's own
+        # speed along the line of sight.  Written as a zero velocity rather
+        # than as a separate branch: the two are the same expression, and a
+        # second one would be a second place for the sign to go wrong.
+        moving = self._velocities_of(source, target, elapsed)
+        if moving is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        velocities: tuple[Vector3, Vector3] = moving
+        src_vel, tgt_vel = velocities
         relative = Vector3(src_vel.x - tgt_vel.x, src_vel.y - tgt_vel.y, 0.0)
         closing_speed = relative.dot(direction)
         if closing_speed <= _CLOSING_SPEED_EPSILON:

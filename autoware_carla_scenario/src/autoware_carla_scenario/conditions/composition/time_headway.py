@@ -117,6 +117,13 @@ class TimeHeadwayCondition(CompositionCondition):
         # A walker's velocity, measured from where it stood when last checked.
         self._velocities = WalkerVelocities()
 
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
+
     def failure_category(self) -> Optional[FailureCategory]:
         """Too little headway: :attr:`~FailureCategory.SAFETY_MARGIN`."""
         return FailureCategory.SAFETY_MARGIN
@@ -160,7 +167,11 @@ class TimeHeadwayCondition(CompositionCondition):
         tgt_loc = target.get_location()
         offset = Vector3(tgt_loc.x - src_loc.x, tgt_loc.y - src_loc.y, 0.0)
 
-        velocity = self._velocities.velocity(source, elapsed)
+        read = self._velocities.velocity(source, elapsed)
+        if read is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        velocity: Vector3 = read
         travel = Vector3(velocity.x, velocity.y, 0.0)
         speed = travel.magnitude()
         if speed < _SPEED_EPSILON:

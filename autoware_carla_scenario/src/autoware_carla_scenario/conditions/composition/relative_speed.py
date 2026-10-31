@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
-from ...kinematics import AbsoluteVelocity, CoordinateFrame, RelativeVelocity
+from ...kinematics import (
+    AbsoluteVelocity,
+    CoordinateFrame,
+    RelativeVelocity,
+    Vector3,
+)
 from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
@@ -86,6 +91,13 @@ class RelativeSpeedCondition(CompositionCondition):
         # A walker's velocity, measured from where it stood when last checked.
         self._velocities = WalkerVelocities()
 
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
+
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
         details.update(
@@ -111,12 +123,16 @@ class RelativeSpeedCondition(CompositionCondition):
         if entity is None or reference is None:
             return None
 
-        subject_velocity = AbsoluteVelocity(
-            self._velocities.velocity(entity, elapsed), CoordinateFrame.CARLA_WORLD
-        )
-        reference_velocity = AbsoluteVelocity(
-            self._velocities.velocity(reference, elapsed), CoordinateFrame.CARLA_WORLD
-        )
+        # Both read, so each walker is measured from this tick on.
+        subject_read = self._velocities.velocity(entity, elapsed)
+        reference_read = self._velocities.velocity(reference, elapsed)
+        if subject_read is None or reference_read is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optionals (docs/typecheck.md).
+        subject: Vector3 = subject_read
+        referenced: Vector3 = reference_read
+        subject_velocity = AbsoluteVelocity(subject, CoordinateFrame.CARLA_WORLD)
+        reference_velocity = AbsoluteVelocity(referenced, CoordinateFrame.CARLA_WORLD)
 
         if self._direction == SpeedDirection.MAGNITUDE:
             # The difference of the speeds, not the speed of the difference.

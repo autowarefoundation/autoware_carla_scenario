@@ -6,6 +6,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
+from ...kinematics import Vector3
 from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
@@ -112,6 +113,13 @@ class SpeedCondition(CompositionCondition):
         # A walker's velocity, measured from where it stood when last checked.
         self._velocities = WalkerVelocities()
 
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
+
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
         details.update(
@@ -146,7 +154,11 @@ class SpeedCondition(CompositionCondition):
             required for :attr:`SpeedCoordinateSystem.ENTITY` cannot be
             found or has a degenerate forward vector.
         """
-        vel = self._velocities.velocity(entity, elapsed)
+        read = self._velocities.velocity(entity, elapsed)
+        if read is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        vel: Vector3 = read
 
         if self._direction == SpeedDirection.MAGNITUDE:
             return vel.magnitude()

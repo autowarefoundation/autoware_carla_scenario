@@ -25,10 +25,6 @@ from autoware_carla_scenario.conditions.composition.time_to_collision import (
     TimeToCollisionCondition,
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
-from autoware_carla_scenario.kinematics.walker_motion import (
-    WalkerVelocities,
-    simulated_seconds,
-)
 from autoware_carla_scenario.measures import (
     CROSSING_PEDESTRIAN_GAP_M,
     CROSSING_PEDESTRIAN_SPEED_MS,
@@ -42,6 +38,14 @@ from ._fake_world import ActorsById, FakeActorList
 _STEP_M = 0.07
 _TICK_S = 0.05
 _WALKING_MS = _STEP_M / _TICK_S  # 1.4
+
+
+def _velocities() -> Any:
+    """A fresh :class:`WalkerVelocities` (imported here, so the condition and
+    measure tests below also run, and fail, where the module is missing)."""
+    from autoware_carla_scenario.kinematics.walker_motion import WalkerVelocities
+
+    return WalkerVelocities()
 
 
 def _walker(actor_id: int, where: SimpleNamespace) -> SimpleNamespace:
@@ -114,7 +118,7 @@ def test_a_walker_on_its_controller_is_measured_by_where_it_stands() -> None:
     """CARLA's walker controller places its walker: get_velocity() reads 0."""
     where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     walker = _walker(9101, where)
-    velocities = WalkerVelocities()
+    velocities = _velocities()
     assert velocities.walker(walker, 1.0).magnitude() == 0.0
     where.x = 0.6
     assert velocities.walker(walker, 1.5).magnitude() == pytest.approx(1.2)
@@ -134,7 +138,7 @@ def test_each_reader_measures_on_its_own_and_forgets() -> None:
     end (clear) or a walker gone (forget) starts it over."""
     where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
     walker = _walker(9103, where)
-    one, other = WalkerVelocities(), WalkerVelocities()
+    one, other = _velocities(), _velocities()
     one.walker(walker, 1.0)
     other.walker(walker, 1.0)
     where.x = 0.5
@@ -149,7 +153,7 @@ def test_each_reader_measures_on_its_own_and_forgets() -> None:
 
 
 def test_a_vehicle_reads_what_carla_reports() -> None:
-    velocities = WalkerVelocities()
+    velocities = _velocities()
     car = _Actor(5, "vehicle.tesla.model3", (0.0, 0.0), (5.0, 0.0))
     assert velocities.velocity(car, 1.0).x == 5.0  # type: ignore[arg-type]
     car.at.x = 100.0  # placed far away: still what CARLA says
@@ -157,6 +161,8 @@ def test_a_vehicle_reads_what_carla_reports() -> None:
 
 
 def test_simulated_seconds_reads_the_snapshot() -> None:
+    from autoware_carla_scenario.kinematics.walker_motion import simulated_seconds
+
     world = _World([])
     assert simulated_seconds(world) == pytest.approx(10.0)  # type: ignore[arg-type]
     assert simulated_seconds(SimpleNamespace()) is None  # type: ignore[arg-type]
@@ -173,10 +179,60 @@ def test_a_walkers_standstill_reads_its_steps() -> None:
     condition = speed_module.SpeedCondition(
         entity_name="w", value=0.1, rule=ComparisonRule.LESS_THAN_OR_EQUAL, label="s"
     )
-    assert condition._extract_speed_component(walker, None, 1.0) == 0.0  # type: ignore[arg-type]
+    # Read first, it has nothing to measure from: not known, not standing.
+    assert condition._extract_speed_component(walker, None, 1.0) is None  # type: ignore[arg-type]
     where.y = 1.0
     moving = condition._extract_speed_component(walker, None, 2.0)  # type: ignore[arg-type]
     assert moving == pytest.approx(1.0)
+    stood = condition._extract_speed_component(walker, None, 3.0)  # type: ignore[arg-type]
+    assert stood == 0.0
+
+
+def test_a_walker_first_read_walking_on_its_controller_does_not_stand() -> None:
+    """A condition gated until its walker is already walking (on CARLA's
+    controller, reading 0) is not satisfied by a standstill on its first
+    check: it waits for a measured speed."""
+    walker = _Actor(9104, "walker.pedestrian.0001", (0.0, 0.0), role="w")
+    world = _World([walker])
+    condition = speed_module.SpeedCondition(
+        entity_name="w", value=0.1, rule=ComparisonRule.LESS_THAN_OR_EQUAL, label="s"
+    )
+    assert condition._check(world, world.elapsed) is None  # type: ignore[arg-type]
+    _step(world, walker)
+    assert condition._check(world, world.elapsed) is None  # type: ignore[arg-type]
+    world.tick()  # it stops
+    assert condition._check(world, world.elapsed) is not None  # type: ignore[arg-type]
+
+
+def test_a_walker_walked_by_its_control_reads_carlas_velocity_at_first() -> None:
+    """A walker on a WalkerControl reports its velocity: read first, that,
+    and measured after -- the two agree."""
+    walker = _Actor(9105, "walker.pedestrian.0001", (0.0, 0.0), (1.4, 0.0))
+    velocities = _velocities()
+    first = velocities.velocity(walker, 1.0)  # type: ignore[arg-type]
+    assert first is not None and first.x == pytest.approx(1.4)
+    walker.at.x = _STEP_M
+    later = velocities.velocity(walker, 1.0 + _TICK_S)  # type: ignore[arg-type]
+    assert later is not None and later.x == pytest.approx(1.4)
+
+
+def test_a_teleported_walker_is_not_a_sprint() -> None:
+    """A walker put where its walk starts, or brought in from under the map,
+    reads what CARLA reports for that read, not a jump over a tick."""
+    where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    walker = _walker(9106, where)
+    velocities = _velocities()
+    velocities.walker(walker, 1.0)
+    where.x = 30.0  # put 30 m on in a tick
+    assert velocities.walker(walker, 1.05).magnitude() == 0.0
+    assert velocities.velocity(walker, 1.05) is None  # type: ignore[arg-type]
+    where.x += _STEP_M  # and walks on from there
+    assert velocities.walker(walker, 1.1).x == pytest.approx(_WALKING_MS)
+    # Parked under the map, then brought in where it was parked, a while on.
+    where.z = -500.0
+    velocities.walker(walker, 2.0)
+    where.z = 0.0
+    assert velocities.walker(walker, 100.0).magnitude() == 0.0
 
 
 def _crossing() -> tuple[_World, _Actor, _Actor]:
@@ -247,6 +303,20 @@ def test_time_headway_reads_a_walkers_steps() -> None:
     assert condition._check(world, world.elapsed) is not None  # type: ignore[arg-type]
     headway = condition._measure(world, world.elapsed)  # type: ignore[arg-type]
     assert headway == pytest.approx((14.0 - _STEP_M) / _WALKING_MS)
+
+
+def test_a_condition_registered_once_measures_each_run_afresh() -> None:
+    """A condition registered once is checked again next run, after the
+    runner closes it: what it measured last run is forgotten."""
+    world, _ego, walker = _crossing()
+    condition = RelativeSpeedCondition(
+        "walker", EGO_ROLE_NAME, value=-9.0, rule=ComparisonRule.GREATER_THAN, label="r"
+    )
+    condition._check(world, 1.0)  # type: ignore[arg-type]
+    condition.close()  # the run is over
+    # Next run, the same walker id, first checked later than the last read.
+    walker.at.y += 5.0
+    assert condition._measure(world, 30.0) is None  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
