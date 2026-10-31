@@ -214,6 +214,26 @@ def test_case_states_match_the_original(seed: int) -> None:
         ]
 
 
+@pytest.mark.parametrize("status", [[1], "x", 5])
+@pytest.mark.parametrize("queued", [None, "PENDING", "RUNNING", "COMPLETED"])
+@pytest.mark.parametrize("asked", [True, False])
+def test_a_task_file_holding_no_object_fails_where_it_did(
+    status: Any, queued: str | None, asked: bool
+) -> None:
+    states = ({} if queued is None else {0: queued}) if asked else None
+    layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {}, {(0, 0): status})
+    manifest = {"cases": [{"index": 0}]}
+    try:
+        want: Any = _original_case_states(layout, manifest, {0: states})
+    except Exception as error:  # noqa: BLE001
+        want = type(error)
+    try:
+        got: Any = slurm_launch._case_states(layout, manifest, {0: states})  # type: ignore[arg-type]
+    except Exception as error:  # noqa: BLE001
+        got = type(error)
+    assert got == want
+
+
 def test_the_typed_active_states_are_squeue_s() -> None:
     assert set(slurm_launch._ACTIVE_STATES) == set(ACTIVE_STATES)
     assert len(slurm_launch._ACTIVE_STATES) == len(ACTIVE_STATES)

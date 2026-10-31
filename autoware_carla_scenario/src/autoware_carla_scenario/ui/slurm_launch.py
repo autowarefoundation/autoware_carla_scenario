@@ -329,11 +329,15 @@ def _case_states(
             squeue_known = states is not None
             queued = None if states is None else states.get(task)
             status = layout.read_task(sub_index, task) or {}
-            at_case = bool(status.get("current") == index)
             job_id = f"{sub.get('job_id')}"
-            task_state = f"{status.get('state', 'never started')}"
-            if status.get("error"):
-                task_error = f"{status['error']}"
+            # Only what case_state's branch reads of the status: a task file
+            # that holds no JSON object fails only where it always failed.
+            if queued in ACTIVE_STATES:
+                at_case = queued == "RUNNING" and bool(status.get("current") == index)
+            elif squeue_known:
+                task_state = f"{status.get('state', 'never started')}"
+                if status.get("error"):
+                    task_error = f"{status['error']}"
         state, message = case_state(
             record is not None,
             errored,
