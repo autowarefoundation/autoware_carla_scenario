@@ -20,8 +20,10 @@ from autoware_carla_scenario.examples import run
 from autoware_carla_scenario.scenario_glob import (
     is_scenario_glob,
     resolve_scenario_glob,
+    scenario_names,
 )
 from autoware_carla_scenario.ui import app as app_module
+from autoware_carla_scenario.ui import scanner
 
 _BUILTIN_LEFT = (
     Path(autoware_carla_scenario.__file__).resolve().parent
@@ -158,6 +160,39 @@ def test_each_name_once_across_directories(tmp_path: Path) -> None:
     dirs = [first, tmp_path / "empty", second]
     assert resolve_scenario_glob("s/*", dirs) == ["s/x"]
     assert resolve_scenario_glob("t/*", dirs) == []
+
+
+def test_scenario_names_lists_each_name_once_by_path_component(
+    tmp_path: Path,
+) -> None:
+    """The viewer's scenario list (#898): every YAML file under ``scenario/``,
+    each name once across the directories, ordered by path component (``a/z``
+    before ``a-b/x``, which plain string order puts first)."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for conf_dir in (first, second):
+        (conf_dir / "scenario" / "a" / "deep").mkdir(parents=True)
+        (conf_dir / "scenario" / "a" / "z.yaml").write_text("{}\n")
+    (first / "scenario" / "a-b").mkdir()
+    (first / "scenario" / "a-b" / "x.yaml").write_text("{}\n")
+    (second / "scenario" / "a" / "deep" / "y.yaml").write_text("{}\n")
+    (second / "scenario" / "a" / "note.txt").write_text("not a config\n")
+    (tmp_path / "empty").mkdir()
+    dirs = [first, tmp_path / "empty", second]
+    assert scenario_names(dirs) == ["a/deep/y", "a/z", "a-b/x"]
+    assert scenario_names([]) == []
+
+
+def test_the_viewer_lists_scenario_names_of_its_config_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ui.scanner.list_scenario_configs`` is :func:`scenario_names` of the
+    viewer's config directories (#898)."""
+    (tmp_path / "scenario" / "s").mkdir(parents=True)
+    (tmp_path / "scenario" / "s" / "x.yaml").write_text("{}\n")
+    monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [tmp_path])
+    assert scanner.list_scenario_configs() == ["s/x"]
+    assert scanner.scenario_names is scenario_names
 
 
 @pytest.mark.parametrize(

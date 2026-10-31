@@ -10,6 +10,7 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from ..registry import get_conf_dirs, load_scenario_plugins
+from ..scenario_glob import scenario_names
 from . import cases
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
@@ -55,17 +56,9 @@ def list_scenario_configs() -> list[str]:
     component; patterns are not matched against it but resolved as the
     ``scenario`` CLI resolves them
     (:func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`).
+    The scan is :func:`~autoware_carla_scenario.scenario_glob.scenario_names`.
     """
-    names: set[str] = set()
-    for conf_dir in scenario_conf_dirs():
-        scenario_dir = conf_dir / "scenario"
-        if not scenario_dir.is_dir():
-            continue
-        for p in scenario_dir.rglob("*.yaml"):
-            # Hydra config names always use forward slashes.
-            names.add(p.relative_to(scenario_dir).with_suffix("").as_posix())
-    # Ordered by path component, as the directory walk always listed them.
-    return sorted(names, key=lambda name: name.split("/"))
+    return scenario_names(scenario_conf_dirs())
 
 
 def clear_cache() -> None:
