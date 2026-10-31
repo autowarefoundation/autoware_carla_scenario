@@ -34,7 +34,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   "lights": {id: "Red"|"Yellow"|"Green"|"Off"|"Unknown"}}`` -- ``t`` is the
   scenario's simulated time (the clock pass/fail conditions report);
   ``control`` only for the ego; ``lights`` only the lights whose state changed
-  since the last written tick (all of them in the first).  Ticks without any
+  since the last written tick (all of them in the first).  An ego's tick
+  also carries ``"angular_velocity": {id: [wx, wy, wz]}`` (deg/s, CARLA's
+  axes), which a reader moving the ego's velocity to its ``base_link`` needs;
+  a file written before it was recorded has none.  Ticks without any
   vehicle/walker are not written.
 * ``{"type": "turn_indicators", "frame", "t", "states": {id:
   "off"|"left"|"right"|"hazard"}}`` -- right after a tick on which a recorded
@@ -740,12 +743,17 @@ class TrajectoryRecorder:
                 self._known.setdefault(actor_id, None)
 
         rows = []
+        angular: dict[str, list[float]] = {}
         kept = self._state_value
         for s in snapshot:
             if self._known.get(s.id) is None:
                 continue
             tf, v = s.get_transform(), s.get_velocity()
             loc, rot = tf.location, tf.rotation
+            if s.id in self._egos:
+                # The snapshot carries it: no request to the server.
+                w = s.get_angular_velocity()
+                angular[str(s.id)] = [kept(w.x), kept(w.y), kept(w.z)]
             rows.append(
                 [
                     s.id,
@@ -797,6 +805,8 @@ class TrajectoryRecorder:
             "actors": rows,
             "control": control,
         }
+        if angular:
+            record["angular_velocity"] = angular
         if changed:
             record["lights"] = changed
         self._emit(record)

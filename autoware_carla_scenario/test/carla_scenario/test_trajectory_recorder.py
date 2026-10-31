@@ -50,15 +50,18 @@ class _Actor:
 
 
 class _ActorSnapshot:
-    def __init__(self, actor_id: int, x: float, vx: float) -> None:
+    def __init__(self, actor_id: int, x: float, vx: float, wz: float = 0.0) -> None:
         self.id = actor_id
-        self._x, self._vx = x, vx
+        self._x, self._vx, self._wz = x, vx, wz
 
     def get_transform(self) -> SimpleNamespace:
         return SimpleNamespace(location=_vec(self._x, 1.0, 0.0), rotation=_rot(90.0))
 
     def get_velocity(self) -> SimpleNamespace:
         return _vec(self._vx)
+
+    def get_angular_velocity(self) -> SimpleNamespace:
+        return _vec(0.0, 0.0, self._wz)
 
 
 class _Light:
@@ -261,7 +264,10 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     world.snapshot = [_ActorSnapshot(1, 0.0, 0.0), _ActorSnapshot(2, 0.0, 0.0)]
     recorder.record(world, 0.0)
     world.frame += 1
-    world.snapshot = [_ActorSnapshot(1, 0.5, 10.0), _ActorSnapshot(2, 0.5, 10.0)]
+    world.snapshot = [
+        _ActorSnapshot(1, 0.5, 10.0, wz=-12.3456),
+        _ActorSnapshot(2, 0.5, 10.0, wz=7.0),
+    ]
     world.light.state = int(carla.TrafficLightState.Green)
     recorder.record(world, 0.05)
     recorder.close()
@@ -292,9 +298,12 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     first, second = records[5], records[6]
     assert first["actors"] == [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0]]
     assert first["control"] == {"1": [0.5, 0.0, 0.0, 1]}
+    assert first["angular_velocity"] == {"1": [0.0, 0.0, 0.0]}
     assert first["lights"] == {"9": "Red"}
     assert second["t"] == 0.05 and second["frame"] == 101
     assert second["actors"][0][7] == 10.0
+    # The ego's angular velocity as CARLA gives it (deg/s), to the thousandth.
+    assert second["angular_velocity"] == {"1": [0.0, 0.0, -12.346]}
     # Only the light states that changed since the last written tick.
     assert second["lights"] == {"9": "Green"}
     # orjson writes what the stdlib wrote before it, byte for byte.
@@ -349,6 +358,7 @@ def test_records_without_an_ego_or_a_light_change_follow_the_schema(
     ]
     first, second = (r for r in records if r["type"] == "tick")
     assert first["control"] == {} and first["lights"] == {"9": "Red"}
+    assert "angular_velocity" not in first  # an ego's only
     assert "lights" not in second  # the light did not change
 
 
@@ -369,6 +379,8 @@ _TICK = {
         {**_TICK, "lights": {"9": "Blue"}},  # no such light state
         {**_TICK, "control": {"ego": [0.5, 0.0, 0.0, 1]}},  # a key that is no id
         {**_TICK, "accel": [0.0, 0.0, 0.0]},  # a field the format does not have
+        {**_TICK, "angular_velocity": {"1": [0.0, 0.0]}},  # not a vector
+        {**_TICK, "angular_velocity": {"ego": [0.0, 0.0, 1.0]}},  # a key that is no id
         {**_TICK, "frame": 2**53},  # an integer a double cannot hold exactly
         {**_TICK, "frame": -1},  # LibCarla's frame is unsigned
         {"type": "world", "map": "m", "episode": 2**64},  # past a uint64
@@ -414,6 +426,13 @@ _TICK = {
 )
 def test_the_schema_rejects_lines_the_recorder_does_not_write(record: dict) -> None:
     assert not _validator().is_valid(record)
+
+
+def test_a_tick_with_or_without_an_angular_velocity_follows_the_schema() -> None:
+    # Without: a file written before ticks carried it.
+    for tick in (_TICK, {**_TICK, "angular_velocity": {"1": [0.1, -0.2, 5.0]}}):
+        _validator().validate(tick)
+        _draft7_validator().validate(tick)
 
 
 def test_ticks_without_vehicles_are_not_written(tmp_path: Path) -> None:

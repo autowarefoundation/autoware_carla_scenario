@@ -424,6 +424,16 @@
             "$ref": "#/$defs/VehicleControl"
           }
         },
+        "angular_velocity": {
+          "description": "Each ego's angular velocity [wx, wy, wz] in CARLA's world axes, degrees per second, as CARLA reports it, keyed by its actor id as a decimal string (version 2, added after the records listed in `schema_version`). A reader that moves the ego's velocity from its actor origin to its `base_link` adds the lever arm w x r with it. Absent when there is no ego, and in a file written before it was recorded.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/ActorIdKey"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/Vector3"
+          }
+        },
         "lights": {
           "description": "The traffic lights whose state changed since the last written tick, keyed by actor id as a decimal string; every light in the first tick. Absent when none changed, so a reader carries each light's state forward.",
           "type": "object",

@@ -32,10 +32,11 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 The records marked (2) in the table below that are not in that list
 (`rear_axle`, `turn_indicators`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`,
 `spawn`, `despawn`) came later within version 2: a reader of version 2 that does not
-know one skips it.
+know one skips it. So did the `tick`'s optional `angular_velocity` field: a
+file written before it has none.
 Every change keeps the records there are: a new version adds records (and
-optional fields), so a reader that skips the `type`s it does not know reads
-any later file.
+optional fields), so a reader that skips the `type`s and ignores the fields
+it does not know reads any later file.
 
 ## Records
 
@@ -69,7 +70,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `world` | once, first | `map` (CARLA map name), `episode` (`world.id`) |
 | `traffic_light` | once per light, when recording starts | `id`, `opendrive_id`, `location` `[x,y,z]`, `boxes` `[[x,y,z,ex,ey,ez,yaw]]` (one per light head), `stops` `[[x,y,z,yaw]]` (stop-line waypoints) |
 | `actor` | before the first tick a vehicle/walker appears in | `id`, `type_id` (blueprint), `role` (`role_name`), `extent` (bounding box half size), `center` (box centre offset from the actor origin, actor frame) |
-| `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `lights` `{id: state}` (changes only) |
+| `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `angular_velocity` `{id: [wx,wy,wz]}` (egos only, deg/s in CARLA's world axes; (2), absent before it was recorded), `lights` `{id: state}` (changes only) |
 | `map` (2) | once, after `world` | `name` (short map name), `source` (`map.source`, else `map.directory`, else null), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
 | `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
 | `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: where the ego put its `base_link` for the run -- a driver policy's entity's rig origin (`driver.rear_axle_offset_m`), a ROS 2 ego's odometry (`rear_axle_offset_m`), an Autoware ego's `base_link` (`AutowareBridgeConfig.base_link_offset_m`) -- else from its wheels, else half its box behind) |
@@ -94,7 +95,9 @@ generated types keep them as tuples where the target language has them.
 
 - Positions and rotations are in CARLA's left-handed world frame (x east,
   y south, z up; see [Coordinate frames](driver_interface.md#coordinate-frames)). Positions are in metres, angles in degrees, and velocities
-  are world-frame m/s. Every float is rounded to 3 decimals.
+  are world-frame m/s (an angular velocity, world-frame deg/s, a pseudovector:
+into a right-handed frame its `x` and `z` flip, not its `y`). Every float is
+rounded to 3 decimals.
 - `t` is simulated time since the scenario clock started, the time pass/fail
   conditions see. It is not wall time. Warm-up ticks are not recorded: the
   `warmup` line says how many there were, so a frame of the CARLA recording,

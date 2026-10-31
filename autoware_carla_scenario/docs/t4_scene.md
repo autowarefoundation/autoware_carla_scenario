@@ -57,7 +57,8 @@ the current one last, its states unrounded (the log keeps millimetres). A run
 younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of `base_link`, the acceleration an estimate), body
-angular velocity, front tyres' angle and odometry times; the first LiDAR's
+angular velocity (on a row the policy was not told, the log's), front tyres'
+angle and odometry times; the first LiDAR's
 current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
 the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets
@@ -107,7 +108,7 @@ machine any more) has no `map` and no `traffic_lights`.
 | `scene_metadata` | `scene_id`: the log's stem; `recording_id`: the world's `episode`; `tags`: `autoware_carla_scenario`, `map:{name}`, and `result:passed`/`result:failed` when the run reached a verdict |
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
-| `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities`, `longitudinal_speeds`, `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
+| `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities` and `longitudinal_speeds` of its `base_link` (below), `angular_velocities` (body axes, rad/s, from the ticks' `angular_velocity`), `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
 | `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
 | `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |
@@ -117,8 +118,9 @@ What the log does not hold is left out, never made up:
 - **A row the log has no tick for** -- a tick without road users is not
   logged -- has its ego, objects and lights unavailable; rows are never
   interpolated.
-- **The ego** has no accelerations, angular velocity or steering, and its
-  `shape` no `wheel_base`; nor turn indicators in a log without
+- **The ego** has no accelerations or steering, and its
+  `shape` no `wheel_base`; nor angular velocity in a log without the ticks'
+  `angular_velocity` (one written before it was recorded); nor turn indicators in a log without
   `turn_indicators` records (one written before they were recorded).
 - **Other road users' turn indicators** are in the log but not in the scene:
   the contract has them for the ego only.
@@ -144,6 +146,14 @@ What the log does not hold is left out, never made up:
   the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and
   `base_link_to_rear_axle` is 0.
+- The ego's velocity is its `base_link`'s too. The log records its actor
+  origin's, so the rigid-body lever arm is added: `v = v_origin + w x r`,
+  `w` the tick's `angular_velocity` and `r` the rotated
+  `(rear_axle_offset, 0, 0)`, in the map frame -- as the driver observations
+  do (`ego_observation`). The forward speed is the same either way; a turning
+  ego's sideways velocity is not (`yaw_rate * rear_axle_offset` of slip at
+  the origin). A log written before ticks carried `angular_velocity` keeps
+  the origin's velocity.
 - A light shows a traffic-light regulatory element when it switches an
   OpenDRIVE signal (its `opendrive_id`) of the controller named after the
   element (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention, as
