@@ -8,6 +8,7 @@ import json
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import jsonschema
@@ -159,8 +160,7 @@ def test_the_schema_is_a_valid_2020_12_schema() -> None:
     assert _validator().schema["x-schema-version"] == SCHEMA_VERSION
 
 
-def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
-    jsonschema.Draft7Validator.check_schema(_draft7_validator().schema)
+def _draft7_script() -> Any:
     script = (
         Path(__file__).resolve().parents[2] / "scripts" / "trajectory_schema_draft7.py"
     )
@@ -168,9 +168,38 @@ def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert DRAFT7_SCHEMA_PATH.read_text() == module.render(
+    return module
+
+
+def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
+    jsonschema.Draft7Validator.check_schema(_draft7_validator().schema)
+    assert DRAFT7_SCHEMA_PATH.read_text() == _draft7_script().render(
         json.loads(SCHEMA_PATH.read_text())
     ), "run autoware_carla_scenario/scripts/trajectory_schema_draft7.py"
+
+
+def test_the_draft_7_conversion_repoints_only_references() -> None:
+    literal = "#/$defs/A"
+    schema: dict[str, Any] = {
+        "$defs": {"A": {"type": "string"}},
+        "oneOf": [{"$ref": "#/$defs/A"}],
+        "discriminator": {"propertyName": "type", "mapping": {"a": "#/$defs/A"}},
+        "properties": {
+            "c": {"const": literal},
+            "e": {"enum": [literal], "default": literal, "examples": [literal]},
+            "t": {"prefixItems": [{"$ref": "#/$defs/A"}], "items": {"type": "null"}},
+        },
+    }
+    out = _draft7_script().to_draft7(schema)
+    assert out["definitions"] == {"A": {"type": "string"}}
+    assert out["oneOf"] == [{"$ref": "#/definitions/A"}]
+    assert out["discriminator"]["mapping"] == {"a": "#/definitions/A"}
+    assert out["properties"]["c"] == {"const": literal}
+    assert out["properties"]["e"] == schema["properties"]["e"]
+    assert out["properties"]["t"] == {
+        "items": [{"$ref": "#/definitions/A"}],
+        "additionalItems": {"type": "null"},
+    }
 
 
 def test_every_record_type_is_in_the_discriminator() -> None:
@@ -180,6 +209,49 @@ def test_every_record_type_is_in_the_discriminator() -> None:
     for name, target in mapping.items():
         definition = schema["$defs"][target.rsplit("/", 1)[-1]]
         assert definition["properties"]["type"] == {"const": name}
+
+
+def _resolve(schema: dict, pointer: str) -> object:
+    """The node *pointer* (a local ``#/...`` JSON pointer) names in *schema*."""
+    assert pointer.startswith("#/"), pointer
+    node: object = schema
+    for token in pointer[2:].split("/"):
+        token = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list):
+            node = node[int(token)]
+        else:
+            assert isinstance(node, dict) and token in node, pointer
+            node = node[token]
+    return node
+
+
+def _pointers(node: object) -> list[str]:
+    """Every ``$ref`` and ``discriminator.mapping`` value under *node*."""
+    found: list[str] = []
+    if isinstance(node, list):
+        for item in node:
+            found += _pointers(item)
+    elif isinstance(node, dict):
+        if isinstance(node.get("$ref"), str):
+            found.append(node["$ref"])
+        discriminator = node.get("discriminator")
+        if isinstance(discriminator, dict):
+            found += list(discriminator.get("mapping", {}).values())
+        for value in node.values():
+            found += _pointers(value)
+    return found
+
+
+@pytest.mark.parametrize(
+    "path", [SCHEMA_PATH, DRAFT7_SCHEMA_PATH], ids=lambda p: p.name
+)
+def test_every_pointer_in_the_schema_resolves(path: Path) -> None:
+    schema = json.loads(path.read_text())
+    pointers = _pointers(schema)
+    mapping = list(schema["discriminator"]["mapping"].values())
+    assert mapping and set(mapping) <= set(pointers)
+    for pointer in pointers:
+        assert isinstance(_resolve(schema, pointer), dict), pointer
 
 
 def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
