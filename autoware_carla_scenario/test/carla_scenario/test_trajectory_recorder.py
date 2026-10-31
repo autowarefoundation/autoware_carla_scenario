@@ -8,6 +8,7 @@ import json
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import jsonschema
@@ -159,8 +160,7 @@ def test_the_schema_is_a_valid_2020_12_schema() -> None:
     assert _validator().schema["x-schema-version"] == SCHEMA_VERSION
 
 
-def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
-    jsonschema.Draft7Validator.check_schema(_draft7_validator().schema)
+def _draft7_script() -> Any:
     script = (
         Path(__file__).resolve().parents[2] / "scripts" / "trajectory_schema_draft7.py"
     )
@@ -168,9 +168,38 @@ def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert DRAFT7_SCHEMA_PATH.read_text() == module.render(
+    return module
+
+
+def test_the_draft_7_copy_is_generated_from_the_2020_12_schema() -> None:
+    jsonschema.Draft7Validator.check_schema(_draft7_validator().schema)
+    assert DRAFT7_SCHEMA_PATH.read_text() == _draft7_script().render(
         json.loads(SCHEMA_PATH.read_text())
     ), "run autoware_carla_scenario/scripts/trajectory_schema_draft7.py"
+
+
+def test_the_draft_7_conversion_repoints_only_references() -> None:
+    literal = "#/$defs/A"
+    schema: dict[str, Any] = {
+        "$defs": {"A": {"type": "string"}},
+        "oneOf": [{"$ref": "#/$defs/A"}],
+        "discriminator": {"propertyName": "type", "mapping": {"a": "#/$defs/A"}},
+        "properties": {
+            "c": {"const": literal},
+            "e": {"enum": [literal], "default": literal, "examples": [literal]},
+            "t": {"prefixItems": [{"$ref": "#/$defs/A"}], "items": {"type": "null"}},
+        },
+    }
+    out = _draft7_script().to_draft7(schema)
+    assert out["definitions"] == {"A": {"type": "string"}}
+    assert out["oneOf"] == [{"$ref": "#/definitions/A"}]
+    assert out["discriminator"]["mapping"] == {"a": "#/definitions/A"}
+    assert out["properties"]["c"] == {"const": literal}
+    assert out["properties"]["e"] == schema["properties"]["e"]
+    assert out["properties"]["t"] == {
+        "items": [{"$ref": "#/definitions/A"}],
+        "additionalItems": {"type": "null"},
+    }
 
 
 def test_every_record_type_is_in_the_discriminator() -> None:

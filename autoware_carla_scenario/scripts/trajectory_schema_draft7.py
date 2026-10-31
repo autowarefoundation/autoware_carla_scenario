@@ -24,25 +24,21 @@ TARGET = PACKAGE / "trajectory_recorder.schema.json"
 DRAFT7_ID = "urn:autoware-carla-scenario:schema:trajectory"
 
 
-def _repoint(value: str) -> str:
-    """*value* with a JSON pointer into ``$defs`` pointing into ``definitions``.
-
-    Any string that is a URI reference (no whitespace) holding ``#/$defs/``
-    is one: a ``$ref``, but also a ``discriminator.mapping`` value or any
-    other keyword whose value is a pointer.  Prose (a description) is left
-    alone.
-    """
-    if any(c.isspace() for c in value):
-        return value
-    return value.replace("#/$defs/", "#/definitions/")
+def _repoint(pointer: str) -> str:
+    """*pointer*, a URI reference into ``$defs``, pointing into ``definitions``."""
+    return pointer.replace("#/$defs/", "#/definitions/", 1)
 
 
 def to_draft7(node: Any) -> Any:
-    """*node*, a 2020-12 schema or part of one, as draft-07 says the same."""
+    """*node*, a 2020-12 schema or part of one, as draft-07 says the same.
+
+    Only the keywords whose value is a reference are repointed -- ``$ref`` and
+    the OpenAPI ``discriminator.mapping`` values -- so a ``const``, ``enum``,
+    ``default``, ``examples`` or ``pattern`` that happens to hold ``#/$defs/``
+    keeps it.
+    """
     if isinstance(node, list):
         return [to_draft7(item) for item in node]
-    if isinstance(node, str):
-        return _repoint(node)
     if not isinstance(node, dict):
         return node
     out: dict[str, Any] = {}
@@ -53,12 +49,27 @@ def to_draft7(node: Any) -> Any:
             out[key] = DRAFT7_ID
         elif key == "$defs":
             out["definitions"] = to_draft7(value)
+        elif key == "$ref" and isinstance(value, str):
+            out[key] = _repoint(value)
+        elif (
+            key == "discriminator"
+            and isinstance(value, dict)
+            and isinstance(value.get("mapping"), dict)
+        ):
+            out[key] = {
+                **value,
+                "mapping": {
+                    tag: _repoint(ref) if isinstance(ref, str) else ref
+                    for tag, ref in value["mapping"].items()
+                },
+            }
         elif key == "prefixItems":
-            # A tuple: 2020-12's prefixItems + items: false is draft-07's
-            # items array + additionalItems: false.
+            # A tuple: 2020-12's prefixItems + items (false, or the schema of
+            # the items after the tuple) is draft-07's items array +
+            # additionalItems.
             out["items"] = to_draft7(value)
-            if node.get("items") is False:
-                out["additionalItems"] = False
+            if "items" in node:
+                out["additionalItems"] = to_draft7(node["items"])
         elif key == "items" and "prefixItems" in node:
             continue
         else:
