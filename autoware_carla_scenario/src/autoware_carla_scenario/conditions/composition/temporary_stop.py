@@ -150,7 +150,10 @@ class TemporaryStopCondition(CompositionCondition):
         If the margin range ``[s - s_margin, s + s_margin]`` stays within the
         road, a single condition is returned.  When the range overflows past
         ``s < 0`` (road start) or ``s > road_length`` (road end), additional
-        conditions for predecessor / successor roads are appended.
+        conditions for the predecessor / successor roads, and the roads beyond
+        them as far as the margin reaches, are appended
+        (:meth:`_spill_onto_roads`).  Each direction keeps its own visited set,
+        so a short ring of roads reached from both ends gets both stretches.
         """
         road_length = cls._get_road_length(od_pose.road_id)
         s_min = od_pose.s - s_margin
@@ -176,58 +179,91 @@ class TemporaryStopCondition(CompositionCondition):
 
         # --- Overflow before road start (s - margin < 0) ---
         if s_min < 0:
-            overflow = abs(s_min)
-            for pred_id, contact in cls._find_linked_roads(
-                od_pose.road_id, "predecessor"
-            ):
-                pred_length = cls._get_road_length(pred_id)
-                if contact == "end":
-                    lo = max(0.0, pred_length - overflow)
-                    hi = pred_length
-                else:
-                    lo = 0.0
-                    hi = min(overflow, pred_length)
-                conditions.append(
-                    cls._make_road_segment_condition(
-                        entity_name, pred_id, lo, hi, label=label
-                    )
-                )
-                logger.info(
-                    "  + predecessor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
-                    pred_id,
-                    lo,
-                    hi,
-                    contact,
-                    pred_length,
-                )
+            visited_before: set[str] = {od_pose.road_id}
+            conditions += cls._spill_onto_roads(
+                entity_name,
+                od_pose.road_id,
+                -s_min,
+                False,
+                visited_before,
+                label=label,
+            )
 
         # --- Overflow beyond road end (s + margin > road_length) ---
         if s_max > road_length:
-            overflow = s_max - road_length
-            for succ_id, contact in cls._find_linked_roads(
-                od_pose.road_id, "successor"
-            ):
-                succ_length = cls._get_road_length(succ_id)
-                if contact == "start":
-                    lo = 0.0
-                    hi = min(overflow, succ_length)
-                else:
-                    lo = max(0.0, succ_length - overflow)
-                    hi = succ_length
-                conditions.append(
-                    cls._make_road_segment_condition(
-                        entity_name, succ_id, lo, hi, label=label
-                    )
-                )
-                logger.info(
-                    "  + successor road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
-                    succ_id,
-                    lo,
-                    hi,
-                    contact,
-                    succ_length,
-                )
+            visited_after: set[str] = {od_pose.road_id}
+            conditions += cls._spill_onto_roads(
+                entity_name,
+                od_pose.road_id,
+                s_max - road_length,
+                True,
+                visited_after,
+                label=label,
+            )
 
+        return conditions
+
+    @classmethod
+    def _spill_onto_roads(
+        cls,
+        entity_name: Union[EntityRole, str],
+        road_id: str,
+        overflow: float,
+        past_end: bool,
+        visited: set[str],
+        *,
+        label: str,
+    ) -> list[EntityLanePositionCondition]:
+        """The stretch of *overflow* metres beyond one end of *road_id*.
+
+        *past_end* says which end the margin leaves *road_id* through: its end
+        (into its successors) or its start (into its predecessors).  Each
+        linked road is entered at its own contact point and takes what it can
+        hold from there -- ``[0, overflow]`` entered at its start,
+        ``[length - overflow, length]`` entered at its end -- and passes the
+        rest on through its other end, along every branch, until nothing is
+        left.  A map converted from Lanelet2 has roads as short as lanelets,
+        so a margin often reaches past the next road (#837).  *visited* keeps
+        a loop of roads from being walked round forever.
+        """
+        conditions: list[EntityLanePositionCondition] = []
+        direction = "successor" if past_end else "predecessor"
+        for linked_id, contact in cls._find_linked_roads(road_id, direction):
+            if linked_id in visited:
+                continue
+            visited.add(linked_id)
+            linked_length = cls._get_road_length(linked_id)
+            entered_at_start = contact == "start"
+            if entered_at_start:
+                lo = 0.0
+                hi = min(overflow, linked_length)
+            else:
+                lo = max(0.0, linked_length - overflow)
+                hi = linked_length
+            conditions.append(
+                cls._make_road_segment_condition(
+                    entity_name, linked_id, lo, hi, label=label
+                )
+            )
+            logger.info(
+                "  + %s road='%s' s=[%.1f, %.1f] (contact=%s, length=%.1f)",
+                direction,
+                linked_id,
+                lo,
+                hi,
+                contact,
+                linked_length,
+            )
+            if overflow > linked_length:
+                # Entered at its start, the margin leaves it through its end.
+                conditions += cls._spill_onto_roads(
+                    entity_name,
+                    linked_id,
+                    overflow - linked_length,
+                    entered_at_start,
+                    visited,
+                    label=label,
+                )
         return conditions
 
     @classmethod
