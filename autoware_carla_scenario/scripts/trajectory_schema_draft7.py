@@ -24,10 +24,25 @@ TARGET = PACKAGE / "trajectory_recorder.schema.json"
 DRAFT7_ID = "urn:autoware-carla-scenario:schema:trajectory"
 
 
+def _repoint(value: str) -> str:
+    """*value* with a JSON pointer into ``$defs`` pointing into ``definitions``.
+
+    Any string that is a URI reference (no whitespace) holding ``#/$defs/``
+    is one: a ``$ref``, but also a ``discriminator.mapping`` value or any
+    other keyword whose value is a pointer.  Prose (a description) is left
+    alone.
+    """
+    if any(c.isspace() for c in value):
+        return value
+    return value.replace("#/$defs/", "#/definitions/")
+
+
 def to_draft7(node: Any) -> Any:
     """*node*, a 2020-12 schema or part of one, as draft-07 says the same."""
     if isinstance(node, list):
         return [to_draft7(item) for item in node]
+    if isinstance(node, str):
+        return _repoint(node)
     if not isinstance(node, dict):
         return node
     out: dict[str, Any] = {}
@@ -38,8 +53,6 @@ def to_draft7(node: Any) -> Any:
             out[key] = DRAFT7_ID
         elif key == "$defs":
             out["definitions"] = to_draft7(value)
-        elif key == "$ref" and isinstance(value, str):
-            out[key] = value.replace("#/$defs/", "#/definitions/")
         elif key == "prefixItems":
             # A tuple: 2020-12's prefixItems + items: false is draft-07's
             # items array + additionalItems: false.

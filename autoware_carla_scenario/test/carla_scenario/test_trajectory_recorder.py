@@ -182,6 +182,49 @@ def test_every_record_type_is_in_the_discriminator() -> None:
         assert definition["properties"]["type"] == {"const": name}
 
 
+def _resolve(schema: dict, pointer: str) -> object:
+    """The node *pointer* (a local ``#/...`` JSON pointer) names in *schema*."""
+    assert pointer.startswith("#/"), pointer
+    node: object = schema
+    for token in pointer[2:].split("/"):
+        token = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list):
+            node = node[int(token)]
+        else:
+            assert isinstance(node, dict) and token in node, pointer
+            node = node[token]
+    return node
+
+
+def _pointers(node: object) -> list[str]:
+    """Every ``$ref`` and ``discriminator.mapping`` value under *node*."""
+    found: list[str] = []
+    if isinstance(node, list):
+        for item in node:
+            found += _pointers(item)
+    elif isinstance(node, dict):
+        if isinstance(node.get("$ref"), str):
+            found.append(node["$ref"])
+        discriminator = node.get("discriminator")
+        if isinstance(discriminator, dict):
+            found += list(discriminator.get("mapping", {}).values())
+        for value in node.values():
+            found += _pointers(value)
+    return found
+
+
+@pytest.mark.parametrize(
+    "path", [SCHEMA_PATH, DRAFT7_SCHEMA_PATH], ids=lambda p: p.name
+)
+def test_every_pointer_in_the_schema_resolves(path: Path) -> None:
+    schema = json.loads(path.read_text())
+    pointers = _pointers(schema)
+    mapping = list(schema["discriminator"]["mapping"].values())
+    assert mapping and set(mapping) <= set(pointers)
+    for pointer in pointers:
+        assert isinstance(_resolve(schema, pointer), dict), pointer
+
+
 def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     world = _World()
     recorder = TrajectoryRecorder(tmp_path / "out" / "s.trajectory.jsonl")
