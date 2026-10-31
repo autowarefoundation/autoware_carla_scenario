@@ -82,6 +82,9 @@ import logging
 import math
 from typing import TYPE_CHECKING, Optional
 
+from ..kinematics import Vector3
+from ..kinematics.walker_motion import WalkerVelocities, simulated_seconds
+
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
@@ -161,6 +164,9 @@ _DEFAULT_DT_S = 0.05
 
 #: Whether each episode's map has a navigation mesh, by world id.
 _NAVMESH: dict[int, bool] = {}
+#: The walkers' velocities, measured from where they stand: a walker on its
+#: controller is placed, and its ``get_velocity()`` reads 0.
+_WALKING = WalkerVelocities()
 
 
 class _Driven:
@@ -437,11 +443,9 @@ def _threat(
         reach = max(reach, ttc_s * _THREAT_SPEED_MPS + _THREAT_MARGIN_M)
     walking_x = walking_y = 0.0
     if not standing:
-        try:
-            velocity = walker.get_velocity()
+        velocity = _walking(walker, location)
+        if velocity is not None:
             walking_x, walking_y = float(velocity.x), float(velocity.y)
-        except (AttributeError, RuntimeError):
-            pass
     try:
         found = road_threat(
             walker.get_world(), location, walking_x, walking_y, distance_m, ttc_s, reach
@@ -449,6 +453,16 @@ def _threat(
     except (AttributeError, RuntimeError):
         return ""  # a world with no vehicles to ask (a test double)
     return "" if found is None else found
+
+
+def _walking(walker: "carla.Actor", location: "carla.Location") -> Optional[Vector3]:
+    """*walker*'s velocity at *location*, measured from where it stood when
+    last asked (:class:`~..kinematics.walker_motion.WalkerVelocities`), or
+    ``None`` where it cannot be read."""
+    try:
+        return _WALKING.walker(walker, simulated_seconds(walker.get_world()), location)
+    except (AttributeError, RuntimeError):
+        return None
 
 
 def _turns_back(
@@ -474,6 +488,9 @@ def _turns_back(
     turn_back = driven.turn_back
     assert turn_back is not None
     _distance, _ttc, within_m = turn_back
+    # Where it stands each tick off the kerb, for its velocity when a threat
+    # is looked for (asked again this tick, the same).
+    _walking(walker, location)
     if driven.waiting_back:
         if _kerb_wait(walker, driven, path, here, location):
             walker.apply_control(carla.WalkerControl(speed=0.0))
@@ -861,6 +878,7 @@ def killed_by_crowd(walker_id: int) -> bool:
 def release(walker_id: int) -> None:
     """Stop and destroy *walker_id*'s controller, if it has one."""
     _GIVING_WAY.pop(int(walker_id), None)
+    _WALKING.forget(int(walker_id))
     driven = _DRIVEN.pop(int(walker_id), None)
     if driven is None:
         return

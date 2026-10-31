@@ -9,6 +9,7 @@ from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import to_carla_location
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
+from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
@@ -53,7 +54,9 @@ class TimeToCollisionCondition(CompositionCondition):
     the centres :func:`~.distance_measure.separation` measures between, and
     for a pair lined up along a box axis the two ranges agree; off that axis
     ``separation``'s Euclidean gap is taken per world axis instead, so the two
-    can differ.  The velocities are the actors' own (``get_velocity``), not
+    can differ.  The velocities are the actors' own (``get_velocity``; a
+    walker's measured from where it stood when last checked, for CARLA's
+    walker controller places its walker and ``get_velocity`` reads 0), not
     their box centres': a turning actor's box centre moves a little faster or
     slower than its origin, which is ignored.  A place has no box, so only the
     source's offset and reach apply to it.  It matters more here than
@@ -100,6 +103,7 @@ class TimeToCollisionCondition(CompositionCondition):
     _edge_to_edge: bool
     _place: Optional[Vector3]
     _comparison: ScalarComparisonRule
+    _velocities: WalkerVelocities
 
     def __init__(
         self,
@@ -139,6 +143,8 @@ class TimeToCollisionCondition(CompositionCondition):
         self._comparison = ScalarComparisonRule(
             field="ttc", rule=rule, value=value, tolerance=tolerance
         )
+        # A walker's velocity, measured from where it stood when last checked.
+        self._velocities = WalkerVelocities()
 
     # ------------------------------------------------------------------
     # Introspection
@@ -170,8 +176,9 @@ class TimeToCollisionCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
-    def _measure(self, world: "carla.World") -> Optional[float]:
-        """Return the source-to-target TTC in seconds.
+    def _measure(self, world: "carla.World", elapsed: float = 0.0) -> Optional[float]:
+        """Return the source-to-target TTC in seconds (*elapsed* the
+        scenario's time, to measure a walker's velocity by).
 
         Returns ``None`` when either actor is missing, when the two are
         co-located (no direction to close along), or when the pair is not
@@ -198,10 +205,10 @@ class TimeToCollisionCondition(CompositionCondition):
             tgt = Vector3(self._place.x, self._place.y, src_loc.z)
 
         if self._coordinate_system is DistanceCoordinateSystem.LANE:
-            src_vel = Vector3.from_carla_vector3d(source.get_velocity())
+            src_vel = self._velocities.velocity(source, elapsed)
             # A place does not move, and neither does the road under it.
             tgt_vel = (
-                Vector3.from_carla_vector3d(target.get_velocity())
+                self._velocities.velocity(target, elapsed)
                 if target is not None
                 else Vector3.zero()
             )
@@ -228,9 +235,9 @@ class TimeToCollisionCondition(CompositionCondition):
             if target is not None:
                 distance = max(0.0, distance - half_extent_along(target, direction))
 
-        src_vel = Vector3.from_carla_vector3d(source.get_velocity())
+        src_vel = self._velocities.velocity(source, elapsed)
         if target is not None:
-            tgt_vel = Vector3.from_carla_vector3d(target.get_velocity())
+            tgt_vel = self._velocities.velocity(target, elapsed)
         else:
             # A place does not move, so the closing speed is the source's own
             # speed along the line of sight.  Written as a zero velocity rather
@@ -308,7 +315,7 @@ class TimeToCollisionCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the TTC satisfies the comparison rule."""
-        ttc = self._measure(world)
+        ttc = self._measure(world, elapsed)
         if ttc is None:
             return None
 

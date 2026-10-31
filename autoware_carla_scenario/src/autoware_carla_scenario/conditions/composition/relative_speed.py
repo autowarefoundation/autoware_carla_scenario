@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
-from ...kinematics import AbsoluteVelocity, RelativeVelocity
+from ...kinematics import AbsoluteVelocity, CoordinateFrame, RelativeVelocity
+from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
@@ -60,6 +61,7 @@ class RelativeSpeedCondition(CompositionCondition):
     _reference_entity_name: str
     _comparison: ScalarComparisonRule
     _direction: SpeedDirection
+    _velocities: WalkerVelocities
 
     def __init__(
         self,
@@ -81,6 +83,8 @@ class RelativeSpeedCondition(CompositionCondition):
             field="relative_speed", rule=rule, value=value, tolerance=tolerance
         )
         self._direction = direction
+        # A walker's velocity, measured from where it stood when last checked.
+        self._velocities = WalkerVelocities()
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
@@ -94,17 +98,24 @@ class RelativeSpeedCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, world: "carla.World") -> Optional[float]:
-        """Return the relative speed component, or ``None`` when unknowable."""
+    def _measure(self, world: "carla.World", elapsed: float = 0.0) -> Optional[float]:
+        """Return the relative speed component, or ``None`` when unknowable.
+
+        A walker's velocity is measured from where it stood when last checked
+        (*elapsed* the scenario's time):
+        :class:`~...kinematics.walker_motion.WalkerVelocities`.
+        """
         assert self._entity_name is not None  # noqa: S101
         entity = find_actor_by_role_name(world, self._entity_name)
         reference = find_actor_by_role_name(world, self._reference_entity_name)
         if entity is None or reference is None:
             return None
 
-        subject_velocity = AbsoluteVelocity.from_carla_vector3d(entity.get_velocity())
-        reference_velocity = AbsoluteVelocity.from_carla_vector3d(
-            reference.get_velocity()
+        subject_velocity = AbsoluteVelocity(
+            self._velocities.velocity(entity, elapsed), CoordinateFrame.CARLA_WORLD
+        )
+        reference_velocity = AbsoluteVelocity(
+            self._velocities.velocity(reference, elapsed), CoordinateFrame.CARLA_WORLD
         )
 
         if self._direction == SpeedDirection.MAGNITUDE:
@@ -124,7 +135,7 @@ class RelativeSpeedCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the relative speed satisfies the rule."""
-        component = self._measure(world)
+        component = self._measure(world, elapsed)
         if component is None:
             return None
         if not self._comparison.satisfied(component):
