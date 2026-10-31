@@ -260,6 +260,26 @@ class TestFreespaceFromTheBoxCentre:
         condition = _between(ego, npc, value=1e9)
         assert math.isclose(_ttc(condition, _world(ego, npc)), 1.0, abs_tol=0.01)
 
+    def test_overlapping_boxes_that_are_closing_are_at_zero(self) -> None:
+        """Box centres 4 m apart, reaching 4.8 m between them: no gap left."""
+        ego = _actor(
+            "Ego",
+            (0.0, 0.0, 0.0),
+            velocity=(5.0, 0.0, 0.0),
+            extent=_EXTENT,
+            box_offset=_OFFSET,
+        )
+        npc = _actor("npc1", (4.0, 0.0, 0.0), extent=_EXTENT, box_offset=_OFFSET)
+        condition = _between(ego, npc, value=1e9, edge_to_edge=True)
+        assert _ttc(condition, _world(ego, npc)) == 0.0
+
+    def test_a_receding_pair_never_fires(self) -> None:
+        ego, npc = _head_on()
+        ego.get_velocity.return_value = carla.Vector3D(-10.0, 0.0, 0.0)
+        npc.get_velocity.return_value = carla.Vector3D(10.0, 0.0, 0.0)
+        condition = _between(ego, npc, value=1e9, edge_to_edge=True)
+        assert condition.check(_world(ego, npc), 0.0) is None
+
 
 class TestConstruction:
     def test_neither_target_is_refused(self) -> None:

@@ -49,9 +49,14 @@ class TimeToCollisionCondition(CompositionCondition):
     centre.  *edge_to_edge* measures between the bounding boxes instead: the
     range and its direction are taken between the box centres -- a CARLA box
     sits at an offset from its actor's origin, a vehicle's about a metre
-    forward -- and each box's reach along that line is subtracted, exactly as
-    :func:`~.distance_measure.separation` does.  A place has no box, so only
-    the source's offset and reach apply to it.  It matters more here than
+    forward -- and each box's reach along that line is subtracted.  Those are
+    the centres :func:`~.distance_measure.separation` measures between, and
+    for a pair lined up along a box axis the two ranges agree; off that axis
+    ``separation``'s Euclidean gap is taken per world axis instead, so the two
+    can differ.  The velocities are the actors' own (``get_velocity``), not
+    their box centres': a turning actor's box centre moves a little faster or
+    slower than its origin, which is ignored.  A place has no box, so only the
+    source's offset and reach apply to it.  It matters more here than
     anywhere else: TTC is compared against a handful of seconds, so a vehicle
     length in the numerator is a large fraction of the answer.
 
@@ -66,8 +71,8 @@ class TimeToCollisionCondition(CompositionCondition):
         value: Threshold time in seconds.
         rule: Comparison operator applied to ``ttc`` vs *value*.
         edge_to_edge: Measure between the bounding boxes, from their centres,
-            rather than between the actors' locations.  This is OpenSCENARIO's ``freespace``, and it is not
-            available in the lane frame.
+            rather than between the actors' locations.  This is OpenSCENARIO's
+            ``freespace``, and it is not available in the lane frame.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
             measures the straight line; :attr:`~DistanceCoordinateSystem.LANE`
