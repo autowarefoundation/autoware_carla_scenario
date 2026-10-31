@@ -15,6 +15,7 @@ from autoware_carla_scenario import (
     ElapsedTimeCondition,
     EntityLanePositionCondition,
     OrCondition,
+    PersistentCondition,
     ScalarComparisonRule,
     ScenarioResult,
     SpeedCondition,
@@ -86,6 +87,47 @@ class TestTimeoutCondition:
         result = condition.check(world, elapsed=30.0)
         assert result is not None
         assert "30" in result.message
+
+
+def _summed_elapsed(start_tick: int, ticks: int) -> float:
+    """Elapsed time as the runner computes it on CARLA's clock.
+
+    ``elapsed_seconds`` is a running sum of the 0.05 s tick, and the runner
+    subtracts the value at the start, so a whole number of ticks can come out
+    a hair short of its exact value.
+    """
+    now, times = 0.0, []
+    for _ in range(start_tick + ticks + 1):
+        times.append(now)
+        now += 0.05
+    return times[start_tick + ticks] - times[start_tick]
+
+
+class TestDurationsOnTheSummedClock:
+    """A duration of a whole number of ticks is met on its tick (#808)."""
+
+    def test_timeout_fires_on_its_tick(self) -> None:
+        elapsed = _summed_elapsed(2, 6)
+        assert elapsed < 0.3
+        condition = TimeoutCondition(timeout_seconds=0.3, label="t")
+        result = condition.check(MagicMock(), elapsed=elapsed)
+        assert result is not None
+        assert result.passed is False
+
+    def test_timeout_still_waits_a_whole_tick_short(self) -> None:
+        condition = TimeoutCondition(timeout_seconds=0.3, label="t")
+        assert condition.check(MagicMock(), elapsed=_summed_elapsed(2, 5)) is None
+
+    def test_persistent_passes_on_its_tick(self) -> None:
+        condition = PersistentCondition(AlwaysPassCondition(), 0.3)
+        world = MagicMock()
+        start = _summed_elapsed(0, 2)
+        assert condition.check(world, elapsed=start) is None
+        end = _summed_elapsed(0, 8)
+        assert end - start < 0.3
+        result = condition.check(world, elapsed=end)
+        assert result is not None
+        assert result.passed is True
 
 
 # ---------------------------------------------------------------------------

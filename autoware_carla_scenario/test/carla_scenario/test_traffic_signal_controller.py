@@ -352,6 +352,78 @@ class TestOffsetControllers:
         assert controller.started_at == 42.0
 
 
+_TICK = 0.05
+"""CARLA's usual fixed_delta_seconds."""
+
+
+def _summed_clock(ticks: int) -> list[float]:
+    """The clock as CARLA keeps it: a running sum of the tick, float error and all."""
+    times, now = [], 0.0
+    for _ in range(ticks):
+        times.append(now)
+        now += _TICK
+    return times
+
+
+class TestTheSummedClock:
+    """Durations that are whole numbers of ticks end on the tick they should.
+
+    ``elapsed_seconds`` is a running sum of 0.05, so ``now - started`` lands a
+    hair below 1.0 often enough that a strict comparison held phases a tick
+    long and let the cycle drift (#808).
+    """
+
+    def test_whole_tick_phases_hold_exactly_their_duration(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("a", 1.0, (PhaseState(_NORTH, "green"),)),
+                Phase("b", 1.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        world = _World()
+        changes: list[float] = []
+        last: str | None = None
+        for now in _summed_clock(int(20.0 / _TICK) + 1):
+            world.now = now
+            controller.tick(world)
+            phase = controller.current_phase
+            assert phase is not None
+            if phase.name != last:
+                changes.append(now)
+                last = phase.name
+
+        lengths = [round(b - a, 6) for a, b in zip(changes, changes[1:])]
+        assert lengths == [1.0] * 20
+
+    def test_a_whole_tick_delay_starts_on_its_tick(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        first = _cycle("first")
+        second = SignalController(
+            name="second",
+            phases=(Phase("go", 5.0, (PhaseState(_EAST, "green"),)),),
+            delay_seconds=0.3,
+            reference=first,
+        )
+        world = _World()
+        times = _summed_clock(20)
+        # Start the reference on a tick whose sum carries float error, so
+        # now - started comes out just below 0.3 six ticks later.
+        start = 2
+        assert times[start + 6] - times[start] < 0.3
+        for now in times[start:]:
+            world.now = now
+            first.tick(world)
+            second.tick(world)
+            if second.current_phase is not None:
+                break
+
+        assert second.started_at == times[start + 6]
+
+
 class TestBuildingFromTheDocument:
     def test_the_declared_cycle_is_built_in_order(self) -> None:
         declared = [

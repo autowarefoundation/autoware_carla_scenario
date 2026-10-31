@@ -76,7 +76,10 @@ class PersistentCondition(BaseCondition):
         if result is not None and result.passed:
             if self._true_start is None:
                 self._true_start = elapsed
-            if elapsed - self._true_start >= self._duration:
+            # elapsed is a running sum of the tick, so a duration that is a
+            # whole number of ticks can come out a hair short of it; without
+            # the tolerance the condition would pass one tick late.
+            if elapsed - self._true_start >= self._duration - 1e-9:
                 return ScenarioResult(
                     passed=True,
                     message=(
