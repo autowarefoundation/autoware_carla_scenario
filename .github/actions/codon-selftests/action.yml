@@ -1,0 +1,65 @@
+name: Codon checker self-tests
+description: >
+  Decide whether this run takes the Codon checker's own tests (the tests marked
+  `codon_selftest`) and export the answer as CODON_SELFTEST ("true" or
+  "false"). A pull request runs them only when it changes a file the checker
+  or those tests read; every other event runs them. When the answer cannot be
+  worked out, they run.
+
+outputs:
+  run:
+    description: '"true" when the self-tests are to run, else "false"'
+    value: ${{ steps.decide.outputs.run }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide whether the checker may have changed
+      id: decide
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      # A pull request's checkout is the merge of its head into its base:
+      # HEAD^1 is the base it was merged into, so `git diff HEAD^1 HEAD` is the
+      # pull request's change. It needs `fetch-depth: 2` on the checkout; with
+      # less (or no merge commit) the self-tests run.
+      run: |
+        set -uo pipefail
+        run=true
+        reason="not a pull request"
+        if [ "${EVENT_NAME}" = "pull_request" ]; then
+          reason="could not list the pull request's changes"
+          if [ "$(git rev-list --parents -n 1 HEAD 2>/dev/null | wc -w)" -eq 3 ] \
+            && changed=$(git diff --name-only HEAD^1 HEAD); then
+            run=false
+            reason="the pull request changes nothing the checker reads"
+            # What the self-tests read beyond the package's own modules: the
+            # checker (its Python, the Codon model and the shims), the locked
+            # dependencies it runs on (Codon, mypy, typesafe-carla) and their
+            # configuration, the page they compare the model with, the
+            # scenario package template, the tests themselves and what pytest
+            # loads before them, and how CI runs them.
+            while IFS= read -r path; do
+              case "${path}" in
+                autoware_carla_scenario/src/autoware_carla_scenario/typecheck/* | \
+                uv.lock | pyproject.toml | autoware_carla_scenario/pyproject.toml | \
+                autoware_carla_scenario/docs/typecheck.md | \
+                examples/scenario_package_template/* | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_codon.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_codon_route.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_call_diagnostics.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_threading.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py | \
+                autoware_carla_scenario/test/*conftest.py | \
+                .github/workflows/ci.yml | .github/actions/*)
+                  run=true
+                  reason="the pull request changes ${path}"
+                  break
+                  ;;
+              esac
+            done <<< "${changed}"
+          fi
+        fi
+        echo "Codon checker self-tests: ${run} (${reason})"
+        echo "run=${run}" >> "${GITHUB_OUTPUT}"
+        echo "CODON_SELFTEST=${run}" >> "${GITHUB_ENV}"

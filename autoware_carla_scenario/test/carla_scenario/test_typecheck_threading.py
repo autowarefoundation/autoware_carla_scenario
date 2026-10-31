@@ -28,7 +28,9 @@ from autoware_carla_scenario.typecheck.library import package_modules
 _PACKAGE = "autoware_carla_scenario"
 _FAKE = f"{_PACKAGE}.zz_threading_check_case"
 
-pytestmark = pytest.mark.codon
+# The checker's own tests: a pull request runs them only when the checker may
+# have changed (.github/actions/codon-selftests).
+pytestmark = [pytest.mark.codon, pytest.mark.codon_selftest]
 
 needs_codon = pytest.mark.skipif(
     available_toolchain() is None, reason="no Codon compiler"
