@@ -410,6 +410,37 @@ def test_the_zone_appears_at_its_start_and_is_cleared_away_at_its_end() -> None:
     assert action.state is ActionState.COMPLETE
 
 
+def test_whole_tick_times_are_met_on_their_tick_on_a_summed_clock() -> None:
+    """CARLA's clock is a running sum of the 0.05 s tick, so tick 10 reads a
+    hair below 0.5 and tick 60 a hair below 3.0; the zone still appears and
+    is cleared away on those ticks, not one late (#819)."""
+    clock, now = [], 0.0
+    for _ in range(70):
+        clock.append(now)
+        now += 0.05
+    assert clock[10] < 0.5 and clock[60] < 3.0
+    world = _World()
+    action = ConstructionZoneAction(
+        rm.W_IN1,
+        20.0,
+        70.0,
+        SHORT,
+        start_time=0.5,
+        end_time=3.0,
+        close_lane=False,
+        clear_traffic=False,
+    )
+    placed: Optional[int] = None
+    cleared: Optional[int] = None
+    for tick, t in enumerate(clock):
+        action.tick(world, t)  # type: ignore[arg-type]
+        if placed is None and action.prop_count > 0:
+            placed = tick
+        if cleared is None and action.cleared:
+            cleared = tick
+    assert (placed, cleared) == (10, 60)
+
+
 def test_a_zone_for_good_is_cleared_away_when_the_run_ends() -> None:
     world = _World()
     action = ConstructionZoneAction(

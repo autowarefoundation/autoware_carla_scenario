@@ -24,6 +24,7 @@ from autoware_carla_scenario import (
     StandstillCondition,
     StickyCondition,
     TimeoutCondition,
+    TrajectoryTimeCondition,
 )
 from autoware_carla_scenario.coordinate.poses import OpenDrivePose
 
@@ -128,6 +129,18 @@ class TestDurationsOnTheSummedClock:
         result = condition.check(world, elapsed=end)
         assert result is not None
         assert result.passed is True
+
+    def test_trajectory_time_is_reached_on_its_tick(self) -> None:
+        # Ten summed ticks come out a hair short of 0.5 (#819).
+        elapsed = _summed_elapsed(0, 10)
+        assert elapsed < 0.5
+        result = TrajectoryTimeCondition(0.5).check(MagicMock(), elapsed=elapsed)
+        assert result is not None
+        assert result.passed is True
+
+    def test_trajectory_time_still_waits_a_whole_tick_short(self) -> None:
+        condition = TrajectoryTimeCondition(0.5)
+        assert condition.check(MagicMock(), elapsed=_summed_elapsed(0, 9)) is None
 
 
 # ---------------------------------------------------------------------------
