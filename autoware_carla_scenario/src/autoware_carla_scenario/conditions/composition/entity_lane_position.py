@@ -11,6 +11,7 @@ from ...coordinate.transform import (
     on_lanelet,
     project_onto_lanelet,
     project_onto_road,
+    road_traffic_rule,
     to_opendrive,
 )
 from ...entity_role import EntityRole
@@ -334,17 +335,40 @@ class EntityLanePositionCondition(CompositionCondition):
 LANE_RELATIONS: tuple[str, ...] = ("same", "left", "right", "any")
 
 
-def beside_lane_id(lane_id: int, side: str) -> int:
+def beside_lane_id(lane_id: int, side: str, traffic_rule: str = "RHT") -> int:
     """The OpenDRIVE lane on *side* (``"left"`` / ``"right"``) of *lane_id*.
 
-    Left of a negative (right-hand) lane is towards the centre, ``id + 1``; a
-    positive lane runs against the reference line, so the offsets flip.  The
-    lane a lane change *side* from *lane_id* ends on.
+    The lane a lane change *side* from *lane_id* ends on, left and right as
+    seen by a vehicle driving the lane.  OpenDRIVE numbers lanes increasing to
+    the left of the road's reference line, looking along it (``s``
+    increasing), and *traffic_rule* -- the road's ``rule``
+    (:func:`~autoware_carla_scenario.coordinate.road_traffic_rule`), ``"RHT"``
+    or ``"LHT"`` -- says which lanes drive along it: the negative ones in
+    right-hand traffic, the positive ones in left-hand traffic.  A lane driven
+    along the reference line has ``id + 1`` on its left; one driven against
+    it, ``id - 1``.  The centre lane, ``0``, is no lane to drive on and is
+    stepped over: left of ``-1`` in right-hand traffic is ``1``, across the
+    centre line.
+
+    The sign of *lane_id* alone does not decide it: on a left-hand-traffic
+    road it means the opposite of what it does on a right-hand one.
+
+    Raises:
+        ValueError: If *side* is not ``"left"`` or ``"right"``, or
+            *traffic_rule* not ``"RHT"`` or ``"LHT"``, or *lane_id* is
+            ``0``.
     """
     if side not in ("left", "right"):
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-    delta = 1 if side == "left" else -1
-    return lane_id + delta if lane_id < 0 else lane_id - delta
+    if traffic_rule not in ("RHT", "LHT"):
+        raise ValueError(f"traffic_rule must be 'RHT' or 'LHT', got {traffic_rule!r}")
+    if lane_id == 0:
+        raise ValueError("lane 0 is the centre lane, which has no side to change to")
+    along_reference_line = (lane_id < 0) == (traffic_rule == "RHT")
+    # Towards higher ids is left looking along the reference line.
+    step = 1 if (side == "left") == along_reference_line else -1
+    beside = lane_id + step
+    return beside + step if beside == 0 else beside
 
 
 class EntityLaneOfCondition(EntityLanePositionCondition):
@@ -358,7 +382,8 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
       Wider than the lanelet the position is on, which ends where the lanelet
       does.
     * ``left`` / ``right``: the lane beside it, where a lane change from the
-      position ends (:func:`beside_lane_id`).  The lane need not exist: a
+      position ends (:func:`beside_lane_id`, by the road's traffic rule).
+      The lane need not exist: a
       scenario asserting that a change is *refused* names one that does not.
     * ``any``: any lane of the road under the position
       (:meth:`EntityLanePositionCondition.anywhere_on_road`).
@@ -389,7 +414,10 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
             raise ValueError(f"lane must be one of {LANE_RELATIONS}, got {lane!r}")
         address = to_opendrive(position)
         if lane in ("left", "right"):
-            address = replace(address, lane_id=beside_lane_id(address.lane_id, lane))
+            beside = beside_lane_id(
+                address.lane_id, lane, road_traffic_rule(address.road_id)
+            )
+            address = replace(address, lane_id=beside)
         super().__init__(entity_name, address, label=label)
         self._relation = lane
         if lane == "any":

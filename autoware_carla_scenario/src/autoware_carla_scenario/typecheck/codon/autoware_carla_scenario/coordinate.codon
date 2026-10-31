@@ -151,6 +151,10 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     raise NotImplementedError()
 
 
+def road_traffic_rule(road_id: str) -> str:
+    raise NotImplementedError()
+
+
 def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     raise NotImplementedError()
 

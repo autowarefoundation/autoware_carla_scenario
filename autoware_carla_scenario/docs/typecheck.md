@@ -707,7 +707,8 @@ What `test_typecheck_model.py` compares, model by model:
 - **Every name `__init__.codon` exports**, with the object of the same name
   in the package.
 - **`coordinate.codon`**: beside its exports, `lanelet_length`, `on_lanelet`,
-  `project_onto_road`, `project_onto_lanelet`, `get_stop_line_linestrings`,
+  `project_onto_road`, `road_traffic_rule`, `project_onto_lanelet`,
+  `get_stop_line_linestrings`,
   `get_stop_line_linestrings_with_following`,
   `find_traffic_lights_for_lanelet2_id`, `get_signal_ids_for_controller`,
   `to_map_frame`, `MapManager`, `map_origin`, `resolve_projector`,

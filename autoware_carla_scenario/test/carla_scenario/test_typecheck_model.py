@@ -395,6 +395,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
             "on_lanelet",
             "project_onto_lanelet",
             "project_onto_road",
+            "road_traffic_rule",
             "route_road_ids",
         )
     },
