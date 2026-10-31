@@ -74,7 +74,8 @@ def green_together(phases: list[str], index: int) -> set[int]:
 
 def permissive_links(phases: list[str], switched: set[int]) -> set[int]:
     """The links of *switched* that some phase of *phases* shows as a
-    permissive green (``g``)."""
+    permissive green (``g``), also one that is ``G`` in another phase (a
+    protected, then permissive turn): a CARLA Green does not say which."""
     permissive: set[int] = set()
     for state in phases:
         for index in switched:
