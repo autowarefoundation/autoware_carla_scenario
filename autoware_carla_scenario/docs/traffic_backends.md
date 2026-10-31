@@ -214,9 +214,12 @@ built. Each vehicle draws once, when it is first put on autopilot
     - The speed drivers aim for, as a multiple of the speed limit: `1.0` drives at
       the limit, `0.8` 20 % under it, `1.1` 10 % over it.
     - `traffic_manager`: `vehicle_percentage_speed_difference(vehicle, (1 - draw) * 100)`.
-      Unset, the TrafficManager's own default (30 % under the limit). A speed
-      set on one vehicle wins over it: a background vehicle's spawn speed, or a
-      `SetSpeedAction`.
+      Unset, the TrafficManager's own default, which the backend sets as it
+      prepares the TrafficManager (`global_percentage_speed_difference(0)`,
+      LibCarla's own): the limit. The TrafficManager keeps a percentage or a
+      speed for a vehicle, not both, the one given last: a speed set on it
+      (a background vehicle's spawn speed, a `SetSpeedAction`) drops its
+      percentage, and a new draw (`TrafficParametersAction`) drops its speed.
     - `sumo`: the vehicle's speed factor (`setSpeedFactor`). Unset, SUMO's own
       draw around 1.0 (spread 0.1).
 
@@ -753,15 +756,20 @@ know where every actor is whatever the fog. With
 `traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
 the speed it stops from within what its driver sees, worked out with SUMO's
 default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
-The TrafficManager takes a speed as a percentage under the road's limit, so
-each vehicle is given the one that holds it there
-(`vehicle_percentage_speed_difference`), never less than its own
-`speed_factor`'s, worked out again every second and whenever the visibility
-changes; when the weather lifts, or the field is turned off during the run
-(`TrafficParametersAction`), each gets its own back. A vehicle a scenario gave
-a speed of its own (`set_desired_speed`) keeps it. Off by default, so a
-scenario's vehicles drive as they always did; unset, the backend logs the
-speed it would hold traffic to.
+A vehicle is never held faster than it drives anyway. One given a speed of
+its own (`set_desired_speed`, a `SetSpeedAction`, a background vehicle's spawn
+speed) is given the lesser of that and the sight speed (`set_desired_speed`),
+so a stop stays a stop, and a speed the scenario sets while it is held is held
+too. Any other is given the percentage under its road's limit that holds it
+there (`vehicle_percentage_speed_difference`), never less than its own
+`speed_factor`'s (or the TrafficManager's default, 0 %), worked out again
+every second and whenever the visibility changes. Each is given its own the
+same way: the TrafficManager keeps a percentage or a speed for a vehicle, not
+both, and either drops the other (LibCarla's `Parameters.cpp`). When the
+weather lifts, or the field is turned off during the run
+(`TrafficParametersAction`), each gets its own back: its speed, or its
+percentage. Off by default, so a scenario's vehicles drive as they always
+did; unset, the backend logs the speed it would hold traffic to.
 
 The road's grip is CARLA's vehicle physics alone (`EnvironmentAction`'s tire
 friction scales every vehicle's wheels, the TrafficManager's as well); the

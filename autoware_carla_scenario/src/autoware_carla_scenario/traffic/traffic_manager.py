@@ -98,15 +98,22 @@ _TARGET_DEG: dict[TurnDirection, float] = {
 
 
 #: How often the vehicles held to what their drivers see are worked out again,
-#: seconds of simulated time: each is held as a percentage under its road's
-#: speed limit, which changes along its route.
+#: seconds of simulated time: one held as a percentage under its road's speed
+#: limit is held to a limit that changes along its route.
 SIGHT_UPDATE_S: float = 1.0
 #: How much a percentage held to sight may differ from the one sent last, and
 #: still not be sent again: each is an RPC.
 _SIGHT_TOLERANCE_PCT: float = 0.5
-#: The TrafficManager's own percentage under the speed limit, which a vehicle
-#: without a speed factor of its own drives at (and is given back).
-TM_DEFAULT_SPEED_DIFFERENCE_PCT: float = 30.0
+#: The same for a speed held to sight, km/h.
+_SIGHT_TOLERANCE_KMH: float = 0.5
+#: The TrafficManager's percentage under the speed limit for every vehicle
+#: with neither a percentage nor a speed of its own: what such a vehicle
+#: drives at, and is given back after a hold to sight.  LibCarla's own
+#: default is 0 (``trafficmanager/Constants.h``:
+#: ``INITIAL_PERCENTAGE_SPEED_DIFFERENCE``; ``Parameters.h``:
+#: ``global_percentage_difference_from_limit``), and :meth:`prepare` sets it
+#: (``global_percentage_speed_difference``), so it holds whatever the build.
+TM_DEFAULT_SPEED_DIFFERENCE_PCT: float = 0.0
 
 #: The blueprint a background vehicle gets when none is asked for: one CARLA
 #: 0.9 and 0.10 both ship.
@@ -267,7 +274,9 @@ class TrafficManagerBackend(TrafficBackend):
     _drawn: set[int]
     _autopiloted: dict[int, "carla.Actor"]
     _speed_differences: dict[int, float]
+    _exact_kmh: dict[int, float]
     _held: dict[int, float]
+    _sight_kmh: float
     _sight_due: float
     _kept: dict[int, _Kept]
     _desired_mps: dict[int, float]
@@ -315,11 +324,25 @@ class TrafficManagerBackend(TrafficBackend):
         self._visibility = None
         #: Every vehicle put on autopilot here, by actor id.
         self._autopiloted = {}
+        # The TrafficManager keeps a percentage under the limit or an exact
+        # speed for a vehicle, not both: each call drops the other, and a
+        # vehicle with neither drives at the global percentage
+        # (LibCarla's ``Parameters.cpp``: ``SetPercentageSpeedDifference``,
+        # ``SetDesiredSpeed``, ``GetVehicleTargetVelocity``).  Its own is the
+        # one given last, and an actor id is in one of these at the most.
         #: Actor id -> the percentage under the speed limit its own speed
-        #: factor drew; a vehicle without one drives at the TrafficManager's.
+        #: factor drew, in force; with neither, it drives at
+        #: :data:`TM_DEFAULT_SPEED_DIFFERENCE_PCT`.
         self._speed_differences = {}
-        #: Actor id -> the percentage it is held to by what its driver sees.
+        #: Actor id -> the speed (km/h) it was given (``set_desired_speed``,
+        #: a background vehicle's spawn speed), in force.
+        self._exact_kmh = {}
+        #: Actor id -> what it is held to by what its driver sees: a speed
+        #: (km/h) for one with a speed in :attr:`_exact_kmh`, else a
+        #: percentage under the limit.
         self._held = {}
+        #: The speed (km/h) vehicles are held to by sight; negative: none.
+        self._sight_kmh = -1.0
         #: The simulated time the vehicles held to sight are worked out again.
         self._sight_due = 0.0
         #: Each vehicle's parameter draws, reseeded by prepare(); the actors
@@ -365,6 +388,9 @@ class TrafficManagerBackend(TrafficBackend):
             return
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
+        # What a vehicle with no speed of its own drives at, and is given back
+        # after a hold to sight: LibCarla's default, set rather than assumed.
+        tm.global_percentage_speed_difference(TM_DEFAULT_SPEED_DIFFERENCE_PCT)
         # Each vehicle's draws, from the run's seed: the same seed, the same
         # drivers, in the order the vehicles are put on autopilot.
         self._draws = None
@@ -402,12 +428,15 @@ class TrafficManagerBackend(TrafficBackend):
         ``follow_visibility: true`` each vehicle it drives is held to the
         speed it stops from within the visibility the run's weather set
         (:func:`~autoware_carla_scenario.visibility.sight_speed`, for SUMO's
-        default car's reaction and braking): as a percentage under its road's speed limit, never less than its own
-        speed factor's, worked out again every :data:`SIGHT_UPDATE_S` and
-        whenever the visibility changes.  A vehicle a scenario
-        gave a speed of its own (``set_desired_speed``) keeps that.  Without
-        it, the visibility is only logged, with the speed it would hold a car
-        to.
+        default car's reaction and braking), never faster than it drives
+        anyway, worked out again every :data:`SIGHT_UPDATE_S` and whenever the
+        visibility changes.  A vehicle given a speed of its own
+        (``set_desired_speed``, a background vehicle's spawn speed) is given
+        the lesser of that and the sight speed, so a stop stays a stop; any
+        other, a percentage under its road's speed limit, never less than its
+        own speed factor's.  Released, each gets its own back: its speed, or
+        its percentage.  Without ``follow_visibility``, the visibility is only
+        logged, with the speed it would hold a car to.
         """
         self._keep_scenario_vehicles(world, elapsed)
         seen = world_visibility(episode_of(world))
@@ -422,6 +451,7 @@ class TrafficManagerBackend(TrafficBackend):
         if follows and seen is not None:
             limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
         if limit_kmh < 0.0 and len(self._held) == 0:
+            self._sight_kmh = limit_kmh
             return
         if follows and not changed and elapsed < self._sight_due:
             return
@@ -429,6 +459,7 @@ class TrafficManagerBackend(TrafficBackend):
         tm = self._require_tm("follow_visibility")
         if tm is None:
             return
+        self._sight_kmh = limit_kmh
         for actor_id, actor in list(self._autopiloted.items()):
             if not actor.is_alive:
                 # Destroyed since it was put on autopilot: forgotten.
@@ -446,27 +477,44 @@ class TrafficManagerBackend(TrafficBackend):
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
     ) -> None:
-        """Hold *actor* to *limit_kmh*, as a percentage under its road's
-        speed limit; a negative *limit_kmh* gives it its own back."""
-        own = TM_DEFAULT_SPEED_DIFFERENCE_PCT
-        if actor.id in self._speed_differences:
-            own = self._speed_differences[actor.id]
+        """Hold *actor* to *limit_kmh*, never faster than its own speed; a
+        negative *limit_kmh* gives it its own back.
+
+        One with a speed of its own (:attr:`_exact_kmh`) is given a speed:
+        a percentage would drop it in the TrafficManager.  Any other is given
+        a percentage under its road's speed limit, from its own.
+        """
+        actor_id = int(actor.id)
         vehicle = _vehicle(actor)
-        wanted = own
-        if limit_kmh >= 0.0:
-            road_kmh = float(vehicle.get_speed_limit())
-            if road_kmh > 0.0:
-                wanted = max(own, 100.0 * (1.0 - limit_kmh / road_kmh))
-        if actor.id in self._held:
-            if abs(self._held[actor.id] - wanted) < _SIGHT_TOLERANCE_PCT:
+        exact = actor_id in self._exact_kmh
+        if exact:
+            own = self._exact_kmh[actor_id]
+            wanted = own
+            if limit_kmh >= 0.0:
+                wanted = min(own, limit_kmh)
+            tolerance = _SIGHT_TOLERANCE_KMH
+        else:
+            own = self._speed_differences.get(actor_id, TM_DEFAULT_SPEED_DIFFERENCE_PCT)
+            wanted = own
+            if limit_kmh >= 0.0:
+                road_kmh = float(vehicle.get_speed_limit())
+                if road_kmh > 0.0:
+                    wanted = max(own, 100.0 * (1.0 - limit_kmh / road_kmh))
+            tolerance = _SIGHT_TOLERANCE_PCT
+        if actor_id in self._held:
+            # Its own back exactly, however near the hold was to it.
+            if wanted != own and abs(self._held[actor_id] - wanted) < tolerance:
                 return
         elif wanted == own:
             return  # never held, and not to be
-        tm.vehicle_percentage_speed_difference(vehicle, wanted)
-        if wanted == own:
-            del self._held[actor.id]
+        if exact:
+            tm.set_desired_speed(vehicle, wanted)
         else:
-            self._held[actor.id] = wanted
+            tm.vehicle_percentage_speed_difference(vehicle, wanted)
+        if wanted == own:
+            del self._held[actor_id]
+        else:
+            self._held[actor_id] = wanted
 
     def _log_sight(self, seen: Optional[float], follows: bool) -> None:
         """Say how far drivers see now, and what that does to the traffic."""
@@ -511,7 +559,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._visibility = None
         self._autopiloted = {}
         self._speed_differences = {}
+        self._exact_kmh = {}
         self._held = {}
+        self._sight_kmh = -1.0
         self._sight_due = 0.0
         self._drawn = set()
         self._draws = None
@@ -586,7 +636,7 @@ class TrafficManagerBackend(TrafficBackend):
             self._autopilot(actor, keep=False)
         tm = self._require_tm("spawn_background")
         if tm is not None:
-            tm.set_desired_speed(_vehicle(actor), max(speed_kmh, 1.0))
+            self._give_speed(tm, actor, max(speed_kmh, 1.0))
         return handle
 
     def background_vehicles(
@@ -760,7 +810,7 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        tm.set_desired_speed(_vehicle(actor), speed_kmh)
+        self._give_speed(tm, actor, speed_kmh)
         logger.debug(
             "%s: desired speed set to %.1f km/h", _entity_name(entity), speed_kmh
         )
@@ -773,6 +823,30 @@ class TrafficManagerBackend(TrafficBackend):
             if kept.leading_out and approach is not None:
                 leading: FinalApproach = approach
                 leading.set_speed(speed_kmh / 3.6)
+
+    def _give_speed(
+        self, tm: "carla.TrafficManager", actor: "carla.Actor", speed_kmh: float
+    ) -> None:
+        """Give *actor* *speed_kmh* of its own, under the sight speed it is
+        held to if it is (:meth:`tick`): the hold never raises it, and lifted,
+        gives this back."""
+        actor_id = int(actor.id)
+        # The TrafficManager drops the vehicle's percentage for this speed.
+        self._exact_kmh[actor_id] = speed_kmh
+        if actor_id in self._speed_differences:
+            del self._speed_differences[actor_id]
+        if actor_id in self._held:
+            del self._held[actor_id]
+        sent = speed_kmh
+        if (
+            self._sight_kmh >= 0.0
+            and speed_kmh > self._sight_kmh
+            and actor_id in self._autopiloted
+            and actor_id not in self._released
+        ):
+            sent = self._sight_kmh
+            self._held[actor_id] = sent
+        tm.set_desired_speed(_vehicle(actor), sent)
 
     def turn_at_junction(
         self,
@@ -1052,11 +1126,21 @@ class TrafficManagerBackend(TrafficBackend):
             factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
             difference = (1.0 - factor) * 100.0
             tm.vehicle_percentage_speed_difference(vehicle, difference)
-            # Its own, which a hold to sight never drives it faster than;
-            # held, it is held again from this at the next update.
-            self._speed_differences[actor.id] = difference
-            if actor.id in self._held:
-                del self._held[actor.id]
+            # Its own, which a hold to sight never drives it faster than: the
+            # TrafficManager drops the speed it was given for it.
+            actor_id = int(actor.id)
+            self._speed_differences[actor_id] = difference
+            if actor_id in self._exact_kmh:
+                del self._exact_kmh[actor_id]
+            if actor_id in self._held:
+                del self._held[actor_id]
+            if (
+                self._sight_kmh >= 0.0
+                and actor_id in self._autopiloted
+                and actor_id not in self._released
+            ):
+                # Held, it is held again from this at once.
+                self._hold_to_sight(tm, actor, self._sight_kmh)
         min_gap = parameters.min_gap_m
         if min_gap is not None:
             tm.distance_to_leading_vehicle(

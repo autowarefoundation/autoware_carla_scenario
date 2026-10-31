@@ -303,10 +303,13 @@ def test_the_traffic_manager_without_parameters_sets_nothing_more() -> None:
     backend = TrafficManagerBackend(client=client)
     backend.prepare(TrafficContext(client=client, random_seed=1))
     backend.start(_World([_Actor(1)]))
+    # The global percentage is LibCarla's own default (0), set, not assumed.
     assert {name for name, _ in client.tm.calls} == {
         "set_synchronous_mode",
         "set_random_device_seed",
+        "global_percentage_speed_difference",
     }
+    assert client.tm.called("global_percentage_speed_difference") == [(0.0,)]
     assert "vehicles" not in backend.describe()
 
 
