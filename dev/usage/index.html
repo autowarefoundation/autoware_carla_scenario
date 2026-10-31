@@ -4312,17 +4312,30 @@ that file is removed. It needs the Rerun SDK of the converter's version:</p>
 <p>Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
 a camera frame is its JPEG (<code>driver.image_quality</code>). A merge that fails keeps
 <code>{ScenarioName}.sensors.rrd</code> beside the recording (logged; not a failed
-conversion). The two cannot be opened together instead: the viewer registers a
-file by its recording id, and the second replaces the first.</p>
+conversion); converting the run again (below) merges it. The two cannot be
+opened together instead: the viewer registers a file by its recording id, and
+the second replaces the first.</p>
 <p>A run made without it (or by a version before it) can be converted afterwards,
 the same way:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Every run of a session (a sweep's directory works the same), or one log:</span>
 <a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12
 <a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
 </code></pre></div>
-<p>or from Python, <code>autoware_carla_scenario.rerun.convert_outputs(path)</code>. The
-converter reads nothing but the log and the map files the log names, so it
-runs anywhere, without CARLA. The CARLA recording (<code>{ScenarioName}.log</code>) is
+<p>or from Python, <code>autoware_carla_scenario.rerun.convert_outputs(path)</code>. It also
+converts a run again (with <code>--strict</code>, or a newer converter), and keeps the
+sensors the run recorded:</p>
+<ul>
+<li>a <code>{ScenarioName}.sensors.rrd</code> left beside the log (a merge that failed) is
+  merged into the new recording and removed, as during a run;</li>
+<li>the sensors in a <code>{ScenarioName}.rrd</code> it replaces (<code>world/lidar/**</code>,
+  <code>world/ego/pose/cameras/**</code>) are carried over into the new one. That needs
+  the Rerun SDK's CLI (<code>rerun-lidar</code> extra); without it, or if it fails, the
+  old recording is left as it was and reported as <code>[SKIPPED]</code> (exit status 1).
+  <code>--overwrite</code> (<code>overwrite=True</code>) replaces it anyway, without its sensors.</li>
+</ul>
+<p>A log that fails to convert leaves the recording it would have replaced as it
+was. The converter reads nothing but the log and the map files the log names,
+so it runs anywhere, without CARLA. The CARLA recording (<code>{ScenarioName}.log</code>) is
 still written: CARLA's own replayer (<code>client.replay_file()</code>) plays it back on a
 server running the same map.</p>
 <p><code>video.*</code> settings (<code>video.enabled</code>, <code>video.width</code>, <code>video.height</code>) are
@@ -5693,7 +5706,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 02:41:58 UTC"><span class="timeago" datetime="2026-10-31T02:41:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 02:41:58 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 20:51:44 UTC"><span class="timeago" datetime="2026-10-31T20:51:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 20:51:44 UTC">2026-10-31</span>
   </span>
 
     
