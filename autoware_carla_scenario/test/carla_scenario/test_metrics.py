@@ -384,6 +384,21 @@ def test_a_turned_box_is_turned() -> None:
     assert _read(MIN_DISTANCE_TO_OBSTACLE_M, _world(ahead)) == pytest.approx(0.1)
 
 
+def test_a_road_user_parked_under_the_map_is_out_of_the_scene() -> None:
+    """Hidden road users are parked 500 m under the map, the ego may drive
+    right over one (#844): no collision, and no obstacle."""
+    parked = _car(2, (3.0, 0.0))
+    parked._at.z = -500.0
+    walker = _Actor(3, "walker.pedestrian.0001", (0.0, 1.0), extent=(0.3, 0.3))
+    walker._at.z = -499.0
+
+    assert set(_collisions(_world(parked, walker)).values()) == {0.0}
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, _world(parked, walker)) is None
+    # Above the line it is a road user again.
+    parked._at.z = -50.0
+    assert _read(COLLISION_ANY, _world(parked)) == 1.0
+
+
 def test_props_are_not_road_users() -> None:
     prop = _Actor(2, "static.prop.barrel", (1.0, 0.0))
 

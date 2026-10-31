@@ -160,13 +160,22 @@ jobs:
         key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
         restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
+    # The library compile builds every checked module at once and is the
+    # largest Codon process of the suite. Run beside the other workers' Codon
+    # compiles it outgrew the arm64 runner, which was shut down at ~94 %
+    # every time, so it runs alone first and the rest runs in parallel.
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
         MARKERS: ${{ env.CODON == 'true' && 'not slow' || 'not slow and not codon' }}
+        LIBRARY_COMPILE: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_the_checked_modules_compile
       run: |
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}"
+        if [ "${CODON}" = "true" ]; then
+          uv run pytest -v --tb=short -o addopts= "${LIBRARY_COMPILE}"
+        fi
+        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}" \
+          --deselect "${LIBRARY_COMPILE}"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache.

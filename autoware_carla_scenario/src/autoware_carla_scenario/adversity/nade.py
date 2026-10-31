@@ -254,7 +254,10 @@ class ImportanceSampler:
 
     def cooling(self, elapsed: float) -> bool:
         """Whether *elapsed* is within the cooldown of the last sample."""
-        return elapsed - self._sampled_at < self.settings.cooldown
+        # The scenario clock is a running sum of the tick, so a cooldown of a
+        # whole number of ticks comes out a hair short of it on the tick it
+        # ends; without the tolerance the next sample would be a tick late.
+        return elapsed - self._sampled_at < self.settings.cooldown - 1e-9
 
     def step(
         self,

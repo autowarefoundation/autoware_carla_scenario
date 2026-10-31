@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
+from ..authoring._builders_generated import OVERRIDING_ACTIONS
 from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
 from ..trajectory.authoring import (
@@ -183,6 +184,9 @@ def create_app(
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,
+        # The actions whose card offers to override a running action: those
+        # that command an entity's control domains.
+        overriding_actions=OVERRIDING_ACTIONS,
         phase_help=registry.PHASE_HELP,
         # The colours a phase may set, from the one list the runtime and the
         # validator both hold to.

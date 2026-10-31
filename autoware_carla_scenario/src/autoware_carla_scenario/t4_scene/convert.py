@@ -34,6 +34,7 @@ import orjson
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
+from ..utils.clearance import _HIDDEN_BELOW_M
 from ._proto import t4_scene_pb2 as pb
 from .grid import indicator_at, is_ego, on_scene, scene_stem, step_frames
 from .map_resource import map_resource
@@ -710,6 +711,9 @@ def _fill_annotations(
             [int(i) in others and log.on_scene(int(i), carla_frame) for i in ids],
             dtype=bool,
         )
+        # A road user parked under the map (hidden; a trajectory entity's
+        # hiding records no despawn) is out of the scene.
+        keep &= states[:, 3] >= _HIDDEN_BELOW_M
         origins = frame.positions(states[:, 1:4])
         centre = ego_origins[row]
         if max_distance_m is not None and centre is not None:

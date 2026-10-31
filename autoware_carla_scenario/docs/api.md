@@ -228,6 +228,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `MapManager` | Singleton owning the loaded `LaneletMap`, `pyxodr` road network, MGRS offset, and z offset. |
 | `to_carla_world`, `to_carla_location`, `to_lanelet2`, `to_opendrive` | Pose conversion entry points (overload by input frame). |
 | `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
+| `road_traffic_rule` | An OpenDRIVE road's traffic rule, `"RHT"` or `"LHT"` (its `rule` attribute, `"RHT"` where unset). |
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
 | `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`. |
 | `lanelets_ahead` | A lanelet and the lanelets that follow it in the routing graph (no lane changes, every branch), up to a distance: the lanes a vehicle keeps to without changing lanes. |

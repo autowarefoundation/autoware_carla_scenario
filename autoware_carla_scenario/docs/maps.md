@@ -98,7 +98,25 @@ directories (`map.directory`) go through the same file checks.
 
 `map_projector_info.yaml` names the projection the map's lat/lon is read
 with, and every loader in this framework -- the run's `MapManager`, the
-sweeper, the editor's preview, the ODD route check -- reads it the same way.
+sweeper, the editor's preview, the ODD route check -- reads it the same way,
+and the way Autoware does:
+
+| `projector_type` | Read with |
+| --- | --- |
+| `MGRS` | `mgrs` (`MGRSProjector`) |
+| `LocalCartesianUTM` | `utm` (`UtmProjector` at `map_origin`) |
+| `LocalCartesian` | `local_cartesian` (`LocalCartesianProjector` at `map_origin`) |
+| `TransverseMercator` | `transverse_mercator` (`TransverseMercatorProjector` at `map_origin`) |
+| `Local` | `local_xy` (each node's local tags; see below) |
+
+`LocalCartesianUTM` is read through UTM, not a local tangent plane, despite
+its name: the two place a city-sized map tens of metres apart.
+
+The projector is anchored at the whole `map_origin` -- latitude, longitude
+and `altitude` -- as Autoware's `get_lanelet2_projector()` anchors it. Only
+`LocalCartesian` uses the altitude: it measures every z from it, so near an
+origin at 40 m a node's z, and the map-frame poses sent to Autoware, are its
+`ele` less 40 m. The other projections ignore it.
 
 A `projector_type: Local` map stores its map frame in each node's `local_x` and
 `local_y` tags (and `local_z`, when it has one), which is what Autoware's own

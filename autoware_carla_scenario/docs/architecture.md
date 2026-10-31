@@ -537,6 +537,7 @@ classDiagram
     class EnvironmentAction
     class TurnAction
     class WalkStraightAction
+    class PlayMotionAction
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
@@ -546,6 +547,7 @@ classDiagram
     BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
     BaseAction <|-- WalkStraightAction
+    BaseAction <|-- PlayMotionAction
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
@@ -606,6 +608,48 @@ objects build on this lifecycle: see
 `ActionStateCondition` observes these states, which is what lets one actor react
 to another *finishing* a manoeuvre rather than to the command having gone out
 (`done` only reports the latter).
+
+**Control domains:**
+
+An action that commands an entity takes control of one or more of its
+**control domains**, OpenSCENARIO's four (`ControlDomain`, in
+`autoware_carla_scenario.control_domain`): *longitudinal* (how fast it goes),
+*lateral* (where across it goes), *lighting* and *animation*. Longitudinal and
+lateral together are its movement (`MOVEMENT`).
+
+| Action | Domains of its entity |
+|---|---|
+| `SetSpeedAction` | longitudinal |
+| `LaneChangeAction`, `TurnAction` | lateral |
+| `TurnIndicatorAction` | lighting |
+| `WalkStraightAction` | longitudinal, lateral |
+| `RoutingAction`, `follow` / `position` | longitudinal, lateral |
+| `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |
+| The adversarial actions | longitudinal, lateral |
+
+The domains are taken as the action fires, before `execute` runs. An action
+that runs on (it has an `until`, or reissues its command) holds them until its
+run ends (`endTransition`, or `close()`); one that is over the moment it is
+commanded holds them for that tick alone. An action that fires to command a
+domain another action holds raises `ControlConflictError`, naming both, and
+commands nothing: the run ends in error. So two speed commands to one vehicle
+in the same tick, or a `SetSpeedAction` while a `WalkStraightAction` that turns
+back is still watching, are errors, while a `LaneChangeAction` beside a running
+`SetSpeedAction` is not.
+
+Whether that is an error is the newer action's to say, one action at a time.
+An action built with `overrides=True` (in the Scenario Editor, its card's
+*Override a running action*) takes the domain over instead, as OpenSCENARIO has every action do (*Actions
+at runtime*): the action holding it is stopped -- it goes to `completeState`,
+OpenSCENARIO's stop transition -- and gives back every domain it held. The
+default is `False`: actions fighting over an
+entity say two things at once, and which one CARLA would end up doing is an
+accident of the tick order.
+
+A post-tick action and the pre-tick action of the next loop are handed the same
+time and act on the same simulation step, so they share a tick. The holds are
+process-wide, like the entity registry, and the runner forgets them as each
+scenario is set up.
 
 **Tick timing:**
 

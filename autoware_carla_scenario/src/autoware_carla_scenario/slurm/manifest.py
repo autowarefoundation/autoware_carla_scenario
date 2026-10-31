@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .scripts import BatchPaths
+from .stems import config_key, sequential_stems
 
 __all__ = [
     "MANIFEST_VERSION",
@@ -34,6 +35,7 @@ __all__ = [
     "RUN_FILE_SUFFIXES",
     "BatchLayout",
     "config_files",
+    "config_key",
     "file_sha256",
     "resubmit_target",
     "read_json",
@@ -73,14 +75,6 @@ def file_sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def config_key(prefix: str, key: Any) -> str:
-    """The name of *key* under *prefix* in a config, as the worker reports a
-    difference (``a.b``, ``a.list[2]``)."""
-    if isinstance(key, int):
-        return f"{prefix}[{key}]"
-    return f"{prefix}.{key}" if prefix else str(key)
 
 
 def config_files(
@@ -153,23 +147,6 @@ def write_json(path: Path, data: Any) -> None:
 def read_json(path: Path) -> Any:
     """Read the JSON file *path*."""
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def sequential_stems(scenario_classes: list[str]) -> list[str]:
-    """The file stem each case of a batch is named by, in a local batch's way.
-
-    A local batch names a run's files by its scenario class, and the next run
-    of the same class ``{class}-1``, ``{class}-2`` and so on, in the order they
-    ran (``scenario_runner._run_file_stem``).  A case keeps that name whichever
-    task runs it, and when.
-    """
-    seen: dict[str, int] = {}
-    stems: list[str] = []
-    for name in scenario_classes:
-        count = seen.get(name, 0)
-        stems.append(name if count == 0 else f"{name}-{count}")
-        seen[name] = count + 1
-    return stems
 
 
 @dataclass(frozen=True)

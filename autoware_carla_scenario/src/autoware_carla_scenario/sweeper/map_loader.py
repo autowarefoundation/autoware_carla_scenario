@@ -81,12 +81,19 @@ def load_lanelet2_map(
     if xodr is not None and not xodr.exists():
         raise FileNotFoundError(f"OpenDRIVE file not found: {xodr}")
 
-    (lat, lon, _alt), anchored_by = map_origin(osm_path, xodr)
+    (lat, lon, alt), anchored_by = map_origin(osm_path, xodr)
     logger.info(
-        "Anchoring %s at (%s, %s) from %s", osm_path.name, lat, lon, anchored_by
+        "Anchoring %s at (%s, %s, %s) from %s",
+        osm_path.name,
+        lat,
+        lon,
+        alt,
+        anchored_by,
     )
 
-    origin = lanelet2.io.Origin(lat, lon)
+    # With the altitude, as MapManager and Autoware anchor it: a
+    # LocalCartesian map's z is measured from it.
+    origin = lanelet2.io.Origin(lat, lon, alt)
     lanelet_map, _projector, projector_name = load_lanelet2(
         osm_path, origin, projector_type
     )

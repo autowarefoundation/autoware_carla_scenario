@@ -150,6 +150,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.conditions.traffic_signal_controller",
     "autoware_carla_scenario.conditions.trajectory_time",
     "autoware_carla_scenario.constants",
+    "autoware_carla_scenario.control_domain",
     "autoware_carla_scenario.coordinate",
     "autoware_carla_scenario.coordinate.frames",
     "autoware_carla_scenario.coordinate.lane_distance",
@@ -218,6 +219,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.metrics",
     "autoware_carla_scenario.npc_collisions",
+    "autoware_carla_scenario.odd.control_diagnostics",
     "autoware_carla_scenario.odd.probes",
     "autoware_carla_scenario.odd.route_plan",
     "autoware_carla_scenario.odd.scenario_measure",
@@ -252,6 +254,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.slurm.port_slots",
     "autoware_carla_scenario.slurm.scripts",
     "autoware_carla_scenario.slurm.settings",
+    "autoware_carla_scenario.slurm.stems",
     "autoware_carla_scenario.slurm.task_timing",
     "autoware_carla_scenario.sweeper.bindings",
     "autoware_carla_scenario.sweeper.case_choice",
@@ -486,6 +489,7 @@ UNCALLED: dict[str, str] = {
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
+    "autoware_carla_scenario.actions.play_motion": "imports entity._soma_motion, which is neither checked nor modelled",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked",
@@ -522,6 +526,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.routes": "imports fastapi, starlette, anyio",
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview, which is not checked",
     "autoware_carla_scenario.editor.service": "imports yaml, zipfile, `contextlib.contextmanager`; reaches pydantic models through authoring.models; takes form fields as `Mapping[str, Any]`, which Codon cannot express",
+    "autoware_carla_scenario.entity._soma_motion": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks",
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.driver (`TurnIndicator`) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)",
     "autoware_carla_scenario.entity.hils_entity": "imports socket, and hils.protocol (socket), which is neither checked nor modelled",
     "autoware_carla_scenario.examples": "re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)",
@@ -540,7 +545,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd": "`from . import backend, probes` fails first: Codon reads it as an import of `odd` from the top-level package's `__init__`, which the model does not declare (\"cannot import name 'odd'\"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)",
     "autoware_carla_scenario.odd.backend": "derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (`Mapping[Any, OddKnob]`)",
     "autoware_carla_scenario.odd.traffic_probes": "builds openodd's OddKnob (a Rust extension) for each probe, and each probe reads a traffic parameter by name (`getattr` on the recorded parameters) and is a callable object keyed in a `dict[Callable[..., Any], OddKnob]`, which Codon cannot express",
-    "autoware_carla_scenario.odd.controls": "imports omegaconf inside `_key_exists()` and `validate_controls()` (the config it checks the keys of is a `DictConfig`), difflib (for its did-you-mean hints), and `controls_from_mapping()` from odd.sampler (openodd, a Rust extension), inside `validate_controls()`; it reads the `controls` of a config as `Any` and `Mapping[Any, Any]` (a control is a key, or a mapping of any values: `isinstance` on `Any`, `spec.get()` of mixed types), which Codon cannot express",
+    "autoware_carla_scenario.odd.controls": "imports omegaconf inside `_key_exists()` and `validate_controls()` (the config it checks the keys of is a `DictConfig`), difflib (for its did-you-mean hints), and `controls_from_mapping()` from odd.sampler (openodd, a Rust extension), inside `validate_controls()`; it reads the `controls` of a config as `Any` and `Mapping[Any, Any]` (a control is a key, or a mapping of any values: `isinstance` on `Any`, `spec.get()` of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics'",
     "autoware_carla_scenario.odd.cli": "imports argparse, and `odd_builder()` and `odd_names()` from odd.registry, which the odd model does not declare; inside its commands, it imports `combine_route_coverage()` from odd.route, which the odd model does not declare either (it declares only `plan_route_coverage()`), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled",
     "autoware_carla_scenario.odd.model": "re-exports openodd's model (a Rust extension)",
     "autoware_carla_scenario.odd.openodd": "re-exports openodd's reader (a Rust extension)",
@@ -560,7 +565,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.serve_cli": "imports argparse and ipaddress",
     "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked",
     "autoware_carla_scenario.slurm.collect": "imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (`dict[str, Any]`)",
-    "autoware_carla_scenario.slurm.manifest": "imports more of os than its shim declares (`os.fdopen()`); reads and writes JSON documents of values of any type (`Any`); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths",
+    "autoware_carla_scenario.slurm.manifest": "imports more of os than its shim declares (`os.fdopen()`); reads and writes JSON documents of values of any type (`Any`); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'",
     "autoware_carla_scenario.slurm.ports": "imports fcntl, socket, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.access()`, `os.O_CREAT`, `os.O_RDONLY`); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'",
     "autoware_carla_scenario.slurm.submit": "imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.O_CREAT`, `os.O_WRONLY`, `os.O_TRUNC`); takes the manifest as `dict[str, Any]` and a function as `Callable[..., Any]`, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts",
     "autoware_carla_scenario.slurm.worker": "imports socket, traceback, errno, fcntl (inside a function), `contextlib.contextmanager`, more of os, threading and importlib than their shims declare (`os.open()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (`Any`); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's",
@@ -593,6 +598,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.slurm_launch": "imports more of shlex than its shim declares (`shlex.split()`, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (`Any`); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's",
     "autoware_carla_scenario.ui.sweep_resolver": "imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
+    "autoware_carla_scenario.weather_rules": "imports openodd (a Rust extension), reads rule files and `environment.rules` as `Mapping[str, Any]`, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it",
 }
 
 #: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library

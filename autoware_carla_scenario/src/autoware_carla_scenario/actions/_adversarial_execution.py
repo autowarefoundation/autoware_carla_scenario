@@ -151,6 +151,9 @@ class AdversarialExecution:
                 self.entity_name, vehicle, driver, trajectory, following_mode, label
             )
             follow = direct
+        # The run is the adversarial action's, which holds the entity's
+        # movement for it: it takes no control domain of its own.
+        follow._claims_control = False
         self._follow = follow
         self._actor = actor
         self._backend = backend
@@ -167,6 +170,13 @@ class AdversarialExecution:
             return
         self._follow.tick(world, elapsed)
         if self._follow.state is not ActionState.COMPLETE:
+            return
+        self.hand_back(world)
+
+    def hand_back(self, world: carla.World) -> None:
+        """Give the vehicle back to its driver: the path is done, or the run
+        was stopped (an action overrode it)."""
+        if self._handed_back:
             return
         self._handed_back = True
         actor = self._actor

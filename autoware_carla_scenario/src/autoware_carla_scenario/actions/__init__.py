@@ -6,6 +6,7 @@ from .despawn import DespawnAction
 from .spawn import SpawnAction
 from .environment import EnvironmentAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
+from .play_motion import PlayMotionAction
 from .routing import RoutingAction, RoutingMode
 from .set_speed import SetSpeedAction
 from .traffic_signal import TrafficLightTarget, TrafficSignalAction
@@ -24,6 +25,7 @@ __all__ = [
     "EnvironmentAction",
     "LaneChangeAction",
     "LaneChangeDirection",
+    "PlayMotionAction",
     "RoutingAction",
     "RoutingMode",
     "SetSpeedAction",

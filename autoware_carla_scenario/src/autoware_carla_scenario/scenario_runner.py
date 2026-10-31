@@ -27,6 +27,7 @@ from .conditions import (
     TimeoutCondition,
 )
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
+from .actions.base import reset_control_slots
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
@@ -1412,6 +1413,9 @@ class ScenarioRunner:
             from .route import clear_scenario_route  # noqa: PLC0415
 
             clear_scenario_route()
+            # Who controls which entity is process-wide too: an action of the
+            # previous scenario that never finished holds nothing in this one.
+            reset_control_slots()
             scenario.setup()
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once

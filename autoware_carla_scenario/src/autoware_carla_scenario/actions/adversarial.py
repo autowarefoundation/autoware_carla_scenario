@@ -55,6 +55,7 @@ from ..conditions.base import BaseCondition, ScenarioResult
 from ..entity_role import EntityRole
 from ..trajectory.model import TrajectoryFollowingMode
 from ._adversarial_execution import AdversarialExecution, start_execution
+from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -91,6 +92,8 @@ class AdversarialAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action runs at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         seed: Seeds the trigger's random draws (a jaywalker's
             speed, a stopped crosser's wait); ``None`` (default) takes the
             run's seed (:mod:`~autoware_carla_scenario.seed`).
@@ -120,6 +123,7 @@ class AdversarialAction(BaseAction):
         *,
         label: str,
         once: bool = True,
+        overrides: bool = False,
         seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
@@ -144,6 +148,7 @@ class AdversarialAction(BaseAction):
             condition=trigger,
             timing=timing,
             once=once,
+            overrides=overrides,
             until=end,
         )
         self._entity_name = str(entity_name)
@@ -177,6 +182,10 @@ class AdversarialAction(BaseAction):
         self._elapsed = elapsed
         super().tick(world, elapsed)
 
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The entity's movement: the adversity drives it along its path."""
+        return movement_of(str(self._entity_name))
+
     def execute(self, world: "carla.World") -> None:
         """Plan the command when triggered, then drive it a tick at a time."""
         if self.state is ActionState.STANDBY:
@@ -185,6 +194,12 @@ class AdversarialAction(BaseAction):
             return
         execution: AdversarialExecution = self._execution
         execution.tick(world, self._elapsed)
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Overridden mid-path: hand the vehicle back, as at the path's end."""
+        if self._execution is not None:
+            execution: AdversarialExecution = self._execution
+            execution.hand_back(world)
 
     def close(self) -> None:
         """Close the conditions, the trigger's and the path's."""
@@ -251,6 +266,7 @@ class AdversarialBrakeAction(AdversarialAction):
         *,
         label: str = "adversarial_brake",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -262,6 +278,7 @@ class AdversarialBrakeAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -286,6 +303,7 @@ class IgnoreLeaderAction(AdversarialAction):
         *,
         label: str = "ignore_leader",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -297,6 +315,7 @@ class IgnoreLeaderAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -320,6 +339,7 @@ class AdversarialCutInAction(AdversarialAction):
         *,
         label: str = "adversarial_cut_in",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -331,6 +351,7 @@ class AdversarialCutInAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -358,6 +379,7 @@ class AdversarialMergeAction(AdversarialAction):
         *,
         label: str = "adversarial_merge",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -369,6 +391,7 @@ class AdversarialMergeAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -392,6 +415,7 @@ class LaneChangeAbortAction(AdversarialAction):
         *,
         label: str = "lane_change_abort",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -403,6 +427,7 @@ class LaneChangeAbortAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -426,6 +451,7 @@ class HeadOnAction(AdversarialAction):
         *,
         label: str = "head_on",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -437,6 +463,7 @@ class HeadOnAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -460,6 +487,7 @@ class RunTrafficRuleAction(AdversarialAction):
         *,
         label: str = "run_traffic_rule",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -471,6 +499,7 @@ class RunTrafficRuleAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -495,6 +524,7 @@ class JaywalkAction(AdversarialAction):
         *,
         label: str = "jaywalk",
         once: bool = True,
+        overrides: bool = False,
         seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
@@ -507,6 +537,7 @@ class JaywalkAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             seed=seed,
             thresholds=thresholds,
             following_mode=following_mode,
@@ -533,6 +564,7 @@ class PedestrianRunRedLightAction(AdversarialAction):
         *,
         label: str = "pedestrian_run_red_light",
         once: bool = True,
+        overrides: bool = False,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
@@ -544,6 +576,7 @@ class PedestrianRunRedLightAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             thresholds=thresholds,
             following_mode=following_mode,
         )
@@ -568,6 +601,7 @@ class StopCrossingAction(AdversarialAction):
         *,
         label: str = "stop_crossing",
         once: bool = True,
+        overrides: bool = False,
         seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
@@ -580,6 +614,7 @@ class StopCrossingAction(AdversarialAction):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             seed=seed,
             thresholds=thresholds,
             following_mode=following_mode,

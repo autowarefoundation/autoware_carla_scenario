@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +32,25 @@ for _var in (
     "GIT_WORK_TREE",
 ):
     os.environ.pop(_var, None)
+
+
+#: The repository root, wherever pytest was started from.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+#: The shared fixture maps (the Nishishinjuku ``.osm`` and ``.xodr``).
+DATA_DIR = REPO_ROOT / "data"
+
+
+@pytest.fixture
+def at_repo_root(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Run the test with the repository root as the working directory.
+
+    The example configs and the editor's starter documents name their maps
+    relative to it (``data/nishishinjuku.osm``), as the CLIs are run from
+    there; a test that goes through them must not depend on where pytest was
+    started (#849).
+    """
+    monkeypatch.chdir(REPO_ROOT)
+    return REPO_ROOT
 
 
 @pytest.fixture(scope="session", autouse=True)

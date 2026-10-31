@@ -29,10 +29,21 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "OVERRIDING_ACTIONS",
 {% for b in builders %}
     "{{ b.name }}",
 {% endfor %}
 ]
+
+#: The action types whose constructor takes ``overrides``: those that command
+#: an entity's control domains, whose card offers *Override a running action*.
+OVERRIDING_ACTIONS: frozenset[str] = frozenset(
+    {
+{% for b in builders if b.overrides %}
+        "{{ b.type_id }}",
+{% endfor %}
+    }
+)
 {% for b in builders %}
 
 

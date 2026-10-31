@@ -41,6 +41,7 @@ from autoware_carla_scenario.actions._departures import (
     TimelineVertex,
 )
 from autoware_carla_scenario.conditions.base import ScenarioResult
+from autoware_carla_scenario.actions.base import reset_control_slots
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
@@ -316,6 +317,27 @@ class TestPosition:
         assert len(gate.asked) == 1
         assert all(speed > 0.0 for _, _, speed in trace)
 
+    def test_it_ends_on_its_tick_on_a_summed_clock(self, entity: _Entity) -> None:
+        """CARLA's clock is a running sum of the 0.05 s tick, so tick 60 reads
+        a hair below 3.0; a gated timeline still ends on that tick, as the
+        timed-only path does, not one late (#845)."""
+
+        def ended(*vertices: tuple[float, Any]) -> int:
+            action = _route("npc1", _path(*vertices), TrajectoryTiming(), speed=10.0)
+            world, elapsed = _World(), 0.0
+            for tick in range(80):
+                action.tick(world, elapsed)
+                if action.finished:
+                    assert elapsed < 3.0  # the summed clock falls short
+                    return tick
+                entity.actor.step(_DT, driven=False)
+                elapsed += _DT
+            raise AssertionError("never ended")
+
+        assert ended((0.0, 0.0), (10.0, 1.5), (20.0, 3.0)) == 60
+        gate = _Recorder(AlwaysTrueCondition())
+        assert ended((0.0, 0.0), (10.0, gate), (20.0, 3.0)) == 60
+
     def test_a_condition_on_the_first_vertex_holds_the_start(
         self, entity: _Entity
     ) -> None:
@@ -570,6 +592,8 @@ def _drive(
             speeds.append(actor.speed)
     finally:
         unregister_entity("npc9")
+        # The vehicle goes with its entity: the next drive's is a fresh one.
+        reset_control_slots()
     return action, actor, elapsed, speeds
 
 

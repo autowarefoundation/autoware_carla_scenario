@@ -162,6 +162,10 @@ class TestLaneOf:
                 else OpenDrivePose(road_id="5", lane_id=-2, s=10.0)
             ),
         )
+        # Road 5 is a right-hand-traffic road: lane -2 drives along it.
+        monkeypatch.setattr(
+            entity_lane_position, "road_traffic_rule", lambda road_id: "RHT"
+        )
 
     @pytest.mark.parametrize(
         ("lane", "lane_id"),

@@ -7,9 +7,13 @@ Tests are split between:
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+_DATA = Path(__file__).resolve().parents[3] / "data"
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +271,185 @@ class TestGetStopLinePoses:
         assert len(result) == 2
         assert result[0].s == pytest.approx(10.0)
         assert result[1].s == pytest.approx(20.0)
+
+
+# ---------------------------------------------------------------------------
+# Autoware detection areas (issue #857)
+# ---------------------------------------------------------------------------
+
+
+class _DetectionArea:
+    """An Autoware ``DetectionArea`` stand-in: ``stopLine`` is a method."""
+
+    def __init__(self, re_id: int, stop_line: object) -> None:
+        self.id = re_id
+        self.attributes = {"subtype": "detection_area"}
+        self.parameters = {"ref_line": [stop_line], "refers": []}
+        self._stop_line = stop_line
+
+    def stopLine(self) -> object:  # noqa: N802 -- the binding's name
+        return self._stop_line
+
+
+class TestDetectionAreaMocked:
+    def test_its_stop_line_is_read_from_the_ref_line_role(self) -> None:
+        from autoware_carla_scenario.utils.stop_line import (
+            regulatory_element_stop_lines,
+        )
+
+        stop_ls = _make_linestring(30, [(1.0, 2.0)], attrs={"type": "stop_line"})
+        seen: set[int] = set()
+        result = regulatory_element_stop_lines(_DetectionArea(3, stop_ls), seen)
+        assert [ls.id for ls in result] == [30]
+        assert seen == {30}
+
+    def test_it_is_no_traffic_light_stop_line(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasStopLineConstraint,
+            HasTrafficLightStopLineConstraint,
+        )
+
+        stop_ls = _make_linestring(30, [(1.0, 2.0)], attrs={"type": "stop_line"})
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [_DetectionArea(3, stop_ls)]
+        assert HasStopLineConstraint().evaluate(lanelet)
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
+    def test_a_traffic_light_still_counts(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasTrafficLightStopLineConstraint,
+        )
+
+        stop_ls = _make_linestring(10, [(1.0, 2.0)])
+        reg_elem = _make_reg_elem(
+            1, has_stop_line=True, stop_line=stop_ls, subtype="traffic_light"
+        )
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [reg_elem]
+        assert HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
+    def test_a_traffic_light_without_a_stop_line_does_not_count(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasTrafficLightStopLineConstraint,
+        )
+
+        reg_elem = _make_reg_elem(
+            1, has_stop_line=True, stop_line=None, subtype="traffic_light"
+        )
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [reg_elem]
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
+    def test_a_right_of_way_stop_line_is_no_traffic_light_s(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasStopLineConstraint,
+            HasTrafficLightStopLineConstraint,
+        )
+
+        # lanelet2's RightOfWay has a stopLine property too.
+        stop_ls = _make_linestring(20, [(1.0, 2.0)])
+        reg_elem = _make_reg_elem(
+            2, has_stop_line=True, stop_line=stop_ls, subtype="right_of_way"
+        )
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [reg_elem]
+        assert HasStopLineConstraint().evaluate(lanelet)
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
+
+#: On the fixture map, lanelet 580 has a traffic sign (124129) and a detection
+#: area (124149, whose stop line is linestring 1401), and no traffic light.
+_SIGN_LANELET = 580
+_DETECTION_AREA = 124149
+_DETECTION_AREA_STOP_LINE = 1401
+
+
+@pytest.fixture(scope="module")
+def nishishinjuku() -> Any:
+    from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+    return load_lanelet2_map(
+        _DATA / "nishishinjuku.osm", _DATA / "nishishinjuku_carla.xodr"
+    )
+
+
+class TestDetectionAreaOnNishishinjuku:
+    def test_the_detection_area_stop_line_is_found(self, nishishinjuku: Any) -> None:
+        from autoware_carla_scenario.utils.stop_line import (
+            regulatory_element_stop_lines,
+        )
+
+        element = nishishinjuku.regulatoryElementLayer[_DETECTION_AREA]
+        lines = regulatory_element_stop_lines(element, set())
+        assert [int(ls.id) for ls in lines] == [_DETECTION_AREA_STOP_LINE]
+        assert int(element.stopLine().id) == _DETECTION_AREA_STOP_LINE
+
+    def test_the_lanelet_has_no_traffic_light_stop_line(
+        self, nishishinjuku: Any
+    ) -> None:
+        from autoware_carla_scenario.route.geometry import MapFeatures
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasTrafficLightStopLineConstraint,
+        )
+
+        lanelet = nishishinjuku.laneletLayer[_SIGN_LANELET]
+        assert not MapFeatures.has_traffic_light(lanelet)
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+        assert not MapFeatures.has_traffic_light_stop_line(lanelet)
+
+    def test_the_constraint_agrees_with_the_traffic_lights(
+        self, nishishinjuku: Any
+    ) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasTrafficLightStopLineConstraint,
+        )
+
+        def lit(lanelet: Any) -> bool:
+            for element in lanelet.regulatoryElements:
+                attrs = element.attributes
+                if (
+                    "subtype" in attrs
+                    and str(attrs["subtype"]) == "traffic_light"
+                    and element.stopLine is not None
+                ):
+                    return True
+            return False
+
+        constraint = HasTrafficLightStopLineConstraint()
+        disagree = [
+            int(ll.id)
+            for ll in nishishinjuku.laneletLayer
+            if constraint.evaluate(ll) != lit(ll)
+        ]
+        assert disagree == []
+
+    def test_the_temporary_stop_sweep_keeps_the_sign_controlled_lanelet(
+        self, nishishinjuku: Any
+    ) -> None:
+        from autoware_carla_scenario.sweeper.constraints import parse_constraint
+
+        constraint = parse_constraint(
+            {
+                "type": "and",
+                "constraints": [
+                    {"type": "has_stop_line"},
+                    {
+                        "type": "not",
+                        "constraint": {"type": "has_traffic_light_stop_line"},
+                    },
+                ],
+            }
+        )
+        assert constraint.evaluate(nishishinjuku.laneletLayer[_SIGN_LANELET])
+
+    def test_the_lanelet_s_stop_lines_hold_the_shared_line_once(
+        self, nishishinjuku: Any
+    ) -> None:
+        from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
+
+        # The sign's ref_line is the detection area's stop line too: both
+        # elements now yield it, and it is listed once.
+        ids = [
+            int(ls.id) for ls in get_stop_line_linestrings(nishishinjuku, _SIGN_LANELET)
+        ]
+        assert ids.count(_DETECTION_AREA_STOP_LINE) == 1

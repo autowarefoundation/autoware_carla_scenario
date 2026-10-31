@@ -1283,6 +1283,72 @@ register_action_spec(
     )
 )
 
+register_action_spec(
+    ActionSpec(
+        type_id="play_motion",
+        title="Play Motion",
+        category="Pedestrian",
+        builder="build_play_motion_action",
+        target="..actions:PlayMotionAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="motion_path",
+                label="Motion file",
+                kind="text",
+                help=(
+                    "A SOMA motion (.npz, as SOMA-X's save_soma_npz writes "
+                    "it), such as a wave.  Relative to the working directory."
+                ),
+            ),
+            FieldSpec(
+                name="fps",
+                label="Frame rate",
+                kind="number",
+                default=None,
+                required=False,
+                unit="fps",
+                help="Empty: the file's own, else 30.",
+            ),
+            FieldSpec(
+                name="loop",
+                label="Loop",
+                kind="bool",
+                default=False,
+                help="Play the motion over again when it ends.",
+            ),
+            FieldSpec(
+                name="duration_s",
+                label="Duration",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help=(
+                    "Stop after this long.  Empty: when the motion ends, or, "
+                    "looping, at the scenario's end."
+                ),
+            ),
+            FieldSpec(
+                name="upper_body_only",
+                label="Upper body only",
+                kind="bool",
+                default=True,
+                help=(
+                    "Drive the spine, neck and arms only; the legs keep the "
+                    "walking animation's pose."
+                ),
+            ),
+        ),
+        description=(
+            "Pose a pedestrian after a SOMA motion file -- a wave, a beckon -- "
+            "retargeted onto its skeleton.  The pedestrian stands while it "
+            "plays: stop it first."
+        ),
+    )
+)
+
 #: Mirrors ``TrajectoryFollowingMode``; ``test_authoring_registry`` keeps the
 #: two in step (the codegen refuses an option that names no member).
 _FOLLOWING_MODES: tuple[SelectOption, ...] = (

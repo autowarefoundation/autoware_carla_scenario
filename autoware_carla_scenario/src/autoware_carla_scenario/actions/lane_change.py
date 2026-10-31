@@ -11,6 +11,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import LaneChangeDirection
 from ..entity_role import EntityRole
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -47,6 +48,8 @@ class LaneChangeAction(BaseAction):
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as the manoeuvre having settled.  Defaults
             to :class:`LaneChangeSettledCondition` on *entity_name*.
     """
@@ -64,6 +67,7 @@ class LaneChangeAction(BaseAction):
         *,
         label: str = "lane_change",
         once: bool = True,
+        overrides: bool = False,
         until: Optional[BaseCondition] = None,
     ) -> None:
         if until is None:
@@ -76,6 +80,7 @@ class LaneChangeAction(BaseAction):
             condition=condition,
             timing=timing,
             once=once,
+            overrides=overrides,
             until=until,
         )
         self._entity_name = str(entity_name)
@@ -84,6 +89,10 @@ class LaneChangeAction(BaseAction):
     # ------------------------------------------------------------------
     # BaseAction interface
     # ------------------------------------------------------------------
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The vehicle's lane: its lateral domain."""
+        return [(str(self._entity_name), ControlDomain.LATERAL)]
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to change lane."""

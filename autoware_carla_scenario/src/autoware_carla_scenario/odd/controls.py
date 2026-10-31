@@ -16,10 +16,10 @@ from __future__ import annotations
 import difflib
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from ..measures import BUILT_IN_MEASURES
+from .control_diagnostics import ControlDiagnostic, format_diagnostics
 
 __all__ = [
     "ControlDiagnostic",
@@ -35,40 +35,12 @@ _MAPPING_FIELDS = ("scale", "offset", "integer", "values")
 _MISSING = object()
 
 
-@dataclass(frozen=True)
-class ControlDiagnostic:
-    """One problem with the ``controls`` of a config.
-
-    Attributes:
-        path: Where in the config, e.g. ``controls.vehicle_ahead_gap_m.range``.
-        message: What is wrong, with a suggestion when there is one.
-        severity: ``error`` (the sweep cannot run) or ``warning``.
-    """
-
-    path: str
-    message: str
-    severity: str = "error"
-
-    def format(self, prefix: str = "") -> str:
-        """One line: ``<prefix>: <path>: <message>`` (``warning: `` before a warning)."""
-        head = f"{prefix}: " if prefix else ""
-        tag = "warning: " if self.severity == "warning" else ""
-        return f"{head}{tag}{self.path}: {self.message}"
-
-
 class ControlsError(ValueError):
     """The ``controls`` of a config are invalid (:attr:`diagnostics`, errors only)."""
 
     def __init__(self, diagnostics: Sequence[ControlDiagnostic]) -> None:
         self.diagnostics = list(diagnostics)
         super().__init__("\n".join(d.format() for d in self.diagnostics))
-
-
-def format_diagnostics(
-    diagnostics: Sequence[ControlDiagnostic], prefix: str = ""
-) -> list[str]:
-    """The one-line text of each of *diagnostics*."""
-    return [d.format(prefix) for d in diagnostics]
 
 
 def config_keys(node: Any, prefix: str = "") -> list[str]:

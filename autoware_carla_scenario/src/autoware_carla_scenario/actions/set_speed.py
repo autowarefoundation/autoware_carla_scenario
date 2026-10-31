@@ -12,6 +12,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -76,6 +77,8 @@ class SetSpeedAction(BaseAction):
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as having arrived.  Defaults to the
             vehicle being within :data:`ARRIVAL_TOLERANCE_KMH` of the target
             for a rate-limited change, and to nothing at all for an immediate
@@ -112,6 +115,7 @@ class SetSpeedAction(BaseAction):
         *,
         label: str = "set_speed",
         once: bool = True,
+        overrides: bool = False,
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
@@ -143,6 +147,7 @@ class SetSpeedAction(BaseAction):
             condition=condition,
             timing=timing,
             once=once,
+            overrides=overrides,
             until=until,
             reissue=reissue,
         )
@@ -161,6 +166,10 @@ class SetSpeedAction(BaseAction):
         given, and repeating it would say the same thing again.
         """
         return self._rate_kmh_s is not None
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The vehicle's speed: its longitudinal domain."""
+        return [(str(self._entity_name), ControlDomain.LONGITUDINAL)]
 
     def execute(self, world: "carla.World") -> None:
         """Command the target, or this tick's step towards it."""

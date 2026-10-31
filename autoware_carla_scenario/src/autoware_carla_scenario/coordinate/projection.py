@@ -49,12 +49,19 @@ PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
 
 #: Lanelet2 projector to read each Autoware ``projector_type`` with.
 #:
+#: Each one is the projector Autoware itself builds for that type
+#: (``get_lanelet2_projector()`` in autoware_core's
+#: ``autoware_geography_utils``).  Despite its name, ``LocalCartesianUTM`` is
+#: read with ``UtmProjector`` at the map origin, not with
+#: ``LocalCartesianProjector``: that one is ``LocalCartesian``'s, and the two
+#: part by tens of metres across a city-sized map.
+#:
 #: ``Local`` maps store the map frame in the ``local_x``/``local_y`` tags, and
 #: :data:`LOCAL_XY` reads it from there, as Autoware's own loader does.
 PROJECTOR_BY_AUTOWARE_TYPE = {
     "Local": "local_xy",
     "LocalCartesian": "local_cartesian",
-    "LocalCartesianUTM": "local_cartesian",
+    "LocalCartesianUTM": "utm",
     "MGRS": "mgrs",
     "TransverseMercator": "transverse_mercator",
 }
@@ -150,8 +157,9 @@ def read_map_origin(lanelet2_path: Path) -> Optional[tuple[float, float, float]]
     """Return the ``map_origin`` in the map's descriptor, if it names one.
 
     Autoware writes an origin beside maps whose projection needs one --
-    ``LocalCartesian`` and ``TransverseMercator``.  A ``Local`` or ``MGRS`` map
-    carries none, because neither projection is anchored by one.
+    ``LocalCartesianUTM``, ``LocalCartesian`` and ``TransverseMercator``.  A
+    ``Local`` or ``MGRS`` map carries none, because neither projection is
+    anchored by one.
 
     Returns:
         ``(latitude, longitude, altitude)``, or ``None`` when the descriptor is

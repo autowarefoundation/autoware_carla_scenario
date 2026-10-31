@@ -4,7 +4,8 @@ CARLA's weather is drawn, never seen by its traffic: the TrafficManager's
 vehicles know where every other actor is whatever the fog.  A driver does
 not, and drives so that they can stop within the road they can see.  So the
 visibility is a quantity of the run of its own, in metres, which the weather
-bounds (:func:`visibility_range`) and a traffic backend that models drivers'
+bounds (:func:`visibility_range`, by the weather rules of
+:mod:`autoware_carla_scenario.weather_rules`) and a traffic backend that models drivers'
 sight follows -- the ``sumo`` backend holds its traffic to the speed it can
 stop from within it (:func:`sight_speed`).  The TrafficManager has no such
 notion of its own: the ``traffic_manager`` backend holds its vehicles to it
@@ -28,15 +29,13 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+from .weather_rules import weather_range
+
 __all__ = [
     "DEFAULT_DECEL",
     "DEFAULT_REACTION_S",
-    "FOG_VISIBILITY_RANGES",
-    "LIGHT_VISIBILITY_RANGES",
-    "RAIN_VISIBILITY_RANGES",
     "at_quantile",
     "forget_visibility",
-    "interpolate_range",
     "set_world_visibility",
     "sight_speed",
     "visibility",
@@ -49,59 +48,6 @@ __all__ = [
 DEFAULT_DECEL: float = 4.5
 DEFAULT_REACTION_S: float = 1.0
 
-#: The distance a driver sees, metres, by CARLA's ``fog_density`` (0-100):
-#: ``(fog_density, low, high)``, interpolated linearly between the rows.  A
-#: clear day's is what a driver looks ahead on an open road; heavy fog's is
-#: meteorology's dense fog (under 50 m).
-FOG_VISIBILITY_RANGES: tuple[tuple[float, float, float], ...] = (
-    (0.0, 250.0, 400.0),
-    (30.0, 120.0, 250.0),
-    (70.0, 40.0, 100.0),
-    (100.0, 15.0, 40.0),
-)
-
-#: The same by the rain's ``precipitation`` (0-100): falling rain and the
-#: spray the traffic throws up shorten the view less than fog does.
-RAIN_VISIBILITY_RANGES: tuple[tuple[float, float, float], ...] = (
-    (0.0, 250.0, 400.0),
-    (30.0, 180.0, 320.0),
-    (70.0, 100.0, 220.0),
-    (100.0, 60.0, 150.0),
-)
-
-#: The same by the sun's altitude, degrees: from sunset to the end of civil
-#: twilight (6 degrees below the horizon,
-#: :func:`~autoware_carla_scenario.odd.probes.illumination_level`'s night)
-#: down to what headlights light, from a dipped beam's 50 m to a main beam's
-#: or a lit street's 150 m.
-LIGHT_VISIBILITY_RANGES: tuple[tuple[float, float, float], ...] = (
-    (-90.0, 50.0, 150.0),
-    (-6.0, 50.0, 150.0),
-    (0.0, 250.0, 400.0),
-    (90.0, 250.0, 400.0),
-)
-
-
-def interpolate_range(
-    rows: tuple[tuple[float, float, float], ...], at: float
-) -> tuple[float, float]:
-    """``(low, high)`` of *rows* -- ``(x, low, high)``, by rising ``x`` -- at
-    *at*, interpolated linearly between them and clamped to the first and last.
-
-    The tables of a range a weather leaves are written this way: this
-    module's, and the grip's
-    (:data:`~autoware_carla_scenario.actions.environment.TIRE_FRICTION_RANGES`).
-    """
-    first = rows[0]
-    if at <= first[0]:
-        return first[1], first[2]
-    for (x0, lo0, hi0), (x1, lo1, hi1) in zip(rows, rows[1:]):
-        if at <= x1:
-            t = (at - x0) / (x1 - x0)
-            return lo0 + t * (lo1 - lo0), hi0 + t * (hi1 - hi0)
-    last = rows[len(rows) - 1]
-    return last[1], last[2]
-
 
 def visibility_range(
     fog_density: float = 0.0,
@@ -110,12 +56,12 @@ def visibility_range(
 ) -> tuple[float, float]:
     """The ``(low, high)`` distance a driver sees in this weather, metres.
 
-    Each of the fog (:data:`FOG_VISIBILITY_RANGES`), the rain
-    (:data:`RAIN_VISIBILITY_RANGES`) and the light
-    (:data:`LIGHT_VISIBILITY_RANGES`) bounds it, and the shortest bound
-    holds: fog at night is seen through no further than either.  Each row
-    spans what eyes, windscreens, headlights and the road's own lighting make
-    of the same weather.
+    The weather rules' ``visibility``
+    (:mod:`autoware_carla_scenario.weather_rules`): by default, the fog, the
+    rain and the light each bound it, and the shortest bound holds -- fog at
+    night is seen through no further than either.  Each range spans what
+    eyes, windscreens, headlights and the road's own lighting make of the same
+    weather.
 
     Args:
         fog_density: The weather's ``fog_density``, 0-100.
@@ -123,16 +69,13 @@ def visibility_range(
         sun_altitude_angle: Its ``sun_altitude_angle``, degrees above the
             horizon.
     """
-    fog_low, fog_high = interpolate_range(FOG_VISIBILITY_RANGES, float(fog_density))
-    rain_low, rain_high = interpolate_range(
-        RAIN_VISIBILITY_RANGES, float(precipitation)
-    )
-    light_low, light_high = interpolate_range(
-        LIGHT_VISIBILITY_RANGES, float(sun_altitude_angle)
-    )
-    return (
-        min(fog_low, rain_low, light_low),
-        min(fog_high, rain_high, light_high),
+    return weather_range(
+        "visibility",
+        {
+            "fog_density": float(fog_density),
+            "precipitation": float(precipitation),
+            "sun_altitude_angle": float(sun_altitude_angle),
+        },
     )
 
 

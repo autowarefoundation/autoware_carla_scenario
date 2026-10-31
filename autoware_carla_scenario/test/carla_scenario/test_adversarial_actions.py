@@ -223,7 +223,10 @@ def test_a_jaywalker_walks_its_seeded_path() -> None:
     def walk(seed: int) -> Optional[PredictedState]:
         made.clear()
         walker = _actor(7, "p1", -40.0, -12.0, 0.0, type_id="walker.pedestrian.0001")
-        _run(JaywalkAction("p1", ANY, seed=seed), [_world(walker, frame=seed)])
+        action = JaywalkAction("p1", ANY, seed=seed)
+        _run(action, [_world(walker, frame=seed)])
+        # Gives the pedestrian back for the next walk's action.
+        action.close()
         return made[0].path[-1] if made else None
 
     assert walk(3) == walk(3) != walk(4)

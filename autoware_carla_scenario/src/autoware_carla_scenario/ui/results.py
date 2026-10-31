@@ -52,6 +52,9 @@ from .drive_metrics import _separated as _separated
 from .drive_metrics import box as _box
 from .drive_metrics import box_distance as _box_distance
 
+# Below this height (m) a road user is parked under the map, out of the scene.
+from ..utils.clearance import _HIDDEN_BELOW_M
+
 __all__ = [
     "CaseResult",
     "CellComparison",
@@ -244,7 +247,9 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                 speed = math.hypot(float(me[7]), float(me[8])) * 3.6
                 ego_box = _box(me[1], me[2], me[6], extents.get(ego, (2.4, 1.0)))
                 for other, state in states.items():
-                    if other == ego:
+                    # A road user parked under the map (hidden) is out of
+                    # the scene.
+                    if other == ego or float(state[3]) < _HIDDEN_BELOW_M:
                         continue
                     drive.gap(
                         _box_distance(

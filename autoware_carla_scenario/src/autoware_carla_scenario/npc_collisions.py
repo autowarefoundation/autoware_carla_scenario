@@ -291,7 +291,9 @@ class NpcCollisionMonitor:
 
         out: list[tuple[str, int]] = []
         for walker_id, since in list(self._down.items()):
-            if elapsed - since < after:
+            # Within a tolerance: the scenario clock is a running sum of the
+            # tick, so a whole number of ticks comes out a hair short.
+            if elapsed - since < after - 1e-9:
                 continue
             del self._down[walker_id]
             role = self._names.get(walker_id, "")

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..coordinate.lane_distance import lane_closing_speed, lane_separation
 from ..coordinate.poses import CarlaWorldPose
+from ..utils.clearance import _HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -59,13 +60,18 @@ def road_threat(
     """What threatens a pedestrian at *location*, walking at
     ``(walking_x, walking_y)`` m/s -- a vehicle at most *distance_m* away along
     the road, or at most *ttc_s* from it -- or ``None``.  Every vehicle in the
-    world counts; with *near_m*, only those within that straight-line distance
-    (to spare the lane search for the far ones)."""
+    world counts but one parked under the map (#853); with *near_m*, only
+    those within that straight-line distance (to spare the lane search for
+    the far ones)."""
     if distance_m is None and ttc_s is None:
         return None
     target = CarlaWorldPose(x=location.x, y=location.y, z=location.z, yaw=0.0)
     for vehicle in world.get_actors().filter("vehicle.*"):
         at = vehicle.get_location()
+        # Parked under the map until its spawn: its lane projection (2D, or
+        # onto the road above) would put it on the road (#853).
+        if at.z < _HIDDEN_BELOW_M:
+            continue
         if near_m is not None:
             reach: float = near_m
             if math.hypot(at.x - location.x, at.y - location.y) > reach:

@@ -707,7 +707,8 @@ What `test_typecheck_model.py` compares, model by model:
 - **Every name `__init__.codon` exports**, with the object of the same name
   in the package.
 - **`coordinate.codon`**: beside its exports, `lanelet_length`, `on_lanelet`,
-  `project_onto_road`, `project_onto_lanelet`, `get_stop_line_linestrings`,
+  `project_onto_road`, `road_traffic_rule`, `project_onto_lanelet`,
+  `get_stop_line_linestrings`,
   `get_stop_line_linestrings_with_following`,
   `find_traffic_lights_for_lanelet2_id`, `get_signal_ids_for_controller`,
   `to_map_frame`, `MapManager`, `map_origin`, `resolve_projector`,
@@ -2788,7 +2789,9 @@ stands in for it in the check's workspace:
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
   for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
-  returns). A module with no
+  returns; `weather_rules.codon`, for `visibility` and
+  `actions.environment`, the `weather_range()`, `vehicle_range()` and
+  `vehicle_rules_in_use()` they read the weather rules through). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 

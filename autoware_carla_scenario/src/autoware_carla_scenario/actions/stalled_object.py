@@ -70,6 +70,8 @@ class StalledObjectAction(TrajectoryRun):
             world until *start_time*; ``None`` at once.
         timing: Tick phase.
         label: Human-readable identifier.
+        overrides: Take over the vehicle's movement from another action
+            holding it (:attr:`~BaseAction.overrides`).
 
     Raises:
         ValueError: A :class:`MapPose` without a ``yaw`` (a pose that stays
@@ -89,6 +91,7 @@ class StalledObjectAction(TrajectoryRun):
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "stalled_object",
+        overrides: bool = False,
     ) -> None:
         if isinstance(pose, MapPose) and pose.yaw is None:
             raise ValueError(f"{label}: a stalled object's MapPose needs its yaw")
@@ -111,6 +114,7 @@ class StalledObjectAction(TrajectoryRun):
             condition=condition,
             timing=timing,
             label=label,
+            overrides=overrides,
             hidden_outside_trajectory=True,
         )
         self._pose = pose

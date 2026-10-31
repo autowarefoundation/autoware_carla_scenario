@@ -57,6 +57,7 @@ from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
+from ..control_domain import ControlDomain, movement_of
 from .base import TickTiming
 
 if TYPE_CHECKING:
@@ -291,6 +292,8 @@ class RoutingAction(TrajectoryRun):
         timing: Which tick phase to run on, when registered on the loop.
         label: Action label.
         once: Whether the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         initial_pose: CARLA world pose the entity is expected to start at, used
             to initialize localization (``driver`` mode).  ``None`` reads the
             attached actor instead.
@@ -376,6 +379,7 @@ class RoutingAction(TrajectoryRun):
         *,
         label: str = "routing",
         once: bool = True,
+        overrides: bool = False,
         initial_pose: Optional[CarlaWorldPose] = None,
         ground_projection: Optional[GroundProjectionConfig] = None,
         waypoints: Sequence[Lanelet2Pose] = (),
@@ -431,6 +435,7 @@ class RoutingAction(TrajectoryRun):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             until=until,
             control_config=control_config,
             speed=speed,
@@ -502,6 +507,10 @@ class RoutingAction(TrajectoryRun):
             return True  # a route written out is followed to its end
         if self._timed():
             return True
+        return self._walks_pedestrian()
+
+    def _walks_pedestrian(self) -> bool:
+        """Whether the entity is a pedestrian, which ``driver`` mode walks."""
         return (
             find_vehicle_entity(self._entity_name) is None
             and find_pedestrian_entity(self._entity_name) is not None
@@ -520,6 +529,22 @@ class RoutingAction(TrajectoryRun):
     # ------------------------------------------------------------------
     # BaseAction / TrajectoryRun interface
     # ------------------------------------------------------------------
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """``follow``/``position``: the entity's movement.  ``driver``: its
+        lateral domain (the route its driver takes), and its longitudinal one
+        too where the action sets the pace -- a speed, a timed waypoint, a
+        stop at the goal -- or walks a pedestrian."""
+        entity = str(self._entity_name)
+        if (
+            self._mode is not RoutingMode.DRIVER
+            or self._given_speed is not None
+            or self._stop_at_goal
+            or self._timed()
+            or self._walks_pedestrian()
+        ):
+            return movement_of(entity)
+        return [(entity, ControlDomain.LATERAL)]
 
     def _reissues_by_default(self) -> bool:
         """``follow``/``position`` move the entity every tick; ``driver`` mode

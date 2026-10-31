@@ -72,7 +72,9 @@ def store(tmp_path: Path) -> DraftStore:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> TestClient:
+def client(tmp_path: Path, at_repo_root: Path) -> TestClient:
+    # A new draft names the fixture map relative to the repository root, and
+    # the editor resolves it (and its map roots) against the working directory.
     return TestClient(
         create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
     )
@@ -785,6 +787,35 @@ class TestActionEditing:
         client.post(f"/draft/{draft_id}/action/{action.id}", data={"direction": "left"})
         assert _action(store, draft_id, action.id).once is False
 
+    def test_checking_overrides_is_stored_where_it_means_something(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        turn = next(a for a in _document(store, draft_id).actions if a.type == "turn")
+        page = client.get(f"/draft/{draft_id}?selected={turn.id}").text
+        assert "Override a running action" in page
+        client.post(
+            f"/draft/{draft_id}/action/{turn.id}",
+            data={"direction": "left", "overrides": "on"},
+        )
+        assert _action(store, draft_id, turn.id).overrides is True
+        client.post(f"/draft/{draft_id}/action/{turn.id}", data={"direction": "left"})
+        assert _action(store, draft_id, turn.id).overrides is False
+
+    def test_an_action_on_no_entity_offers_no_override(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/action", data={"type_id": "environment"})
+        weather = next(
+            a for a in _document(store, draft_id).actions if a.type == "environment"
+        )
+        page = client.get(f"/draft/{draft_id}?selected={weather.id}").text
+        assert "Override a running action" not in page
+        client.post(f"/draft/{draft_id}/action/{weather.id}", data={"overrides": "on"})
+        assert _action(store, draft_id, weather.id).overrides is False
+
     def test_moving_an_action_changes_layout_only(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -1490,9 +1521,9 @@ class TestEnvironmentTrack:
     ) -> None:
         """The other half of the rule above, for the kind that has its own.
 
-        A pedestrian walks, follows a trajectory -- a recorded one, say -- or
-        carries out a pedestrian's adversity, and is offered nothing a
-        vehicle does to its lane.
+        A pedestrian walks, follows a trajectory -- a recorded one, say --
+        carries out a pedestrian's adversity, or plays a motion on its
+        skeleton, and is offered nothing a vehicle does to its lane.
         """
         client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
         body = client.get(f"/draft/{draft_id}").text
@@ -1507,6 +1538,7 @@ class TestEnvironmentTrack:
         pedestrian_only = {
             "jaywalk",
             "pedestrian_run_red_light",
+            "play_motion",
             "stop_crossing",
             "walk_straight",
         }

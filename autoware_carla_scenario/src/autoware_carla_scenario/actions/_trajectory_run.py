@@ -36,6 +36,7 @@ from ..trajectory.model import (
 )
 from ._departures import DepartureTimeline, TimelineVertex
 from ..utils.vehicles import as_vehicle
+from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -173,6 +174,8 @@ class TrajectoryRun(BaseAction):
             world then advances from.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         until: Overrides what ends the run; defaults to reaching the end of
             the trajectory as above.
         control_config: Gains for ``FOLLOW`` mode; ``None`` uses the
@@ -250,6 +253,7 @@ class TrajectoryRun(BaseAction):
         *,
         label: str = "trajectory_run",
         once: bool = True,
+        overrides: bool = False,
         until: Optional[BaseCondition] = None,
         control_config: Optional["ControlConfig"] = None,
         hidden_outside_trajectory: bool = False,
@@ -284,6 +288,7 @@ class TrajectoryRun(BaseAction):
             condition=condition,
             timing=timing,
             once=once,
+            overrides=overrides,
             until=ending,
         )
         self._entity_name = entity_name
@@ -351,6 +356,10 @@ class TrajectoryRun(BaseAction):
         """Remember the scenario time, which :meth:`execute` is not given."""
         self._elapsed = elapsed
         super().tick(world, elapsed)
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The entity's movement: it is driven, or placed, along the trajectory."""
+        return movement_of(str(self._entity_name))
 
     def execute(self, world: "carla.World") -> None:
         """Move the entity one tick along the trajectory."""
@@ -953,7 +962,10 @@ class TrajectoryRun(BaseAction):
         self._held_at = None
         last = timeline.count - 1
         for _ in range(timeline.count + 2):
-            if elapsed < timeline.end_arrival:
+            # Within the tolerance of _absent: the scenario clock is a running
+            # sum of the tick, so an arrival on a whole number of ticks comes
+            # out a hair short of it, and it would end one tick late.
+            if elapsed < timeline.end_arrival - 1e-9:
                 break
             index = timeline.index(timeline.end_vertex)
             if timeline.end_kind == "end":
