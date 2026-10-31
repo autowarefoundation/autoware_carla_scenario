@@ -10,6 +10,7 @@ from typing import Optional
 
 from ..constants import FIXED_DELTA_SECONDS
 from .convert import LOG_SUFFIX, write_t4_scene
+from .grid import scene_stem
 
 
 def _logs(paths: list[Path]) -> list[Path]:
@@ -86,11 +87,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.output_dir is not None:
         stems: dict[str, Path] = {}
         for log in logs:
-            stem = (
-                log.name[: -len(LOG_SUFFIX)]
-                if log.name.endswith(LOG_SUFFIX)
-                else log.stem
-            )
+            stem = scene_stem(log.name)
             if stem in stems:
                 parser.error(
                     f"{stems[stem]} and {log} would both be written to "

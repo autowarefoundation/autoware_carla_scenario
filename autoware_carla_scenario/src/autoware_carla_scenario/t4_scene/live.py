@@ -37,7 +37,6 @@ from typing import IO, Any, Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 
-from ..constants import FIXED_DELTA_SECONDS
 from ..trajectory_recorder import TrajectoryRecorder
 from ._proto import t4_scene_pb2 as pb
 from .convert import (
@@ -52,6 +51,7 @@ from .convert import (
     log_to_scene,
     map_of,
 )
+from .grid import step_frames
 from .route import RouteGraph
 
 __all__ = ["EgoExtras", "LiveT4Scene"]
@@ -144,20 +144,14 @@ class LiveT4Scene:
         opendrive_path: Optional[Path] = None,
         projector_type: Optional[str] = None,
     ) -> None:
-        step_frames = round(step_s / FIXED_DELTA_SECONDS)
         if history_rows < 1:
             raise ValueError(f"history_rows must be at least 1, not {history_rows}")
-        if step_frames < 1 or not math.isclose(
-            step_frames * FIXED_DELTA_SECONDS, step_s, rel_tol=0.0, abs_tol=1e-9
-        ):
-            raise ValueError(
-                f"step_s={step_s} is not a multiple of the tick ({FIXED_DELTA_SECONDS} s)"
-            )
+        frames = step_frames(step_s)
         self.history_rows = history_rows
         self.max_distance_m = max_distance_m
         self.rear_axle_offset_m = rear_axle_offset_m
         self.wheel_base_m = wheel_base_m
-        self._log = _Log(step_frames=step_frames)
+        self._log = _Log(step_frames=frames)
         self._recorder = _LiveRecorder(
             self._log,
             map_source=map_source,

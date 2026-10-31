@@ -1384,6 +1384,64 @@ class TestFilesThatAreNotDrafts:
         response = client.post("/draft/a.b/delete", follow_redirects=False)
         assert response.status_code == 404
 
+    @pytest.mark.parametrize(
+        ("name", "text"),
+        [
+            ("notes", "just some text\n"),
+            ("broken", "a: [\n"),
+            ("config", "name: x\nversion: 3\n"),
+        ],
+    )
+    def test_deleting_one_by_id_is_a_404_and_leaves_it(
+        self, client: TestClient, tmp_path: Path, name: str, text: str
+    ) -> None:
+        # #820: get() refuses the file, so delete must too.
+        drafts = tmp_path / "drafts"
+        drafts.mkdir(parents=True, exist_ok=True)
+        other = drafts / f"{name}.yaml"
+        other.write_text(text, encoding="utf-8")
+        response = client.post(f"/draft/{name}/delete", follow_redirects=False)
+        assert response.status_code == 404
+        assert other.read_text(encoding="utf-8") == text
+
+    def test_the_store_refuses_to_delete_one(self, tmp_path: Path) -> None:
+        store = DraftStore(tmp_path)
+        (tmp_path / "notes.yaml").write_text("- a list\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="not a draft"):
+            store.delete("notes")
+        assert (tmp_path / "notes.yaml").is_file()
+
+
+class TestADraftWhoseStoredIdIsNotItsFileName:
+    """A draft is the file it is read from, whatever id it stores (#820)."""
+
+    @pytest.mark.parametrize("stored", ["someone_else", "a.b"])
+    def test_saving_it_writes_back_its_own_file(
+        self, client: TestClient, tmp_path: Path, draft_id: str, stored: str
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        path = drafts / f"{draft_id}.yaml"
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw["id"] = stored
+        path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        assert response.status_code == 200
+        assert "Draft saved" in response.text
+        assert sorted(p.name for p in drafts.glob("*.yaml")) == [path.name]
+        saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert saved["id"] == draft_id
+        assert saved["document"]["title"] == "Renamed"
+
+    def test_the_list_links_to_its_file(
+        self, client: TestClient, store: DraftStore, tmp_path: Path, draft_id: str
+    ) -> None:
+        path = tmp_path / "drafts" / f"{draft_id}.yaml"
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw["id"] = "someone_else"
+        path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        assert [d.id for d in store.list()] == [draft_id]
+
 
 class TestEnvironmentTrack:
     """The canvas has a track for actions no vehicle performs."""
