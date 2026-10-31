@@ -337,6 +337,170 @@ def test_a_walker_walking_off_the_way_is_not_waited_for(
     assert approach._in_way("walker", 6.0, 1.5)
 
 
+class _Clock:
+    """A world whose simulated clock the test sets, holding one walker."""
+
+    def __init__(self, walker: Any) -> None:
+        self.elapsed = 10.0
+        self.walker = walker
+
+    def get_snapshot(self) -> Any:
+        return SimpleNamespace(timestamp=SimpleNamespace(elapsed_seconds=self.elapsed))
+
+    def get_actor(self, actor_id: int) -> Any:
+        return self.walker
+
+
+def _ai_walker(y: float) -> Any:
+    """A walker on CARLA's controller at ``(3, y)``: it reports standing,
+    whether or not it walks."""
+    walker = SimpleNamespace(
+        id=66,
+        type_id="walker.pedestrian.0001",
+        get_velocity=lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0),
+        at=SimpleNamespace(x=3.0, y=y, z=0.0),
+    )
+    walker.get_location = lambda: walker.at
+    return walker
+
+
+def _ahead(monkeypatch: pytest.MonkeyPatch, world: _Clock) -> Any:
+    """``_in_way_ahead`` along +x from the origin, the walker found beside
+    the path where it stands now; the vehicle's body 1 m to each side."""
+    from autoware_carla_scenario.actions import _trajectory_run
+    from autoware_carla_scenario.utils import clearance
+
+    def found(*args: Any) -> Any:
+        at = world.walker.at
+        return SimpleNamespace(id=66, x=at.x, y=at.y, ahead=at.x, side=at.y)
+
+    monkeypatch.setattr(clearance, "first_box_in_way", found)
+    # Looked up, so the leaving tests fail on their assertions where walkers
+    # are not measured.
+    forget = getattr(_trajectory_run, "forget_walkers", None)
+    if forget is not None:
+        forget()
+
+    def look() -> int:
+        return _trajectory_run._in_way_ahead(
+            world,  # type: ignore[arg-type]
+            1,
+            0.0,
+            0.0,
+            0.0,
+            "walker",
+            5.0,
+            2.0,
+            behind=(0.0, 0.0, 0.0, 0.0),
+            body_half_width=1.0,
+        )
+
+    return look
+
+
+def test_a_walker_on_its_controller_walking_off_the_way_is_measured_leaving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A walker on CARLA's controller reports standing while it walks: it is
+    measured from where it stood the tick before, and walking off the way it
+    is not waited for (#929).  Two reading it on one tick read the same."""
+    world = _Clock(_ai_walker(1.5))
+    look = _ahead(monkeypatch, world)
+    assert look() == 66  # nothing to measure from yet: it reports standing
+    world.elapsed += 0.05
+    world.walker.at = SimpleNamespace(x=3.0, y=1.57, z=0.0)  # 1.4 m/s away
+    assert look() == -1
+    assert look() == -1  # read again on the same tick: the same
+
+
+def test_a_walker_on_its_controller_standing_in_the_way_is_waited_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _Clock(_ai_walker(1.5))
+    look = _ahead(monkeypatch, world)
+    assert look() == 66
+    world.elapsed += 0.05
+    assert look() == 66
+
+
+def test_a_teleported_walker_is_not_read_as_leaving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A walker put elsewhere between two ticks (faster than any walk) did
+    not walk there: it is not leaving, and is waited for."""
+    world = _Clock(_ai_walker(1.5))
+    look = _ahead(monkeypatch, world)
+    assert look() == 66
+    world.elapsed += 0.05
+    world.walker.at = SimpleNamespace(x=3.0, y=4.0, z=0.0)  # 50 m/s: put there
+    assert look() == 66
+
+
+def test_a_walker_on_its_controller_looks_as_far_ahead_as_it_walks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_vehicle_before_walker`` looks a second's walk ahead: for a walker on
+    CARLA's controller, which reports standing, that walk is measured."""
+    from autoware_carla_scenario.actions import _trajectory_run
+    from autoware_carla_scenario.utils import clearance
+
+    reaches: List[float] = []
+
+    def found(*args: Any) -> Any:
+        reaches.append(float(args[6]))
+        return None
+
+    monkeypatch.setattr(clearance, "first_box_in_way", found)
+    forget = getattr(_trajectory_run, "forget_walkers", None)
+    if forget is not None:
+        forget()
+    walker = _ai_walker(1.5)
+    world = _Clock(walker)
+    walker.get_world = lambda: world
+    walker.get_transform = lambda: SimpleNamespace(
+        location=walker.at, rotation=SimpleNamespace(yaw=90.0)
+    )
+    walker.bounding_box = SimpleNamespace(extent=SimpleNamespace(x=0.3, y=0.3, z=0.9))
+    assert not _trajectory_run._vehicle_before_walker(walker)
+    world.elapsed += 0.05
+    walker.at = SimpleNamespace(x=3.0, y=1.57, z=0.0)  # 1.4 m/s
+    assert not _trajectory_run._vehicle_before_walker(walker)
+    assert reaches == pytest.approx([1.8, 3.2])
+
+
+def test_a_vehicles_velocity_is_what_carla_reports() -> None:
+    """Only walkers are measured: a vehicle reads what CARLA reports, however
+    far it has gone between two ticks."""
+    from autoware_carla_scenario.actions import _trajectory_run
+
+    _trajectory_run.forget_walkers()
+    vehicle = SimpleNamespace(
+        id=7,
+        type_id="vehicle.mini",
+        get_velocity=lambda: SimpleNamespace(x=4.0, y=-1.0, z=0.0),
+        get_location=lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0),
+    )
+    world = _Clock(vehicle)
+    first = _trajectory_run._measured_velocity(world, vehicle)  # type: ignore[arg-type]
+    world.elapsed += 0.05
+    second = _trajectory_run._measured_velocity(world, vehicle)  # type: ignore[arg-type]
+    assert (first.x, first.y) == (second.x, second.y) == (4.0, -1.0)
+
+
+def test_the_walkers_measured_are_forgotten_when_a_run_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.actions import _trajectory_run
+
+    world = _Clock(_ai_walker(1.5))
+    look = _ahead(monkeypatch, world)
+    look()
+    _trajectory_run.forget_walkers()
+    world.elapsed += 0.05
+    world.walker.at = SimpleNamespace(x=3.0, y=1.57, z=0.0)
+    assert look() == 66  # nothing to measure from: a new run's first read
+
+
 def test_a_path_crossing_to_the_lane_beside_marks_a_lane_change() -> None:
     """Where a path steps sideways by a lane (2 m or more) it crosses to the
     lane beside: marked, with the side (CARLA: +y is south, so a step to +y
