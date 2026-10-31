@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
+from .utils.clearance import _HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -444,7 +445,11 @@ def _read_frame(world: "carla.World") -> _Frame:
             kind.startswith("vehicle.") or kind.startswith("walker.")
         ):
             continue
-        others.append(_box_of(actor, actor.get_transform()))
+        placed = actor.get_transform()
+        # A road user parked under the map (hidden) is out of the scene.
+        if placed.location.z < _HIDDEN_BELOW_M:
+            continue
+        others.append(_box_of(actor, placed))
     transform = ego.get_transform()
     return _Frame(transform.rotation.yaw, _box_of(ego, transform), others)
 

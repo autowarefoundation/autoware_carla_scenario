@@ -536,6 +536,34 @@ def test_a_fallen_walker_is_despawned_after_it_has_lain_there(
     assert name == "w1" and 5.0 <= at - fell_at < 5.5
 
 
+def test_a_fallen_walker_is_despawned_on_its_tick_on_a_summed_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CARLA's clock is a running sum of the 0.05 s tick, so 100 ticks after
+    the fall read a hair short of 5 s; the walker still goes on that tick,
+    not one late (#845)."""
+    import autoware_carla_scenario.actions.despawn as despawn
+
+    monkeypatch.setattr(despawn, "despawn_entity", lambda world, name, label: 9)
+    walker = _actor(5, "walker.pedestrian.0001", "w1")
+    world = _MonitoredWorld([walker])
+    monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
+    fell: Optional[int] = None
+    despawned: Optional[int] = None
+    t = fell_at = 0.0
+    for tick in range(300):
+        world.poses[5] = (0.0, 0.0, 1.0, 80.0 if tick >= 60 else 0.0)
+        _, falls, out = monitor.tick(world, t)  # type: ignore[arg-type]
+        if falls:
+            fell = tick
+            fell_at = t
+        if out and despawned is None:
+            despawned = tick
+            assert t - fell_at < 5.0  # the summed clock falls short
+        t += 0.05
+    assert fell is not None and despawned == fell + 100
+
+
 class _SnapshotWorld:
     """A world whose snapshot holds the actors of *poses*."""
 
