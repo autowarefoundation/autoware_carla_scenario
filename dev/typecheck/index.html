@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-237 of the package's 343
-modules (69%; about 69,700 of
-120,000 lines) are <code>CHECKED</code>: the kinematics, the
+238 of the package's 344
+modules (69%; about 70,000 of
+120,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 237 CHECKED modules</summary>
+<summary>The 238 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5525,6 +5525,10 @@ first paragraph of its docstring:</p>
 <td>Where a session's cases are on disk: the viewer's path guard and case stems.</td>
 </tr>
 <tr>
+<td><code>ui.comparison</code></td>
+<td>Sessions compared case by case and ODD cell by cell: each case's change from the first session that ran it to the last, its metric deltas, and the pass rate of each cell of two ODD attributes, per session.</td>
+</tr>
+<tr>
 <td><code>ui.drive_metrics</code></td>
 <td>How the ego drove: the gaps between road users' boxes, and the metrics the viewer reads off a trajectory log, fed one tick at a time.</td>
 </tr>
@@ -5849,7 +5853,7 @@ the first:</p>
 <li><code>ui.cases</code>: reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.models</code>: imports pydantic</li>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>)</li>
-<li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>)</li>
+<li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>); the comparison of sessions is the checked ui.comparison's, fed the buckets and key read here</li>
 <li><code>ui.scanner</code>: imports yaml, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options'</li>
 <li><code>ui.sweep_resolver</code>: imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
