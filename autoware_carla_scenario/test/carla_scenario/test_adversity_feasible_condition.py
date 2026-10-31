@@ -39,8 +39,12 @@ def _actor(
     y: float,
     speed: float,
     type_id: str = "vehicle.audi.tt",
+    *,
+    box_x: float = 0.0,
+    box_y: float = 0.0,
 ) -> Any:
-    # A map-frame (x, y) facing East, as CARLA has it: y flipped.
+    # A map-frame (x, y) facing East, as CARLA has it: y flipped.  The box's
+    # centre is (box_x, box_y) off the origin, in CARLA's frame (y right).
     transform = SimpleNamespace(
         location=_vector(x, -y, 0.0),
         rotation=SimpleNamespace(yaw=0.0, pitch=0.0, roll=0.0),
@@ -50,7 +54,9 @@ def _actor(
         id=actor_id,
         type_id=type_id,
         attributes={"role_name": role},
-        bounding_box=SimpleNamespace(extent=_vector(2.5, 1.0, 0.8), location=_vector()),
+        bounding_box=SimpleNamespace(
+            extent=_vector(2.5, 1.0, 0.8), location=_vector(box_x, box_y)
+        ),
         get_transform=lambda: transform,
         get_velocity=lambda: _vector(speed),
         get_acceleration=lambda: _vector(),

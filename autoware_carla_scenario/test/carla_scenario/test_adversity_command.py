@@ -156,6 +156,42 @@ def test_the_path_becomes_a_timed_trajectory_in_the_map_frame() -> None:
     assert trajectory.name == "cut-in"
     assert [v.time for v in trajectory.vertices] == [0.0, 0.5]
     assert trajectory.vertices[0].position == MapPose(1.0, 2.0, 0.5)
+    # No offset given, or a zero one: the poses are the path's own.
+    assert execution.path_trajectory("cut-in", path, 0.0, 0.0) == trajectory
+
+
+def test_a_box_offset_is_taken_off_each_pose_along_its_heading() -> None:
+    # The box's centre 1.3 m ahead of the origin and 0.2 m to its right
+    # (#889): each pose is the origin's, the offset turned by the state's yaw.
+    path = [
+        PredictedState(1.0, 2.0, 0.5, 3.0, 4.0),
+        PredictedState(2.0, 3.0, math.pi / 2, 3.0, 4.5),
+    ]
+    trajectory = execution.path_trajectory("cut-in", path, 1.3, -0.2)
+    first, second = (v.position for v in trajectory.vertices)
+    assert isinstance(first, MapPose) and isinstance(second, MapPose)
+    c, s = math.cos(0.5), math.sin(0.5)
+    assert (first.x, first.y) == pytest.approx(
+        (1.0 - 1.3 * c - 0.2 * s, 2.0 - 1.3 * s + 0.2 * c)
+    )
+    assert first.yaw == 0.5
+    # Heading north: ahead is +y and right is +x, so the origin is south and
+    # west of the centre.
+    assert (second.x, second.y) == pytest.approx((2.0 - 0.2, 3.0 - 1.3))
+
+
+def test_an_execution_drives_the_origin_of_a_box_offset_vehicle() -> None:
+    run = execution.AdversarialExecution(
+        "npc1",
+        [
+            PredictedState(-38.7, -1.75, 0.0, 10.0, 0.0),
+            PredictedState(-37.7, -1.75, 0.0, 10.0, 0.1),
+        ],
+        box_ahead=1.3,
+    )
+    first = run._follow._trajectory.vertices[0].position
+    assert isinstance(first, MapPose)
+    assert (first.x, first.y) == pytest.approx((-40.0, -1.75))
 
 
 def test_the_vehicle_is_handed_back_once_the_path_is_done(

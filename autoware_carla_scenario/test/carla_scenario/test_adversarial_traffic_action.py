@@ -20,6 +20,7 @@ from autoware_carla_scenario.actions import adversarial_traffic
 from autoware_carla_scenario.actions.adversarial_traffic import AdversarialTrafficAction
 from autoware_carla_scenario.adversity import AdversityKind, AdversityLocation
 from autoware_carla_scenario.adversity.nade import NadeAdversity, NadeSettings
+from autoware_carla_scenario.trajectory.model import MapPose
 from autoware_carla_scenario.utils.turn_indicator import TurnIndicatorState
 
 from .test_adversity_feasible_condition import INNER, _actor, _world
@@ -44,10 +45,13 @@ class _Execution:
         label: str,
         actor: Any = None,
         backend: Any = None,
+        box_ahead: float = 0.0,
+        box_left: float = 0.0,
     ) -> None:
         self.name, self.path, self.label = name, path, label
         self.entity_name = name
         self.actor, self.backend = actor, backend
+        self.box_ahead, self.box_left = box_ahead, box_left
         self.ticks = 0
         self.closed = False
         made.append(self)
@@ -82,11 +86,11 @@ def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return ego_lights
 
 
-def _leading(frame: int, *, npc: str = "npc1") -> Any:
+def _leading(frame: int, *, npc: str = "npc1", box_x: float = 0.0) -> Any:
     # npc1 15 m ahead of the ego, both at 10 m/s: it may brake-check the ego.
     return _world(
         _actor(1, EGO, -55.0, INNER, 10.0),
-        _actor(2, npc, -40.0, INNER, 10.0),
+        _actor(2, npc, -40.0, INNER, 10.0, box_x=box_x),
         frame=frame,
     )
 
@@ -150,6 +154,24 @@ def test_a_background_vehicle_is_driven_by_its_actor_without_an_entity() -> None
     assert run.name == "background_7"
     assert run.actor is actor and run.backend is backend
     assert find_vehicle_entity("background_7") is None  # no entity made
+
+
+def test_a_background_vehicle_s_origin_is_put_on_the_path() -> None:
+    # Its box's centre 1.3 m ahead of its origin at x = -40 (#889).
+    actor = SimpleNamespace(id=7)
+    backend = _Backend({"background_7": actor})
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    action.set_traffic_backend(backend)  # type: ignore[arg-type]
+    _run(action, 1, npc="background_7", box_x=1.3)
+    (run,) = made
+    assert run.path[0].x == pytest.approx(-38.7)
+    assert (run.box_ahead, run.box_left) == pytest.approx((1.3, 0.0))
+    trajectory = executions.path_trajectory(
+        run.label, run.path, run.box_ahead, run.box_left
+    )
+    first = trajectory.vertices[0].position
+    assert isinstance(first, MapPose)
+    assert (first.x, first.y) == pytest.approx((-40.0, INNER))
 
 
 def test_background_vehicles_can_be_left_alone() -> None:

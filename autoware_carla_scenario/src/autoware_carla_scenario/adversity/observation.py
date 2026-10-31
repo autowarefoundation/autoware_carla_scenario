@@ -96,6 +96,10 @@ class AgentSnapshot:
         footprint: Its size; ``is_vehicle`` tells a vehicle from a pedestrian.
         speed_limit: The simulator's speed limit for it (km/h), if any: the
             desired speed where the lanelet has no ``speed_limit`` tag.
+        box_ahead: How far its centre is ahead of its actor's origin, along
+            its heading (m): a vehicle's origin is often behind the centre
+            of its bounding box (#889).
+        box_left: How far its centre is left of its actor's origin (m).
     """
 
     name: str
@@ -106,6 +110,8 @@ class AgentSnapshot:
     acceleration: float
     footprint: AgentFootprint
     speed_limit: Optional[float] = None
+    box_ahead: float = 0.0
+    box_left: float = 0.0
 
 
 @dataclass(frozen=True)

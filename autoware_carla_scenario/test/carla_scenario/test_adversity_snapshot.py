@@ -30,6 +30,7 @@ def _actor(
     acceleration: Any,
     extent: Any,
     box_x: float = 0.0,
+    box_y: float = 0.0,
 ) -> SimpleNamespace:
     yaw = math.radians(yaw_deg)
     transform = SimpleNamespace(
@@ -40,7 +41,7 @@ def _actor(
     return SimpleNamespace(
         type_id=type_id,
         get_speed_limit=lambda: 40.0,
-        bounding_box=SimpleNamespace(extent=extent, location=_vector(box_x, 0.0)),
+        bounding_box=SimpleNamespace(extent=extent, location=_vector(box_x, box_y)),
         get_transform=lambda: transform,
         get_velocity=lambda: velocity,
         get_acceleration=lambda: acceleration,
@@ -120,6 +121,66 @@ def test_the_position_is_the_centre_of_the_bounding_box() -> None:
     assert (agent.x, agent.y) == pytest.approx(
         (110.0 + 1.5 * math.cos(yaw), 195.0 + 1.5 * math.sin(yaw))
     )
+    assert (agent.box_ahead, agent.box_left) == (1.5, 0.0)
+
+
+@pytest.mark.usefixtures("offset_map")
+def test_a_box_off_to_the_side_is_left_or_right_in_the_map_frame() -> None:
+    # CARLA's y is to the right: a box 0.4 m right of the origin is 0.4 m to
+    # the right of the heading in the map frame too, i.e. box_left = -0.4.
+    car = _actor(
+        "vehicle.audi.tt",
+        10.0,
+        5.0,
+        -30.0,
+        _vector(0.0, 0.0),
+        _vector(0.0, 0.0),
+        _vector(2.0, 1.0, 0.7),
+        box_x=1.5,
+        box_y=0.4,
+    )
+    agent = snapshot.snapshot_actor(car, "npc1")
+    yaw = math.radians(30.0)
+    right = (math.sin(yaw), -math.cos(yaw))
+    assert (agent.x, agent.y) == pytest.approx(
+        (
+            110.0 + 1.5 * math.cos(yaw) + 0.4 * right[0],
+            195.0 + 1.5 * math.sin(yaw) + 0.4 * right[1],
+        )
+    )
+    assert (agent.box_ahead, agent.box_left) == (1.5, -0.4)
+
+
+@pytest.mark.usefixtures("offset_map")
+def test_a_path_from_a_snapshot_puts_the_origin_back_where_it_was() -> None:
+    # A yawed actor whose box is ahead and to the side (#889): the pose of a
+    # path that starts at its snapshot is its origin, in the map frame.
+    from autoware_carla_scenario.actions._adversarial_execution import (
+        path_trajectory,
+    )
+    from autoware_carla_scenario.adversity import PredictedState
+    from autoware_carla_scenario.trajectory.model import MapPose
+
+    car = _actor(
+        "vehicle.audi.tt",
+        10.0,
+        5.0,
+        -30.0,
+        _vector(0.0, 0.0),
+        _vector(0.0, 0.0),
+        _vector(2.0, 1.0, 0.7),
+        box_x=1.3,
+        box_y=-0.25,
+    )
+    agent = snapshot.snapshot_actor(car, "npc1")
+    path = [
+        PredictedState(agent.x, agent.y, agent.yaw, 0.0, 0.0),
+        PredictedState(agent.x, agent.y, agent.yaw, 0.0, 0.1),
+    ]
+    first = path_trajectory("p", path, agent.box_ahead, agent.box_left).vertices[0]
+    assert isinstance(first.position, MapPose)
+    assert (first.position.x, first.position.y) == pytest.approx((110.0, 195.0))
+    assert first.position.yaw == pytest.approx(math.radians(30.0))
 
 
 def _parked_or_not(z: float) -> SimpleNamespace:

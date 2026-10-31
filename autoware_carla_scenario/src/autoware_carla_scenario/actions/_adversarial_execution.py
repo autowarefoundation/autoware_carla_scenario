@@ -20,6 +20,7 @@ driven directly (:class:`_ActorFollow`), taken from the backend with
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
@@ -49,8 +50,20 @@ __all__ = ["AdversarialExecution", "drivable", "path_trajectory", "start_executi
 logger = logging.getLogger(__name__)
 
 
-def path_trajectory(name: str, path: list[PredictedState]) -> Trajectory:
-    """*path* as a timed trajectory in the map frame, its times from 0."""
+def path_trajectory(
+    name: str,
+    path: list[PredictedState],
+    box_ahead: float = 0.0,
+    box_left: float = 0.0,
+) -> Trajectory:
+    """*path* as a timed trajectory in the map frame, its times from 0.
+
+    The path is planned for the centre of the vehicle's bounding box (as an
+    :class:`~..adversity.observation.AgentSnapshot` has it); the trajectory
+    is driven by the actor's origin, which the follow action puts on it.  So
+    each pose is the origin's: the centre less the box's offset, *box_ahead*
+    along the state's heading and *box_left* to its left (#889).
+    """
     if len(path) < 2:
         raise ValueError("a path to drive needs at least two states")
     start = path[0].t
@@ -59,7 +72,11 @@ def path_trajectory(name: str, path: list[PredictedState]) -> Trajectory:
         # A typed local: the vertex takes a BaseCondition, which Codon does not
         # upcast a TrajectoryTimeCondition to inside the call.
         at: BaseCondition = TrajectoryTimeCondition(p.t - start)
-        vertices.append(TrajectoryVertex(MapPose(p.x, p.y, p.yaw), at))
+        cos_yaw = math.cos(p.yaw)
+        sin_yaw = math.sin(p.yaw)
+        x = p.x - box_ahead * cos_yaw + box_left * sin_yaw
+        y = p.y - box_ahead * sin_yaw - box_left * cos_yaw
+        vertices.append(TrajectoryVertex(MapPose(x, y, p.yaw), at))
     return Trajectory(name, vertices)
 
 
@@ -110,11 +127,15 @@ class AdversarialExecution:
 
     Args:
         entity_name: ``role_name`` of the vehicle or pedestrian.
-        path: The planned path, in the Lanelet2 map frame.
+        path: The planned path of its bounding box's centre, in the Lanelet2
+            map frame.
         following_mode: ``FOLLOW`` (default) or ``POSITION``.
         label: For the logs and the follow action's label.
         actor: For a background vehicle no entity stands for, its actor...
         backend: ...and the traffic backend that drives it otherwise.
+        box_ahead: How far the box's centre is ahead of the actor's origin
+            (m), which is put on the path less it: :func:`path_trajectory`.
+        box_left: How far it is left of the origin (m).
     """
 
     entity_name: str
@@ -131,9 +152,11 @@ class AdversarialExecution:
         label: str = "adversity",
         actor: Optional["carla.Actor"] = None,
         backend: Optional[TrafficBackend] = None,
+        box_ahead: float = 0.0,
+        box_left: float = 0.0,
     ) -> None:
         self.entity_name = str(entity_name)
-        trajectory = path_trajectory(label, path)
+        trajectory = path_trajectory(label, path, box_ahead, box_left)
         follow: TrajectoryRun = TrajectoryRun(
             self.entity_name,
             trajectory,
@@ -219,9 +242,20 @@ def start_execution(
     """*command* planned for *name* on *scene*, ready to drive -- a background
     vehicle's *actor* through its *backend* when given; None, with a warning,
     when it cannot be planned (off the lanes, no lane to change to)."""
+    observed = scene.vehicle(name)
     try:
-        path = plan_command(scene.features, scene.vehicle(name), command)
+        path = plan_command(scene.features, observed, command)
     except ValueError as error:
         logger.warning("%s: %s; nothing done", label, error)
         return None
-    return AdversarialExecution(name, path, following_mode, label, actor, backend)
+    # The path is the box centre's, the actor's origin is driven (#889).
+    return AdversarialExecution(
+        name,
+        path,
+        following_mode,
+        label,
+        actor,
+        backend,
+        observed.agent.box_ahead,
+        observed.agent.box_left,
+    )

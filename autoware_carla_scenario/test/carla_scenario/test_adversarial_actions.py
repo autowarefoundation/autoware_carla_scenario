@@ -38,7 +38,7 @@ from autoware_carla_scenario.conditions.adversity_feasible import (
     AdversityFeasibleCondition,
 )
 from autoware_carla_scenario.conditions.always_true import AlwaysTrueCondition
-from autoware_carla_scenario.trajectory.model import TrajectoryFollowingMode
+from autoware_carla_scenario.trajectory.model import MapPose, TrajectoryFollowingMode
 
 from .test_adversity_feasible_condition import INNER, _actor, _world
 from .test_adversity_feasible_condition import crossroads as crossroads  # noqa: F401
@@ -61,11 +61,14 @@ class _Execution:
         label: str,
         actor: Any = None,
         backend: Any = None,
+        box_ahead: float = 0.0,
+        box_left: float = 0.0,
     ) -> None:
         self.entity_name = entity_name
         self.path = path
         self.following_mode = following_mode
         self.label = label
+        self.box_ahead, self.box_left = box_ahead, box_left
         self.ticks: list[float] = []
         self.closed = False
         made.append(self)
@@ -134,6 +137,33 @@ def test_a_triggered_adversity_is_driven_to_its_end() -> None:
     assert run.path[-1].speed < run.path[0].speed
     assert run.ticks == pytest.approx([0.0, 0.1, 0.2])
     assert action.finished
+
+
+def test_the_path_is_driven_by_the_actor_s_origin_not_its_box_centre() -> None:
+    # npc1's origin at x = -40 with its box's centre 1.3 m ahead (#889): the
+    # path is planned from the centre, the trajectory puts the origin on it.
+    world = _world(
+        _actor(1, "npc1", -40.0, INNER, 10.0, box_x=1.3),
+        _actor(2, "npc2", -55.0, INNER, 10.0),
+    )
+    action = AdversarialBrakeAction("npc1", ANY)
+    _run(action, [world])
+    (run,) = made
+    assert run.path[0].x == pytest.approx(-38.7)
+    assert (run.box_ahead, run.box_left) == pytest.approx((1.3, 0.0))
+    trajectory = executions.path_trajectory(
+        run.label, run.path, run.box_ahead, run.box_left
+    )
+    poses = [v.position for v in trajectory.vertices]
+    assert all(isinstance(p, MapPose) for p in poses)
+    first = poses[0]
+    assert isinstance(first, MapPose)
+    # Where the actor stands: no jump on the first tick.
+    assert (first.x, first.y) == pytest.approx((-40.0, INNER))
+    # And every vertex 1.3 m behind the planned centre, the path straight.
+    assert [(p.x, p.y) for p in poses if isinstance(p, MapPose)] == pytest.approx(
+        [(s.x - 1.3, s.y) for s in run.path]
+    )
 
 
 def test_nothing_fires_where_the_adversity_may_not() -> None:
