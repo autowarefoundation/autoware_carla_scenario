@@ -30,7 +30,7 @@ Where the sweep has cases of its own (constraints or a route search), the
 ODD's attributes the Lanelet2 map decides -- in a junction or not, how many
 lanes, the speed limit: the road the case is on -- are drawn too, among the
 buckets the cases' lanelets reach, and each drawn case takes a case on a
-lanelet in the buckets drawn (:func:`_choose_cases`).  So the sampler's
+lanelet in the buckets drawn (:func:`.case_choice.choose_cases`).  So the sampler's
 strategy -- uniform, or what coverage left uncovered first -- picks the road
 as it picks the settings.
 
@@ -52,6 +52,9 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 from omegaconf import DictConfig, OmegaConf
 
 from .bindings import Binding, parse_binding
+from .case_choice import case_lanelet as _case_lanelet
+from .case_choice import choose_cases as _choose_cases
+from .case_choice import fits as _fits
 from .constraints import (
     Constraint,
     create_routing_graph,
@@ -155,19 +158,6 @@ def expand_sweep(
 _MAP_KNOB_PREFIX = "_odd_map."
 
 
-def _case_lanelet(case: Sequence[str]) -> int | None:
-    """The lanelet a base case is on: its first ``*lanelet_id`` override (the
-    constraints' pick, or the route's spawn)."""
-    for item in case:
-        key, _, value = item.lstrip("+").partition("=")
-        if key.endswith("lanelet_id"):
-            try:
-                return int(value)
-            except ValueError:
-                return None
-    return None
-
-
 def _case_readings(
     base_cases: list[list[str]], definition: Any, lanelet_map: Any
 ) -> list[dict[str, tuple[str, Any]]]:
@@ -231,12 +221,6 @@ def _map_knobs(
 _DRAWS_PER_CASE = 20
 
 
-def _fits(sample: Any, buckets: dict[str, str], attributes: Sequence[str]) -> bool:
-    return all(
-        buckets.get(a) == sample.buckets[a] for a in attributes if a in sample.buckets
-    )
-
-
 def _on_some_case(
     sampler: Any, wanted: int, buckets: list[dict[str, str]], attributes: Sequence[str]
 ) -> list[Any]:
@@ -248,10 +232,11 @@ def _on_some_case(
     30, say -- and the knobs draw each attribute on its own.  So more are
     drawn (:data:`_DRAWS_PER_CASE` for each kept, in the sampler's order) and
     those on no case are passed over; if too few are left, the rest are the
-    first passed over, put on the case nearest them (:func:`_choose_cases`).
+    first passed over, put on the case nearest them
+    (:func:`.case_choice.choose_cases`).
     """
     drawn = sampler.sample(wanted * _DRAWS_PER_CASE)
-    kept = [s for s in drawn if any(_fits(s, b, attributes) for b in buckets)]
+    kept = [s for s in drawn if any(_fits(s.buckets, b, attributes) for b in buckets)]
     if len(kept) >= wanted:
         return kept[:wanted]
     passed = [s for s in drawn if s not in kept]
@@ -263,36 +248,6 @@ def _on_some_case(
         wanted - len(kept),
     )
     return kept + passed[: wanted - len(kept)]
-
-
-def _choose_cases(
-    samples: Sequence[Any],
-    buckets: list[dict[str, str]],
-    attributes: Sequence[str],
-) -> tuple[list[int], int]:
-    """The base case for each drawn sample, by index: one on a lanelet in
-    every bucket the sample drew for *attributes*, else in as many of them as
-    any; among those, the one run least so far (the first of equals), so
-    the cases are spread over as many lanelets as the buckets allow.
-    Returns the indices and how many matched fully."""
-    chosen: list[int] = []
-    uses = [0] * len(buckets)
-    full = 0
-    for sample in samples:
-        wanted = {a: sample.buckets[a] for a in attributes if a in sample.buckets}
-        scores = [
-            sum(1 for a, label in wanted.items() if b.get(a) == label) for b in buckets
-        ]
-        best = max(scores) if scores else 0
-        if best == len(wanted):
-            full += 1
-        index = min(
-            (i for i, score in enumerate(scores) if score == best),
-            key=lambda i: (uses[i], i),
-        )
-        uses[index] += 1
-        chosen.append(index)
-    return chosen, full
 
 
 def _as_run(
@@ -373,7 +328,9 @@ def _with_odd_samples(
         samples = sampler.sample(wanted)
     space = search.space if search is not None else ParameterSpace.of(sampler)
     if map_attributes:
-        indices, full = _choose_cases(samples, buckets, map_attributes)
+        indices, full = _choose_cases(
+            [s.buckets for s in samples], buckets, map_attributes
+        )
         # Every attribute the map decides is the lanelet's, a derived one too
         # (it has no knob, but it was derived from the buckets drawn).
         decided = sorted({*map_attributes, *(n for r in readings for n in r)})
