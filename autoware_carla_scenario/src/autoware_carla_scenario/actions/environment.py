@@ -37,6 +37,7 @@ __all__ = [
     "TIRE_FRICTION_RANGES",
     "apply_tire_friction",
     "follow_tire_friction",
+    "forget_tire_friction",
     "rain_weather",
     "tire_friction",
     "tire_friction_range",
@@ -217,6 +218,38 @@ def world_tire_friction(world_id: Optional[int]) -> Optional[float]:
     if world_id in _TIRE_FACTORS:
         return _TIRE_FACTORS[world_id]
     return None
+
+
+def forget_tire_friction(world: "carla.World") -> None:
+    """Put back the grip the vehicles of *world* were spawned with, and forget
+    every world's tire friction; the runner calls this for every run.
+
+    A soft world reset keeps the episode, so without this a run that sets no
+    grip would read (:func:`world_tire_friction`) and give the vehicles it
+    spawns (:func:`follow_tire_friction`) the grip the last run set.  The
+    vehicles that grip was applied to mostly went with that run, but not
+    every one: an ego that attaches to an actor someone else spawned outlives
+    the run, and a retried run gets no reset at all.  Such a vehicle gets its
+    spawned grip back before its base is forgotten, so the next run's grip
+    scales that rather than what the last one left.  Nothing is asked of the
+    server when no grip was ever applied.
+    """
+    world_id = world.id
+    if world_id in _TIRE_BASES and len(_TIRE_BASES[world_id]) > 0:
+        bases = _TIRE_BASES[world_id]
+        for actor in world.get_actors().filter("vehicle.*"):
+            if actor.id not in bases:
+                continue
+            # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
+            try:
+                _scale_wheels(bases, actor, 1.0)
+            except RuntimeError:
+                continue
+            except AttributeError:
+                continue
+    _TIRE_FACTORS.clear()
+    _TIRE_BASES.clear()
+    _TIRE_SEEN.clear()
 
 
 def follow_tire_friction(world: "carla.World") -> None:
