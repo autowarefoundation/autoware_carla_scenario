@@ -11,6 +11,7 @@ under SLURM must report exactly what the same batch run here reports.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -612,6 +613,88 @@ def test_settings_chunk_the_cases() -> None:
         SlurmSettings.from_mapping({"type": "slurm", "memory": "1G"})
     with pytest.raises(ValueError, match="at least 1"):
         SlurmSettings.from_mapping({"array_parallelism": 0})
+
+
+@pytest.mark.parametrize("key", ["start_stagger_seconds", "poll_seconds"])
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", "1e400", -1, "-0.5"])
+def test_settings_refuse_seconds_that_are_not_finite_or_negative(
+    key: str, value: Any
+) -> None:
+    # inf made a task's start wait overflow (and the manifest's JSON hold
+    # Infinity), nan read as 0, a negative stagger as 0 (#784).
+    with pytest.raises(ValueError, match=rf"launcher\.{key} must be a finite"):
+        SlurmSettings.from_mapping({key: value})
+
+
+def test_settings_read_the_seconds_they_take() -> None:
+    settings = SlurmSettings.from_mapping(
+        {"start_stagger_seconds": "2.5", "poll_seconds": 3}
+    )
+    assert (settings.start_stagger_seconds, settings.poll_seconds) == (2.5, 3.0)
+    # null: no stagger; a poll of 0 would spin, so it is 0.1 s at least.
+    settings = SlurmSettings.from_mapping(
+        {"start_stagger_seconds": None, "poll_seconds": 0}
+    )
+    assert (settings.start_stagger_seconds, settings.poll_seconds) == (0.0, 0.1)
+    assert SlurmSettings.from_mapping(settings.to_dict()) == settings
+
+
+class _FrozenClock:
+    """``worker.time`` with ``time()`` fixed at *now* and ``sleep`` recorded."""
+
+    def __init__(self, now: float) -> None:
+        self.now = now
+        self.slept: list[float] = []
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        ("1000.0", 0.0),  # long ago
+        ("1998.0", 3.0),  # 2 s ago: the rest of the spacing
+        ("2000.0", 5.0),  # just now: the whole spacing
+        ("2600.0", 5.0),  # a node whose clock runs 600 s ahead: no more
+        ("inf", 0.0),  # no finite time: as if no task had started
+        ("-inf", 0.0),
+        ("nan", 0.0),
+        ("garbage", 0.0),
+        ("", 0.0),
+    ],
+)
+def test_start_turn_waits_at_most_the_spacing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str, expected: float
+) -> None:
+    from autoware_carla_scenario.slurm import worker
+
+    clock = _FrozenClock(2000.0)
+    monkeypatch.setattr(worker, "time", clock)
+    lock = tmp_path / "start.lock"
+    lock.write_text(recorded + "\n", encoding="utf-8")
+    assert worker.wait_for_start_turn(lock, 5.0) == expected
+    assert clock.slept == ([expected] if expected else [])
+    assert float(lock.read_text(encoding="utf-8")) == 2000.0
+
+
+@pytest.mark.parametrize("spacing", [math.inf, math.nan, -1.0])
+def test_start_turn_refuses_a_spacing_that_is_not_finite_or_negative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spacing: float
+) -> None:
+    from autoware_carla_scenario.slurm import worker
+
+    clock = _FrozenClock(2000.0)
+    monkeypatch.setattr(worker, "time", clock)
+    lock = tmp_path / "start.lock"
+    lock.write_text("2000.0\n", encoding="utf-8")
+    # Not an OverflowError out of time.sleep(inf) (#784).
+    with pytest.raises(ValueError, match="launcher.start_stagger_seconds"):
+        worker.wait_for_start_turn(lock, spacing)
+    assert clock.slept == []
 
 
 def _recorded_starts(monkeypatch: pytest.MonkeyPatch) -> Any:

@@ -27,6 +27,7 @@ import errno
 import importlib
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -347,8 +348,18 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
     *lock* holds when that was; it is held (``flock``, or an ``O_EXCL`` file
     where the shared file system has no ``flock``) while this waits, so the
     tasks that start together start one after another, *spacing* apart, and
-    so do the ones started later as slots free up.  How long it waited.
+    so do the ones started later as slots free up.  How long it waited: at
+    most *spacing*, however far ahead the clock of the node that wrote *lock*
+    runs; a recorded time that is no finite number counts as no start.
+
+    Raises:
+        ValueError: *spacing* is not a finite number of seconds, at least 0.
     """
+    if not math.isfinite(spacing) or spacing < 0:
+        raise ValueError(
+            "launcher.start_stagger_seconds must be a finite number of seconds, "
+            f"at least 0 (got {spacing!r})"
+        )
     lock.parent.mkdir(parents=True, exist_ok=True)
     with (
         open(lock, "a+", encoding="utf-8") as stream,
@@ -356,10 +367,18 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
     ):
         stream.seek(0)
         try:
-            last = float(stream.read().strip())
+            last: float | None = float(stream.read().strip())
         except ValueError:
-            last = float("-inf")
-        waited = max(0.0, last + spacing - time.time())
+            last = None
+        if last is not None and not math.isfinite(last):
+            last = None  # "inf"/"nan" is no start time: as if none was
+        # At most *spacing*: a lock written by a node whose clock runs ahead
+        # would otherwise hold this task back by the skew as well (#784).
+        waited = (
+            0.0
+            if last is None
+            else min(spacing, max(0.0, last + spacing - time.time()))
+        )
         if waited > 0:
             logger.info("Starting in %.0f s (launcher.start_stagger_seconds)", waited)
             time.sleep(waited)
