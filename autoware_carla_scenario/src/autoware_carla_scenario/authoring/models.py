@@ -647,6 +647,11 @@ class ActionNode(_Node):
         default="pre_tick", validation_alias=AliasChoices("phase", "timing")
     )
     once: bool = True
+    #: Whether the action takes over a control domain of its entity another
+    #: action holds, stopping that action, rather than end the run in error
+    #: (``BaseAction.overrides``).  Only for an action that commands one:
+    #: ``OVERRIDING_ACTIONS``.
+    overrides: bool = False
     #: Field name -> how that lanelet parameter is chosen; see
     #: :attr:`ConditionNode.searches`.
     searches: dict[str, LaneletChoice] = Field(default_factory=dict)

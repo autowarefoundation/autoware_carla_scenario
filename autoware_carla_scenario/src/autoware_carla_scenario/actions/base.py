@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Optional
 
@@ -11,6 +12,7 @@ from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
+from ..control_domain import ControlConflictError, ControlDomain
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
@@ -56,6 +58,11 @@ class BaseAction(ABC):
             run, overriding what the action would decide for itself.  ``None``
             (default) leaves that decision to
             :meth:`~BaseAction.reissues_while_running`.
+        overrides: Whether the action, firing to command a control domain of
+            an entity another action holds, takes it over, stopping that
+            action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default) -- :attr:`overrides`.
 
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- ``force_lane_change`` returns long before the vehicle
@@ -106,6 +113,8 @@ class BaseAction(ABC):
     _reissue: Optional[bool]
     _done: bool
     _lifecycle: ActionState
+    _overrides: bool
+    _claims_control: bool
 
     def __init__(
         self,
@@ -116,6 +125,7 @@ class BaseAction(ABC):
         once: bool = True,
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
+        overrides: bool = False,
     ) -> None:
         if not label:
             raise ValueError(
@@ -133,6 +143,10 @@ class BaseAction(ABC):
         self._reissue = reissue
         self._done = False
         self._lifecycle = ActionState.STANDBY
+        self._overrides = overrides
+        # False for an action another drives as a part of its own run (an
+        # adversity's path), whose domains that one holds.
+        self._claims_control = True
 
     @property
     def timing(self) -> TickTiming:
@@ -238,9 +252,65 @@ class BaseAction(ABC):
         """
         return self.REISSUES_BY_DEFAULT
 
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The ``(entity, domain)`` the action commands when it fires
+        (:mod:`~autoware_carla_scenario.control_domain`); none unless it
+        moves, steers, lights or animates an entity.  Asked as it fires, so
+        the answer may depend on what the entity is."""
+        none: list[tuple[str, ControlDomain]] = []
+        return none
+
+    def _take_control(self, world: "carla.World", at: float) -> None:
+        """Take the domains the action commands as it fires at *at*: for its
+        run if it runs on, else for this tick.
+
+        Raises:
+            ControlConflictError: If another action holds one of them.
+        """
+        if not self._claims_control:
+            return
+        claims = self._control_claims()
+        if not claims:
+            return
+        runs = self._until is not None or self.reissues_while_running
+        for stopped in _SLOTS.take(self, claims, at, runs):
+            stopped._stop_overridden(world, self._control_name)
+
+    @property
+    def _control_name(self) -> str:
+        """How a control conflict names the action: its class and label."""
+        return f"{type(self).__name__} '{self.label}'"
+
+    @property
+    def overrides(self) -> bool:
+        """Whether the action, firing to command a control domain another
+        action holds, takes it over -- stopping that action, as OpenSCENARIO
+        has every action do -- rather than raise
+        :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+        (the default).  Read as the action fires."""
+        return self._overrides
+
+    def _stop_overridden(self, world: "carla.World", by: str) -> None:
+        """Stop the run, overridden by the action *by*: OpenSCENARIO's stop
+        transition, to ``completeState``; what it held is given back."""
+        logger.info("%s overridden by %s", self._control_name, by)
+        self._lifecycle = ActionState.COMPLETE
+        self._stopped(world)
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Undo what the run left in place, now that it is stopped before its
+        end -- an entity it took from its driver, given back.  Nothing unless
+        the action takes one."""
+        return
+
+    def _release_control(self) -> None:
+        """Give back the domains the action took, as its run ends."""
+        _SLOTS.release(self)
+
     def close(self) -> None:
         """Close the action's trigger and its *until* condition, at the run's
-        end (:meth:`BaseCondition.close`)."""
+        end (:meth:`BaseCondition.close`), and give back what it controls."""
+        self._release_control()
         self._condition.close()
         if self._until is not None:
             # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
@@ -268,6 +338,10 @@ class BaseAction(ABC):
         action's lifecycle to step through."""
         if self._lifecycle is not ActionState.START_TRANSITION:
             return
+        # Nothing ticks it again: what it commanded is left to the entity's
+        # driver (an action that keeps acting is put on the tick loop
+        # instead), so it controls nothing from here.
+        self._release_control()
         self._lifecycle = ActionState.RUNNING
         if self.reissues_while_running:
             return
@@ -317,6 +391,7 @@ class BaseAction(ABC):
                 # that has not finished.
                 return
             self._lifecycle = ActionState.END_TRANSITION
+            self._release_control()
             if not just_started or self._until is not None or reissues:
                 # A manoeuvre that genuinely took time holds `endTransition`
                 # for a tick, so a condition can watch for it.  An action given
@@ -350,8 +425,109 @@ class BaseAction(ABC):
             type(self).__name__,
             result.message,
         )
+        # Before it commands anything: a conflict raises with the entity
+        # untouched.
+        self._take_control(world, elapsed)
         self.execute(world)
         self._done = True
         # Held for this whole tick, so a condition watching `startTransition`
         # has a tick on which to see it.
         self._lifecycle = ActionState.START_TRANSITION
+
+
+@dataclass
+class _Hold:
+    """A control domain taken by an action."""
+
+    owner: BaseAction
+    at: float
+    runs: bool
+
+
+class _ControlSlots:
+    """Who holds each control domain of each entity
+    (:mod:`~autoware_carla_scenario.control_domain`)."""
+
+    _holds: dict[tuple[str, str], _Hold]
+
+    def __init__(self) -> None:
+        self._holds = {}
+
+    def take(
+        self,
+        owner: BaseAction,
+        claims: list[tuple[str, ControlDomain]],
+        at: float,
+        runs: bool,
+    ) -> list[BaseAction]:
+        """Take each ``(entity, domain)`` of *claims* for *owner*, fired at
+        scenario time *at*: until it is :meth:`released <release>` if it
+        *runs* on, else for that tick alone.
+
+        Returns:
+            The actions it took a domain over from (*owner* overrides), each
+            released of everything it held, to be stopped.
+
+        Raises:
+            ControlConflictError: If another action holds one of them and
+                *owner* does not override; none is taken then.
+        """
+        overridden: list[BaseAction] = []
+        for entity, domain in claims:
+            held = self.holder(entity, domain, at)
+            if held is None:
+                continue
+            holder: BaseAction = held
+            if not owner.overrides:
+                raise ControlConflictError(
+                    entity, domain, holder._control_name, owner._control_name
+                )
+            if not any(stopped is holder for stopped in overridden):
+                overridden.append(holder)
+        for stopped in overridden:
+            self.release(stopped)
+        for entity, domain in claims:
+            self._holds[(entity, domain.value)] = _Hold(owner, at, runs)
+        return overridden
+
+    def release(self, owner: BaseAction) -> None:
+        """Give back what *owner* took."""
+        for key in [k for k, hold in self._holds.items() if hold.owner is owner]:
+            del self._holds[key]
+
+    def holder(
+        self, entity: str, domain: ControlDomain, at: float
+    ) -> Optional[BaseAction]:
+        """The action holding *domain* of *entity* at scenario time *at*, or
+        ``None``."""
+        key = (entity, domain.value)
+        if key not in self._holds:
+            return None
+        hold = self._holds[key]
+        if hold.runs or hold.at == at:
+            return hold.owner
+        return None
+
+    def clear(self) -> None:
+        """Forget every hold."""
+        self._holds = {}
+
+
+#: Who controls which entity: process-wide, as the entity registry is.
+_SLOTS = _ControlSlots()
+
+
+def control_holder(entity: str, domain: ControlDomain, at: float) -> Optional[str]:
+    """The :attr:`~BaseAction._control_name` of the action holding *domain* of
+    *entity* at scenario time *at*, or ``None``."""
+    held = _SLOTS.holder(entity, domain, at)
+    if held is None:
+        return None
+    holder: BaseAction = held
+    return holder._control_name
+
+
+def reset_control_slots() -> None:
+    """Forget who controls which entity, as a run begins: what an action of a
+    previous run that never finished held is not this run's."""
+    _SLOTS.clear()

@@ -292,6 +292,21 @@ class TestValidation:
         report = validate_document(document)
         assert any("ego" in i.message for i in report.errors)
 
+    def test_an_override_on_an_action_on_no_entity_is_an_error(self) -> None:
+        document = new_document()
+        document.actions.append(ActionNode(type="environment", overrides=True))
+        assert any(
+            "nothing" in i.message or "no running action" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_an_override_on_an_entity_s_action_is_valid(self) -> None:
+        document = new_document()
+        document.actions[0].overrides = True
+        assert not [
+            i for i in validate_document(document).errors if "override" in i.message
+        ]
+
     def test_two_egos_is_an_error(self) -> None:
         document = new_document()
         document.entities.append(Entity(id="ego2", kind="ego"))

@@ -33,6 +33,7 @@ from ..trajectory.authoring import (
     relative_vertex_problems,
     vertex_problems,
 )
+from ._builders_generated import OVERRIDING_ACTIONS
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -464,6 +465,15 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         out.error(
             f"{path}.actor",
             f"Action references unknown entity {node.actor!r}.",
+            node.id,
+        )
+    if node.overrides and node.type not in OVERRIDING_ACTIONS:
+        # A document written by hand: the editor offers it only where it means
+        # something, and the builder would drop it without a word.
+        out.error(
+            f"{path}.overrides",
+            f"{spec.title} commands no entity's speed, steering or lights, so "
+            "there is no running action for it to override.",
             node.id,
         )
 

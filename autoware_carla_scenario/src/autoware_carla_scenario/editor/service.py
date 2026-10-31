@@ -35,6 +35,7 @@ from typing import (
     get_args,
 )
 
+from ..authoring._builders_generated import OVERRIDING_ACTIONS
 from ..authoring.models import (
     ActionNode,
     BindingRef,
@@ -1260,6 +1261,9 @@ class EditorService:
                     )
                 action.phase = requested
         action.once = "once" in form
+        # Only an action that commands an entity's control domains can take
+        # one over; for any other, there is nothing to override.
+        action.overrides = action.type in OVERRIDING_ACTIONS and "overrides" in form
         action.params.update(_parse(spec.fields, form))
 
     def delete_action(self, document: ScenarioDocument, action_id: str) -> None:

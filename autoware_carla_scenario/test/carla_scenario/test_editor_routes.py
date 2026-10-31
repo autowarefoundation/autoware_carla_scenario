@@ -787,6 +787,35 @@ class TestActionEditing:
         client.post(f"/draft/{draft_id}/action/{action.id}", data={"direction": "left"})
         assert _action(store, draft_id, action.id).once is False
 
+    def test_checking_overrides_is_stored_where_it_means_something(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        turn = next(a for a in _document(store, draft_id).actions if a.type == "turn")
+        page = client.get(f"/draft/{draft_id}?selected={turn.id}").text
+        assert "Override a running action" in page
+        client.post(
+            f"/draft/{draft_id}/action/{turn.id}",
+            data={"direction": "left", "overrides": "on"},
+        )
+        assert _action(store, draft_id, turn.id).overrides is True
+        client.post(f"/draft/{draft_id}/action/{turn.id}", data={"direction": "left"})
+        assert _action(store, draft_id, turn.id).overrides is False
+
+    def test_an_action_on_no_entity_offers_no_override(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/action", data={"type_id": "environment"})
+        weather = next(
+            a for a in _document(store, draft_id).actions if a.type == "environment"
+        )
+        page = client.get(f"/draft/{draft_id}?selected={weather.id}").text
+        assert "Override a running action" not in page
+        client.post(f"/draft/{draft_id}/action/{weather.id}", data={"overrides": "on"})
+        assert _action(store, draft_id, weather.id).overrides is False
+
     def test_moving_an_action_changes_layout_only(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
