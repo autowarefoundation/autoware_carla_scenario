@@ -13,14 +13,12 @@ from typing import Optional
 import pytest
 
 from autoware_carla_scenario.action_state import ActionState
-from autoware_carla_scenario.actions.base import BaseAction
+from autoware_carla_scenario.actions.base import BaseAction, control_holder
 from autoware_carla_scenario.conditions.base import BaseCondition, ScenarioResult
 from autoware_carla_scenario.control_domain import (
     MOVEMENT,
     ControlConflictError,
     ControlDomain,
-    ControlSlots,
-    control_slots,
 )
 
 LON = ControlDomain.LONGITUDINAL
@@ -51,8 +49,9 @@ class _Command(BaseAction):
         entity: str = "npc",
         until: Optional[_Switch] = None,
         once: bool = True,
+        overrides: bool = False,
     ) -> None:
-        super().__init__(label=label, until=until, once=once)
+        super().__init__(label=label, until=until, once=once, overrides=overrides)
         self.entity = entity
         self.domains = domains
         self.executed = 0
@@ -64,58 +63,24 @@ class _Command(BaseAction):
         self.executed += 1
 
 
-class TestSlots:
-    def test_a_running_hold_blocks_until_released(self) -> None:
-        slots = ControlSlots()
-        owner, _ = slots.take("a", [("npc", LON)], 0.0, runs=True)
+class TestActions:
+    def test_a_conflict_names_both_actions_and_takes_nothing(self) -> None:
+        _Command("lane", (LAT,), until=_Switch()).tick(None, 0.0)
+        walk = _Command("walk", MOVEMENT)
         with pytest.raises(ControlConflictError) as raised:
-            slots.take("b", [("npc", LON)], 5.0, runs=False)
-        assert (raised.value.entity, raised.value.domain) == ("npc", LON)
-        assert (raised.value.holder, raised.value.claimant) == ("a", "b")
-        slots.release(owner)
-        slots.take("b", [("npc", LON)], 5.0, runs=False)
-
-    def test_a_command_holds_its_tick_alone(self) -> None:
-        slots = ControlSlots()
-        slots.take("a", [("npc", LON)], 1.0, runs=False)
-        with pytest.raises(ControlConflictError):
-            slots.take("b", [("npc", LON)], 1.0, runs=False)
-        slots.take("b", [("npc", LON)], 1.05, runs=False)
+            walk.tick(None, 1.0)
+        assert (raised.value.entity, raised.value.domain) == ("npc", LAT)
+        assert raised.value.holder == "_Command 'lane'"
+        assert raised.value.claimant == "_Command 'walk'"
+        assert control_holder("npc", LON, 1.0) is None
 
     def test_other_domains_and_entities_are_free(self) -> None:
-        slots = ControlSlots()
-        slots.take("a", [("npc", LON)], 0.0, runs=True)
-        slots.take("b", [("npc", LAT)], 0.0, runs=True)
-        slots.take("c", [("other", LON)], 0.0, runs=True)
-        assert slots.holder("npc", LAT, 9.0) == "b"
-        assert slots.holder("npc", ControlDomain.LIGHTING, 9.0) is None
+        _Command("speed", (LON,), until=_Switch()).tick(None, 0.0)
+        _Command("lane", (LAT,), until=_Switch()).tick(None, 0.0)
+        _Command("other", (LON,), entity="other", until=_Switch()).tick(None, 0.0)
+        assert control_holder("npc", LAT, 9.0) == "_Command 'lane'"
+        assert control_holder("npc", ControlDomain.LIGHTING, 9.0) is None
 
-    def test_a_refused_claim_takes_nothing(self) -> None:
-        slots = ControlSlots()
-        slots.take("a", [("npc", LAT)], 0.0, runs=True)
-        with pytest.raises(ControlConflictError):
-            slots.take("b", [("npc", d) for d in MOVEMENT], 0.0, runs=True)
-        assert slots.holder("npc", LON, 0.0) is None
-
-    def test_an_override_releases_everything_the_holder_held(self) -> None:
-        slots = ControlSlots()
-        held, _ = slots.take("walk", [("npc", d) for d in MOVEMENT], 0.0, runs=True)
-        owner, overridden = slots.take(
-            "speed", [("npc", LON)], 1.0, runs=True, overrides=True
-        )
-        assert overridden == [held]
-        assert slots.holder("npc", LON, 1.0) == "speed"
-        assert slots.holder("npc", LAT, 1.0) is None
-
-
-def _Overriding(*args: object, **kwargs: object) -> _Command:  # noqa: N802
-    """A :class:`_Command` that overrides."""
-    command = _Command(*args, **kwargs)  # type: ignore[arg-type]
-    command.overrides = True
-    return command
-
-
-class TestActions:
     def test_a_running_action_blocks_another_on_its_domain(self) -> None:
         holding = _Command("speed", (LON,), until=_Switch())
         holding.tick(None, 0.0)
@@ -162,7 +127,7 @@ class TestActions:
         holding = _Command("speed", (LON,), until=_Switch())
         holding.tick(None, 0.0)
         holding.close()
-        assert control_slots().holder("npc", LON, 1.0) is None
+        assert control_holder("npc", LON, 1.0) is None
 
     def test_an_action_on_no_entity_takes_nothing(self) -> None:
         _Command("weather", ()).tick(None, 0.0)
@@ -175,11 +140,11 @@ class TestOverride:
         holding.tick(None, 0.0)
         holding.tick(None, 0.05)
         assert holding.state is ActionState.RUNNING
-        taking = _Overriding("speed", (LON,), until=_Switch())
+        taking = _Command("speed", (LON,), until=_Switch(), overrides=True)
         taking.tick(None, 0.1)
         assert taking.executed == 1
         assert holding.state is ActionState.COMPLETE
-        assert control_slots().holder("npc", LON, 0.1) == "_Command 'speed'"
+        assert control_holder("npc", LON, 0.1) == "_Command 'speed'"
         # The stopped action gave its lateral domain back too.
         _Command("lane", (LAT,)).tick(None, 0.15)
         # And is not run again.
@@ -188,11 +153,11 @@ class TestOverride:
 
     def test_an_overriding_action_takes_a_domain_commanded_this_tick(self) -> None:
         _Command("speed", (LON,)).tick(None, 1.0)
-        _Overriding("speed2", (LON,)).tick(None, 1.0)
+        _Command("speed2", (LON,), overrides=True).tick(None, 1.0)
 
     def test_an_action_held_over_still_refuses_one_that_does_not_override(
         self,
     ) -> None:
-        _Overriding("speed", (LON,), until=_Switch()).tick(None, 0.0)
+        _Command("speed", (LON,), until=_Switch(), overrides=True).tick(None, 0.0)
         with pytest.raises(ControlConflictError):
             _Command("speed2", (LON,)).tick(None, 0.05)

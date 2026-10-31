@@ -92,10 +92,8 @@ class AdversarialAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action runs at most once.
-        overrides: If ``True``, take over a control domain of the entity
-            another action holds, stopping that action, rather than raise
-            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
-            (default).
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         seed: Seeds the trigger's random draws (a jaywalker's
             speed, a stopped crosser's wait); ``None`` (default) takes the
             run's seed (:mod:`~autoware_carla_scenario.seed`).

@@ -27,7 +27,7 @@ from .conditions import (
     TimeoutCondition,
 )
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
-from .control_domain import reset_control_slots
+from .actions.base import reset_control_slots
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail

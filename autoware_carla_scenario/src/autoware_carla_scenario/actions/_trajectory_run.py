@@ -174,10 +174,8 @@ class TrajectoryRun(BaseAction):
             world then advances from.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
-        overrides: If ``True``, take over a control domain of the entity
-            another action holds, stopping that action, rather than raise
-            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
-            (default).
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         until: Overrides what ends the run; defaults to reaching the end of
             the trajectory as above.
         control_config: Gains for ``FOLLOW`` mode; ``None`` uses the

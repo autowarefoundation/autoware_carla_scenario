@@ -292,10 +292,8 @@ class RoutingAction(TrajectoryRun):
         timing: Which tick phase to run on, when registered on the loop.
         label: Action label.
         once: Whether the action fires at most once.
-        overrides: If ``True``, take over a control domain of the entity
-            another action holds, stopping that action, rather than raise
-            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
-            (default).
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         initial_pose: CARLA world pose the entity is expected to start at, used
             to initialize localization (``driver`` mode).  ``None`` reads the
             attached actor instead.
@@ -509,6 +507,10 @@ class RoutingAction(TrajectoryRun):
             return True  # a route written out is followed to its end
         if self._timed():
             return True
+        return self._walks_pedestrian()
+
+    def _walks_pedestrian(self) -> bool:
+        """Whether the entity is a pedestrian, which ``driver`` mode walks."""
         return (
             find_vehicle_entity(self._entity_name) is None
             and find_pedestrian_entity(self._entity_name) is not None
@@ -534,21 +536,15 @@ class RoutingAction(TrajectoryRun):
         too where the action sets the pace -- a speed, a timed waypoint, a
         stop at the goal -- or walks a pedestrian."""
         entity = str(self._entity_name)
-        lateral = [(entity, ControlDomain.LATERAL)]
-        if self._mode is not RoutingMode.DRIVER:
-            return [(entity, domain) for domain in MOVEMENT]
-        paced = (
-            self._given_speed is not None
+        if (
+            self._mode is not RoutingMode.DRIVER
+            or self._given_speed is not None
             or self._stop_at_goal
             or self._timed()
-            or (
-                find_vehicle_entity(entity) is None
-                and find_pedestrian_entity(entity) is not None
-            )
-        )
-        if paced:
+            or self._walks_pedestrian()
+        ):
             return [(entity, domain) for domain in MOVEMENT]
-        return lateral
+        return [(entity, ControlDomain.LATERAL)]
 
     def _reissues_by_default(self) -> bool:
         """``follow``/``position`` move the entity every tick; ``driver`` mode

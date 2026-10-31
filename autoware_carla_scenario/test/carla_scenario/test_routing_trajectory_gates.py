@@ -41,7 +41,7 @@ from autoware_carla_scenario.actions._departures import (
     TimelineVertex,
 )
 from autoware_carla_scenario.conditions.base import ScenarioResult
-from autoware_carla_scenario.control_domain import reset_control_slots
+from autoware_carla_scenario.actions.base import reset_control_slots
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Optional
 
@@ -11,7 +12,7 @@ from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
-from ..control_domain import ControlDomain, control_slots
+from ..control_domain import ControlConflictError, ControlDomain
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
@@ -112,7 +113,6 @@ class BaseAction(ABC):
     _reissue: Optional[bool]
     _done: bool
     _lifecycle: ActionState
-    _control: int
     _overrides: bool
 
     def __init__(
@@ -142,7 +142,6 @@ class BaseAction(ABC):
         self._reissue = reissue
         self._done = False
         self._lifecycle = ActionState.STANDBY
-        self._control = 0
         self._overrides = overrides
 
     @property
@@ -268,16 +267,13 @@ class BaseAction(ABC):
         if not claims:
             return
         runs = self._until is not None or self.reissues_while_running
-        name = f"{type(self).__name__} '{self.label}'"
-        owner, overridden = control_slots().take(
-            name, claims, at, runs, self._overrides
-        )
-        for stopped in overridden:
-            if stopped in _CONTROLLING:
-                _CONTROLLING[stopped]._stop_overridden(name)
-                del _CONTROLLING[stopped]
-        self._control = owner
-        _CONTROLLING[owner] = self
+        for stopped in _SLOTS.take(self, claims, at, runs):
+            stopped._stop_overridden(self._control_name)
+
+    @property
+    def _control_name(self) -> str:
+        """How a control conflict names the action: its class and label."""
+        return f"{type(self).__name__} '{self.label}'"
 
     @property
     def overrides(self) -> bool:
@@ -288,24 +284,15 @@ class BaseAction(ABC):
         (the default).  Read as the action fires."""
         return self._overrides
 
-    @overrides.setter
-    def overrides(self, value: bool) -> None:
-        self._overrides = bool(value)
-
     def _stop_overridden(self, by: str) -> None:
         """Stop the run, overridden by the action *by*: OpenSCENARIO's stop
         transition, to ``completeState``; what it held is given back."""
-        logger.info("%s '%s' overridden by %s", type(self).__name__, self.label, by)
-        self._control = 0
+        logger.info("%s overridden by %s", self._control_name, by)
         self._lifecycle = ActionState.COMPLETE
 
     def _release_control(self) -> None:
         """Give back the domains the action took, as its run ends."""
-        if self._control:
-            control_slots().release(self._control)
-            if self._control in _CONTROLLING:
-                del _CONTROLLING[self._control]
-            self._control = 0
+        _SLOTS.release(self)
 
     def close(self) -> None:
         """Close the action's trigger and its *until* condition, at the run's
@@ -432,6 +419,99 @@ class BaseAction(ABC):
         self._lifecycle = ActionState.START_TRANSITION
 
 
-#: The action holding each control token (:meth:`BaseAction._take_control`),
-#: so one an overriding action takes its domains from can be stopped.
-_CONTROLLING: dict[int, BaseAction] = {}
+@dataclass
+class _Hold:
+    """A control domain taken by an action."""
+
+    owner: BaseAction
+    at: float
+    runs: bool
+
+
+class _ControlSlots:
+    """Who holds each control domain of each entity
+    (:mod:`~autoware_carla_scenario.control_domain`)."""
+
+    _holds: dict[tuple[str, str], _Hold]
+
+    def __init__(self) -> None:
+        self._holds = {}
+
+    def take(
+        self,
+        owner: BaseAction,
+        claims: list[tuple[str, ControlDomain]],
+        at: float,
+        runs: bool,
+    ) -> list[BaseAction]:
+        """Take each ``(entity, domain)`` of *claims* for *owner*, fired at
+        scenario time *at*: until it is :meth:`released <release>` if it
+        *runs* on, else for that tick alone.
+
+        Returns:
+            The actions it took a domain over from (*owner* overrides), each
+            released of everything it held, to be stopped.
+
+        Raises:
+            ControlConflictError: If another action holds one of them and
+                *owner* does not override; none is taken then.
+        """
+        overridden: list[BaseAction] = []
+        for entity, domain in claims:
+            held = self.holder(entity, domain, at)
+            if held is None:
+                continue
+            holder: BaseAction = held
+            if not owner.overrides:
+                raise ControlConflictError(
+                    entity, domain, holder._control_name, owner._control_name
+                )
+            if not any(stopped is holder for stopped in overridden):
+                overridden.append(holder)
+        for stopped in overridden:
+            self.release(stopped)
+        for entity, domain in claims:
+            self._holds[(entity, domain.value)] = _Hold(owner, at, runs)
+        return overridden
+
+    def release(self, owner: BaseAction) -> None:
+        """Give back what *owner* took."""
+        for key in [k for k, hold in self._holds.items() if hold.owner is owner]:
+            del self._holds[key]
+
+    def holder(
+        self, entity: str, domain: ControlDomain, at: float
+    ) -> Optional[BaseAction]:
+        """The action holding *domain* of *entity* at scenario time *at*, or
+        ``None``."""
+        key = (entity, domain.value)
+        if key not in self._holds:
+            return None
+        hold = self._holds[key]
+        if hold.runs or hold.at == at:
+            return hold.owner
+        return None
+
+    def clear(self) -> None:
+        """Forget every hold."""
+        self._holds = {}
+
+
+#: Who controls which entity: process-wide, as the entity registry is.
+_SLOTS = _ControlSlots()
+
+
+def control_holder(entity: str, domain: ControlDomain, at: float) -> Optional[str]:
+    """The :attr:`~BaseAction._control_name` of the action holding *domain* of
+    *entity* at scenario time *at*, or ``None``."""
+    held = _SLOTS.holder(entity, domain, at)
+    if held is None:
+        return None
+    holder: BaseAction = held
+    return holder._control_name
+
+
+def reset_control_slots() -> None:
+    """Forget who controls which entity, as a run begins: what an action of a
+    previous run that never finished held is not this run's."""
+    _SLOTS.clear()

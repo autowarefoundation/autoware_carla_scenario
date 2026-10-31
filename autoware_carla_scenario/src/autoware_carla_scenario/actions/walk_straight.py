@@ -80,10 +80,8 @@ class WalkStraightAction(BaseAction):
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
-        overrides: If ``True``, take over a control domain of the entity
-            another action holds, stopping that action, rather than raise
-            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
-            (default).
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         turn_back_ttc_s: Turn back when a vehicle's time to collision with
             the pedestrian, along the road, is at most this (s).  ``None``
             (default): not by time to collision.

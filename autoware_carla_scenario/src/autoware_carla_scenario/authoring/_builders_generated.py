@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "OVERRIDING_ACTIONS",
     "build_and_condition",
     "build_or_condition",
     "build_not_condition",
@@ -95,6 +96,29 @@ __all__ = [
     "build_turn_action",
     "build_vehicle_parameters_action",
 ]
+
+#: The action types whose constructor takes ``overrides``: those that command
+#: an entity's control domains, whose card offers *Override a running action*.
+OVERRIDING_ACTIONS: frozenset[str] = frozenset(
+    {
+        "adversarial_brake",
+        "adversarial_cut_in",
+        "adversarial_merge",
+        "head_on",
+        "ignore_leader",
+        "jaywalk",
+        "lane_change_abort",
+        "pedestrian_run_red_light",
+        "run_traffic_rule",
+        "stop_crossing",
+        "walk_straight",
+        "turn_indicator",
+        "lane_change",
+        "routing",
+        "set_speed",
+        "turn",
+    }
+)
 
 
 def build_and_condition(
@@ -846,6 +870,7 @@ def build_adversarial_brake_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -870,6 +895,7 @@ def build_adversarial_cut_in_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -894,6 +920,7 @@ def build_adversarial_merge_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1000,6 +1027,7 @@ def build_head_on_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1024,6 +1052,7 @@ def build_ignore_leader_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1048,6 +1077,7 @@ def build_jaywalk_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1072,6 +1102,7 @@ def build_lane_change_abort_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1096,6 +1127,7 @@ def build_pedestrian_run_red_light_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1120,6 +1152,7 @@ def build_run_traffic_rule_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1173,6 +1206,7 @@ def build_stop_crossing_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1365,6 +1399,7 @@ def build_walk_straight_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         turn_back_ttc_s=params["turn_back_ttc_s"],
         turn_back_distance_m=params["turn_back_distance_m"],
         turn_back_within_m=params["turn_back_within_m"],
@@ -1494,6 +1529,7 @@ def build_turn_indicator_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
     )
 
 
@@ -1536,6 +1572,7 @@ def build_lane_change_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
     )
 
 
@@ -1588,6 +1625,7 @@ def build_routing_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         waypoints=waypoints,
         walking_speed=params["walking_speed"],
         cross_factor=params["cross_factor"],
@@ -1622,6 +1660,7 @@ def build_set_speed_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
     )
 
 
@@ -1680,6 +1719,7 @@ def build_turn_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        overrides=compiled.node.overrides,
         search_distance=params["search_distance"],
     )
 

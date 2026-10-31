@@ -245,10 +245,6 @@ class BaseAction:
     def overrides(self) -> bool:
         raise NotImplementedError()
 
-    @overrides.setter
-    def overrides(self, value: bool):
-        raise NotImplementedError()
-
     def execute(self, world: carla.World) -> None:
         raise NotImplementedError()
 

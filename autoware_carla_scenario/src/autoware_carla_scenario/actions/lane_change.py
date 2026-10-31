@@ -48,10 +48,8 @@ class LaneChangeAction(BaseAction):
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
-        overrides: If ``True``, take over a control domain of the entity
-            another action holds, stopping that action, rather than raise
-            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
-            (default).
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as the manoeuvre having settled.  Defaults
             to :class:`LaneChangeSettledCondition` on *entity_name*.
     """

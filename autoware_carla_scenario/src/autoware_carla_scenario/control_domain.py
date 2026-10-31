@@ -19,7 +19,9 @@ happens then is the newer action's to say:
   action do (*Actions at runtime*): the action holding it is stopped -- it
   goes to ``completeState`` -- and gives back every domain it held.
 
-A domain is held by the action that took it (:class:`ControlSlots`):
+A domain is held by the action that took it
+(:func:`~autoware_carla_scenario.actions.base.reset_control_slots` forgets
+every hold, as a run begins):
 
 * an action that runs on -- one with an end condition, or one that reissues
   its command every tick -- holds it until its run ends;
@@ -35,16 +37,11 @@ the same simulation step.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
-from typing import Optional, Sequence
 
 __all__ = [
     "MOVEMENT",
     "ControlConflictError",
     "ControlDomain",
-    "ControlSlots",
-    "control_slots",
-    "reset_control_slots",
 ]
 
 
@@ -91,107 +88,3 @@ class ControlConflictError(RuntimeError):
         self.domain = domain
         self.holder = holder
         self.claimant = claimant
-
-
-@dataclass
-class _Hold:
-    """A domain taken by an action."""
-
-    owner: int
-    label: str
-    at: float
-    runs: bool
-
-
-class ControlSlots:
-    """Who holds each control domain of each entity."""
-
-    _holds: dict[tuple[str, str], _Hold]
-    _next: int
-
-    def __init__(self) -> None:
-        self._holds = {}
-        self._next = 0
-
-    def take(
-        self,
-        label: str,
-        claims: Sequence[tuple[str, ControlDomain]],
-        at: float,
-        runs: bool,
-        overrides: bool = False,
-    ) -> tuple[int, list[int]]:
-        """Take each ``(entity, domain)`` of *claims* for the action *label*,
-        fired at scenario time *at*: until it is :meth:`released <release>`
-        if it *runs* on, else for that tick alone.
-
-        Args:
-            overrides: Take a domain another action holds, releasing
-                everything that action holds, rather than refuse.
-
-        Returns:
-            The token :meth:`release` gives them back with, and the tokens of
-            the actions it overrode, to be stopped.
-
-        Raises:
-            ControlConflictError: If another action holds one of them and
-                *overrides* is false; none is taken then.
-        """
-        overridden: list[int] = []
-        for entity, domain in claims:
-            held = self._holder(entity, domain, at)
-            if held is None:
-                continue
-            hold: _Hold = held
-            if not overrides:
-                raise ControlConflictError(entity, domain, hold.label, label)
-            if hold.owner not in overridden:
-                overridden.append(hold.owner)
-        for owner in overridden:
-            self.release(owner)
-        self._next += 1
-        owner = self._next
-        for entity, domain in claims:
-            self._holds[(entity, domain.value)] = _Hold(owner, label, at, runs)
-        return owner, overridden
-
-    def release(self, owner: int) -> None:
-        """Give back what the action holding *owner* took."""
-        for key in [key for key, hold in self._holds.items() if hold.owner == owner]:
-            del self._holds[key]
-
-    def holder(self, entity: str, domain: ControlDomain, at: float) -> Optional[str]:
-        """The label of the action holding *domain* of *entity* at scenario
-        time *at*, or ``None``."""
-        held = self._holder(entity, domain, at)
-        if held is None:
-            return None
-        hold: _Hold = held
-        return hold.label
-
-    def clear(self) -> None:
-        """Forget every hold."""
-        self._holds = {}
-
-    def _holder(self, entity: str, domain: ControlDomain, at: float) -> Optional[_Hold]:
-        key = (entity, domain.value)
-        if key not in self._holds:
-            return None
-        hold = self._holds[key]
-        if hold.runs or hold.at == at:
-            return hold
-        return None
-
-
-_SLOTS = ControlSlots()
-
-
-def control_slots() -> ControlSlots:
-    """The run's holds: process-wide, as the entity registry is."""
-    return _SLOTS
-
-
-def reset_control_slots() -> None:
-    """Forget every hold, as a run begins: one a previous run left (an action
-    that never finished) is not this run's."""
-    _SLOTS.clear()

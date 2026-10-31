@@ -89,6 +89,7 @@ ACTION_PARAMS: dict[str, str] = {
     "condition": "condition",
     "timing": "timing",
     "once": "compiled.node.once",
+    "overrides": "compiled.node.overrides",
 }
 
 
@@ -374,6 +375,12 @@ class RenderedBuilder:
     args: "tuple[tuple[str, str], ...]"
     uses_params: bool
     needs_actor_assert: bool
+
+    @property
+    def overrides(self) -> bool:
+        """Whether the builder passes the card's *overrides* (the constructor
+        takes control domains of an entity)."""
+        return any(name == "overrides" for name, _ in self.args)
 
 
 def _is_carla_type(annotation: type) -> bool:

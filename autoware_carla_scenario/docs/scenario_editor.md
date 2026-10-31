@@ -247,6 +247,13 @@ Three rules make it readable:
   *Set Goal* card can also hold conditions on its waypoints --
   [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
   inspector with the same condition controls.
+* **Two cards may not steer one entity at once.** A card that commands an
+  entity's speed, steering or lights takes that
+  [control domain](architecture.md) while it runs, and a second card firing on
+  the same domain ends the run in error. Tick *Override a running action* in
+  the second card's inspector to have it stop the first instead (the canvas
+  marks it *overrides*; `overrides: true` in the document). Cards that command
+  no entity do not offer it.
 * **One actor reacting to another is a reference, not a coincidence.**
   "Swerve once NPC1 has cut in" is a `Lane Change` clip on the ego track whose
   trigger is an **Action state** condition naming NPC1's cut-in and the state

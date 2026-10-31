@@ -110,15 +110,17 @@ def _map_manager_left_as_found() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _vehicle_entity_run_state_cleared() -> Iterator[None]:
-    """Forget the entry speeds and the warm-up flag a test left behind.
+    """Forget the entry speeds, the warm-up flag and the control holds a test
+    left behind.
 
-    Both are process-wide and only a ``ScenarioRunner.run_scenario`` clears
+    All are process-wide and only a ``ScenarioRunner.run_scenario`` clears
     them, at the start and end of its run.  A test that executes a
     ``SpawnAction`` with a speed outside a run holds that speed for its actor
     id, which any later test in the same xdist worker that reads the entry
     speeds or the flag without going through a run would see (#697).
     """
     from autoware_carla_scenario import ego_base_link
+    from autoware_carla_scenario.actions.base import reset_control_slots
     from autoware_carla_scenario.entity import vehicle_entity
 
     yield
@@ -127,17 +129,6 @@ def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     # As is where an ego that started its scenario outside a run (#739) has
     # its base_link, which the trajectory log and the T4 dataset read.
     ego_base_link.clear_ego_base_link()
-
-
-@pytest.fixture(autouse=True)
-def _control_slots_cleared() -> Iterator[None]:
-    """Forget who controls which entity, as each test begins.
-
-    The holds are process-wide and only a ``ScenarioRunner.run_scenario``
-    clears them; an action a test left running would otherwise hold its
-    entity's domains in the next test of the same xdist worker.
-    """
-    from autoware_carla_scenario.control_domain import reset_control_slots
-
+    # And who controls which entity: an action a test left running would hold
+    # its entity's control domains in the next test.
     reset_control_slots()
-    yield
