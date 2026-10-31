@@ -492,6 +492,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../pedestrian_motion/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Pedestrian Motions (SOMA)
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../trajectory/" class="md-tabs__link">
         
   
@@ -1404,6 +1423,33 @@
     
   
     Traffic Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pedestrian_motion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pedestrian Motions (SOMA)
   
 
     
@@ -4610,9 +4656,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-249 of the package's 358
-modules (70%; about 71,400 of
-122,800 lines) are <code>CHECKED</code>: the kinematics, the
+249 of the package's 360
+modules (69%; about 71,400 of
+123,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5766,7 +5812,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 109 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 111 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -5795,9 +5841,10 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 109 EXCLUDED modules, and why</summary>
+<summary>The 111 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
+<li><code>actions.play_motion</code>: imports entity._soma_motion, which is neither checked nor modelled</li>
 <li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)</li>
 <li><code>authoring._builders_generated</code>: its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models</li>
 <li><code>authoring.builders</code>: dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked</li>
@@ -5834,6 +5881,7 @@ the first:</p>
 <li><code>editor.routes</code>: imports fastapi, starlette, anyio</li>
 <li><code>editor.scenario_map</code>: reaches pydantic models through authoring.models; imports editor.map_preview, which is not checked</li>
 <li><code>editor.service</code>: imports yaml, zipfile, <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>entity._soma_motion</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports socket, and hils.protocol (socket), which is neither checked nor modelled</li>
 <li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>, <code>unquote()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's</li>
