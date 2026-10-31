@@ -217,6 +217,45 @@ class TestConditionByStopLine:
         assert len(warnings) == 1
 
 
+class TestConditionAfterWorldReload:
+    """A condition the scenario's ``__init__`` registered outlives a run, and
+    the world is reloaded between runs: its lights come back as new actors.
+    The condition cached signal ids before #901, which a reload keeps; the
+    actor ids it caches now are resolved again when they are gone."""
+
+    def test_controller_named_map(self) -> None:
+        condition = TrafficSignalCondition(77, _RED, label="reload_named")
+        first = _Light(opendrive_id="sig_1")
+        first.state = _RED
+        with (
+            patch(_PATCH_CONTROLLER_ID, return_value=100),
+            patch(_PATCH_SIGNAL_IDS, return_value=["sig_1"]),
+        ):
+            result = condition.check(_World([first]), elapsed=0.0)
+            assert result is not None and result.passed
+
+            reloaded = _Light(opendrive_id="sig_1")
+            reloaded.state = _RED
+            result = condition.check(_World([reloaded]), elapsed=0.0)
+        assert result is not None and result.passed
+        assert condition.get_details()["cached_actor_ids"] == [reloaded.id]
+
+    def test_roadgen_map(self, roadgen: tuple[_World, _Light, _Light]) -> None:
+        world, own, _beside = roadgen
+        own.state = _RED
+        condition = TrafficSignalCondition(77, _RED, label="reload_roadgen")
+        result = condition.check(world, elapsed=0.0)
+        assert result is not None and result.passed
+
+        reloaded = _Light(3.5, 0.5, 0.0, 1.0)
+        reloaded.state = _GREEN
+        reloaded_world = _World([reloaded])
+        assert condition.check(reloaded_world, elapsed=0.0) is None
+        reloaded.state = _RED
+        result = condition.check(reloaded_world, elapsed=1.0)
+        assert result is not None and result.passed
+
+
 class TestControllerByStopLine:
     def test_phases_drive_the_light_on_the_stop_line(
         self, roadgen: tuple[_World, _Light, _Light]

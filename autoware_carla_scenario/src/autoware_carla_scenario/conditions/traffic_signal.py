@@ -116,7 +116,9 @@ class TrafficSignalCondition(BaseCondition):
         * **The id resolves to no light.**  Warned once, because a
           condition that never fires for a whole run should say why, and
           retried next tick.
-        * **The resolved lights are gone.**  Warned once, likewise.
+        * **The resolved lights are gone.**  They are resolved again at
+          once, since a reloaded world numbers its actors anew; when that
+          finds none either, warned once, likewise.
         * **A matching light shows another state.**  The ordinary answer,
           logged at debug with the state each mismatching light *is*
           showing, which :meth:`get_details` also reports.
@@ -131,25 +133,37 @@ class TrafficSignalCondition(BaseCondition):
             expected state, ``None`` otherwise.
         """
         # Lazy resolution with caching
+        fresh = False
         if self._cached_actor_ids is None:
             resolved = self._resolve_actor_ids(world)
             if resolved is None:
+                self._last_mismatch = None
                 return None
             self._cached_actor_ids = resolved
+            fresh = True
         # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
         actor_ids: set[int] = self._cached_actor_ids
+        match_count, mismatches = self._match(world, actor_ids)
 
-        # Single-pass: find the resolved actors and collect mismatches
-        match_count = 0
-        mismatches: list[tuple[str, int]] = []
-        for actor in world.get_actors().filter("traffic.traffic_light*"):
-            if int(actor.id) in actor_ids:
-                match_count += 1
-                state = actor.get_state()
-                if state != self._expected_state:
-                    mismatches.append((actor.get_opendrive_id(), state))
+        if match_count == 0 and not fresh:
+            # The cached actors are gone, as after a world reload under a
+            # condition the scenario's ``__init__`` registered, which outlives
+            # a run: actor ids are the episode's, unlike the signal ids that
+            # were cached before (#901).  Resolve the lights again.
+            resolved = self._resolve_actor_ids(world)
+            if resolved is None:
+                self._cached_actor_ids = None
+                self._last_mismatch = None
+                return None
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            reresolved: set[int] = resolved
+            self._cached_actor_ids = reresolved
+            actor_ids = reresolved
+            match_count, mismatches = self._match(world, actor_ids)
 
         if match_count == 0:
+            # Resolved anew next tick.
+            self._cached_actor_ids = None
             self._last_mismatch = None
             if not self._warned_no_actors:
                 self._warned_no_actors = True
@@ -187,6 +201,21 @@ class TrafficSignalCondition(BaseCondition):
             ),
             elapsed_seconds=elapsed,
         )
+
+    def _match(
+        self, world: "carla.World", actor_ids: set[int]
+    ) -> tuple[int, list[tuple[str, int]]]:
+        """Count the lights among *actor_ids* that *world* still has, and
+        collect ``(signal id, state)`` of those not in the expected state."""
+        match_count = 0
+        mismatches: list[tuple[str, int]] = []
+        for actor in world.get_actors().filter("traffic.traffic_light*"):
+            if int(actor.id) in actor_ids:
+                match_count += 1
+                state = actor.get_state()
+                if state != self._expected_state:
+                    mismatches.append((actor.get_opendrive_id(), state))
+        return match_count, mismatches
 
     def get_details(self) -> dict[str, Any]:
         """Return structured details about this condition's configuration."""
