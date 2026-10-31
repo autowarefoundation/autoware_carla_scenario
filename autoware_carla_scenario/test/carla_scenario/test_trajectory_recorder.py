@@ -50,12 +50,16 @@ class _Actor:
 
 
 class _ActorSnapshot:
-    def __init__(self, actor_id: int, x: float, vx: float, wz: float = 0.0) -> None:
+    def __init__(
+        self, actor_id: int, x: float, vx: float, wz: float = 0.0, z: float = 0.0
+    ) -> None:
         self.id = actor_id
-        self._x, self._vx, self._wz = x, vx, wz
+        self._x, self._vx, self._wz, self._z = x, vx, wz, z
 
     def get_transform(self) -> SimpleNamespace:
-        return SimpleNamespace(location=_vec(self._x, 1.0, 0.0), rotation=_rot(90.0))
+        return SimpleNamespace(
+            location=_vec(self._x, 1.0, self._z), rotation=_rot(90.0)
+        )
 
     def get_velocity(self) -> SimpleNamespace:
         return _vec(self._vx)
@@ -134,6 +138,8 @@ class _Snapshot:
     def __init__(self, actors: list[_ActorSnapshot], frame: int) -> None:
         self._actors = actors
         self.frame = frame
+        # 20 Hz, the framework's fixed step.
+        self.timestamp = SimpleNamespace(elapsed_seconds=0.05 * frame)
 
     def __iter__(self):
         return iter(self._actors)
@@ -1081,3 +1087,73 @@ def test_a_world_without_light_states_leaves_the_turn_indicators_out(
     recorder.close()
     kinds = [r["type"] for r in _lines(recorder.path)]
     assert "turn_indicators" not in kinds and kinds.count("tick") == 2
+
+
+def _velocities(path: Path, actor_id: int) -> list[list[float]]:
+    """*actor_id*'s ``[vx, vy, vz]`` on each tick written."""
+    return [
+        row[7:10]
+        for r in _lines(path)
+        if r["type"] == "tick"
+        for row in r["actors"]
+        if row[0] == actor_id
+    ]
+
+
+def _walk(
+    recorder: TrajectoryRecorder,
+    world: _World,
+    steps: list[tuple[float, float]],
+    vehicle_x: float = 0.0,
+) -> None:
+    """Record a tick per step (20 Hz): the walker (3) at ``(x, z)``, reporting
+    0 as one on CARLA's walker controller does, and the ego (1) reporting 7
+    m/s while it moves 10."""
+    for n, (x, z) in enumerate(steps):
+        world.snapshot = [
+            _ActorSnapshot(1, vehicle_x + 0.5 * n, 7.0),
+            _ActorSnapshot(3, x, 0.0, z=z),
+        ]
+        recorder.record(world, 0.05 * (world.frame - 100))
+        world.frame += 1
+
+
+def test_a_walker_on_its_controller_is_recorded_walking(tmp_path: Path) -> None:
+    """CARLA's walker controller places its walker, which reports 0 while it
+    walks: its velocity is measured from where it stood the tick before
+    (#924); a vehicle's is the one CARLA reports."""
+    recorder, world = _run(tmp_path)
+    _walk(recorder, world, [(0.0, 0.0), (0.07, 0.0), (0.14, 0.0)])
+    recorder.close()
+    walker = _velocities(recorder.path, 3)
+    assert walker[0] == [0.0, 0.0, 0.0]  # nothing to measure from yet
+    for vx, vy, vz in walker[1:]:
+        assert vx == pytest.approx(1.4, abs=1e-3) and vy == vz == 0.0
+    assert _velocities(recorder.path, 1) == [[7.0, 0.0, 0.0]] * 3
+
+
+def test_a_walker_brought_in_from_under_the_map_is_no_spike(
+    tmp_path: Path,
+) -> None:
+    """A walker parked under the map and brought in has not walked there: the
+    tick it appears reads what CARLA reports, the next its walk."""
+    recorder, world = _run(tmp_path)
+    _walk(recorder, world, [(0.0, -500.0), (0.0, -500.0), (5.0, 0.0), (5.07, 0.0)])
+    recorder.close()
+    walker = _velocities(recorder.path, 3)
+    assert walker[:3] == [[0.0, 0.0, 0.0]] * 3
+    assert walker[3][0] == pytest.approx(1.4, abs=1e-3)
+
+
+def test_a_rerun_measures_its_walkers_afresh(tmp_path: Path) -> None:
+    """Started again, the recorder has forgotten where the walkers stood: a
+    walker first read on the frame it was last read on in the run before is
+    not given that run's velocity."""
+    recorder, world = _run(tmp_path)
+    _walk(recorder, world, [(0.0, 0.0), (0.07, 0.0)])
+    recorder.close()
+    world.frame = 101
+    recorder.start(world)
+    _walk(recorder, world, [(3.0, 0.0)])
+    recorder.close()
+    assert _velocities(recorder.path, 3) == [[0.0, 0.0, 0.0]]

@@ -60,6 +60,7 @@ from .driver.observation import (
     sensor_pose_in_rig,
 )
 from .ego_base_link import ego_base_link
+from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
@@ -305,6 +306,11 @@ class T4Recording:
         self._ego_id = int(ego.id)
         #: Ids of the actors seen, and whether each is annotated.
         self._seen: dict[int, bool] = {}
+        #: Ids of the annotated walkers, and their velocities measured from
+        #: where each stood on the frame written before: CARLA's walker
+        #: controller places its walker, which then reports 0 (#924).
+        self._walker_ids: set[int] = set()
+        self._walkers = WalkerVelocities()
         #: World snapshots of the last ticks, by frame: a sweep of the
         #: recorder's own LiDARs can be from a tick before it is read on.
         self._snapshots: dict[int, Any] = {}
@@ -586,6 +592,11 @@ class T4Recording:
         by the actor id and writes only instances with boxes, so one revealed
         later is one instance from the frame it appears, and one hidden again
         has no box while it is away, as one out of range.
+
+        A walker's velocity is measured from where it stood on the frame
+        written before (:class:`~.kinematics.walker_motion.WalkerVelocities`):
+        one walking on CARLA's walker controller reports 0 (#924).  Every
+        other actor's is what CARLA reports.
         """
         seen = self._seen
         new = [s.id for s in snapshot if s.id not in seen]
@@ -594,6 +605,8 @@ class T4Recording:
                 seen[int(actor.id)] = self._register(actor)
             for actor_id in new:  # gone before it could be looked up
                 seen.setdefault(int(actor_id), False)
+        elapsed = float(snapshot.timestamp.elapsed_seconds)
+        walkers = self._walker_ids
         ids: list[int] = []
         rows: list[tuple[float, ...]] = []
         for s in snapshot:
@@ -601,9 +614,13 @@ class T4Recording:
                 continue
             tf = s.get_transform()
             loc, rot = tf.location, tf.rotation
+            if s.id in walkers:
+                # Read while hidden too, so a walker brought in is no walk.
+                v = self._walkers.walker(s, elapsed, loc)
+            else:
+                v = s.get_velocity()
             if loc.z < _HIDDEN_BELOW_M:
                 continue
-            v = s.get_velocity()
             ids.append(s.id)
             rows.append(
                 (loc.x, loc.y, loc.z, rot.roll, rot.pitch, rot.yaw, v.x, v.y, v.z)
@@ -624,6 +641,8 @@ class T4Recording:
             wheels = int(_attribute(actor, "number_of_wheels") or 0)
         except ValueError:
             wheels = 0
+        if is_walker(actor):
+            self._walker_ids.add(int(actor.id))
         box = actor.bounding_box
         role = _attribute(actor, "role_name")
         self._writer.register_actor(
@@ -676,6 +695,7 @@ class T4Recording:
         self._destroy_sensors()
         self._snapshots = {}
         self._fed = None
+        self._walkers.clear()
         try:
             summary = self._writer.finish()
         except Exception as error:  # noqa: BLE001 - best effort, like the log

@@ -98,6 +98,9 @@ generated types keep them as tuples where the target language has them.
   are world-frame m/s (an angular velocity, world-frame deg/s, a pseudovector:
 into a right-handed frame its `x` and `z` flip, not its `y`). Every float is
 rounded to 3 decimals.
+- A walker's velocity is measured from where it stood the tick before: one
+  walking on CARLA's walker controller reports 0. Every other actor's is the
+  one CARLA reports.
 - `t` is simulated time since the scenario clock started, the time pass/fail
   conditions see. It is not wall time. Warm-up ticks are not recorded: the
   `warmup` line says how many there were, so a frame of the CARLA recording,
