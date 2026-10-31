@@ -724,9 +724,10 @@ class PlayMotionAction(BaseAction):
     def __init__(self, entity_name, motion_path, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "play_motion",
                  once: bool = True, fps: Optional[float] = None, loop: bool = False,
-                 duration_s: Optional[float] = None, upper_body_only: bool = True):
-        _keyword_only(_kw, "PlayMotionAction(): label, once, fps, loop, duration_s and "
-                      "upper_body_only")
+                 duration_s: Optional[float] = None, upper_body_only: bool = True,
+                 overrides: bool = False):
+        _keyword_only(_kw, "PlayMotionAction(): label, once, fps, loop, duration_s, "
+                      "upper_body_only and overrides")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 

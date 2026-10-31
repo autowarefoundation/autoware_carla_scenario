@@ -1337,14 +1337,16 @@ register_action_spec(
                 default=True,
                 help=(
                     "Drive the spine, neck and arms only; the legs keep the "
-                    "walking animation's pose."
+                    "walking animation's pose.  Unchecked, the motion takes "
+                    "the pedestrian's movement too: nothing may walk it while "
+                    "it plays."
                 ),
             ),
         ),
         description=(
             "Pose a pedestrian after a SOMA motion file -- a wave, a beckon -- "
-            "retargeted onto its skeleton.  The pedestrian stands while it "
-            "plays: stop it first."
+            "retargeted onto its skeleton.  It fires only once the pedestrian "
+            "stands (and its trigger holds): stop it first."
         ),
     )
 )
