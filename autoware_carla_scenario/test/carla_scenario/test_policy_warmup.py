@@ -1,4 +1,4 @@
-"""Unit tests for the policy warm-up's pedestrian run-up."""
+"""Unit tests for the policy warm-up's pedestrian run-up and the carried ego."""
 
 from __future__ import annotations
 
@@ -37,3 +37,12 @@ def test_a_walker_is_moved_back_along_its_heading(yaw: float) -> None:
         )
         assert placed.location.z == pytest.approx(1.0)
         assert placed.rotation.yaw == pytest.approx(yaw)
+
+
+def test_carried_actor_lives_with_the_run_up() -> None:
+    """``_CarriedActor`` moved into the checked ``_policy_warmup`` (#898) and
+    stays importable from ``carla_driver_entity`` as the same class."""
+    from autoware_carla_scenario.entity import _policy_warmup, carla_driver_entity
+
+    assert carla_driver_entity._CarriedActor is _policy_warmup._CarriedActor
+    assert _policy_warmup._CarriedActor.__module__ == _policy_warmup.__name__

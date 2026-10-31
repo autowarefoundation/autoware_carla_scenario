@@ -24,6 +24,8 @@ _MOVED = (
     "job_dir",
     "stem_order",
     "_stems_in",
+    "_only_case",
+    "_mtime",
 )
 
 

@@ -425,3 +425,55 @@ class PolicyWarmup:
                 light.freeze(True)
                 frozen.append(light)
         return frozen
+
+
+class _CarriedActor:
+    """The ego as the run-up carries it: its pose, and the motion it is carried at.
+
+    Placed without physics, the actor itself reports no motion.
+
+    The run-up carries the ego along its heading, as a car without slip moves its
+    rear axle: the velocity it reports is that of the actor origin, *rear_axle_offset_m*
+    ahead of the rear axle, so that :func:`ego_observation`'s lever-arm term
+    (``v + w x r``) brings it back to the heading at the rig origin instead of
+    adding a sideways ``yaw_rate * rear_axle_offset_m`` to it.
+    """
+
+    _actor: "carla.Actor"
+    _warmup: PolicyWarmup
+    _rear_axle_offset_m: float
+
+    def __init__(
+        self, actor: "carla.Actor", warmup: PolicyWarmup, rear_axle_offset_m: float
+    ) -> None:
+        self._actor = actor
+        self._warmup = warmup
+        self._rear_axle_offset_m = rear_axle_offset_m
+
+    def get_transform(self) -> "carla.Transform":
+        return self._actor.get_transform()
+
+    def get_velocity(self) -> "carla.Vector3D":
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        along = self._warmup.velocity()
+        if self._rear_axle_offset_m == 0.0:
+            return along
+        # v_origin = v_axle - w x r, r = (d, 0, 0): -w_z * d along the local left.
+        # In CARLA's left-handed frame the local yaw rate is -radians(z) and the
+        # local left is (sin yaw, -cos yaw).
+        sideways = math.radians(self._warmup.angular_velocity().z) * (
+            self._rear_axle_offset_m
+        )
+        yaw = math.radians(self._actor.get_transform().rotation.yaw)
+        return carla.Vector3D(
+            x=along.x + sideways * math.sin(yaw),
+            y=along.y - sideways * math.cos(yaw),
+            z=along.z,
+        )
+
+    def get_acceleration(self) -> "carla.Vector3D":
+        return self._warmup.acceleration()
+
+    def get_angular_velocity(self) -> "carla.Vector3D":
+        return self._warmup.angular_velocity()
