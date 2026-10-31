@@ -51,6 +51,7 @@ def _command(job: list[str], extra: list[str]) -> list[str]:
     return ["uv", "run", "scenario", *job, *extra]
 
 
+@pytest.mark.usefixtures("at_repo_root")
 def test_sweep_jobs_run_with_the_extra_overrides(
     started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
