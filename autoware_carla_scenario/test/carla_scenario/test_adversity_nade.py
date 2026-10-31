@@ -161,6 +161,26 @@ def test_no_adversity_after_one_for_the_cooldown(features: MapFeatures) -> None:
     assert _step(sampler, scene, 6.5) is not None
 
 
+@pytest.mark.parametrize("cooldown", [5.5, 1.0, 2.0, 0.5])
+def test_the_cooldown_ends_on_its_tick_on_a_summed_clock(cooldown: float) -> None:
+    """CARLA's clock is a running sum of the 0.05 s tick, so a cooldown of a
+    whole number of ticks reads a hair short on the tick it ends; it is over
+    on that tick all the same, not one late (#845)."""
+    clock, now = [], 0.0
+    for _ in range(400):
+        clock.append(now)
+        now += 0.05
+    ticks = round(cooldown / 0.05)
+    short = 0
+    for sampled in range(0, 400 - ticks):
+        sampler = ImportanceSampler(settings=NadeSettings(cooldown=cooldown))
+        sampler._sampled_at = clock[sampled]
+        short += clock[sampled + ticks] - clock[sampled] < cooldown
+        assert sampler.cooling(clock[sampled + ticks - 1])
+        assert not sampler.cooling(clock[sampled + ticks])
+    assert short > 0  # the clock does fall short
+
+
 def test_one_adversity_a_tick_the_first_challenger(features: MapFeatures) -> None:
     # npc1 right ahead of the ego, npc2 ahead of npc1: both may brake-check
     # into the ego, and only the first decided is.
