@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-235 of the package's 341
-modules (69%; about 69,400 of
-119,700 lines) are <code>CHECKED</code>: the kinematics, the
+236 of the package's 342
+modules (69%; about 69,500 of
+119,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 235 CHECKED modules</summary>
+<summary>The 236 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5389,6 +5389,10 @@ first paragraph of its docstring:</p>
 <td>Running a batch's cases as SLURM array jobs: <code>launcher=slurm</code> (docs/slurm.md).</td>
 </tr>
 <tr>
+<td><code>slurm.port_slots</code></td>
+<td>The arithmetic of a SLURM task's port slots (docs/slurm.md).</td>
+</tr>
+<tr>
 <td><code>slurm.scripts</code></td>
 <td>The text a SLURM batch hands to SLURM, and reads back from it (docs/slurm.md).</td>
 </tr>
@@ -5816,7 +5820,7 @@ the first:</p>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (<code>dict[str, Any]</code>)</li>
 <li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths</li>
-<li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); first_slot() takes <code>dict[str, str] | os._Environ[str]</code>, which Codon cannot express</li>
+<li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
 <li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>)</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
@@ -5841,8 +5845,8 @@ the first:</p>
 <li><code>ui.cases</code>: reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.models</code>: imports pydantic</li>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>)</li>
-<li><code>ui.results</code>: imports yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>)</li>
-<li><code>ui.scanner</code>: imports yaml</li>
+<li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>)</li>
+<li><code>ui.scanner</code>: imports yaml, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options'</li>
 <li><code>ui.sweep_resolver</code>: imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), which Codon cannot express</li>
