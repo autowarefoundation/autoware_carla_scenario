@@ -874,6 +874,40 @@ def test_the_policy_sees_the_ego_moving_through_the_run_up() -> None:
     assert all(obs.speed_mps == pytest.approx(5.0) for obs in observations)
 
 
+@pytest.mark.parametrize("yaw_deg", [0.0, 37.0, -120.0])
+@pytest.mark.parametrize("yaw_rate_deg", [20.0, -20.0])
+def test_the_run_up_carries_the_rear_axle_along_the_heading(
+    yaw_deg: float, yaw_rate_deg: float
+) -> None:
+    """Turning through the run-up, the ego reports its velocity along its heading
+    at the rear axle (base_link), with no sideways slip from the lever arm (#878)."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from autoware_carla_scenario.driver.observation import ego_observation
+    from autoware_carla_scenario.entity.carla_driver_entity import _CarriedActor
+
+    actor = MagicMock()
+    actor.get_transform.return_value = carla.Transform(
+        carla.Location(x=3.0, y=-2.0, z=0.0), carla.Rotation(yaw=yaw_deg)
+    )
+    yaw = math.radians(yaw_deg)
+    warmup = MagicMock()
+    warmup.velocity.return_value = carla.Vector3D(
+        x=5.0 * math.cos(yaw), y=5.0 * math.sin(yaw), z=0.0
+    )
+    warmup.angular_velocity.return_value = carla.Vector3D(x=0.0, y=0.0, z=yaw_rate_deg)
+    warmup.acceleration.return_value = carla.Vector3D(x=0.0, y=0.0, z=0.0)
+
+    observation = ego_observation(
+        _CarriedActor(actor, warmup, -1.4), 0, rear_axle_offset_m=-1.4
+    )
+
+    # CARLA's vectors are float32.
+    assert np.allclose(observation.linear_velocity, [5.0, 0.0, 0.0], atol=1e-5)
+    assert observation.speed_mps == pytest.approx(5.0)
+    assert observation.angular_velocity[2] == pytest.approx(-math.radians(yaw_rate_deg))
+
+
 def _other(type_id: str, actor_id: int, x: float, y: float = 0.0) -> MagicMock:
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
