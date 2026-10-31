@@ -75,18 +75,17 @@ _PLACEHOLDER_NAMES: dict[str, str] = {
 }
 
 
-def _package_init_globals() -> set[str]:
-    """Return the names the generated ``__init__.py`` binds at module level.
+def _template_globals(template_name: str) -> set[str]:
+    """Return the names a template binds at module level once rendered.
 
-    Importing the scenario module (``register()`` does) binds it as an
-    attribute of the package, that is, as a global of ``__init__.py``: a
-    scenario called ``register_scenario`` replaced the function ``register()``
-    calls next with a module.  ``__future__`` imports are compiler directives
-    whose binding nothing reads, so they are left out.
+    Rendered with :data:`_PLACEHOLDER_NAMES`, so a name the template takes
+    from the scenario (its classes) comes out as a placeholder.
+    ``__future__`` imports are compiler directives whose binding nothing
+    reads, so they are left out.
     """
     source = (
         code_environment(TEMPLATES_DIR)
-        .get_template(_PACKAGE_INIT_TEMPLATE)
+        .get_template(template_name)
         .render(**_PLACEHOLDER_NAMES)
     )
     names: set[str] = set()
@@ -106,6 +105,32 @@ def _package_init_globals() -> set[str]:
                     sub.id for sub in ast.walk(target) if isinstance(sub, ast.Name)
                 )
     return names
+
+
+def _package_init_globals() -> set[str]:
+    """Return the names the generated ``__init__.py`` binds at module level.
+
+    Importing the scenario module (``register()`` does) binds it as an
+    attribute of the package, that is, as a global of ``__init__.py``: a
+    scenario called ``register_scenario`` replaced the function ``register()``
+    calls next with a module.
+    """
+    return _template_globals(_PACKAGE_INIT_TEMPLATE)
+
+
+@functools.cache
+def _scenario_module_globals() -> frozenset[str]:
+    """Return the names the scenario module binds besides its own classes.
+
+    ``scenario.py`` imports ``EgoConfig``, ``BaseScenario`` and the rest from
+    the framework, then binds ``{config_class}`` (from ``.configs``) and
+    ``{scenario_class}``.  A generated class of the same name as one of those
+    imports replaces it: a scenario called ``ego`` made ``EgoConfig`` in
+    ``scenario.py`` the package's own dataclass rather than the framework's.
+    The classes named after the scenario are left out, being placeholders.
+    """
+    own = {_PLACEHOLDER_NAMES["scenario_class"], _PLACEHOLDER_NAMES["config_class"]}
+    return frozenset(_template_globals(_SCENARIO_TEMPLATE) - own)
 
 
 @functools.cache
@@ -215,12 +240,23 @@ def resolve_names(
     pascal = _to_pascal(scenario)
     # Avoid awkward doubling when the name already ends in "scenario".
     scenario_class = pascal if pascal.endswith("Scenario") else f"{pascal}Scenario"
+    config_class = f"{pascal}Config"
+    taken = _scenario_module_globals()
+    for generated in (scenario_class, config_class):
+        if generated in taken:
+            msg = (
+                f"scenario name {scenario!r} is reserved: its class "
+                f"{generated!r} would replace the {generated!r} the scenario "
+                f"module already binds (an import from the framework). Pass a "
+                f"different --scenario."
+            )
+            raise ValueError(msg)
     return {
         "package_name": package_name,
         "distribution_name": _to_hyphen(package_name),
         "scenario_name": scenario,
         "scenario_class": scenario_class,
-        "config_class": f"{pascal}Config",
+        "config_class": config_class,
         # Read off the installed framework rather than written out here: a
         # literal drifted the last time the supported range moved, and a
         # scaffolded package that refuses to install on the interpreter that
