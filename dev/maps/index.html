@@ -2423,6 +2423,11 @@ and the way Autoware does:</p>
 </table>
 <p><code>LocalCartesianUTM</code> is read through UTM, not a local tangent plane, despite
 its name: the two place a city-sized map tens of metres apart.</p>
+<p>The projector is anchored at the whole <code>map_origin</code> -- latitude, longitude
+and <code>altitude</code> -- as Autoware's <code>get_lanelet2_projector()</code> anchors it. Only
+<code>LocalCartesian</code> uses the altitude: it measures every z from it, so near an
+origin at 40 m a node's z, and the map-frame poses sent to Autoware, are its
+<code>ele</code> less 40 m. The other projections ignore it.</p>
 <p>A <code>projector_type: Local</code> map stores its map frame in each node's <code>local_x</code> and
 <code>local_y</code> tags (and <code>local_z</code>, when it has one), which is what Autoware's own
 loader reads. So does this framework: such a map is read with the <code>local_xy</code>
@@ -2620,7 +2625,7 @@ elsewhere has to be added there to be previewed.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 10:38:31 UTC"><span class="timeago" datetime="2026-10-31T10:38:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 10:38:31 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 11:20:34 UTC"><span class="timeago" datetime="2026-10-31T11:20:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 11:20:34 UTC">2026-10-31</span>
   </span>
 
     
