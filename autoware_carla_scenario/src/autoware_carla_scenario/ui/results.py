@@ -64,6 +64,23 @@ def _read_json(path: Path | None) -> Any:
         return None
 
 
+def _passed(value: Any) -> bool | None:
+    """A verdict: *value* when it is a boolean, else ``None``."""
+    return value if isinstance(value, bool) else None
+
+
+def _seconds(value: Any) -> float | None:
+    """A duration: *value* when it is a number (not a boolean), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _strings(value: Any) -> list[str]:
+    """A list of overrides: each item as a string, empty unless a list."""
+    return [str(o) for o in value] if isinstance(value, list) else []
+
+
 @dataclass
 class CaseResult:
     """One case of a session, as the result views need it."""
@@ -262,15 +279,18 @@ def load_results(
             if not isinstance(entry, dict):
                 continue
             files = case_files(base, session_type, date, time, index)
+            scenario = entry.get("scenario")
             out.append(
                 CaseResult(
                     index=index,
-                    label=str(entry.get("scenario") or "unknown"),
-                    passed=entry.get("passed"),
+                    label=scenario
+                    if isinstance(scenario, str) and scenario
+                    else "unknown",
+                    passed=_passed(entry.get("passed")),
                     errored=bool(entry.get("error")),
-                    elapsed_seconds=entry.get("elapsed_seconds"),
+                    elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
                     message=str(entry.get("message") or ""),
-                    overrides=[str(o) for o in entry.get("overrides") or []],
+                    overrides=_strings(entry.get("overrides")),
                     files=files,
                     coverage=_read_json(files.coverage) if files else None,
                 )
@@ -303,9 +323,9 @@ def load_results(
                 CaseResult(
                     index=index,
                     label=label,
-                    passed=result.get("passed"),
+                    passed=_passed(result.get("passed")),
                     errored=files is None or not result,
-                    elapsed_seconds=result.get("elapsed_seconds"),
+                    elapsed_seconds=_seconds(result.get("elapsed_seconds")),
                     message=str(result.get("message") or ""),
                     overrides=[o for o in overrides if not o.startswith("scenario=")],
                     files=files,

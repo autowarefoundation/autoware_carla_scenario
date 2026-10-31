@@ -119,7 +119,7 @@ def _read_verdict(output_dir: Path) -> bool | None:
         return None
     try:
         data = json.loads(result_files[0].read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (OSError, ValueError):  # ValueError: not JSON, or not UTF-8
         return None
     if not isinstance(data, dict):
         return None

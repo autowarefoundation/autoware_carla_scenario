@@ -45,12 +45,51 @@ def clear_cache() -> None:
 
 
 def _read_result_json(path: Path) -> dict[str, Any] | None:
-    """Read and parse a ``*_result.json`` file, returning ``None`` on error."""
+    """Read and parse a ``*_result.json`` file, returning ``None`` on error.
+
+    ``None`` too when the file is not a JSON object: a result cut off
+    mid-character (not UTF-8, a ``ValueError``) or of another type must not
+    break the scan of every other session.
+    """
     try:
-        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         logger.warning("Failed to read result JSON: %s", path)
         return None
+    if not isinstance(data, dict):
+        logger.warning("Result JSON is not an object: %s", path)
+        return None
+    return data
+
+
+def _dict_entries(entries: list[Any]) -> list[tuple[int, dict[str, Any]]]:
+    """A batch's entries that are JSON objects, each with its position in the
+    batch (which its case's files are found by), the others left out."""
+    return [(i, e) for i, e in enumerate(entries) if isinstance(e, dict)]
+
+
+def _name(value: Any, fallback: str) -> str:
+    """*value* when it is a non-empty string, else *fallback*."""
+    return value if isinstance(value, str) and value else fallback
+
+
+def _passed(value: Any) -> bool | None:
+    """A verdict: ``passed`` when it is a boolean, else ``None``."""
+    return value if isinstance(value, bool) else None
+
+
+def _seconds(value: Any) -> float | None:
+    """A duration: *value* when it is a number (not a boolean), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _text(value: Any) -> str:
+    """A message: *value* as a string, empty for ``None``."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
 
 
 def _read_overrides(job_dir: Path) -> list[str]:
@@ -64,9 +103,11 @@ def _read_overrides(job_dir: Path) -> list[str]:
 
 
 def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
-    """Extract scenario name from result JSON filename or batch data."""
-    if result and "scenario" in result:
-        return result["scenario"]
+    """Extract scenario name from result JSON or, when it names none (a
+    missing, ``null`` or empty ``scenario``), its filename."""
+    name = result.get("scenario") if result else None
+    if isinstance(name, str) and name:
+        return name
     # Derive from *_result.json filename
     for f in sorted(job_dir.glob("*_result.json")):
         name = f.stem
@@ -95,7 +136,7 @@ def _scan_multirun_session(
         result_files = sorted(job_dir.glob("*_result.json"))
         if result_files:
             data = _read_result_json(result_files[0])
-            if data and data.get("passed"):
+            if data and _passed(data.get("passed")):
                 passed_count += 1
             scenario_names.add(_extract_scenario_name(data, job_dir))
         # Missing result counts as failed (no increment)
@@ -119,11 +160,11 @@ def _scan_outputs_session(
     # A batch: its summary, or a SLURM batch's cases recorded so far.
     found = batch_entries(session_dir)
     if found is not None:
-        entries = found[0]
+        entries = [entry for _, entry in _dict_entries(found[0])]
         if not entries:
             return None
-        passed_count = sum(1 for item in entries if item.get("passed"))
-        scenario_names = {item.get("scenario", "unknown") for item in entries}
+        passed_count = sum(1 for item in entries if _passed(item.get("passed")))
+        scenario_names = {_name(item.get("scenario"), "unknown") for item in entries}
         return SessionSummary(
             date=date,
             time=time,
@@ -139,7 +180,7 @@ def _scan_outputs_session(
         return None  # Skip directories with no result
 
     data = _read_result_json(result_files[0])
-    passed = bool(data.get("passed")) if data else False
+    passed = bool(_passed(data.get("passed"))) if data else False
     scenario_name = _extract_scenario_name(data, session_dir)
     return SessionSummary(
         date=date,
@@ -243,10 +284,10 @@ def load_session(
                         SessionItem(
                             index=index,
                             scenario_name=_extract_scenario_name(data, job),
-                            passed=data.get("passed"),
-                            elapsed_seconds=data.get("elapsed_seconds"),
+                            passed=_passed(data.get("passed")),
+                            elapsed_seconds=_seconds(data.get("elapsed_seconds")),
                             overrides=overrides,
-                            message=data.get("message", ""),
+                            message=_text(data.get("message")),
                         )
                     )
                 else:
@@ -278,15 +319,17 @@ def load_session(
             return items
         data_list, final = found
         overrides = _read_overrides(directory)
-        for i, entry in enumerate(data_list):
+        # An entry that is not an object is left out; the others keep their
+        # position, which load_scenario and case_files index the batch by.
+        for i, entry in _dict_entries(data_list):
             items.append(
                 SessionItem(
                     index=i,
-                    scenario_name=entry.get("scenario", "unknown"),
-                    passed=entry.get("passed"),
-                    elapsed_seconds=entry.get("elapsed_seconds"),
+                    scenario_name=_name(entry.get("scenario"), "unknown"),
+                    passed=_passed(entry.get("passed")),
+                    elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
                     overrides=overrides,
-                    message=entry.get("message", ""),
+                    message=_text(entry.get("message")),
                 )
             )
 
@@ -302,10 +345,10 @@ def load_session(
                     SessionItem(
                         index=0,
                         scenario_name=_extract_scenario_name(data, directory),
-                        passed=data.get("passed"),
-                        elapsed_seconds=data.get("elapsed_seconds"),
+                        passed=_passed(data.get("passed")),
+                        elapsed_seconds=_seconds(data.get("elapsed_seconds")),
                         overrides=overrides,
-                        message=data.get("message", ""),
+                        message=_text(data.get("message")),
                     )
                 )
 
@@ -379,10 +422,10 @@ def _detail_to_condition_node(detail: dict[str, Any]) -> ConditionNode | None:
     if not isinstance(detail, dict):
         return None
 
-    label = detail.get("label", "")
-    condition_type = detail.get("condition_type", "")
-    satisfied = detail.get("satisfied", False)
-    message = detail.get("message", "")
+    label = _text(detail.get("label"))
+    condition_type = _text(detail.get("condition_type"))
+    satisfied = bool(detail.get("satisfied", False))
+    message = _text(detail.get("message"))
 
     # Build children recursively
     children = _build_condition_tree(detail)
@@ -432,8 +475,9 @@ def load_scenario(
         found = batch_entries(job_path)
         if found is not None:
             data_list, final = found
-            if 0 <= index < len(data_list) and not data_list[index].get("pending"):
-                data = data_list[index]
+            entry = data_list[index] if 0 <= index < len(data_list) else None
+            if isinstance(entry, dict) and not entry.get("pending"):
+                data = entry
             if not final:
                 cacheable = False
 
@@ -467,20 +511,22 @@ def load_scenario(
 
     # Build condition tree
     condition_statuses: list[ConditionNode] = []
-    for cs in data.get("condition_statuses", []):
-        children = _build_condition_tree(cs.get("details", {}))
+    statuses = data.get("condition_statuses")
+    for cs in statuses if isinstance(statuses, list) else []:
+        if not isinstance(cs, dict):
+            continue
+        details = cs.get("details")
+        if not isinstance(details, dict):
+            details = {}
+        children = _build_condition_tree(details)
         condition_statuses.append(
             ConditionNode(
-                label=cs.get("label", ""),
-                satisfied=cs.get("satisfied", False),
-                message=cs.get("message", ""),
-                condition_type=cs.get("condition_type", ""),
-                role=cs.get("role", ""),
-                details={
-                    k: v
-                    for k, v in cs.get("details", {}).items()
-                    if k not in _STRUCTURAL_KEYS
-                },
+                label=_text(cs.get("label")),
+                satisfied=bool(cs.get("satisfied", False)),
+                message=_text(cs.get("message")),
+                condition_type=_text(cs.get("condition_type")),
+                role=_text(cs.get("role")),
+                details={k: v for k, v in details.items() if k not in _STRUCTURAL_KEYS},
                 children=children,
             )
         )
@@ -495,9 +541,9 @@ def load_scenario(
         trajectory_path = str(files.trajectory.resolve())
 
     result = ScenarioResultView(
-        passed=data.get("passed"),
-        message=data.get("message", ""),
-        elapsed_seconds=data.get("elapsed_seconds"),
+        passed=_passed(data.get("passed")),
+        message=_text(data.get("message")),
+        elapsed_seconds=_seconds(data.get("elapsed_seconds")),
         condition_statuses=condition_statuses,
         overrides=overrides,
         raw_log=raw_log,
