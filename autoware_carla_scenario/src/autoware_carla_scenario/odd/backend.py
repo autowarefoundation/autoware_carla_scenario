@@ -15,7 +15,9 @@ attributes are measured and set. Here:
   (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for the measures its
   parameters set;
 * **where the ego is** -- in the world (the metres a tick stands for in
-  coverage) and on Earth (the positions of an exported COD).
+  coverage) and on Earth (the positions of an exported COD);
+* **rules** -- the grip and the visibility the weather leaves, fuzzy rules
+  openodd infers (:mod:`autoware_carla_scenario.weather_rules`).
 
 :class:`CarlaBackend` derives openodd's :class:`~openodd.Backend` for these;
 everything else -- the model, the reader, coverage, the sampler -- is
@@ -26,13 +28,14 @@ backend, so ``openodd.load_odd_binding`` and this package's own read the same.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from openodd import Backend, OddKnob, set_default_backend
+from openodd import Backend, OddKnob, Rules, set_default_backend
 from openodd.model import _missing
 
+from .. import weather_rules
 from . import probes
 from .scenario_measure import ScenarioMeasure, scenario_measure
 from .traffic_probes import TRAFFIC_KNOBS, TRAFFIC_PROBES
@@ -196,6 +199,13 @@ class CarlaBackend(Backend):
     knob_for: Optional[Callable[[Any, Mapping[str, OddKnob]], Optional[OddKnob]]] = (
         _knob_for
     )
+    # The grip and the visibility the weather leaves (:mod:`..weather_rules`).
+    rules: Optional[Rules] = field(default_factory=weather_rules.default_rules)
+    rule_inputs: Sequence[str] = weather_rules.WEATHER_INPUTS
+
+    def rule_values(self, values: Mapping[str, float]) -> dict[str, float]:
+        """The weather's fields, and ``water``, which the grip follows."""
+        return weather_rules.rule_values(values)
 
     def position(self, context: Any) -> Optional[tuple[float, float, float]]:
         """The ego's location in the CARLA world, in metres."""

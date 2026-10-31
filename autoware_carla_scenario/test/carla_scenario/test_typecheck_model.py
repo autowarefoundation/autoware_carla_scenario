@@ -53,6 +53,7 @@ from autoware_carla_scenario import (
     odd,
     ros2,
     trajectory_recorder,
+    weather_rules,
 )
 from autoware_carla_scenario import rerun as rerun_module
 from autoware_carla_scenario import t4 as t4_module
@@ -755,6 +756,12 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4_scene": (t4_scene_module, ("T4SceneExporter",)),
+    # What the checked visibility and actions.environment read the weather
+    # rules through.
+    "weather_rules": (
+        weather_rules,
+        ("vehicle_range", "vehicle_rules_in_use", "weather_range"),
+    ),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (
         environment,
