@@ -173,7 +173,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "21.0.7"
+version = "21.0.8"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
