@@ -8,12 +8,16 @@ pedestrian's gestures, a vehicle's moving parts) -- the first two its
 domains of its entity that it commands: a ``SpeedAction`` the longitudinal
 one, a ``LaneChangeAction`` the lateral one, a ``FollowTrajectoryAction`` both.
 
-Two actions that command the same domain of the same entity conflict.
-OpenSCENARIO lets the newer one override the older; here it is an error
-instead (:class:`ControlConflictError`), raised as the second one fires, before
-it has commanded anything: a scenario whose actions fight over an entity says
-two things at once, and which one CARLA ends up doing is an accident of the
-tick order, not what the author meant.
+Two actions that command the same domain of the same entity conflict.  What
+happens then is the newer action's to say:
+
+* by default it is an error (:class:`ControlConflictError`), raised as the
+  newer one fires, before it has commanded anything: a scenario whose actions
+  fight over an entity says two things at once, and which one CARLA ends up
+  doing is an accident of the tick order, not what the author meant;
+* an action that overrides takes the domain over, as OpenSCENARIO has every
+  action do (*Actions at runtime*): the action holding it is stopped -- it
+  goes to ``completeState`` -- and gives back every domain it held.
 
 A domain is held by the action that took it (:class:`ControlSlots`):
 
@@ -115,28 +119,41 @@ class ControlSlots:
         claims: Sequence[tuple[str, ControlDomain]],
         at: float,
         runs: bool,
-    ) -> int:
+        overrides: bool = False,
+    ) -> tuple[int, list[int]]:
         """Take each ``(entity, domain)`` of *claims* for the action *label*,
         fired at scenario time *at*: until it is :meth:`released <release>`
         if it *runs* on, else for that tick alone.
 
+        Args:
+            overrides: Take a domain another action holds, releasing
+                everything that action holds, rather than refuse.
+
         Returns:
-            The token :meth:`release` gives them back with.
+            The token :meth:`release` gives them back with, and the tokens of
+            the actions it overrode, to be stopped.
 
         Raises:
-            ControlConflictError: If another action holds one of them; none
-                is taken then.
+            ControlConflictError: If another action holds one of them and
+                *overrides* is false; none is taken then.
         """
+        overridden: list[int] = []
         for entity, domain in claims:
             held = self._holder(entity, domain, at)
-            if held is not None:
-                hold: _Hold = held
+            if held is None:
+                continue
+            hold: _Hold = held
+            if not overrides:
                 raise ControlConflictError(entity, domain, hold.label, label)
+            if hold.owner not in overridden:
+                overridden.append(hold.owner)
+        for owner in overridden:
+            self.release(owner)
         self._next += 1
         owner = self._next
         for entity, domain in claims:
             self._holds[(entity, domain.value)] = _Hold(owner, label, at, runs)
-        return owner
+        return owner, overridden
 
     def release(self, owner: int) -> None:
         """Give back what the action holding *owner* took."""

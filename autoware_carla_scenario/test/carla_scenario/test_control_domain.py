@@ -67,7 +67,7 @@ class _Command(BaseAction):
 class TestSlots:
     def test_a_running_hold_blocks_until_released(self) -> None:
         slots = ControlSlots()
-        owner = slots.take("a", [("npc", LON)], 0.0, runs=True)
+        owner, _ = slots.take("a", [("npc", LON)], 0.0, runs=True)
         with pytest.raises(ControlConflictError) as raised:
             slots.take("b", [("npc", LON)], 5.0, runs=False)
         assert (raised.value.entity, raised.value.domain) == ("npc", LON)
@@ -96,6 +96,23 @@ class TestSlots:
         with pytest.raises(ControlConflictError):
             slots.take("b", [("npc", d) for d in MOVEMENT], 0.0, runs=True)
         assert slots.holder("npc", LON, 0.0) is None
+
+    def test_an_override_releases_everything_the_holder_held(self) -> None:
+        slots = ControlSlots()
+        held, _ = slots.take("walk", [("npc", d) for d in MOVEMENT], 0.0, runs=True)
+        owner, overridden = slots.take(
+            "speed", [("npc", LON)], 1.0, runs=True, overrides=True
+        )
+        assert overridden == [held]
+        assert slots.holder("npc", LON, 1.0) == "speed"
+        assert slots.holder("npc", LAT, 1.0) is None
+
+
+def _Overriding(*args: object, **kwargs: object) -> _Command:  # noqa: N802
+    """A :class:`_Command` that overrides."""
+    command = _Command(*args, **kwargs)  # type: ignore[arg-type]
+    command.overrides = True
+    return command
 
 
 class TestActions:
@@ -150,3 +167,32 @@ class TestActions:
     def test_an_action_on_no_entity_takes_nothing(self) -> None:
         _Command("weather", ()).tick(None, 0.0)
         _Command("weather2", ()).tick(None, 0.0)
+
+
+class TestOverride:
+    def test_an_overriding_action_stops_the_holder(self) -> None:
+        holding = _Command("walk", MOVEMENT, until=_Switch())
+        holding.tick(None, 0.0)
+        holding.tick(None, 0.05)
+        assert holding.state is ActionState.RUNNING
+        taking = _Overriding("speed", (LON,), until=_Switch())
+        taking.tick(None, 0.1)
+        assert taking.executed == 1
+        assert holding.state is ActionState.COMPLETE
+        assert control_slots().holder("npc", LON, 0.1) == "_Command 'speed'"
+        # The stopped action gave its lateral domain back too.
+        _Command("lane", (LAT,)).tick(None, 0.15)
+        # And is not run again.
+        holding.tick(None, 0.2)
+        assert holding.executed == 1
+
+    def test_an_overriding_action_takes_a_domain_commanded_this_tick(self) -> None:
+        _Command("speed", (LON,)).tick(None, 1.0)
+        _Overriding("speed2", (LON,)).tick(None, 1.0)
+
+    def test_an_action_held_over_still_refuses_one_that_does_not_override(
+        self,
+    ) -> None:
+        _Overriding("speed", (LON,), until=_Switch()).tick(None, 0.0)
+        with pytest.raises(ControlConflictError):
+            _Command("speed2", (LON,)).tick(None, 0.05)

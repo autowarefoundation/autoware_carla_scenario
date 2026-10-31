@@ -77,6 +77,10 @@ class SetSpeedAction(BaseAction):
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: If ``True``, take over a control domain of the entity
+            another action holds, stopping that action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default).
         until: Overrides what counts as having arrived.  Defaults to the
             vehicle being within :data:`ARRIVAL_TOLERANCE_KMH` of the target
             for a rate-limited change, and to nothing at all for an immediate
@@ -113,6 +117,7 @@ class SetSpeedAction(BaseAction):
         *,
         label: str = "set_speed",
         once: bool = True,
+        overrides: bool = False,
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
@@ -144,6 +149,7 @@ class SetSpeedAction(BaseAction):
             condition=condition,
             timing=timing,
             once=once,
+            overrides=overrides,
             until=until,
             reissue=reissue,
         )

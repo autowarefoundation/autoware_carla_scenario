@@ -80,6 +80,10 @@ class WalkStraightAction(BaseAction):
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: If ``True``, take over a control domain of the entity
+            another action holds, stopping that action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default).
         turn_back_ttc_s: Turn back when a vehicle's time to collision with
             the pedestrian, along the road, is at most this (s).  ``None``
             (default): not by time to collision.
@@ -122,6 +126,7 @@ class WalkStraightAction(BaseAction):
         *,
         label: str = "walk_straight",
         once: bool = True,
+        overrides: bool = False,
         turn_back_ttc_s: Optional[float] = None,
         turn_back_distance_m: Optional[float] = None,
         turn_back_within_m: float = DEFAULT_TURN_BACK_WITHIN_M,
@@ -142,7 +147,12 @@ class WalkStraightAction(BaseAction):
             settled: BaseCondition = _WalkSettled(self, label)
             until = settled
         super().__init__(
-            label=label, condition=condition, timing=timing, once=once, until=until
+            label=label,
+            condition=condition,
+            timing=timing,
+            once=once,
+            until=until,
+            overrides=overrides,
         )
         self._entity_name = str(entity_name)
         self._speed_ms = speed_ms

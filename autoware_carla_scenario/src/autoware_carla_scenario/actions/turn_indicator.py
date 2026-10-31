@@ -36,6 +36,10 @@ class TurnIndicatorAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: If ``True``, take over a control domain of the entity
+            another action holds, stopping that action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default).
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -51,8 +55,15 @@ class TurnIndicatorAction(BaseAction):
         *,
         label: str = "turn_indicator",
         once: bool = True,
+        overrides: bool = False,
     ) -> None:
-        super().__init__(label=label, condition=condition, timing=timing, once=once)
+        super().__init__(
+            label=label,
+            condition=condition,
+            timing=timing,
+            once=once,
+            overrides=overrides,
+        )
         self._entity_name = str(entity_name)
         self._state = state
 

@@ -635,11 +635,14 @@ in the same tick, or a `SetSpeedAction` while a `WalkStraightAction` that turns
 back is still watching, are errors, while a `LaneChangeAction` beside a running
 `SetSpeedAction` is not.
 
-OpenSCENARIO resolves the same conflict the other way -- the newer action
-overrides the running one, which ends with a stop transition (*Actions at
-runtime*). Here it is an error: actions fighting over an entity say two
-things at once, and which one CARLA would end up doing is an accident of the
-tick order.
+Whether that is an error is the newer action's to say, one action at a time.
+An action built with `overrides=True` (or given `action.overrides = True`
+before it fires) takes the domain over instead, as OpenSCENARIO has every action do (*Actions
+at runtime*): the action holding it is stopped -- it goes to `completeState`,
+OpenSCENARIO's stop transition -- and gives back every domain it held. The
+default is `False`: actions fighting over an
+entity say two things at once, and which one CARLA would end up doing is an
+accident of the tick order.
 
 A post-tick action and the pre-tick action of the next loop are handed the same
 time and act on the same simulation step, so they share a tick. The holds are

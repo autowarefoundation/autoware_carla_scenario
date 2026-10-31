@@ -292,6 +292,10 @@ class RoutingAction(TrajectoryRun):
         timing: Which tick phase to run on, when registered on the loop.
         label: Action label.
         once: Whether the action fires at most once.
+        overrides: If ``True``, take over a control domain of the entity
+            another action holds, stopping that action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default).
         initial_pose: CARLA world pose the entity is expected to start at, used
             to initialize localization (``driver`` mode).  ``None`` reads the
             attached actor instead.
@@ -377,6 +381,7 @@ class RoutingAction(TrajectoryRun):
         *,
         label: str = "routing",
         once: bool = True,
+        overrides: bool = False,
         initial_pose: Optional[CarlaWorldPose] = None,
         ground_projection: Optional[GroundProjectionConfig] = None,
         waypoints: Sequence[Lanelet2Pose] = (),
@@ -432,6 +437,7 @@ class RoutingAction(TrajectoryRun):
             timing,
             label=label,
             once=once,
+            overrides=overrides,
             until=until,
             control_config=control_config,
             speed=speed,

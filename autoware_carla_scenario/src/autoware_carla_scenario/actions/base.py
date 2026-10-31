@@ -57,6 +57,11 @@ class BaseAction(ABC):
             run, overriding what the action would decide for itself.  ``None``
             (default) leaves that decision to
             :meth:`~BaseAction.reissues_while_running`.
+        overrides: Whether the action, firing to command a control domain of
+            an entity another action holds, takes it over, stopping that
+            action, rather than raise
+            :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+            (default) -- :attr:`overrides`.
 
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- ``force_lane_change`` returns long before the vehicle
@@ -108,6 +113,7 @@ class BaseAction(ABC):
     _done: bool
     _lifecycle: ActionState
     _control: int
+    _overrides: bool
 
     def __init__(
         self,
@@ -118,6 +124,7 @@ class BaseAction(ABC):
         once: bool = True,
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
+        overrides: bool = False,
     ) -> None:
         if not label:
             raise ValueError(
@@ -136,6 +143,7 @@ class BaseAction(ABC):
         self._done = False
         self._lifecycle = ActionState.STANDBY
         self._control = 0
+        self._overrides = overrides
 
     @property
     def timing(self) -> TickTiming:
@@ -260,14 +268,43 @@ class BaseAction(ABC):
         if not claims:
             return
         runs = self._until is not None or self.reissues_while_running
-        self._control = control_slots().take(
-            f"{type(self).__name__} '{self.label}'", claims, at, runs
+        name = f"{type(self).__name__} '{self.label}'"
+        owner, overridden = control_slots().take(
+            name, claims, at, runs, self._overrides
         )
+        for stopped in overridden:
+            if stopped in _CONTROLLING:
+                _CONTROLLING[stopped]._stop_overridden(name)
+                del _CONTROLLING[stopped]
+        self._control = owner
+        _CONTROLLING[owner] = self
+
+    @property
+    def overrides(self) -> bool:
+        """Whether the action, firing to command a control domain another
+        action holds, takes it over -- stopping that action, as OpenSCENARIO
+        has every action do -- rather than raise
+        :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
+        (the default).  Read as the action fires."""
+        return self._overrides
+
+    @overrides.setter
+    def overrides(self, value: bool) -> None:
+        self._overrides = bool(value)
+
+    def _stop_overridden(self, by: str) -> None:
+        """Stop the run, overridden by the action *by*: OpenSCENARIO's stop
+        transition, to ``completeState``; what it held is given back."""
+        logger.info("%s '%s' overridden by %s", type(self).__name__, self.label, by)
+        self._control = 0
+        self._lifecycle = ActionState.COMPLETE
 
     def _release_control(self) -> None:
         """Give back the domains the action took, as its run ends."""
         if self._control:
             control_slots().release(self._control)
+            if self._control in _CONTROLLING:
+                del _CONTROLLING[self._control]
             self._control = 0
 
     def close(self) -> None:
@@ -393,3 +430,8 @@ class BaseAction(ABC):
         # Held for this whole tick, so a condition watching `startTransition`
         # has a tick on which to see it.
         self._lifecycle = ActionState.START_TRANSITION
+
+
+#: The action holding each control token (:meth:`BaseAction._take_control`),
+#: so one an overriding action takes its domains from can be stopped.
+_CONTROLLING: dict[int, BaseAction] = {}
