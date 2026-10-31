@@ -58,8 +58,8 @@ class _Never(BaseCondition):
 class _Progress(RouteProgressCondition):
     """A rising route_progress whose entity's progress the test sets."""
 
-    def __init__(self, target: float) -> None:
-        super().__init__(value=target, label="progress")
+    def __init__(self, target: float, entity: Optional[str] = None) -> None:
+        super().__init__(entity, value=target, label="progress")
         self.now = 0.0
         self._threshold = target
 
@@ -124,6 +124,54 @@ class TestPacer:
             speed = pacer.speed(_WORLD, 0.0, t, cruise=8.0, limit=15.0)
         # The ego needs (50 - 14.75) / 5 = 7.05 s more; 40 m over that is 5.7 m/s.
         assert speed == pytest.approx(40.0 / ((50.0 - 5.0 * 2.95) / 5.0), rel=0.15)
+
+    @staticmethod
+    def _two_gates(
+        first: str, second: str, second_from: float
+    ) -> tuple[RoutePacer, _Progress, _Progress, float]:
+        """A pacer whose first waypoint is gated on *first* and second on
+        *second*, both entities going 10 m/s, run until the first opens."""
+        gate1 = _Progress(target=50.0, entity=first)
+        gate2 = _Progress(target=400.0, entity=second)
+        marks = [PaceMark(1, 30.0, gate=gate1), PaceMark(2, 80.0, gate=gate2)]
+        pacer = RoutePacer("npc2", "driver", marks, 1.0, 1.0)
+        gate1.now, gate2.now = 20.0, second_from
+        t = 0.0
+        for _ in range(60):
+            t += 0.05
+            gate1.now += 0.5
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 0.0, t, cruise=1.4, limit=3.0)
+        assert pacer.marks[0].opened_at == pytest.approx(t)  # the first opens
+        assert pacer._rate == pytest.approx(10.0)
+        pacer.observe(30.0, t)  # and the entity reaches it
+        return pacer, gate1, gate2, t
+
+    @pytest.mark.parametrize("second_from", [100.0, 5.0], ids=["ahead", "behind"])
+    def test_a_gate_on_another_entity_starts_its_own_rate(
+        self, second_from: float
+    ) -> None:
+        pacer, _, gate2, t = self._two_gates("Ego", "npc1", second_from)
+        for _ in range(10):
+            t += 0.05
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 30.0, t, cruise=1.4, limit=3.0)
+            # Never the gap between the two entities over a tick.
+            assert 0.0 <= pacer._rate <= 10.0 + 1e-6
+        assert pacer._rate == pytest.approx(10.0)
+        eta = pacer._eta(gate2, t)
+        assert eta is not None
+        assert eta == pytest.approx(t + (400.0 - gate2.now) / 10.0, rel=0.01)
+
+    def test_gates_on_the_same_entity_go_on_with_its_rate(self) -> None:
+        pacer, gate1, gate2, t = self._two_gates("Ego", "Ego", 20.0)
+        gate2.now = gate1.now  # both measure the one entity
+        # The estimate goes on: no tick without a rate, no jump.
+        for _ in range(3):
+            t += 0.05
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 30.0, t, cruise=1.4, limit=3.0)
+            assert pacer._rate == pytest.approx(10.0)
 
     def test_arrivals_are_logged_with_their_targets(self) -> None:
         gate = _Progress(target=10.0)
