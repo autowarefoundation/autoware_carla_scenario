@@ -213,6 +213,16 @@ class TestLocalCartesianUtmMap:
         )
         assert worst < 1e-6
 
+        # What the map used to be read with lands metres away, so the check
+        # above tells the two apart by geometry, not by name alone.
+        tangent = lanelet2.io.load(
+            str(map_path), lanelet2.projection.LocalCartesianProjector(origin)
+        )
+        nearest = min(
+            math.dist((p.x, p.y), expected[p.id][:2]) for p in tangent.pointLayer
+        )
+        assert nearest > 1.0
+
 
 # ---------------------------------------------------------------------------
 # TestLocalProjection – how a projector_type: Local map is read
