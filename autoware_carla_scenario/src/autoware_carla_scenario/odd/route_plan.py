@@ -257,8 +257,10 @@ def _same_lanelet_leg(
     """A leg from *begin* to *end* on the same lanelet, or none.
 
     The lanelet alone when *end* is not behind *begin* the way one of *starts*
-    is travelled; otherwise round a loop back to it: from the lanelet, along
-    the shortest path from a lanelet that follows it to one of *ends*.
+    is travelled; otherwise round a loop back to it: from the lanelet, or a
+    lane it changes to as any other leg may, along the shortest path from a
+    lanelet that follows that one to one of *ends*.  Compared by length, as
+    :func:`_shortest_leg` compares.
     """
     for start in starts:
         length = _lengths([start])[0]
@@ -268,15 +270,40 @@ def _same_lanelet_leg(
     best: list[ConstLanelet] = []
     best_length = 0.0
     for start in starts:
-        for following in routing_graph.following(start):
-            rest = _shortest_leg(routing_graph, [following], ends)
-            if not rest:
-                continue
-            lanelets = [start] + rest
-            length = sum(_lengths(lanelets))
-            if not best or length < best_length:
-                best, best_length = lanelets, length
+        # Leave the lanelet ahead, never by lane changes alone: changing out
+        # and back is beside the begin, not round to behind it.
+        for lanes in _lane_changes_from(routing_graph, start):
+            for following in routing_graph.following(lanes[-1]):
+                rest = _shortest_leg(routing_graph, [following], ends)
+                if not rest:
+                    continue
+                lanelets = lanes + rest
+                length = sum(_lengths(lanelets))
+                if not best or length < best_length:
+                    best, best_length = lanelets, length
     return best
+
+
+def _lane_changes_from(
+    routing_graph: RoutingGraph, lanelet: ConstLanelet
+) -> list[list[ConstLanelet]]:
+    """*lanelet* alone, then each run of lane changes from it, left and right:
+    ``[lanelet, left]``, ``[lanelet, left, left of that]``, ..."""
+    runs: list[list[ConstLanelet]] = [[lanelet]]
+    for right in (False, True):
+        lanes: list[ConstLanelet] = [lanelet]
+        while True:
+            beside = (
+                routing_graph.right(lanes[-1])
+                if right
+                else routing_graph.left(lanes[-1])
+            )
+            if beside is None or any(ll.id == beside.id for ll in lanes):
+                break
+            lane: ConstLanelet = beside
+            lanes = lanes + [lane]
+            runs.append(lanes)
+    return runs
 
 
 def _shortest_leg(

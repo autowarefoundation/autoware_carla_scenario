@@ -365,6 +365,29 @@ class TestALegBehindItsStart:
         assert first[0] == 40.0 and first == sorted(first)
         assert last[0] == 0.0 and last[-1] == 10.0 and last == sorted(last)
 
+    def test_the_loop_may_start_with_a_lane_change(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_lanelets
+
+        # None of 157's own followers leads back to it; the lane beside it,
+        # 158, does, as any other leg could change to it.
+        lanelet_map, graph = nishishinjuku
+        lanelet = lanelet_map.laneletLayer[157]
+        assert 158 not in [int(ll.id) for ll in graph.following(lanelet)]
+        length = _length(nishishinjuku, 157)
+        route = PlannedRoute(
+            start=Lanelet2Pose(157, 0.8 * length),
+            goal=Lanelet2Pose(157, 0.2 * length),
+        )
+        ids = [int(ll.id) for ll in route_lanelets(route, *nishishinjuku)]
+        assert ids[:2] == [157, 158] and ids[-1] == 157 and ids.count(157) == 2
+        planned = plan_route(route, *nishishinjuku)
+        # Left by a lane change: half of it to the start's end, as plan_route
+        # splits one, and to the goal on its way back round.
+        assert planned[0][1] == pytest.approx(0.1 * length)
+        assert planned[-1][1] == pytest.approx(0.2 * length)
+
     def test_a_waypoint_behind_the_one_before(
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
