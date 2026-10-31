@@ -6,10 +6,12 @@ Autoware's ROS 2 environment -- by the launcher, next to the stack it starts
 sequence through the AD API and exposes only a single readiness flag back to the
 scenario runner:
 
-1. poll ``GetMission`` until the scenario hands over an initial pose + goal;
+1. poll ``GetMission`` until the scenario hands over an initial pose, a goal and
+   the waypoints on the way there;
 2. initialize localization at the initial pose (``/api/localization/initialize``) --
    skipped when ``initialize_localization`` is False (ground-truth / E2E stacks);
-3. set the route to the goal (``/api/routing/set_route_points``), but only once
+3. set the route through the waypoints to the goal
+   (``/api/routing/set_route_points``), but only once
    localization has reached INITIALIZED (the mission planner starts the route from
    the current odometry pose and rejects requests before that);
 4. once localization is satisfied, the route is SET, and autonomous mode is
@@ -18,6 +20,15 @@ scenario runner:
 5. aggregate localization/routing/operation-mode state into a single readiness
    flag and push it back with ``ReportReadiness``.  ``require_localization_initialized``
    controls whether localization is part of "ready".
+
+Once readiness is reported it keeps polling ``GetMission``, every
+``route_watch_period_s``, for a re-route: the scenario sending the ego somewhere
+else part-way through the run (a ``RoutingAction`` in its tick loop) is served
+as a new ``mission_version``, and the node changes Autoware's route to it with
+``/api/routing/change_route_points`` -- once the route is SET, retrying a
+rejected change on the next poll and giving up on that version, with an error
+in the log, after ``reroute_max_attempts`` rejections.  The initial pose of a
+re-route is not used: localization is already running.
 
 Throughout the run it also forwards Autoware's turn-indicator command
 (``turn_indicators_topic``, ``/control/command/turn_indicators_cmd``) with
@@ -29,7 +40,7 @@ every AD API state change) re-drives whichever step is still outstanding, so a
 step that cannot complete yet -- the AD API services are not up, the mission
 planner is not ready, or a gRPC call fails transiently -- is retried on the next
 pass instead of being silently dropped.  The tick keeps running until readiness
-has been reported.
+has been reported; the slower route watch takes over from it then.
 
 High-bandwidth data (sensors, control, ``/clock``, tf) never flows over the
 bridge; it stays on ROS 2 topics and direct CARLA control in the interface node.
@@ -54,6 +65,7 @@ from .ad_api import (
 from .ad_api import LOCALIZATION_INITIALIZATION_STATE_TOPIC
 from .ad_api import LOCALIZATION_INITIALIZE_SERVICE
 from .ad_api import OPERATION_MODE_STATE_TOPIC
+from .ad_api import ROUTING_CHANGE_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTING_SET_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTING_STATE_TOPIC
 from .ad_api import ReadinessAggregator
@@ -171,8 +183,19 @@ class ScenarioBridgeNode(Node):
         self._engage_requested = False
         self._readiness_inflight = False
         self._readiness_reported = False
+        # Re-routing (after readiness). Versions are the server's mission_version:
+        # the one whose route Autoware took from this bridge, the one the route
+        # request in flight is for, and one given up on after
+        # reroute_max_attempts rejections.
+        self._routed_version = 0
+        self._route_request_version = 0
+        self._reroute_requested = False
+        self._reroute_rejections = 0
+        self._abandoned_version: Optional[int] = None
+        self._route_watch_timer = None
 
         group = ReentrantCallbackGroup()
+        self._callback_group = group
         self._create_ad_api_clients(group)
         self._subscribe_ad_api_states(group)
         # The short timeout GetMission polls with: a report runs on an executor
@@ -267,6 +290,20 @@ class ScenarioBridgeNode(Node):
             .get_parameter_value()
             .string_value
         )
+        # Once Autoware is ready, how often GetMission is polled for a re-route;
+        # 0 or less stops polling then, as the node did before re-routing.
+        self._route_watch_period_s = (
+            self.declare_parameter("route_watch_period_s", 1.0)
+            .get_parameter_value()
+            .double_value
+        )
+        # Rejected change_route_points calls for one re-route before it is given
+        # up on (the route Autoware drives then stays the one it had).
+        self._reroute_max_attempts = (
+            self.declare_parameter("reroute_max_attempts", 10)
+            .get_parameter_value()
+            .integer_value
+        )
         return (
             self.declare_parameter("tick_period_s", 0.5)
             .get_parameter_value()
@@ -282,6 +319,9 @@ class ScenarioBridgeNode(Node):
         )
         self._route_cli = self.create_client(
             SetRoutePoints, ROUTING_SET_ROUTE_POINTS_SERVICE, callback_group=group
+        )
+        self._change_route_cli = self.create_client(
+            SetRoutePoints, ROUTING_CHANGE_ROUTE_POINTS_SERVICE, callback_group=group
         )
         self._engage_cli = self.create_client(
             ChangeOperationMode,
@@ -324,7 +364,8 @@ class ScenarioBridgeNode(Node):
         Keeps ticking (rather than cancelling once the mission arrives) so any step
         whose AD API service is not up yet is retried, and so ReportReadiness is
         retried after a transient failure even though the AD API states go
-        quiescent once Autoware is ready.  Stops once readiness has been reported.
+        quiescent once Autoware is ready.  Stops once readiness has been reported,
+        handing over to the slower route watch (:meth:`_watch_route`).
         """
         if self._mission is None:
             self._poll_mission()
@@ -337,6 +378,7 @@ class ScenarioBridgeNode(Node):
         self._maybe_report_ready()
         if self._readiness_reported:
             self._stop_tick()
+            self._start_route_watch()
 
     def _advance(self) -> None:
         """Re-issue whichever startup step is still outstanding (idempotent).
@@ -362,6 +404,17 @@ class ScenarioBridgeNode(Node):
                 self._tick_timer.cancel()
                 self._tick_timer = None
 
+    def _start_route_watch(self) -> None:
+        """Start polling for a re-route at ``route_watch_period_s``.  Idempotent."""
+        with self._lock:
+            if self._route_watch_timer is not None or self._route_watch_period_s <= 0:
+                return
+            self._route_watch_timer = self.create_timer(
+                self._route_watch_period_s,
+                self._watch_route,
+                callback_group=self._callback_group,
+            )
+
     # ------------------------------------------------------------------
     # Mission acquisition
     # ------------------------------------------------------------------
@@ -382,6 +435,34 @@ class ScenarioBridgeNode(Node):
                 self.get_logger().info(
                     "Received scenario mission; driving Autoware startup"
                 )
+
+    def _watch_route(self) -> None:
+        """Poll the mission once more; change Autoware's route to a new version.
+
+        Runs on the route-watch timer, after readiness.  A failed poll is retried
+        on the next one, and so is a change the AD API could not take yet.
+        """
+        try:
+            mission = self._client.get_mission(timeout=self._mission_poll_timeout_s)
+        except grpc.RpcError as error:
+            self.get_logger().debug(f"GetMission failed while watching: {error}")
+            mission = None
+        with self._lock:
+            current = self._mission
+            if (
+                mission is not None
+                and current is not None
+                and mission.version != current.version
+            ):
+                self.get_logger().info(
+                    f"The scenario re-routed (mission {current.version} -> "
+                    f"{mission.version}, {len(mission.waypoints)} waypoint(s)); "
+                    "changing Autoware's route"
+                )
+                self._mission = mission
+                self._reroute_rejections = 0
+            self._expire_stalled_steps()
+            self._ensure_reroute()
 
     # ------------------------------------------------------------------
     # Startup steps (each called under _lock, each idempotent + retrying)
@@ -436,16 +517,31 @@ class ScenarioBridgeNode(Node):
         ok, detail = _response_ok(future)
         if ok:
             self.get_logger().info(f"{label} accepted")
-            if latch == "_route_requested":
+            if latch in ("_route_requested", "_reroute_requested"):
                 # The planner accepted OUR route for the current mission, so the
                 # SET routing state that follows is this mission's, not a stale one.
                 with self._lock:
                     self._route_accepted = True
+                    self._routed_version = self._route_request_version
+                    self._reroute_rejections = 0
+                    # Unlike the startup's steps, a route change is not done
+                    # once: the next re-route needs the latch free again.
+                    self._reroute_requested = False
             return
         # Rejected (e.g. service not settled yet / ERROR_PLANNER_UNREADY): clear
         # the latch so the next pass retries.
         with self._lock:
             setattr(self, latch, False)
+            if latch == "_reroute_requested":
+                self._reroute_rejections += 1
+                if self._reroute_rejections >= self._reroute_max_attempts:
+                    self._abandoned_version = self._route_request_version
+                    self.get_logger().error(
+                        f"{label} to mission {self._route_request_version} rejected "
+                        f"{self._reroute_rejections} times ({detail}); giving up on "
+                        "it -- Autoware keeps the route it has"
+                    )
+                    return
         self.get_logger().warning(f"{label} rejected ({detail}); will retry")
 
     def _ensure_localization(self) -> None:
@@ -539,12 +635,54 @@ class ScenarioBridgeNode(Node):
             return
         if self._mission is None:
             return
+        self._route_request_version = self._mission.version
+        self._issue(
+            self._route_cli,
+            self._route_request(self._mission),
+            "_route_requested",
+            "route set",
+        )
+
+    def _route_request(self, mission: Mission) -> SetRoutePoints.Request:
+        """The ``SetRoutePoints`` request for *mission*: its waypoints, then its goal.
+
+        set_route_points and change_route_points take the same request.
+        """
         request = SetRoutePoints.Request()
         request.header.frame_id = self._map_frame
         request.header.stamp = self.get_clock().now().to_msg()
         request.option.allow_goal_modification = True
-        request.goal = _to_ros_pose(self._mission.goal)
-        self._issue(self._route_cli, request, "_route_requested", "route set")
+        request.goal = _to_ros_pose(mission.goal)
+        request.waypoints = [_to_ros_pose(pose) for pose in mission.waypoints]
+        return request
+
+    def _ensure_reroute(self) -> None:
+        """(Re)issue ``/api/routing/change_route_points`` for a new mission version.
+
+        Only once readiness has been reported -- before that the startup's own
+        set_route_points routes the mission, whatever its version -- and only for
+        a version Autoware does not already have, nor one given up on.  Held
+        until the route is SET: the AD API changes no other (an earlier change
+        still CHANGING included).
+        """
+        if not self._readiness_reported or self._mission is None:
+            return
+        if self._reroute_requested:
+            return
+        version = self._mission.version
+        if version == self._routed_version or version == self._abandoned_version:
+            return
+        if not self._aggregator.route_changeable:
+            return
+        if not self._change_route_cli.service_is_ready():
+            return
+        self._route_request_version = version
+        self._issue(
+            self._change_route_cli,
+            self._route_request(self._mission),
+            "_reroute_requested",
+            "route change",
+        )
 
     def _maybe_engage(self) -> None:
         """Call ``change_to_autonomous`` once the preconditions hold."""

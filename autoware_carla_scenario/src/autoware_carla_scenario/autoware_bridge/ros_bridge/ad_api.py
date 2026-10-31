@@ -20,6 +20,9 @@ LOCALIZATION_INITIALIZE_SERVICE = "/api/localization/initialize"
 LOCALIZATION_INITIALIZATION_STATE_TOPIC = "/api/localization/initialization_state"
 #: Service: set a route from a goal pose (+ optional waypoints).
 ROUTING_SET_ROUTE_POINTS_SERVICE = "/api/routing/set_route_points"
+#: Service: change the route that is SET to a new goal (+ optional waypoints),
+#: while driving; same request type (``SetRoutePoints``) as set_route_points.
+ROUTING_CHANGE_ROUTE_POINTS_SERVICE = "/api/routing/change_route_points"
 #: Topic: RouteState.
 ROUTING_STATE_TOPIC = "/api/routing/state"
 #: Topic: OperationModeState.
@@ -117,6 +120,16 @@ class ReadinessAggregator:
         stack that has no route at all.
         """
         return self.route_state == ROUTE_STATE_UNSET
+
+    @property
+    def route_changeable(self) -> bool:
+        """Whether the AD API would change the route now.
+
+        ``RoutingNode::on_change_route_points`` changes a route that is SET and
+        refuses one that is not ("The route is not set yet."), including while
+        an earlier change is still CHANGING.
+        """
+        return self.route_state == ROUTE_STATE_SET
 
     def update_operation_mode(
         self, mode: int, is_control_enabled: bool, is_autonomous_available: bool

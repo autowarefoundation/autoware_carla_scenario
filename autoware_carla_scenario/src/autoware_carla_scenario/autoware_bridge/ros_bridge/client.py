@@ -1,7 +1,8 @@
 """gRPC client for the scenario library's ``AutowareBridge`` server.
 
 This is the Autoware side of the (deliberately tiny) contract: pull the mission
-once it is available (``GetMission``) and push a single readiness flag
+once it is available (``GetMission``) -- and again later, to follow a re-route --
+and push a single readiness flag
 (``ReportReadiness``).  It opens an ``insecure_channel`` to a server the interface
 node launches and dials, and is kept free of ``rclpy`` so it can be unit tested
 against an in-process server.
@@ -31,10 +32,16 @@ class Mission:
     Attributes:
         initial_pose: Where Autoware initializes localization.
         goal: Where Autoware plans the route to.
+        waypoints: Poses the route must pass through, in order; empty leaves
+            the way to the goal to Autoware.
+        version: The server's ``mission_version``: a new one is a re-route.
+            0 from a server that predates it, which never re-routes.
     """
 
     initial_pose: pb2.Pose
     goal: pb2.Pose
+    waypoints: tuple[pb2.Pose, ...] = ()
+    version: int = 0
 
 
 class ScenarioBridgeClient:
@@ -90,7 +97,12 @@ class ScenarioBridgeClient:
         response = self._stub.GetMission(pb2.GetMissionRequest(), timeout=timeout)
         if not response.available:
             return None
-        return Mission(initial_pose=response.initial_pose, goal=response.goal)
+        return Mission(
+            initial_pose=response.initial_pose,
+            goal=response.goal,
+            waypoints=tuple(response.waypoints),
+            version=int(response.mission_version),
+        )
 
     def report_readiness(self, ready: bool, timeout: Optional[float] = None) -> None:
         """Push the readiness flag to the scenario framework.

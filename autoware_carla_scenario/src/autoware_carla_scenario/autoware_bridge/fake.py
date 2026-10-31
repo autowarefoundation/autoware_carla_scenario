@@ -30,10 +30,13 @@ class FakeAutowareBridge(AutowareBridge):
     calls: List[str] = field(default_factory=list)
     #: The initial pose passed to :meth:`configure`, if any.
     configured_initial_pose: Optional[BridgePose] = None
-    #: The goal passed to :meth:`configure`, if any.
+    #: The goal passed to :meth:`configure`, or the last :meth:`reroute`, if any.
     configured_goal: Optional[BridgePose] = None
-    #: The waypoints passed to :meth:`configure`, in order.
+    #: The waypoints passed to :meth:`configure` or the last :meth:`reroute`, in order.
     configured_waypoints: List[BridgePose] = field(default_factory=list)
+    #: Bumped by :meth:`configure` and :meth:`reroute`, as the gRPC server's
+    #: ``mission_version`` is: 0 before the first mission.
+    mission_version: int = 0
     #: Whether :meth:`close` has been called.
     closed: bool = False
     #: The turn-indicator command :meth:`take_turn_indicators` hands over next.
@@ -51,6 +54,19 @@ class FakeAutowareBridge(AutowareBridge):
         self.configured_initial_pose = initial_pose
         self.configured_goal = goal
         self.configured_waypoints = list(waypoints) if waypoints is not None else []
+        self.mission_version += 1
+
+    def reroute(
+        self,
+        goal: BridgePose,
+        waypoints: Optional[list[BridgePose]] = None,
+    ) -> None:
+        if self.configured_initial_pose is None:
+            raise RuntimeError("reroute() before configure(): there is no mission")
+        self.calls.append("reroute")
+        self.configured_goal = goal
+        self.configured_waypoints = list(waypoints) if waypoints is not None else []
+        self.mission_version += 1
 
     def is_ready(self) -> bool:
         self.calls.append("is_ready")
