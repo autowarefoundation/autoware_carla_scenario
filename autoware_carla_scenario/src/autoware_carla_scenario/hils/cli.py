@@ -42,6 +42,17 @@ def example_config() -> str:
     )
 
 
+def _port(text: str) -> int:
+    """``--port``: a TCP port, as ``carla.port`` is checked."""
+    try:
+        port = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {text!r}") from None
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"must be within 1-65535, got {port}")
+    return port
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="scenario-hils",
@@ -53,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("config", nargs="?", help="the bridge's YAML configuration")
     parser.add_argument("--host", help="the CARLA host (overrides carla.host)")
     parser.add_argument(
-        "--port", type=int, help="the CARLA port (overrides carla.port)"
+        "--port", type=_port, help="the CARLA port (overrides carla.port)"
     )
     parser.add_argument(
         "--role-name", help="the ego's role_name (overrides ego.role_name)"
