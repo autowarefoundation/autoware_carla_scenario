@@ -269,6 +269,22 @@ class DrivenEntity:
     #: entity is the one thing there is exactly one of per manoeuvre.
     _lane_change_target: Optional[Tuple[int, int]] = None
     _lane_change_map: Optional["carla.Map"] = None
+    #: The waypoint of that lane beside where the change was asked for, and
+    #: the ``(road_id, lane_id)`` of every lane its successors reach within
+    #: ``_lane_change_horizon_m``: lane ids are scoped to a road, so a vehicle
+    #: that settles after the target lane has run onto the next road is on
+    #: one of these, not on ``_lane_change_target``.  The keys are walked
+    #: when first needed and again only when the vehicle is further on.
+    _lane_change_waypoint: Optional["carla.Waypoint"] = None
+    _lane_change_ahead: Optional[set[Tuple[int, int]]] = None
+    _lane_change_horizon_m: float = 0.0
+    #: The same for the lane the vehicle was on when the change was asked
+    #: for: a lane both lead to (where they merge, or past a junction) is no
+    #: sign the vehicle changed lane, so it counts only once the vehicle has
+    #: been seen on a lane only the target leads to (``_lane_change_crossed``).
+    _lane_change_origin: Optional["carla.Waypoint"] = None
+    _lane_change_origin_ahead: Optional[set[Tuple[int, int]]] = None
+    _lane_change_crossed: bool = False
 
     #: How the backend driving this vehicle simulates it now
     #: (:class:`SimulationFidelity`).  Written by that backend alone, through
@@ -283,6 +299,12 @@ class DrivenEntity:
         scenarios stay in the queue, and their entities with them."""
         self._lane_change_target = None
         self._lane_change_map = None
+        self._lane_change_waypoint = None
+        self._lane_change_ahead = None
+        self._lane_change_horizon_m = 0.0
+        self._lane_change_origin = None
+        self._lane_change_origin_ahead = None
+        self._lane_change_crossed = False
 
     def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
         """Let a backend take this vehicle's actor out of the world, or give it
