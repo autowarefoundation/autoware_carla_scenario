@@ -1,13 +1,15 @@
 // gRPC wire contract between the scenario framework and
 // autoware_carla_interface. The contract is intentionally tiny: the scenario
-// framework hands Autoware the mission (initial pose + goal), and the Autoware
+// framework hands Autoware the mission (initial pose, goal and waypoints, and
+// any re-route of it later in the run), and the Autoware
 // side reports back a single readiness flag. The Autoware side owns the entire
 // startup sequence.
 //
 // Delegation (all on the Autoware side, not the framework):
 //   - localization init  : autoware_automatic_pose_initializer (GNSS) or a
 //                          published /initialpose via initial_pose_adaptor.
-//   - routing            : routing_adaptor, from the goal pose.
+//   - routing            : the AD API's set_route_points, from the goal pose
+//                          and waypoints; change_route_points on a re-route.
 //   - engage + readiness : small Autoware-side helpers (an auto-engage node and
 //                          a readiness aggregator that ANDs localization /
 //                          routing / operation-mode state) - see the follow-up
@@ -96,6 +98,16 @@ message GetMissionResponse {
   // say, where leaving that road means leaving the rendered world -- gets a
   // different one. The waypoints are how the scenario says which drive it meant.
   repeated Pose waypoints = 4;
+
+  // Which mission this is. The framework bumps it every time it hands over a
+  // route -- the scenario's mission, and each re-route part-way through the
+  // run (a RoutingAction in the tick loop) -- so a client that
+  // keeps polling after it is ready can tell a changed route from the one it
+  // already set, and change Autoware's route to it
+  // (/api/routing/change_route_points). A re-route keeps initial_pose as it
+  // was: localization is already running. 0 is a server that predates this
+  // field and never re-routes.
+  uint64 mission_version = 5;
 }
 
 message ReportReadinessRequest {
@@ -116,9 +128,10 @@ message ReportTurnIndicatorsResponse {}
 // Hosted by the scenario library; the autoware_carla_interface node is the
 // client (see the topology note above).
 service AutowareBridge {
-  // Fetch the scenario's mission (initial pose + goal). The client polls this
-  // until `available`; the Autoware side then auto-initializes, routes, and
-  // engages from it.
+  // Fetch the scenario's mission (initial pose, goal, waypoints). The client
+  // polls this until `available`; the Autoware side then auto-initializes,
+  // routes, and engages from it. It keeps polling after that, more slowly, to
+  // follow a re-route (a new `mission_version`).
   rpc GetMission(GetMissionRequest) returns (GetMissionResponse);
 
   // Report the single readiness flag once Autoware is initialized, routed,

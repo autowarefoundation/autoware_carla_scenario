@@ -23,6 +23,9 @@ What the handshake does around the bridge:
 * hands it over and polls readiness each tick (:attr:`BridgeHandshake.ready`),
   which the ego holding it reports as not yet initialized, so the runner holds
   the scenario clock until the stack is driving;
+* hands a mission set once the stack has one -- a re-route part-way through the
+  run -- over as one (:meth:`~autoware_carla_scenario.autoware_bridge.base.AutowareBridge.reroute`),
+  keeping the initial pose the stack localized at;
 * given a :class:`~autoware_carla_scenario.autoware_stack.AutowareLauncher`,
   starts a fresh stack for its scenario once the mission is being served and
   removes it when the scenario ends.
@@ -168,7 +171,7 @@ class BridgeHandshake:
         goal_pose: "BridgePose",
         waypoints: Sequence["BridgePose"] = (),
     ) -> None:
-        """Set the mission before :meth:`on_scenario_start` hands it over.
+        """Set the mission before :meth:`start` hands it over, or re-route after.
 
         ``ScenarioRunner`` calls ``BaseScenario.create_ego()`` *before*
         ``setup()``, so a scenario whose goal comes from the live map -- snapped
@@ -187,12 +190,28 @@ class BridgeHandshake:
         spawn and the scenario's ``goal_pose``; calling this directly is for a
         scenario that derives its mission some other way.
 
+        Once :meth:`start` has handed a mission over, this is a re-route: the
+        goal and waypoints go to the stack at once
+        (:meth:`~autoware_carla_scenario.autoware_bridge.base.AutowareBridge.reroute`),
+        moved to ``base_link`` as the first ones were, and *initial_pose* is not
+        used -- localization is already running.
+
         Args:
             initial_pose: Map-frame pose the stack initializes localization at,
-                or ``None`` to take it from the ego actor.
+                or ``None`` to take it from the ego actor.  Ignored on a
+                re-route.
             goal_pose: Map-frame goal pose the stack plans the route to.
             waypoints: Map-frame poses the route must pass through, in order.
+
+        Raises:
+            NotImplementedError: On a re-route, from a bridge that cannot
+                re-route.
         """
+        if self._configured:
+            self._goal_pose = goal_pose
+            self._waypoint_poses = list(waypoints)
+            self._reroute(goal_pose)
+            return
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
         self._waypoint_poses = list(waypoints)
@@ -214,9 +233,10 @@ class BridgeHandshake:
         the vehicle will actually drive on, so both steps happen here where the
         stack's requirements are known.
 
-        Before the run starts this is the mission :meth:`on_scenario_start`
-        hands over; after it, it is a re-route, and the initial pose is left
-        alone because localization is already running.
+        Before the run starts this is the mission :meth:`start` hands over;
+        after it, it is a re-route, handed to the stack at once (see
+        :meth:`set_mission`), and the initial pose is left alone because
+        localization is already running.
 
         Args:
             world: The CARLA world, used to snap the goal onto the road.
@@ -362,6 +382,25 @@ class BridgeHandshake:
         if self._launcher is not None:
             self._start_stack()
 
+    def _reroute(self, goal: "BridgePose") -> None:
+        """Hand the stack a new *goal* and the waypoints set with it, moved to
+        ``base_link`` by the offset :meth:`start` took."""
+        offset = self._base_link_offset_m
+        goal_pose = goal.moved_forward(offset)
+        # An Optional, as configure()'s is, for Codon's dispatch thunk (see start()).
+        waypoints: Optional[list["BridgePose"]] = [
+            pose.moved_forward(offset) for pose in self._waypoint_poses
+        ]
+        logger.info(
+            "Re-routing the %s stack to (%.2f, %.2f) in the map frame through "
+            "%d waypoint(s)",
+            self._stack_name,
+            goal_pose.position.x,
+            goal_pose.position.y,
+            len(self._waypoint_poses),
+        )
+        self._bridge.reroute(goal_pose, waypoints)
+
     def _start_stack(self) -> None:
         """Start this scenario's stack, now that the mission is being served.
 
@@ -506,6 +545,8 @@ class BridgeHandshake:
                     exc_info=True,
                 )
             self._stack_running = False
+        # A mission set from here on is the next run's, not a re-route of this one.
+        self._configured = False
         try:
             self._bridge.close()
         except Exception:  # noqa: BLE001 - teardown must not raise

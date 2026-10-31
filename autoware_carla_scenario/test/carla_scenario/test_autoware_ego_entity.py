@@ -821,3 +821,123 @@ def test_a_command_is_kept_until_there_is_an_ego_to_show_it() -> None:
     bridge.report_turn_indicators(2)
     entity.on_tick(_FakeWorld([]), 0.0)  # no ego yet
     assert bridge.turn_indicators == 2  # not taken
+
+
+# ---------------------------------------------------------------------------
+# Re-routing part-way through the run (#873)
+# ---------------------------------------------------------------------------
+
+
+class TestReRouting:
+    """A route set once the stack has its mission reaches the stack."""
+
+    _OFFSET = -1.5
+
+    @staticmethod
+    def _snap_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Snap a Lanelet2 pose to a CARLA pose named after it, no map needed."""
+        from autoware_carla_scenario.coordinate import CarlaWorldPose
+
+        def _snap(pose, world, ground_projection):
+            return CarlaWorldPose(
+                x=float(pose.lanelet_id), y=-float(pose.s), z=0.0, yaw=0.0
+            )
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.snap_to_carla_road", _snap
+        )
+
+    def _started(self, bridge) -> tuple[AutowareEgoEntity, _FakeWorld]:
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        entity = _make_entity(bridge=bridge, base_link_offset_m=self._OFFSET)
+        _place(entity, world)
+        _drive_to_ready(entity, world)
+        assert entity.is_initialized
+        return entity, world
+
+    def test_a_mid_run_route_to_reaches_the_bridge_as_a_new_mission_version(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import grpc
+
+        from autoware_carla_scenario.autoware_bridge import GrpcAutowareBridgeServer
+        from autoware_carla_scenario.autoware_bridge._proto import (
+            autoware_bridge_pb2 as pb2,
+            autoware_bridge_pb2_grpc as pb2_grpc,
+        )
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        self._snap_in_place(monkeypatch)
+        bridge = GrpcAutowareBridgeServer(
+            AutowareBridgeConfig(address="localhost:0"), autostart=False
+        )
+        # The server is not ready until a client reports it; stand in for that.
+        monkeypatch.setattr(bridge, "is_ready", lambda: True)
+        entity, world = self._started(bridge)
+        channel = grpc.insecure_channel(f"localhost:{bridge.port}")
+        try:
+            stub = pb2_grpc.AutowareBridgeStub(channel)
+            first = stub.GetMission(pb2.GetMissionRequest(), timeout=5.0)
+
+            entity.route_to(
+                world,  # type: ignore[arg-type]
+                Lanelet2Pose(lanelet_id=40, s=2.0),
+                waypoints=[Lanelet2Pose(lanelet_id=30, s=1.0)],
+            )
+            second = stub.GetMission(pb2.GetMissionRequest(), timeout=5.0)
+        finally:
+            channel.close()
+            entity.on_scenario_end(world)
+
+        assert second.mission_version > first.mission_version > 0
+        # The y-flip of the fixture, then base_link: _OFFSET along +X (yaw 0).
+        assert (second.goal.position.x, second.goal.position.y) == pytest.approx(
+            (40.0 + self._OFFSET, 2.0)
+        )
+        assert [(p.position.x, p.position.y) for p in second.waypoints] == [
+            pytest.approx((30.0 + self._OFFSET, 1.0))
+        ]
+        # Localization is already running: the initial pose is the one handed over.
+        assert second.initial_pose == first.initial_pose
+
+    def test_the_stack_is_re_routed_not_configured_again(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity, _ = self._started(bridge)
+        new_goal = BridgePose.from_yaw(x=50.0, y=5.0, z=0.0, yaw=0.0)
+        via = BridgePose.from_yaw(x=30.0, y=5.0, z=0.0, yaw=0.0)
+
+        entity.set_mission(None, new_goal, [via])
+
+        assert bridge.calls.count("configure") == 1
+        assert bridge.calls.count("reroute") == 1
+        assert bridge.mission_version == 2
+        _assert_pose_close(bridge.configured_goal, new_goal.moved_forward(self._OFFSET))
+        assert len(bridge.configured_waypoints) == 1
+        _assert_pose_close(
+            bridge.configured_waypoints[0], via.moved_forward(self._OFFSET)
+        )
+        _assert_pose_close(
+            bridge.configured_initial_pose, _INITIAL.moved_forward(self._OFFSET)
+        )
+        assert entity.is_initialized  # still driving: nothing to wait for again
+
+    def test_a_bridge_that_cannot_re_route_says_so(self) -> None:
+        from autoware_carla_scenario.autoware_bridge import AutowareBridge
+
+        class _OldBridge(FakeAutowareBridge):
+            # Written before re-routing existed: the interface's default.
+            reroute = AutowareBridge.reroute
+
+        entity, _ = self._started(_OldBridge())
+
+        with pytest.raises(NotImplementedError, match="_OldBridge cannot re-route"):
+            entity.set_mission(None, _GOAL)
+
+    def test_a_mission_set_after_the_run_ended_is_the_next_runs(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity, world = self._started(bridge)
+        entity.on_scenario_end(world)
+
+        entity.set_mission(None, _GOAL)
+
+        assert "reroute" not in bridge.calls

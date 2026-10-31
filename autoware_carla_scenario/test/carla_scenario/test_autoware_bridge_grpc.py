@@ -255,3 +255,35 @@ def test_a_closed_bridge_starts_afresh() -> None:
         assert not response.available
     finally:
         server.close()
+
+
+# ---------------------------------------------------------------------------
+# Re-routing (#873)
+# ---------------------------------------------------------------------------
+
+
+def test_each_mission_handed_over_is_a_new_version(
+    bridge: GrpcAutowareBridgeServer,
+) -> None:
+    waypoint = BridgePose.from_yaw(x=5.0, y=5.0, z=0.0, yaw=0.0)
+    with _client(bridge) as stub:
+        before = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+        bridge.configure(_INITIAL, _GOAL)
+        first = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+        bridge.reroute(_INITIAL, [waypoint])  # back to where it started
+        second = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+
+    assert before.mission_version == 0
+    assert 0 < first.mission_version < second.mission_version
+    assert second.goal.position.x == pytest.approx(_INITIAL.position.x)
+    assert [p.position.x for p in second.waypoints] == [5.0]
+    # The initial pose is configure()'s: localization is already running.
+    assert second.initial_pose.position.x == pytest.approx(_INITIAL.position.x)
+    assert second.initial_pose == first.initial_pose
+
+
+def test_there_is_nothing_to_re_route_before_configure(
+    bridge: GrpcAutowareBridgeServer,
+) -> None:
+    with pytest.raises(RuntimeError, match="before configure"):
+        bridge.reroute(_GOAL)

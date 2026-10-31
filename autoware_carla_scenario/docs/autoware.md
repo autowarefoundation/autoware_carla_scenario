@@ -19,6 +19,30 @@ leaving its other lights as they are. That is what a camera sees and what
 `TurnIndicatorCondition` reads, whether or not `autoware_carla_interface` lights them
 itself.
 
+The route Autoware is given is the scenario's: the goal and, when the scenario
+names them (a `RoutingAction`'s waypoints, or the route it asserts), the
+waypoints on the way there, in order. `scenario_bridge` puts both in the
+`/api/routing/set_route_points` request (`goal` and `waypoints`), so Autoware
+drives the road the scenario meant rather than the shortest one to the goal.
+Every pose is moved to Autoware's `base_link`, the rear axle, as the initial
+pose is.
+
+A `RoutingAction` in the tick loop re-routes Autoware part-way through the run.
+The framework serves the new goal and waypoints as the next `mission_version`
+of the mission; `scenario_bridge`, which keeps polling `GetMission` every
+`route_watch_period_s` (1 s) once Autoware is ready, changes Autoware's route
+to it with `/api/routing/change_route_points`. Localization is left as it is.
+The change waits for the route to be SET; one Autoware rejects -- its mission
+planner refuses a re-route it does not consider safe while driving, say -- is
+retried on the next poll, and given up on after `reroute_max_attempts` (10)
+rejections, with an error in the node's log, leaving Autoware on the route it
+had. A re-route after the ego has reached its goal -- the route ARRIVED, which
+neither routing service takes, and Autoware stopped -- clears the route
+(`/api/routing/clear_route`), sets the new one with `set_route_points` and
+engages again, as the startup did. A bridge implementation of your own re-routes by implementing
+`AutowareBridge.reroute()`; one that does not raises `NotImplementedError` at
+the re-route instead of leaving Autoware on its old route without a word.
+
 Who starts Autoware is `autoware.launcher.type`:
 
 | Value | Who starts Autoware |
@@ -119,7 +143,7 @@ A stack that exits during a scenario ends it: the result's message says
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never` |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, ... |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, ... |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |

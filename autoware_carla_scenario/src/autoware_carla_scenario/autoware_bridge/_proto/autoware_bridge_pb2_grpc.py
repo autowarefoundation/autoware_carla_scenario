@@ -48,9 +48,10 @@ class AutowareBridgeServicer(object):
     """
 
     def GetMission(self, request, context):
-        """Fetch the scenario's mission (initial pose + goal). The client polls this
-        until `available`; the Autoware side then auto-initializes, routes, and
-        engages from it.
+        """Fetch the scenario's mission (initial pose, goal, waypoints). The client
+        polls this until `available`; the Autoware side then auto-initializes,
+        routes, and engages from it. It keeps polling after that, more slowly, to
+        follow a re-route (a new `mission_version`).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
