@@ -191,6 +191,10 @@ class FakeQueue:
                         "type": "world",
                         "schema_version": 2,
                         "map": "Carla/Maps/M",
+                        # The Rerun converter requires the world's episode;
+                        # without it no case's log converts, and only the
+                        # cases that raise (an empty log) make a recording.
+                        "episode": value,
                         # What tells the cases' logs apart (and an unknown
                         # field to the Rerun converter: skipped, with a warning).
                         "digest": scenario.digest,

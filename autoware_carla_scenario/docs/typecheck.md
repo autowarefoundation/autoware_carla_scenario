@@ -2364,7 +2364,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 234 of
-the package's 340 modules (69%; about 69,100 of 119,300 lines) are `CHECKED`:
+the package's 341 modules (69%; about 69,100 of 119,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2509,12 +2509,12 @@ which takes a message of any shape (`hils.wire.encode()`, a
 `prctl(PR_SET_PDEATHSIG)` call through ctypes (`_request_pdeathsig()`) and
 what runs a case in the forked child (`_run_in_child()`, which takes the
 signal mask, a `set[int | signal.Signals]`); the first and the last are
-compiled through their callers. The 106 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 82 import what Codon cannot
+compiled through their callers. The 107 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 83 import what Codon cannot
 compile, 31 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **82 import what Codon cannot compile**:
+- **83 import what Codon cannot compile**:
   pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
