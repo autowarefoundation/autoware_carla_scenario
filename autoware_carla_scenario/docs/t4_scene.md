@@ -59,8 +59,9 @@ drive, not on the run's first tick, so a `driver.policy_timestep_s` that is not
 a multiple of 0.1 s (0.05, 0.15 s, ...) still shows the policy its own tick,
 with the current sweep on it at its true time; with one that is (the default),
 the rows are the ones the log converts to. Every row's time is still
-nanoseconds since the run's first tick. A run
-younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
+nanoseconds since the run's first tick, so two scenes' rows need not fall on
+the same times. A run younger than `t4_scene_history_s` sends the rows it has.
+On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of `base_link`, the acceleration an estimate), body
 angular velocity (on a row the policy was not told, the log's), front tyres'

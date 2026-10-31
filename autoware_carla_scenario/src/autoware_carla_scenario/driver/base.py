@@ -375,9 +375,9 @@ class DriverClientConfig:
 
     History only, the current row last -- the drive's own tick, whatever
     :attr:`policy_timestep_s` -- and the rows before it 0.1 s apart, in
-    Autoware's ``map`` frame (docs/t4_scene.md): the ego with what the policy is told of it, the
-    road users near it, the lights, the current LiDAR sweep, the route and the
-    goal. Its map, the run's Lanelet2 map, is written into the map set once as
+    Autoware's ``map`` frame (docs/t4_scene.md): the ego with what the policy
+    is told of it, the road users near it, the lights, the current LiDAR
+    sweep, the route and the goal. Its map, the run's Lanelet2 map, is written into the map set once as
     the ``t4`` format. Needs :attr:`send_renderer_data` and :attr:`map_dir`,
     and carla-driver-interface 2.4 or later. Every other observation is sent as
     before.
