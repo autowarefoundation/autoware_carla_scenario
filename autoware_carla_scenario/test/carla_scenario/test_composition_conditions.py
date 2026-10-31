@@ -725,6 +725,154 @@ class TestAStopMarginReachesAsFarAsItReaches:
         ]
 
 
+class TestAStopMarginReachesAcrossShortRoads:
+    """A margin longer than the next road carries on into the roads beyond it.
+
+    A map converted from Lanelet2 has roads as short as lanelets, so a 5 m
+    margin often runs through a whole road and on into the next (#837).
+    """
+
+    @staticmethod
+    def _stretches(
+        lengths: dict[str, float],
+        links: dict[tuple[str, str], list[tuple[str, str]]],
+        pose: OpenDrivePose,
+        s_margin: float,
+    ) -> list[tuple[str, float, float]]:
+        """The (road, lo, hi) stretches a stop at *pose* is matched on."""
+        stretches: list[tuple[str, float, float]] = []
+
+        def record(entity, road_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((road_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id=road_id, lane_id=-1, s=0.0), label=label
+            )
+
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_road_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_find_linked_roads",
+                side_effect=lambda rid, d: links.get((rid, d), []),
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_make_road_segment_condition",
+                side_effect=record,
+            ),
+        ):
+            TemporaryStopCondition._build_position_conditions(
+                "ego", pose, s_margin, label="stop"
+            )
+        return stretches
+
+    def test_the_margin_walks_on_past_a_short_predecessor(self) -> None:
+        # 0 (50 m) -> J (2 m) -> 1 (100 m), each joined at the end of the one
+        # before: the 4 m before road 1 is 2 m of J and then 2 m of road 0.
+        stretches = self._stretches(
+            {"1": 100.0, "J": 2.0, "0": 50.0},
+            {
+                ("1", "predecessor"): [("J", "end")],
+                ("J", "predecessor"): [("0", "end")],
+            },
+            OpenDrivePose("1", -1, s=1.0),
+            5.0,
+        )
+        assert stretches == [("1", 0.0, 6.0), ("J", 0.0, 2.0), ("0", 48.0, 50.0)]
+
+    def test_the_margin_walks_on_past_short_successors(self) -> None:
+        # 8 m past the end of road 1: A (3 m, entered at its start), then B
+        # (2 m) entered at its end -- so it is left through its start, into
+        # B's predecessor C, entered at C's start, which takes the last 3 m.
+        stretches = self._stretches(
+            {"1": 100.0, "A": 3.0, "B": 2.0, "C": 50.0},
+            {
+                ("1", "successor"): [("A", "start")],
+                ("A", "successor"): [("B", "end")],
+                ("B", "predecessor"): [("C", "start")],
+                # Not the way out of B: it was entered at its end.
+                ("B", "successor"): [("X", "start")],
+            },
+            OpenDrivePose("1", -1, s=98.0),
+            10.0,
+        )
+        assert stretches == [
+            ("1", 88.0, 100.0),
+            ("A", 0.0, 3.0),
+            ("B", 0.0, 2.0),
+            ("C", 0.0, 3.0),
+        ]
+
+    def test_a_predecessor_entered_at_its_start_is_left_through_its_end(
+        self,
+    ) -> None:
+        # 4 m before road 1: K (1.5 m) meets road 1 with its own start, so the
+        # remaining 2.5 m are at the end of K's successor L.
+        stretches = self._stretches(
+            {"1": 100.0, "K": 1.5, "L": 40.0},
+            {
+                ("1", "predecessor"): [("K", "start")],
+                ("K", "successor"): [("L", "end")],
+                ("K", "predecessor"): [("X", "end")],
+            },
+            OpenDrivePose("1", -1, s=1.0),
+            5.0,
+        )
+        assert stretches == [("1", 0.0, 6.0), ("K", 0.0, 1.5), ("L", 37.5, 40.0)]
+
+    def test_a_loop_of_short_roads_is_walked_once(self) -> None:
+        # 1 -> A (3 m) -> B (3 m) -> {A, 1, C (5 m)}: the way back to A and to
+        # road 1 is not walked again, and C takes 5 of the 12 m left.
+        stretches = self._stretches(
+            {"1": 100.0, "A": 3.0, "B": 3.0, "C": 5.0},
+            {
+                ("1", "successor"): [("A", "start")],
+                ("A", "successor"): [("B", "start")],
+                ("B", "successor"): [("A", "start"), ("1", "start"), ("C", "start")],
+            },
+            OpenDrivePose("1", -1, s=98.0),
+            20.0,
+        )
+        assert stretches == [
+            ("1", 78.0, 100.0),
+            ("A", 0.0, 3.0),
+            ("B", 0.0, 3.0),
+            ("C", 0.0, 5.0),
+        ]
+
+    def test_a_ring_reached_from_both_ends_ends(self) -> None:
+        # Road 1 (4 m) and R (5 m) form a ring; the margin runs off both ends
+        # of road 1 into R, and neither side walks round the ring again.
+        stretches = self._stretches(
+            {"1": 4.0, "R": 5.0},
+            {
+                ("1", "predecessor"): [("R", "end")],
+                ("1", "successor"): [("R", "start")],
+                ("R", "predecessor"): [("1", "end")],
+                ("R", "successor"): [("1", "start")],
+            },
+            OpenDrivePose("1", -1, s=2.0),
+            10.0,
+        )
+        assert stretches == [("1", 0.0, 4.0), ("R", 0.0, 5.0), ("R", 0.0, 5.0)]
+
+    def test_a_margin_that_ends_on_the_linked_road_goes_no_further(self) -> None:
+        stretches = self._stretches(
+            {"1": 100.0, "A": 3.0, "B": 50.0},
+            {
+                ("1", "successor"): [("A", "start")],
+                ("A", "successor"): [("B", "start")],
+            },
+            OpenDrivePose("1", -1, s=97.0),
+            6.0,
+        )
+        assert stretches == [("1", 91.0, 100.0), ("A", 0.0, 3.0)]
+
+
 class TestAStopOnALaneletSpillsOntoTheLaneletsAroundIt:
     """What runs past a lanelet's end is taken from the lanelet after it."""
 
