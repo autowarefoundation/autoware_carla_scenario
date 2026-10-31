@@ -70,8 +70,8 @@ along the tangent at its front bumper.
 The stop line ahead
 ------------------
 :data:`STOP_LINE_DISTANCE_M` is read along the same lane: ``s`` of the
-nearest stop line ahead -- a traffic light's, a traffic sign's or a road
-marking's, as a ``stop_line_offset`` binding finds them
+nearest stop line ahead -- a traffic light's, a traffic sign's, a detection
+area's or a road marking's, as a ``stop_line_offset`` binding finds them
 (:func:`~autoware_carla_scenario.utils.stop_line.regulatory_element_stop_lines`),
 on any lanelet of the lane -- less ``s`` of the ego's front bumper, up to
 :data:`AHEAD_RANGE_M`.  A stop line is placed on the lane at its middle.
@@ -1512,7 +1512,7 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
             "m",
             "Along the ego's lane on the Lanelet2 map, from its front bumper "
             "to the nearest stop line ahead (a traffic light's, a traffic "
-            "sign's or a road marking's)",
+            "sign's, a detection area's or a road marking's)",
         ),
     )
 }

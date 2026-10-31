@@ -328,6 +328,34 @@ class TestDetectionAreaMocked:
         lanelet.regulatoryElements = [reg_elem]
         assert HasTrafficLightStopLineConstraint().evaluate(lanelet)
 
+    def test_a_traffic_light_without_a_stop_line_does_not_count(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasTrafficLightStopLineConstraint,
+        )
+
+        reg_elem = _make_reg_elem(
+            1, has_stop_line=True, stop_line=None, subtype="traffic_light"
+        )
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [reg_elem]
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
+    def test_a_right_of_way_stop_line_is_no_traffic_light_s(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import (
+            HasStopLineConstraint,
+            HasTrafficLightStopLineConstraint,
+        )
+
+        # lanelet2's RightOfWay has a stopLine property too.
+        stop_ls = _make_linestring(20, [(1.0, 2.0)])
+        reg_elem = _make_reg_elem(
+            2, has_stop_line=True, stop_line=stop_ls, subtype="right_of_way"
+        )
+        lanelet = MagicMock()
+        lanelet.regulatoryElements = [reg_elem]
+        assert HasStopLineConstraint().evaluate(lanelet)
+        assert not HasTrafficLightStopLineConstraint().evaluate(lanelet)
+
 
 #: On the fixture map, lanelet 580 has a traffic sign (124129) and a detection
 #: area (124149, whose stop line is linestring 1401), and no traffic light.
@@ -414,12 +442,14 @@ class TestDetectionAreaOnNishishinjuku:
         )
         assert constraint.evaluate(nishishinjuku.laneletLayer[_SIGN_LANELET])
 
-    def test_the_lanelet_s_stop_lines_include_the_detection_area_s(
+    def test_the_lanelet_s_stop_lines_hold_the_shared_line_once(
         self, nishishinjuku: Any
     ) -> None:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
-        ids = {
+        # The sign's ref_line is the detection area's stop line too: both
+        # elements now yield it, and it is listed once.
+        ids = [
             int(ls.id) for ls in get_stop_line_linestrings(nishishinjuku, _SIGN_LANELET)
-        }
-        assert _DETECTION_AREA_STOP_LINE in ids
+        ]
+        assert ids.count(_DETECTION_AREA_STOP_LINE) == 1
