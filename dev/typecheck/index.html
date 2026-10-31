@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-242 of the package's 350
-modules (69%; about 70,500 of
-121,800 lines) are <code>CHECKED</code>: the kinematics, the
+243 of the package's 351
+modules (69%; about 70,600 of
+121,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 242 CHECKED modules</summary>
+<summary>The 243 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5437,6 +5437,10 @@ first paragraph of its docstring:</p>
 <td>Generated protobuf modules for the T4Scene exchange contract (tier4/e2e-devkit).</td>
 </tr>
 <tr>
+<td><code>t4_scene.grid</code></td>
+<td>The pure pieces of a T4Scene's time grid: the step in ticks, the scene's stem, who the ego is, who is on the scene and the ego's turn indicator.</td>
+</tr>
+<tr>
 <td><code>t4_settings</code></td>
 <td>What a run's T4 dataset holds: its settings, names and categories, and the OpenCV model of an F-theta camera.</td>
 </tr>
@@ -5834,7 +5838,7 @@ the first:</p>
 <li><code>odd.units</code>: re-exports openodd's units (a Rust extension)</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>, under <code>TYPE_CHECKING</code>) and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold</li>
-<li><code>rerun</code>: imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner and scenario_queue use of it</li>
+<li><code>rerun</code>: imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
 <li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; entity.carla_driver_entity (itself excluded) and rerun use it</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
