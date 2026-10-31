@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from ..registry import get_conf_dirs, load_scenario_plugins
 from . import cases
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
@@ -20,23 +21,48 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, Any] = {}
 
 
+# The built-in Hydra configs (``examples/conf``), resolved here rather than
+# taken from ``examples.run``, which registers it on import but pulls in CARLA.
+BUILTIN_CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf"
+
+
+def scenario_conf_dirs() -> list[Path]:
+    """Every Hydra config directory the viewer's scenarios come from.
+
+    The built-in ``examples/conf`` first -- the primary config directory the
+    viewer composes with, as the ``scenario`` CLI does -- then each directory
+    an external scenario package registered (``register_conf_dir``), in
+    registration order and without duplicates.  The packages are loaded
+    first (:func:`~autoware_carla_scenario.registry.load_scenario_plugins`,
+    which loads them once per process).
+    """
+    load_scenario_plugins()
+    dirs = [BUILTIN_CONF_DIR]
+    for conf_dir in get_conf_dirs():
+        if conf_dir not in dirs:
+            dirs.append(conf_dir)
+    return dirs
+
+
 def list_scenario_configs() -> list[str]:
     """Return sorted list of available scenario config names.
 
-    Scans ``conf/scenario/`` under the examples package for YAML files
-    and returns relative paths without the ``.yaml`` suffix
-    (e.g. ``"intersection_passing/left_turn"``).
+    Scans ``scenario/`` under every config directory
+    (:func:`scenario_conf_dirs`: the built-in examples and those of the
+    installed scenario packages) for YAML files and returns relative paths
+    without the ``.yaml`` suffix (e.g. ``"intersection_passing/left_turn"``),
+    each name once, as the ``scenario`` CLI's glob resolves them.
     """
-    scenario_dir = (
-        Path(__file__).resolve().parent.parent / "examples" / "conf" / "scenario"
-    )
-    if not scenario_dir.is_dir():
-        return []
-    names: list[str] = []
-    for p in sorted(scenario_dir.rglob("*.yaml")):
-        rel = p.relative_to(scenario_dir).with_suffix("")
-        names.append(str(rel))
-    return names
+    names: set[str] = set()
+    for conf_dir in scenario_conf_dirs():
+        scenario_dir = conf_dir / "scenario"
+        if not scenario_dir.is_dir():
+            continue
+        for p in scenario_dir.rglob("*.yaml"):
+            # Hydra config names always use forward slashes.
+            names.add(p.relative_to(scenario_dir).with_suffix("").as_posix())
+    # Ordered by path component, as the directory walk always listed them.
+    return sorted(names, key=lambda name: name.split("/"))
 
 
 def clear_cache() -> None:

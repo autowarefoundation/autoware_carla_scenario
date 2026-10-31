@@ -508,6 +508,9 @@ scenarios and `conf/` directory). A bundled Hydra `SearchPathPlugin` then adds
 every registered `conf/` directory to Hydra's search path. The `map`, `ego`,
 `server`, and `entity` config groups still come from the framework's built-in
 `conf/`, so your package only ships the `scenario/` group it actually owns.
+The result viewer (`uv run viewer`) loads the packages the same way: its Run
+panel lists your scenarios, matches them in globs such as `my_scenario/*`,
+and expands their sweeps.
 
 !!! tip "No entry point? Register explicitly."
     If you prefer not to rely on entry-point discovery (e.g. from a custom
