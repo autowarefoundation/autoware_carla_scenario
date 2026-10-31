@@ -2785,9 +2785,12 @@ built. Each vehicle draws once, when it is first put on autopilot
 <li>The speed drivers aim for, as a multiple of the speed limit: <code>1.0</code> drives at
   the limit, <code>0.8</code> 20 % under it, <code>1.1</code> 10 % over it.</li>
 <li><code>traffic_manager</code>: <code>vehicle_percentage_speed_difference(vehicle, (1 - draw) * 100)</code>.
-  Unset, the TrafficManager's own default (30 % under the limit). A speed
-  set on one vehicle wins over it: a background vehicle's spawn speed, or a
-  <code>SetSpeedAction</code>.</li>
+  Unset, the TrafficManager's own default, which the backend sets as it
+  prepares the TrafficManager (<code>global_percentage_speed_difference(0)</code>,
+  LibCarla's own): the limit. The TrafficManager keeps a percentage or a
+  speed for a vehicle, not both, the one given last: a speed set on it
+  (a background vehicle's spawn speed, a <code>SetSpeedAction</code>) drops its
+  percentage, and a new draw (<code>TrafficParametersAction</code>) drops its speed.</li>
 <li><code>sumo</code>: the vehicle's speed factor (<code>setSpeedFactor</code>). Unset, SUMO's own
   draw around 1.0 (spread 0.1).</li>
 </ul>
@@ -3367,15 +3370,20 @@ know where every actor is whatever the fog. With
 <code>traffic.vehicles.follow_visibility: true</code> each vehicle it drives is held to
 the speed it stops from within what its driver sees, worked out with SUMO's
 default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
-The TrafficManager takes a speed as a percentage under the road's limit, so
-each vehicle is given the one that holds it there
-(<code>vehicle_percentage_speed_difference</code>), never less than its own
-<code>speed_factor</code>'s, worked out again every second and whenever the visibility
-changes; when the weather lifts, or the field is turned off during the run
-(<code>TrafficParametersAction</code>), each gets its own back. A vehicle a scenario gave
-a speed of its own (<code>set_desired_speed</code>) keeps it. Off by default, so a
-scenario's vehicles drive as they always did; unset, the backend logs the
-speed it would hold traffic to.</p>
+A vehicle is never held faster than it drives anyway. One given a speed of
+its own (<code>set_desired_speed</code>, a <code>SetSpeedAction</code>, a background vehicle's spawn
+speed) is given the lesser of that and the sight speed (<code>set_desired_speed</code>),
+so a stop stays a stop, and a speed the scenario sets while it is held is held
+too. Any other is given the percentage under its road's limit that holds it
+there (<code>vehicle_percentage_speed_difference</code>), never less than its own
+<code>speed_factor</code>'s (or the TrafficManager's default, 0 %), worked out again
+every second and whenever the visibility changes. Each is given its own the
+same way: the TrafficManager keeps a percentage or a speed for a vehicle, not
+both, and either drops the other (LibCarla's <code>Parameters.cpp</code>). When the
+weather lifts, or the field is turned off during the run
+(<code>TrafficParametersAction</code>), each gets its own back: its speed, or its
+percentage. Off by default, so a scenario's vehicles drive as they always
+did; unset, the backend logs the speed it would hold traffic to.</p>
 <p>The road's grip is CARLA's vehicle physics alone (<code>EnvironmentAction</code>'s tire
 friction scales every vehicle's wheels, the TrafficManager's as well); the
 sight speed above does not read it.</p>
@@ -3799,7 +3807,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 12:30:38 UTC"><span class="timeago" datetime="2026-10-31T12:30:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 12:30:38 UTC">2026-10-31</span>
   </span>
 
     
