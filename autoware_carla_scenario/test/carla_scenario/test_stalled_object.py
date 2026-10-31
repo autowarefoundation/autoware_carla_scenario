@@ -23,7 +23,7 @@ from autoware_carla_scenario.actions._trajectory_run import HIDDEN_DEPTH_M
 from autoware_carla_scenario.actions.stalled_object import FOREVER_S
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
-from .test_routing_trajectory_action import _Actor, _Entity, _run
+from .test_routing_trajectory_action import _DT, _Actor, _Entity, _run, _World
 
 AT = CarlaWorldPose(30.0, 4.0, 0.0, yaw=90.0)
 
@@ -66,6 +66,29 @@ def test_it_appears_stands_still_and_is_removed(stalled: _Entity) -> None:
     _run(action, actor, 1.0, start=clock)
     assert action.finished
     assert actor.z == pytest.approx(-HIDDEN_DEPTH_M) and actor.physics is False
+
+
+def test_whole_tick_times_are_met_on_their_tick_on_a_summed_clock(
+    stalled: _Entity,
+) -> None:
+    """CARLA's clock is a running sum of the 0.05 s tick, so tick 10 reads a
+    hair below 0.5 and tick 60 a hair below 3.0; the vehicle still appears
+    and is removed on those ticks, not one late (#819)."""
+    actor = stalled.actor
+    action = StalledObjectAction("stalled1", AT, 0.5, 3.0)
+    world = _World()
+    clock, now = [], 0.0
+    for _ in range(70):
+        clock.append(now)
+        now += _DT
+    assert clock[10] < 0.5 and clock[60] < 3.0
+    shown: list[int] = []
+    for tick, t in enumerate(clock):
+        action.tick(world, t)  # type: ignore[arg-type]
+        actor.step(_DT, driven=False)
+        if actor.physics:
+            shown.append(tick)
+    assert (shown[0], shown[-1] + 1) == (10, 60)
 
 
 @pytest.mark.parametrize(
