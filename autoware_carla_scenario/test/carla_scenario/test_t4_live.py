@@ -137,17 +137,32 @@ def test_the_scene_is_the_last_rows_on_the_grid_the_current_one_last() -> None:
     assert list(_numeric(scene.ego.available)) == [True, True, True]
 
 
-def test_a_tick_between_grid_rows_keeps_the_oldest_row_a_scene_shows() -> None:
-    live = _run(ticks=10)  # frames 100..109; the last on the grid is 108
-    assert live.frames() == [104, 106, 108]
+def test_a_tick_between_grid_rows_is_the_current_row() -> None:
+    live = _run(ticks=10)  # frames 100..109; 109 is off the run's grid
+    assert live.frames() == [105, 107, 109]
+    scene = live.scene("run")
+    assert scene is not None
+    assert list(_numeric(scene.frame_indices)) == [105, 107, 109]
+    assert list(_numeric(scene.timestamps_ns)) == [
+        250_000_000,
+        350_000_000,
+        450_000_000,
+    ]
+    assert list(_numeric(scene.ego.available)) == [True, True, True]
+
+
+def test_the_next_tick_still_has_every_row_it_shows() -> None:
+    live = _run(ticks=11)  # an off-grid tick kept what the next one shows
+    assert live.frames() == [106, 108, 110]
     scene = live.scene("run")
     assert scene is not None
     assert list(_numeric(scene.ego.available)) == [True, True, True]
+    assert not np.frombuffer(scene.ego.accelerations.mask, dtype="?").any()
 
 
 def test_a_short_run_has_the_rows_it_has() -> None:
     assert _run(ticks=1).frames() == [100]
-    assert _run(ticks=4).frames() == [100, 102]
+    assert _run(ticks=4).frames() == [101, 103]
     assert _run(ticks=0).scene("run") is None
 
 
@@ -210,6 +225,87 @@ def test_the_current_sweep_route_and_goal_ride_along() -> None:
     np.testing.assert_allclose(
         _numeric(scene.goal_poses)[-1], [10.0, 20.0, 0.0, 1.0], atol=1e-12
     )
+
+
+def _drives(
+    policy_timestep_s: float, ticks: int, history_rows: int = 3
+) -> list[tuple[int, float, pb.T4Scene]]:
+    """Each drive's frame, x and scene, the ego driving +x at 10 m/s with a
+    policy stepping every *policy_timestep_s*, as ``CarlaDriverEntity`` does:
+    every tick recorded, a scene on each policy step with the sweep taken on
+    that tick."""
+    world = _World()
+    live = LiveT4Scene(history_rows)
+    live.start(world)
+    interval_us = int(round(policy_timestep_s * 1e6))
+    sim_time_us = 0
+    last_policy_us: int | None = None
+    drives = []
+    for tick in range(ticks):
+        world.frame = 100 + tick
+        x = 0.5 * tick
+        world.snapshot = [_ActorSnapshot(1, x, 10.0)]
+        sim_time_us += 50_000
+        live.record(
+            world,
+            0.05 * tick,
+            EgoExtras(
+                acceleration_rig=np.array([1.0, 0.0]),
+                angular_velocity=np.array([0.0, 0.0, 0.1]),
+            ),
+        )
+        if last_policy_us is None or sim_time_us - last_policy_us >= interval_us:
+            last_policy_us = sim_time_us
+            scene = live.scene(
+                "run",
+                lidar_points=np.zeros((1, 4), dtype=np.float32),
+                lidar_age_ns=0,
+            )
+            assert scene is not None
+            drives.append((world.frame, x, scene))
+    return drives
+
+
+@pytest.mark.parametrize("policy_timestep_s", [0.05, 0.15, 0.25])
+def test_a_drive_off_the_grid_is_the_current_row(policy_timestep_s: float) -> None:
+    drives = _drives(policy_timestep_s, ticks=20)
+    assert any((frame - 100) % 2 for frame, _, _ in drives)
+    for frame, x, scene in drives:
+        frames = list(_numeric(scene.frame_indices))
+        stamps = list(_numeric(scene.timestamps_ns))
+        assert frames[-1] == frame
+        assert scene.current_index == len(frames) - 1
+        assert frames == list(range(frame - 2 * (len(frames) - 1), frame + 1, 2))
+        now_ns = (frame - 100) * 50_000_000
+        assert stamps[-1] == now_ns
+        assert list(_numeric(scene.ego.odometry_timestamps_ns)) == stamps
+        # The ego's state is the drive's tick's, not one 50 ms old.
+        assert _numeric(scene.ego.poses)[-1, 0] == pytest.approx(x, abs=1e-6)
+        assert list(_numeric(scene.ego.available)) == [True] * len(frames)
+        assert not np.frombuffer(scene.ego.accelerations.mask, dtype="?").any()
+        # The sweep taken on the drive's tick is on its row, at its time.
+        assert [row.HasField("value") for row in scene.lidar.rows] == [False] * (
+            len(frames) - 1
+        ) + [True]
+        assert scene.lidar.rows[-1].value.timestamp_ns == now_ns
+
+
+def test_the_issue_repro_a_drive_on_frame_103() -> None:
+    drives = {frame: scene for frame, _, scene in _drives(0.15, ticks=4)}
+    scene = drives[103]
+    # Not [100, 102] with the sweep stamped 100 ms on a row 50 ms old.
+    assert list(_numeric(scene.frame_indices)) == [101, 103]
+    assert list(_numeric(scene.timestamps_ns)) == [50_000_000, 150_000_000]
+    assert scene.lidar.rows[-1].value.timestamp_ns == 150_000_000
+
+
+def test_a_policy_on_the_grid_keeps_the_grid() -> None:
+    for frame, _, scene in _drives(0.1, ticks=20):
+        assert (frame - 100) % 2 == 0
+        frames = list(_numeric(scene.frame_indices))
+        assert frames[-1] == frame
+        assert all((f - 100) % 2 == 0 for f in frames)
+        assert scene.lidar.rows[-1].value.timestamp_ns == (frame - 100) * 50_000_000
 
 
 def test_t4_points_scale_the_intensity_and_zero_the_fifth_column() -> None:

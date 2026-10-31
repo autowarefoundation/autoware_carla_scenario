@@ -52,8 +52,14 @@ uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
 | `driver.t4_scene_map` | `run` or `map_set` | `run` | The scenes' map: the run's Lanelet2 map, or the map set's (`map_dir`: roadgen's from the world's OpenDRIVE, or `lanelet2_path`), the one a policy reading the egodriver observations is given. The route and the lights are placed on it |
 
 Each scene is what the log converts to (below), built as the run goes from the
-same records (`t4_scene.live`): the last rows on the 0.1 s grid, history only,
-the current one last, its states unrounded (the log keeps millimetres). A run
+same records (`t4_scene.live`): history only, the current row last -- the
+drive's own tick -- and the rows before it 0.1 s apart, counted back from it,
+its states unrounded (the log keeps millimetres). The rows are anchored on the
+drive, not on the run's first tick, so a `driver.policy_timestep_s` that is not
+a multiple of 0.1 s (0.05, 0.15 s, ...) still shows the policy its own tick,
+with the current sweep on it at its true time; with one that is (the default),
+the rows are the ones the log converts to. Every row's time is still
+nanoseconds since the run's first tick. A run
 younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of `base_link`, the acceleration an estimate), body

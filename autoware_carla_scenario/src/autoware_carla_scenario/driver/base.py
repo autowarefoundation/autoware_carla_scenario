@@ -373,8 +373,9 @@ class DriverClientConfig:
     for a policy that plans from scenes (``carla_driver_interface``'s
     ``T4SceneDriver``).
 
-    History only, the current row last, on a 0.1 s grid in Autoware's ``map``
-    frame (docs/t4_scene.md): the ego with what the policy is told of it, the
+    History only, the current row last -- the drive's own tick, whatever
+    :attr:`policy_timestep_s` -- and the rows before it 0.1 s apart, in
+    Autoware's ``map`` frame (docs/t4_scene.md): the ego with what the policy is told of it, the
     road users near it, the lights, the current LiDAR sweep, the route and the
     goal. Its map, the run's Lanelet2 map, is written into the map set once as
     the ``t4`` format. Needs :attr:`send_renderer_data` and :attr:`map_dir`,
