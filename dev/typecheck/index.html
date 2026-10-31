@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-245 of the package's 353
-modules (69%; about 70,900 of
-122,200 lines) are <code>CHECKED</code>: the kinematics, the
+247 of the package's 355
+modules (70%; about 71,100 of
+122,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 245 CHECKED modules</summary>
+<summary>The 247 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5201,6 +5201,10 @@ first paragraph of its docstring:</p>
 <td>Why a run failed: the category of the fail condition that ended it.</td>
 </tr>
 <tr>
+<td><code>hils.lidar_revolution</code></td>
+<td>A LiDAR's per-tick arcs, gathered into the whole revolutions a sensor sends.</td>
+</tr>
+<tr>
 <td><code>hils.signals</code></td>
 <td>The ego's state as named signals, the values a device's message fields are filled from.</td>
 </tr>
@@ -5565,6 +5569,10 @@ first paragraph of its docstring:</p>
 <td>Scenario execution bridge using subprocess + progress tracking.</td>
 </tr>
 <tr>
+<td><code>ui.slurm_case_state</code></td>
+<td>The state of one case of a SLURM batch, and the message the viewer shows for it.</td>
+</tr>
+<tr>
 <td><code>ui.slurm_options</code></td>
 <td>The <code>launcher.*</code> keys the viewer sets on a SLURM batch (docs/slurm.md): what each may hold, the Hydra overrides they become, and the <code>scenario</code> command line that submits the batch with them.</td>
 </tr>
@@ -5828,7 +5836,7 @@ the first:</p>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled</li>
 <li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), which Codon cannot express; what YAML 1.1 makes of a plain scalar is the checked hils.yaml11's</li>
 <li><code>hils.link</code>: imports socket, and builds on hils.protocol (socket), which is neither checked nor modelled</li>
-<li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express</li>
+<li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, which it re-exports</li>
 <li><code>hils.protocol</code>: imports socket (LineReader reads the bridge's socket); what needs none is hils.wire, which it re-exports</li>
 <li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
 <li><code>maps.road_network_cache</code>: imports pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
@@ -5885,7 +5893,7 @@ the first:</p>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>)</li>
 <li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>); the comparison of sessions is the checked ui.comparison's, fed the buckets and key read here</li>
 <li><code>ui.scanner</code>: imports yaml, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>)</li>
-<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options'</li>
+<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), which Codon cannot express</li>
 </ul>
