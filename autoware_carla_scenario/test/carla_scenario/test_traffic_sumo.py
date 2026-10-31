@@ -1636,6 +1636,20 @@ def test_a_permissive_green_comes_from_the_program_not_the_first_phase() -> None
     assert states["tls"] == "GGg"
 
 
+def test_a_protected_then_permissive_turn_gets_the_permissive_green() -> None:
+    """A link ``G`` in one phase and ``g`` in another yields on a CARLA
+    Green: the Green does not say which phase it is."""
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, states = _permissive_backend(
+        ["GrG", "yry", "GGg", "yyy", "rrr"], "GrG", {0: green, 2: green}
+    )
+    assert backend._permissive_links == {"tls": {2}}
+    backend._signals_to_sumo()
+    assert states["tls"] == "Grg"
+
+
 def test_only_links_carlas_lights_switch_are_matched_as_permissive() -> None:
     import typesafe_carla.carla as carla
 
