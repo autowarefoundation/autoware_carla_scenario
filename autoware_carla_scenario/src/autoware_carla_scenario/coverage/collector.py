@@ -37,6 +37,10 @@ from openodd.collector import COVERAGE_SCHEMA, CROSS_SEPARATOR, ODD_ARCHIVE_SUFF
 from openodd.collector import CoverageCollector as _CoverageCollector
 from openodd.collector import generator as _generator
 
+# Re-exported: these were defined here before coverage.item_names (#824).
+from .item_names import VERSION_MARK as VERSION_MARK
+from .item_names import _split_versioned, versioned_item_name
+
 __all__ = [
     "COVERAGE_SCHEMA",
     "CROSS_SEPARATOR",
@@ -65,37 +69,6 @@ def generator() -> dict[str, Optional[str]]:
     """What writes the coverage files: openodd's and this framework's versions
     (``None`` when one cannot be told)."""
     return _generator(_framework())
-
-
-#: What a cover item's name is suffixed with for its measure's version.
-VERSION_MARK = "@v"
-
-
-def versioned_item_name(name: str, version: int) -> str:
-    """The name a cover item of a measure of *version* is written under:
-    *name* itself for the first version, ``name@v<version>`` after it.
-
-    Not ``name#<version>``: ``#<n>`` is the suffix openodd's merge gives the
-    n-th differing definition of an item, and a v1 item whose buckets changed
-    would take ``#2`` too; openodd's sampler, besides, pools an item's ``#<n>``
-    definitions.  :func:`current_measure_coverage` hands a sampler only the
-    current version's."""
-    if version <= 1:
-        return name
-    return f"{name}{VERSION_MARK}{version}"
-
-
-def _split_versioned(name: str) -> tuple[str, int, str]:
-    """``(base, version, rest)`` of a merged item's name: ``name@v2#3`` is
-    ``("name", 2, "#3")``, ``name#3`` is ``("name", 1, "#3")``."""
-    rest = ""
-    hash_at = name.find("#")
-    if hash_at >= 0:
-        name, rest = name[:hash_at], name[hash_at:]
-    mark_at = name.rfind(VERSION_MARK)
-    if mark_at >= 0 and name[mark_at + len(VERSION_MARK) :].isdigit():
-        return name[:mark_at], int(name[mark_at + len(VERSION_MARK) :]), rest
-    return name, 1, rest
 
 
 class _Renamed:
