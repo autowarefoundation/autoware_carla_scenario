@@ -41,7 +41,8 @@ __all__ = [
 #: Environment variable that relocates the draft directory.
 DRAFT_DIR_ENV = "SCENARIO_EDITOR_DRAFTS"
 
-_DRAFT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+#: Matched with ``fullmatch``: ``$`` would also match before a trailing newline.
+_DRAFT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def default_draft_dir() -> Path:
@@ -154,18 +155,26 @@ class DraftStore:
                 ids arrive from the URL, so this is the boundary that keeps a
                 request from reaching outside the store.
         """
-        if not _DRAFT_ID_PATTERN.match(draft_id):
+        if not _DRAFT_ID_PATTERN.fullmatch(draft_id):
             raise ValueError(f"Invalid draft id: {draft_id!r}")
         return self.root / f"{draft_id}.yaml"
 
     # -- reads ----------------------------------------------------------
 
     def get(self, draft_id: str) -> Optional[Draft]:
-        """Return the draft, or ``None`` when it does not exist."""
+        """Return the draft, or ``None`` when it does not exist.
+
+        Raises:
+            ValueError: If the file does not hold a mapping, so is not a draft
+                (the drafts directory may hold other YAML; :meth:`list` skips
+                such files).
+        """
         path = self.path_for(draft_id)
         if not path.is_file():
             return None
         raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_SafeLoader) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path}: not a draft")
         raw.setdefault("id", draft_id)
         return Draft.from_dict(raw)
 
