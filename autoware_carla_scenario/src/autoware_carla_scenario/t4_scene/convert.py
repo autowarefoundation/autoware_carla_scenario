@@ -19,7 +19,6 @@ whose ego, objects and lights are unavailable, never an interpolated one.
 
 from __future__ import annotations
 
-import bisect
 import functools
 import hashlib
 import logging
@@ -33,9 +32,10 @@ import numpy as np
 import numpy.typing as npt
 import orjson
 
-from ..constants import EGO_ROLES, FIXED_DELTA_SECONDS
+from ..constants import FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
 from ._proto import t4_scene_pb2 as pb
+from .grid import indicator_at, is_ego, on_scene, scene_stem, step_frames
 from .map_resource import map_resource
 from .route import RouteGraph
 
@@ -200,11 +200,7 @@ class _Log:
         """Whether a road user is on the scene at *frame*, not parked out of
         sight up to its ``SpawnAction``'s frame (whose tick may have been
         logged before the action moved it) or from its ``DespawnAction``'s."""
-        spawned = self.spawned.get(actor_id)
-        despawned = self.despawned.get(actor_id)
-        return (spawned is None or frame > spawned) and (
-            despawned is None or frame < despawned
-        )
+        return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
 
 
 def _read_log(path: Path, step_frames: int) -> _Log:
@@ -313,10 +309,6 @@ def _register_in_map_frame(target: Any) -> None:
             rotation=pb.Matrix3x3(m00=1.0, m11=1.0, m22=1.0), translation=pb.Vector3()
         )
     )
-
-
-def _is_ego(role: str) -> bool:
-    return role.lower() in EGO_ROLES
 
 
 class _StopLine(NamedTuple):
@@ -678,11 +670,11 @@ def _fill_ego(
         indicators = np.zeros(count, dtype=np.int64)
         unknown = missing.copy()
         for row, carla_frame in enumerate(frames):
-            last = bisect.bisect_right(changes[0], carla_frame) - 1
-            if last < 0:
+            state = indicator_at(changes[0], changes[1], carla_frame)
+            if state is None:
                 unknown[row] = True
             else:
-                indicators[row] = _TURN_INDICATORS.get(changes[1][last], 0)
+                indicators[row] = _TURN_INDICATORS.get(state, 0)
         message.turn_indicators.CopyFrom(_array(indicators, "i8", unknown))
     ex, ey, _ = ego.extent
     message.shape.length = 2.0 * ex
@@ -842,22 +834,14 @@ def trajectory_log_to_t4_scene(
             *current_index* does not fit it.
     """
     path = Path(log_path)
-    step_frames = round(step_s / FIXED_DELTA_SECONDS)
-    if step_frames < 1 or not math.isclose(
-        step_frames * FIXED_DELTA_SECONDS, step_s, rel_tol=0.0, abs_tol=1e-9
-    ):
-        raise ValueError(
-            f"step_s={step_s} is not a multiple of the log's tick ({FIXED_DELTA_SECONDS} s)"
-        )
-    log = _read_log(path, step_frames)
-    frames = list(range(log.first_frame, log.last_frame + 1, step_frames))
+    step = step_frames(step_s)
+    log = _read_log(path, step)
+    frames = list(range(log.first_frame, log.last_frame + 1, step))
     if not -len(frames) <= current_index < len(frames):
         raise ValueError(
             f"current_index={current_index} is outside the scene's {len(frames)} rows"
         )
-    stem = (
-        path.name[: -len(LOG_SUFFIX)] if path.name.endswith(LOG_SUFFIX) else path.stem
-    )
+    stem = scene_stem(path.name)
     loaded = None
     if with_map:
         loaded = _load_map(
@@ -887,7 +871,7 @@ def ego_of(log: _Log, source: str = "the log") -> int:
     Raises:
         ValueError: If it has none.
     """
-    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
+    ego_id = next((i for i, actor in log.actors.items() if is_ego(actor.role)), None)
     if ego_id is None:
         raise ValueError(
             f"{source} has no ego (an actor whose role is 'ego' or 'hero')"

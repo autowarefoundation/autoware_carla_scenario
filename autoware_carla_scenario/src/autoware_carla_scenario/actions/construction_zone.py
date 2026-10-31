@@ -181,10 +181,13 @@ class ConstructionZoneAction(_BackendAction):
         """Place the zone at its start time, clear it away at its end time."""
         if self._cleared:
             return
-        if not self._placed and self._elapsed >= self._start_time:
+        # elapsed is a running sum of the tick, so a time that is a whole
+        # number of ticks can come out a hair short of it; without the
+        # tolerance the zone would appear (and go) one tick late.
+        if not self._placed and self._elapsed >= self._start_time - 1e-9:
             self._place(world)
         end = self._end_time
-        if self._placed and end is not None and self._elapsed >= end:
+        if self._placed and end is not None and self._elapsed >= end - 1e-9:
             self._clear(world)
 
     def close(self) -> None:
