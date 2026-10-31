@@ -370,9 +370,16 @@ class EditorService:
         return self.store.save(draft)
 
     def delete_draft(self, draft_id: str) -> bool:
-        """Delete a draft.  Returns whether anything was removed."""
+        """Delete a draft.  Returns whether anything was removed.
+
+        Raises:
+            EditorError: If *draft_id* is not a valid draft id.
+        """
         with self.editing(draft_id):
-            return self.store.delete(draft_id)
+            try:
+                return self.store.delete(draft_id)
+            except ValueError as exc:
+                raise EditorError(str(exc)) from exc
 
     def run_map_operation(
         self, draft_id: str, operation: Callable[[ScenarioDocument], Any]

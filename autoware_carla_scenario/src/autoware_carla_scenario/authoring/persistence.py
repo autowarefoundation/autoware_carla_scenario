@@ -165,14 +165,19 @@ class DraftStore:
         """Return the draft, or ``None`` when it does not exist.
 
         Raises:
-            ValueError: If the file does not hold a mapping, so is not a draft
-                (the drafts directory may hold other YAML; :meth:`list` skips
-                such files).
+            ValueError: If the file is not YAML or does not hold a mapping, so
+                is not a draft (the drafts directory may hold other YAML;
+                :meth:`list` skips such files).
         """
         path = self.path_for(draft_id)
         if not path.is_file():
             return None
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_SafeLoader) or {}
+        try:
+            raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_SafeLoader) or {}
+        except yaml.YAMLError as exc:
+            # A ValueError like the rest, so the editor answers a draft id
+            # naming a broken file with "not found" rather than a 500.
+            raise ValueError(f"{path}: not a draft ({exc})") from exc
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: not a draft")
         raw.setdefault("id", draft_id)

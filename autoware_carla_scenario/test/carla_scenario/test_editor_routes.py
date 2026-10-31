@@ -1359,6 +1359,31 @@ class TestServiceGuards:
         with pytest.raises(EditorError):
             service.require_draft("../secrets")
 
+    def test_deleting_an_invalid_draft_id_raises(self, tmp_path: Path) -> None:
+        service = EditorService(DraftStore(tmp_path))
+        with pytest.raises(EditorError):
+            service.delete_draft("a.b")
+
+
+class TestFilesThatAreNotDrafts:
+    """Other YAML in the drafts directory is a 404 by id, not a 500 (#810)."""
+
+    @pytest.mark.parametrize(
+        ("name", "text"), [("notes", "just some text\n"), ("broken", "a: [\n")]
+    )
+    def test_opening_one_by_id_is_a_404(
+        self, client: TestClient, tmp_path: Path, name: str, text: str
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        drafts.mkdir(parents=True, exist_ok=True)
+        (drafts / f"{name}.yaml").write_text(text, encoding="utf-8")
+        assert client.get("/").status_code == 200
+        assert client.get(f"/draft/{name}").status_code == 404
+
+    def test_deleting_an_invalid_id_is_a_404(self, client: TestClient) -> None:
+        response = client.post("/draft/a.b/delete", follow_redirects=False)
+        assert response.status_code == 404
+
 
 class TestEnvironmentTrack:
     """The canvas has a track for actions no vehicle performs."""

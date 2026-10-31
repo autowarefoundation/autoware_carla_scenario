@@ -99,6 +99,13 @@ class TestRoundTrip:
         with pytest.raises(ValueError, match="not a draft"):
             store.get("notes")
 
+    def test_malformed_yaml_is_not_a_draft(self, tmp_path) -> None:
+        (tmp_path / "broken.yaml").write_text("a: [\n", encoding="utf-8")
+        store = DraftStore(tmp_path)
+        with pytest.raises(ValueError, match="not a draft"):
+            store.get("broken")
+        assert store.list() == []
+
     def test_list_skips_non_mapping_yaml(self, tmp_path) -> None:
         store = DraftStore(tmp_path)
         draft = store.create(new_document())
