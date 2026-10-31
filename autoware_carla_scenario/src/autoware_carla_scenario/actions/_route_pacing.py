@@ -141,6 +141,7 @@ class RoutePacer:
     _rate_readings: int
     _rate_progress: Optional[float]
     _rate_time: float
+    _still_entity: Optional[str]
     _still_at: Optional[float]
     _still_since: float
     _let_go: bool
@@ -165,6 +166,7 @@ class RoutePacer:
         self._rate_readings = 0
         self._rate_progress = None
         self._rate_time = 0.0
+        self._still_entity = None
         self._still_at = None
         self._still_since = 0.0
         self._let_go = False
@@ -331,8 +333,12 @@ class RoutePacer:
         if progress is None:
             return False
         measured: float = progress
+        entity = progress_gate.entity_name
         still = self._still_at
-        if still is None or abs(measured - still) > 0.5:
+        if still is None or entity != self._still_entity or abs(measured - still) > 0.5:
+            # Another entity's route s says nothing of how long this one
+            # has stood.
+            self._still_entity = entity
             self._still_at = measured
             self._still_since = elapsed
             self._let_go = False
@@ -368,14 +374,19 @@ class RoutePacer:
         The rate is the measured entity's: consecutive waypoints gated on the
         same entity go on with its estimate, and one gated on another entity
         starts a new estimate -- the difference between two entities' route s
-        is no progress of either."""
+        is no progress of either.  So does an entity that comes back into the
+        world."""
         gate = _progress_gate(condition)
         if gate is None:
             return None
         progress_gate: RouteProgressCondition = gate
         progress = progress_gate.progress
         threshold = progress_gate.target
-        if progress is None or threshold is None:
+        if progress is None:
+            # Out of the world: where it comes back is no progress either.
+            self._rate_entity = None
+            return None
+        if threshold is None:
             return None
         now: float = progress
         entity = progress_gate.entity_name
