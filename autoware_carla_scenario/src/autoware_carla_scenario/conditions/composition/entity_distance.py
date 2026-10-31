@@ -8,6 +8,7 @@ from ...coordinate.lane_distance import lane_offset, lane_separation
 from ...coordinate.poses import CarlaWorldPose
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
+from ..entity_existence import find_present_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import RelativeDistanceType, separation
@@ -184,7 +185,7 @@ class EntityDistanceCondition(CompositionCondition):
         """Return the source-to-target distance, or ``None`` if unavailable."""
         assert self._entity_name is not None  # noqa: S101
         source = find_actor_by_role_name(world, self._entity_name)
-        target = find_actor_by_role_name(world, self._target)
+        target = find_present_actor_by_role_name(world, self._target)
         if source is None or target is None:
             return None
 

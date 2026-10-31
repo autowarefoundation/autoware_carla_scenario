@@ -57,6 +57,10 @@ def test_a_target_far_enough_behind_holds(monkeypatch: pytest.MonkeyPatch) -> No
 
     actors = {"Ego": _Actor(0.0, yaw=0.0), "npc1": _Actor(-35.0)}
     monkeypatch.setattr(module, "find_actor_by_role_name", lambda w, n: actors[str(n)])
+    # The target is looked up as present (not parked under the map, #922).
+    monkeypatch.setattr(
+        module, "find_present_actor_by_role_name", lambda w, n: actors[str(n)]
+    )
     monkeypatch.setattr(
         module,
         "lane_offset",
