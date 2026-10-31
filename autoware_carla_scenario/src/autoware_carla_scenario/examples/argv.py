@@ -17,6 +17,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping
 
+from ..scenario_glob import is_scenario_glob
+
 __all__ = [
     "BatchCase",
     "_arena_max_set_by_user",
@@ -40,8 +42,12 @@ def _arena_max_set_by_user(environ: Mapping[str, str]) -> bool:
 
 
 def _is_glob_pattern(value: str) -> bool:
-    """Return ``True`` if *value* contains glob metacharacters."""
-    return any(ch in value for ch in ("*", "?", "["))
+    """Return ``True`` if *value* contains glob metacharacters.
+
+    :func:`~autoware_carla_scenario.scenario_glob.is_scenario_glob`, the test
+    the viewer's launcher applies too.
+    """
+    return is_scenario_glob(value)
 
 
 def _extract_scenario_override(argv: list[str]) -> tuple[str | None, list[str]]:

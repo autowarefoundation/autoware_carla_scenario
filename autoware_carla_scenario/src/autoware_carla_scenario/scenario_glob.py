@@ -6,9 +6,9 @@ The one resolver behind the ``scenario`` CLI's glob
 from either.  The pattern is matched with :meth:`pathlib.Path.glob` as
 ``scenario/{pattern}.yaml`` under each config directory: ``*`` stays within
 one path component (``**`` crosses them), and a name without glob
-characters matches its one file.  The names are Hydra config paths relative
-to ``scenario/`` without the ``.yaml`` suffix (``"lane_change/left"``),
-each once, in plain string order.
+characters (:func:`is_scenario_glob`) matches its one file.  The names are
+Hydra config paths relative to ``scenario/`` without the ``.yaml`` suffix
+(``"lane_change/left"``), each once, in plain string order.
 
 Free of heavy imports (only :mod:`pathlib`), so the viewer can resolve a
 pattern without importing CARLA through ``examples.run``.
@@ -18,7 +18,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["resolve_scenario_glob", "scenario_dirs"]
+__all__ = ["is_scenario_glob", "resolve_scenario_glob", "scenario_dirs"]
+
+
+def is_scenario_glob(value: str) -> bool:
+    """Whether *value* is a pattern (has ``*``, ``?`` or ``[``) rather than
+    one scenario's name: the one test the CLI and the viewer both apply."""
+    return any(ch in value for ch in ("*", "?", "["))
 
 
 def scenario_dirs(conf_dirs: list[Path]) -> list[Path]:

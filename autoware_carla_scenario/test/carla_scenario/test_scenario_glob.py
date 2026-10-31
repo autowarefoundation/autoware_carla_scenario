@@ -17,7 +17,10 @@ import pytest
 import autoware_carla_scenario
 import autoware_carla_scenario.registry as registry
 from autoware_carla_scenario.examples import run
-from autoware_carla_scenario.scenario_glob import resolve_scenario_glob
+from autoware_carla_scenario.scenario_glob import (
+    is_scenario_glob,
+    resolve_scenario_glob,
+)
 from autoware_carla_scenario.ui import app as app_module
 
 _BUILTIN_LEFT = (
@@ -155,3 +158,32 @@ def test_each_name_once_across_directories(tmp_path: Path) -> None:
     dirs = [first, tmp_path / "empty", second]
     assert resolve_scenario_glob("s/*", dirs) == ["s/x"]
     assert resolve_scenario_glob("t/*", dirs) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "is_glob"),
+    [
+        ("lane_change/left", False),
+        ("lane_change/*", True),
+        ("lane_change/lef?", True),
+        ("lane_change/[lr]*", True),
+        ("a-b", False),
+    ],
+)
+def test_viewer_and_cli_tell_a_pattern_alike(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    is_glob: bool,
+) -> None:
+    """The viewer resolves *value* as a pattern exactly when the CLI does."""
+    assert is_scenario_glob(value) is is_glob
+    assert run._is_glob_pattern(value) is is_glob
+    resolved: list[str] = []
+
+    def spy(pattern: str, conf_dirs: list[Path]) -> list[str]:
+        resolved.append(pattern)
+        return []
+
+    monkeypatch.setattr(app_module, "resolve_scenario_glob", spy)
+    app_module._resolve_scenario_names(value)
+    assert resolved == ([value] if is_glob else [])
