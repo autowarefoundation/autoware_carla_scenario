@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-240 of the package's 346
-modules (69%; about 70,200 of
-120,200 lines) are <code>CHECKED</code>: the kinematics, the
+241 of the package's 347
+modules (69%; about 70,300 of
+120,300 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 240 CHECKED modules</summary>
+<summary>The 241 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5199,6 +5199,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>hils.wire</code></td>
 <td>The socket-free half of <code>protocol</code>: its constants and message lines.</td>
+</tr>
+<tr>
+<td><code>hils.yaml11</code></td>
+<td>What YAML 1.1 makes of a plain scalar that does not mean what it looks like.</td>
 </tr>
 <tr>
 <td><code>kinematics</code></td>
@@ -5806,7 +5810,7 @@ the first:</p>
 <li><code>hils</code>: re-exports hils.config (yaml), which is neither checked nor modelled</li>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension), and typesafe_carla's CPython package inside HilsBridge; holds hilspy channels and CARLA measurements typed <code>Any</code>, and builds on canvas (carla_canvas) and hils.config (yaml), which are neither checked nor modelled</li>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled</li>
-<li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), which Codon cannot express</li>
+<li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), which Codon cannot express; what YAML 1.1 makes of a plain scalar is the checked hils.yaml11's</li>
 <li><code>hils.link</code>: imports socket, and builds on hils.protocol (socket), which is neither checked nor modelled</li>
 <li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express</li>
 <li><code>hils.protocol</code>: imports socket (LineReader reads the bridge's socket); what needs none is hils.wire, which it re-exports</li>
