@@ -65,6 +65,7 @@ from .driver import (
     render_module_checks,
     render_odd_driver,
 )
+from .memory_gate import admitted, codon_bytes
 from .toolchain import (
     SUPPORTED_CODON_SERIES,
     Toolchain,
@@ -3389,23 +3390,27 @@ def _compile(
                 name, ok=False, diagnostics=problems, warnings=list(ws.warnings)
             )
         env = codon_environment(toolchain, ws.root)
+        # Codon's memory grows with what it compiles: a build waits until the
+        # builds running beside it leave room for it (typecheck/memory_gate.py).
+        need = codon_bytes(sum(len(m.text) for m in sources.modules.values()))
         try:
-            proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
-                [
-                    str(toolchain.executable),
-                    "build",
-                    "-llvm",
-                    "-o",
-                    os.devnull,
-                    DRIVER_MODULE,
-                ],
-                cwd=ws.root,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
+            with admitted(need):
+                proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
+                    [
+                        str(toolchain.executable),
+                        "build",
+                        "-llvm",
+                        "-o",
+                        os.devnull,
+                        DRIVER_MODULE,
+                    ],
+                    cwd=ws.root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
         except subprocess.TimeoutExpired:
             return None
         output = proc.stdout + proc.stderr

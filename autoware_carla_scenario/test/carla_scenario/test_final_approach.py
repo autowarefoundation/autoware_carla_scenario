@@ -357,6 +357,49 @@ def test_a_path_crossing_to_the_lane_beside_marks_a_lane_change() -> None:
     assert _lane_change_marks(turn) == []
 
 
+class _LaneChangingTrafficManager:
+    """Records the bool each ``force_lane_change`` is sent."""
+
+    def __init__(self) -> None:
+        self.lane_changes: List[bool] = []
+
+    def force_lane_change(self, vehicle: Any, to_the_right: bool) -> None:
+        self.lane_changes.append(to_the_right)
+
+
+@pytest.mark.parametrize(("side", "expected"), [(3.5, True), (-3.5, False)])
+def test_a_path_crossing_to_the_lane_beside_sends_carlas_bool(
+    side: float, expected: bool
+) -> None:
+    """CARLA's ``force_lane_change`` takes ``True`` for the right
+    (``LocalizationStage``), as :meth:`LaneChangeDirection.to_carla_bool`
+    sends it: a path stepping to +y going east (the right, in CARLA's
+    left-handed world) sends ``True``, one stepping to -y ``False``."""
+    from autoware_carla_scenario.traffic.config import TrafficManagerBackendConfig
+    from autoware_carla_scenario.traffic.traffic_manager import (
+        TrafficManagerBackend,
+        _Kept,
+        _lane_change_marks,
+    )
+
+    from .test_traffic_backend import _Client
+
+    tm = _LaneChangingTrafficManager()
+    backend = TrafficManagerBackend(
+        TrafficManagerBackendConfig(port=8123),
+        client=_Client(tm),  # type: ignore[arg-type]
+    )
+    npc = _Actor(5)
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    kept = _Kept(npc)  # type: ignore[arg-type]
+    east = [carla.Location(float(x), 0.0, 0.0) for x in (0, 2, 4)]
+    across = [carla.Location(6.0, side, 0.0), carla.Location(8.0, side, 0.0)]
+    kept.lane_changes = _lane_change_marks(east + across)
+    backend._change_lanes_on_path(kept)
+    assert tm.lane_changes == [expected]
+    assert kept.lane_changes == []
+
+
 def test_a_vehicle_wedged_on_a_kerb_is_given_full_throttle(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

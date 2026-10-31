@@ -95,16 +95,49 @@ class _World:
 
 
 class _TrafficManager:
+    """A TrafficManager that keeps a vehicle's speed as LibCarla's
+    ``Parameters.cpp`` does: a percentage under the limit or an exact speed,
+    either dropping the other, and the global percentage (LibCarla's default
+    0) for a vehicle with neither."""
+
     def __init__(self) -> None:
         self.synchronous: List[bool] = []
         self.seeds: List[int] = []
         self.shut_downs = 0
         #: actor id -> every percentage under the limit it was given.
         self.speed_differences: dict = {}
+        #: actor id -> every exact speed (km/h) it was given.
+        self.desired_speeds: dict = {}
+        #: Every global percentage set.
+        self.global_differences: List[float] = []
         self.paths: List[Tuple[int, List[Any]]] = []
+        self._percentage: dict = {}
+        self._exact: dict = {}
+        self._global = 0.0
 
     def vehicle_percentage_speed_difference(self, actor: Any, percent: float) -> None:
         self.speed_differences.setdefault(actor.id, []).append(percent)
+        self._percentage[actor.id] = min(100.0, percent)
+        self._exact.pop(actor.id, None)
+
+    def set_desired_speed(self, actor: Any, speed: float) -> None:
+        self.desired_speeds.setdefault(actor.id, []).append(speed)
+        self._exact[actor.id] = max(0.0, speed)
+        self._percentage.pop(actor.id, None)
+
+    def global_percentage_speed_difference(self, percent: float) -> None:
+        self.global_differences.append(percent)
+        self._global = min(100.0, percent)
+
+    def target_kmh(self, actor: Any) -> float:
+        """The speed it drives at (``GetVehicleTargetVelocity``)."""
+        if actor.id in self._percentage:
+            percent = self._percentage[actor.id]
+        elif actor.id in self._exact:
+            return float(self._exact[actor.id])
+        else:
+            percent = self._global
+        return float(actor.speed_limit * (1.0 - percent / 100.0))
 
     def set_path(self, vehicle: Any, path: List[Any]) -> None:
         self.paths.append((vehicle.id, list(path)))
@@ -197,6 +230,17 @@ class TestTrafficManagerPrepare:
         backend.prepare(_context(client, seed=42))
         assert client.tm.synchronous == [True]
         assert client.tm.seeds == [42]
+
+    def test_its_default_speed_is_set_not_assumed(self) -> None:
+        """LibCarla's own default, 0 % under the limit, whatever the build."""
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            TM_DEFAULT_SPEED_DIFFERENCE_PCT,
+        )
+
+        client = _Client()
+        TrafficManagerBackend().prepare(_context(client))
+        assert TM_DEFAULT_SPEED_DIFFERENCE_PCT == 0.0
+        assert client.tm.global_differences == [0.0]
 
     def test_the_configured_port_is_the_one_reached(self) -> None:
         client = _Client()
@@ -522,6 +566,7 @@ class TestTrafficManagerVisibility:
         forget_visibility()
         backend.tick(world, 0.2 + SIGHT_UPDATE_S)
         assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
+        assert tm.target_kmh(highway) == pytest.approx(100.0)
         assert 1 not in tm.speed_differences
         backend.close()
 
@@ -572,6 +617,169 @@ class TestTrafficManagerVisibility:
         )
         backend.tick(world, 0.10)
         assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
+        assert tm.target_kmh(highway) == pytest.approx(120.0)
+        backend.close()
+
+    def test_a_sight_speed_just_under_the_limit_holds(self) -> None:
+        """62 km/h on an 80 road, 77 % of it: held, and given the limit back."""
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        road = _Actor(2, speed_limit=80.0)
+        backend, world, tm = self._following(road)
+        assert tm.target_kmh(road) == pytest.approx(80.0)
+        set_world_visibility(4, 50.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(50.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(road) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.speed_differences[2][-1] == 0.0
+        assert tm.target_kmh(road) == pytest.approx(80.0)
+        backend.close()
+
+    def test_a_speed_factor_is_given_back_after_the_hold(self) -> None:
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        highway = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(highway, speed_factor=0.9)
+        assert tm.target_kmh(highway) == pytest.approx(108.0)
+        set_world_visibility(4, 50.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(50.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(highway) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.speed_differences[2][-1] == pytest.approx(10.0)
+        assert tm.target_kmh(highway) == pytest.approx(108.0)
+        backend.close()
+
+    @pytest.mark.parametrize("own_kmh", [40.0, 20.0, 0.0])
+    def test_a_speed_of_its_own_is_held_under_and_given_back(
+        self, own_kmh: float
+    ) -> None:
+        """A scenario's ``set_desired_speed`` survives the fog: a stop stays
+        a stop, and the speed comes back when the fog lifts."""
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        car = _Actor(2, speed_limit=50.0)
+        backend, world, tm = self._following(car)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        backend.set_desired_speed(entity, world, own_kmh)
+        set_world_visibility(4, 20.0)  # 35 km/h
+        backend.tick(world, 0.05)
+        limit = sight_speed(20.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(car) == pytest.approx(min(own_kmh, limit))
+        assert 2 not in tm.speed_differences
+        assert max(tm.desired_speeds[2]) == own_kmh  # never raised
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.target_kmh(car) == pytest.approx(own_kmh)
+        assert 2 not in tm.speed_differences
+        backend.close()
+
+    def test_a_speed_set_while_held_is_held_too(self) -> None:
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        car = _Actor(2, speed_limit=50.0)
+        backend, world, tm = self._following(car)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        backend.set_desired_speed(entity, world, 40.0)
+        set_world_visibility(4, 20.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(20.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        backend.set_desired_speed(entity, world, 0.0)  # a stop: it wins
+        assert tm.target_kmh(car) == 0.0
+        backend.tick(world, 0.10)
+        assert tm.target_kmh(car) == 0.0
+        backend.set_desired_speed(entity, world, 60.0)  # held under the sight
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.15)
+        assert tm.target_kmh(car) == pytest.approx(60.0)
+        backend.close()
+
+    def test_a_vehicle_resumed_in_the_fog_is_held_at_once(self) -> None:
+        """A speed set while it was released is held as it is resumed, not
+        at the next update."""
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        car = _Actor(2, speed_limit=50.0)
+        backend, world, tm = self._following(car)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        set_world_visibility(4, 20.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(20.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        backend.release(entity, world)
+        backend.set_desired_speed(entity, world, 60.0)  # the scenario's to drive
+        assert tm.target_kmh(car) == pytest.approx(60.0)
+        backend.resume(entity, world)
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.target_kmh(car) == pytest.approx(60.0)
+        backend.close()
+
+    def test_a_speed_factor_drawn_while_held_is_held_at_once(self) -> None:
+        """A new draw drops the speed it was given (in the TrafficManager as
+        here): held from the draw, and given the draw back."""
+        from autoware_carla_scenario.traffic.parameters import (
+            Spread,
+            VehicleParameters,
+        )
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        car = _Actor(2, speed_limit=50.0)
+        backend, world, tm = self._following(car)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        backend.set_desired_speed(entity, world, 40.0)
+        set_world_visibility(4, 20.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(20.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        backend.override_entity_parameters(
+            world, VehicleParameters(speed_factor=Spread(0.9)), entity
+        )
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.target_kmh(car) == pytest.approx(45.0)
         backend.close()
 
     def test_a_world_with_no_visibility_logs_nothing(
