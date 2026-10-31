@@ -105,26 +105,57 @@ message EgoSequence {
 }
 message OptionalString { optional string value = 1; }
 message StringColumn { repeated OptionalString values = 1; }
+// All geometry groups use the same ObjectCategory integer labels:
+// unknown=0, vehicle=1, car=2, truck=3, bus=4, motorcycle=5, bicycle=6,
+// pedestrian=7, trailer=8, animal=9, hazard=10, over_drivable=11,
+// under_drivable=12. Missing labels use masks, not zero.
+message BoxAnnotations {
+  NumericArray positions = 1; // float64 [N,3], metres, Frame/Scene axes.
+  NumericArray headings = 2; // float64 [N], yaw in Frame/Scene axes, radians.
+  NumericArray velocities = 3; // float64 [N,2], m/s, Frame/Scene axes.
+  NumericArray accelerations = 4; // float64 [N,2], m/s^2, Frame/Scene axes.
+  NumericArray labels = 5; // int64 [N], public ObjectCategory values.
+  StringColumn track_ids = 6; // [N], known IDs unique across groups within a batch.
+  NumericArray orientations = 7; // float64 [N,4], object-to-Frame/Scene xyzw quaternion.
+  NumericArray dimensions = 8; // float64 [N,3], width/length/height in object axes, metres.
+}
+message CylinderAnnotations {
+  NumericArray positions = 1; // float64 [N,3], metres, Frame/Scene axes.
+  NumericArray headings = 2; // float64 [N], yaw in Frame/Scene axes, radians.
+  NumericArray velocities = 3; // float64 [N,2], m/s, Frame/Scene axes.
+  NumericArray accelerations = 4; // float64 [N,2], m/s^2, Frame/Scene axes.
+  NumericArray labels = 5; // int64 [N], public ObjectCategory values.
+  StringColumn track_ids = 6; // [N], known IDs unique across groups within a batch.
+  NumericArray orientations = 7; // float64 [N,4], object-to-Frame/Scene xyzw quaternion.
+  NumericArray diameters = 8; // float64 [N], metres.
+  NumericArray heights = 9; // float64 [N], object-axis height, metres.
+}
+message PolygonAnnotations {
+  NumericArray positions = 1; // float64 [N,3], metres, Frame/Scene axes.
+  NumericArray headings = 2; // float64 [N], yaw in Frame/Scene axes, radians.
+  NumericArray velocities = 3; // float64 [N,2], m/s, Frame/Scene axes.
+  NumericArray accelerations = 4; // float64 [N,2], m/s^2, Frame/Scene axes.
+  NumericArray labels = 5; // int64 [N], public ObjectCategory values.
+  StringColumn track_ids = 6; // [N], known IDs unique across groups within a batch.
+  NumericArray orientations = 7; // float64 [N,4], object-to-Frame/Scene xyzw quaternion.
+  NumericArray vertices = 8; // float64 [V,2], finite Frame/Scene XY metres; simple CCW rings, no holes/closing duplicate.
+  NumericArray offsets = 9; // int64 [N+1], known vertex boundaries.
+  NumericArray footprint_available = 10; // bool [N], known; false requires zero vertices.
+  NumericArray heights = 11; // float64 [N], object-axis height, metres; not a 3D mesh.
+}
 message Annotations {
-  NumericArray positions = 1; // float64 [M,3] x/y/z, metres, Scene axes.
-  NumericArray dimensions = 2; // float64 [M,3] width/length/height, metres, object axes.
-  NumericArray headings = 3; // float64 [M], yaw radians in Scene axes.
-  NumericArray velocities = 4; // float64 [M,2], m/s, Scene axes.
-  NumericArray accelerations = 5; // float64 [M,2], m/s^2, Scene axes.
-  // int64 [M] categories: unknown=0, vehicle=1, car=2, truck=3, bus=4,
-  // motorcycle=5, bicycle=6, pedestrian=7, trailer=8, animal=9, hazard=10,
-  // over_drivable=11, under_drivable=12. Missing values use mask, not zero.
-  NumericArray labels = 6;
-  StringColumn track_ids = 7; // Absent column, absent ID, and empty ID differ.
-  NumericArray orientations = 8; // float64 [M,4] object-to-Scene unit quaternion x/y/z/w.
-  optional int64 timestamp_ns = 9; // Batch reference ns; unset for packed values.
+  BoxAnnotations boxes = 1;
+  CylinderAnnotations cylinders = 2;
+  PolygonAnnotations polygons = 3;
+  optional int64 timestamp_ns = 4; // Batch reference ns; unset for packed values.
 }
 message AnnotationSequence {
-  Annotations values = 1;
-  NumericArray offsets = 2; // int64 [T+1] known boundaries, from 0 to M; no masked elements.
-  // bool [T], no masked elements. True + zero rows = observed empty; false = unavailable.
-  NumericArray available = 3;
-  NumericArray timestamps_ns = 4; // int64 [T], reference ns; masks mark unknown.
+  Annotations values = 1; // Each geometry group has its own packed object rows.
+  NumericArray available = 2; // bool [T]; false=missing batch, true may be empty.
+  NumericArray box_offsets = 3; // int64 [T+1], required exactly when values.boxes exists.
+  NumericArray cylinder_offsets = 4; // int64 [T+1].
+  NumericArray polygon_offsets = 5; // int64 [T+1], time-to-object boundaries, not vertex boundaries.
+  NumericArray timestamps_ns = 6; // int64 [T], batch times; mask unknown times.
 }
 message T4Scene {
   SceneMetadata scene_metadata = 1;
@@ -142,11 +173,10 @@ message T4Scene {
   NumericArray goal_poses = 9; // float64 [T,4] Scene x/y/cos(yaw)/sin(yaw).
   NumericArray goal_poses_3d = 10; // float64 [T,4,4] goal-to-Scene transforms.
   MapReference map = 11; // One static map for the interval; no map bytes in a Scene.
-  reserved 12;
-  RouteSequence routes = 13; // Optional [T], IDs refer to the static Scene map.
-  TrafficLightSequence traffic_lights = 14;
-  CameraSequence cameras = 15; // Already-loaded pixels only; no implicit IO.
-  LidarSequence lidar = 16; // Already-loaded arrays only; no implicit IO.
+  RouteSequence routes = 12; // Optional [T], IDs refer to the static Scene map.
+  TrafficLightSequence traffic_lights = 13;
+  CameraSequence cameras = 14; // Already-loaded pixels only; no implicit IO.
+  LidarSequence lidar = 15; // Already-loaded arrays only; no implicit IO.
   // Python ModelData implementations are runtime behavior, not wire data.
 }
 
@@ -159,7 +189,7 @@ message MapResource {
   }
   enum Projection {
     PROJECTION_UNSPECIFIED = 0;
-    // Already projected metres in MapData axes, including recovered local maps.
+    // Already projected metres in MapData axes, including supplied local submaps.
     // Every node has exact local_x/local_y/ele tags. Auxiliary lat/lon encode
     // the same coordinates with Mercator(0,0); they are NOT real geolocation.
     // Readers restore local coordinates and rebuild spatial indices after IO.
@@ -190,9 +220,8 @@ message RouteData {
 message RouteRow { RouteData value = 1; }
 message RouteSequence { repeated RouteRow rows = 1; } // [T], absent row != empty route.
 
-// Dynamic observations. Group IDs identify native regulatory elements; lane
-// IDs identify lanelets, including generated local fragments. Neither is a row
-// index. Missing raw group relationships are not inferred from effective states.
+// Raw dynamic observations. Group IDs identify native traffic-light regulatory
+// elements. Lane-specific interpretations are derived by consumers, not stored.
 message TrafficLights {
   NumericArray group_ids = 1; // int64 [G], known regulatory-element IDs.
   NumericArray element_offsets = 2; // int64 [G+1], known boundaries from 0 to E.
@@ -202,20 +231,13 @@ message TrafficLights {
   NumericArray element_statuses = 5; // int64 [E]: unknown=0,off=1,on=2,flashing=3.
   NumericArray element_confidences = 6; // float64 [E], unitless [0,1].
   NumericArray element_timestamps_ns = 7; // int64 [E], reference ns; masks mark unknown.
-  NumericArray lane_ids = 8; // int64 [L], known lanelet IDs in Scene.map.
-  NumericArray lane_states = 9; // int64 [L]: unknown=0,red=1,yellow=2,green=3,white=4,
-  // no_signal=5,white_or_no_signal=6. Explicit UNKNOWN differs from missing/masked.
-  NumericArray lane_is_arrow = 10; // bool [L], masked when directional evidence was lost.
-  optional int64 timestamp_ns = 11; // Batch reference ns, also valid for observed empty sets.
+  optional int64 timestamp_ns = 8; // Batch reference ns, also valid for observed empty sets.
 }
 message TrafficLightSequence {
   TrafficLights values = 1; // Required packed observations, without one batch timestamp.
   NumericArray group_offsets = 2; // Required int64 [T+1], known boundaries into group_ids.
-  NumericArray lane_offsets = 3; // Required int64 [T+1], known boundaries into lane_ids.
-  NumericArray available = 4; // Required bool [T], known; false requires zero rows.
-  NumericArray timestamps_ns = 5; // Optional int64 [T], reference ns; masks mark unknown.
-  NumericArray group_available = 6; // Optional known bool [T]; absent uses available.
-  NumericArray lane_available = 7; // Optional known bool [T]; absent uses available.
+  NumericArray available = 3; // Required bool [T], known; false requires zero rows.
+  NumericArray timestamps_ns = 4; // Optional int64 [T], reference ns; masks mark unknown.
 }
 message Camera {
   string name = 1;

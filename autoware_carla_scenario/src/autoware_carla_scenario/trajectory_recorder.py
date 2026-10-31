@@ -282,6 +282,12 @@ class TrajectoryRecorder:
             map's with, if any.
     """
 
+    @staticmethod
+    def _state_value(value: float) -> float:
+        """An actor state's value as the log keeps it: to the millimetre (and
+        the thousandth of a degree, of a metre per second)."""
+        return _r(value)
+
     def __init__(
         self,
         path: Path,
@@ -319,8 +325,7 @@ class TrajectoryRecorder:
     def start(self, world: carla.World) -> None:
         """Open the file and write the world and its traffic lights."""
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._out = self.path.open("wb", buffering=0)
+            self._out = self._open()
             # The run's map, not a fresh get_map(): only its name is wanted,
             # and CARLA builds the whole road network for one.
             map_name = run_carla_map(world).name
@@ -338,6 +343,11 @@ class TrajectoryRecorder:
                 self._emit(_light_record(tl))
         except Exception:
             self._fail("could not start")
+
+    def _open(self) -> IO[bytes]:
+        """The stream the records go to: the file at :attr:`path`."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        return self.path.open("wb", buffering=0)
 
     def record(self, world: carla.World, elapsed: float) -> None:
         """Write the tick the world was just stepped to, at scenario time *elapsed*."""
@@ -730,6 +740,7 @@ class TrajectoryRecorder:
                 self._known.setdefault(actor_id, None)
 
         rows = []
+        kept = self._state_value
         for s in snapshot:
             if self._known.get(s.id) is None:
                 continue
@@ -738,15 +749,15 @@ class TrajectoryRecorder:
             rows.append(
                 [
                     s.id,
-                    _r(loc.x),
-                    _r(loc.y),
-                    _r(loc.z),
-                    _r(rot.roll),
-                    _r(rot.pitch),
-                    _r(rot.yaw),
-                    _r(v.x),
-                    _r(v.y),
-                    _r(v.z),
+                    kept(loc.x),
+                    kept(loc.y),
+                    kept(loc.z),
+                    kept(rot.roll),
+                    kept(rot.pitch),
+                    kept(rot.yaw),
+                    kept(v.x),
+                    kept(v.y),
+                    kept(v.z),
                 ]
             )
         present = {row[0] for row in rows}

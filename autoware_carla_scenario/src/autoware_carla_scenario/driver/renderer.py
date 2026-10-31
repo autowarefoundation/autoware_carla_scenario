@@ -116,6 +116,7 @@ class RendererDataBuilder:
         timestamp_us: int,
         ego_pose: Pose,
         lidar: Sequence[carla_driver_pb2.LidarSweep] = (),
+        t4_scene: bytes = b"",
     ) -> bytes:
         """Return the serialized payload for this instant.
 
@@ -124,6 +125,8 @@ class RendererDataBuilder:
             ego_pose: The ego's rig pose in the local frame, used to resolve
                 distances along the ego's heading.
             lidar: This step's LiDAR sweeps, already in the rig frame.
+            t4_scene: The rollout so far as a serialized T4Scene
+                (``driver.t4_scene``), or empty.
 
         Returns:
             The serialized ``CarlaRendererData``.  If collecting the ground truth
@@ -137,12 +140,14 @@ class RendererDataBuilder:
             # CARLA hiccup here must not take the scenario down with it -- nor
             # cost the policy its sweep, which is sensor data, not ground truth.
             logger.warning("Failed to collect CARLA ground truth", exc_info=True)
-            if not lidar:
+            if not lidar and not t4_scene:
                 return b""
             data = carla_driver_pb2.CarlaRendererData(
                 snapshot_timestamp_us=timestamp_us
             )
         data.lidar.extend(lidar)
+        if t4_scene:
+            data.t4_scene = t4_scene
         return data.SerializeToString()
 
     def _build(

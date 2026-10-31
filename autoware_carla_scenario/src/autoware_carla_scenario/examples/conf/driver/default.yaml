@@ -66,6 +66,21 @@ driver:
   # A local Lanelet2 .osm to write as the set's Lanelet2 map instead of the one
   # roadgen converts (needs map_dir); null converts it with roadgen.
   lanelet2_path: null
+  # Every drive also carries the run so far as a tier4/e2e-devkit T4Scene, for a
+  # policy that plans from scenes (carla_driver_interface's T4SceneDriver); its
+  # map goes into the map set as the `t4` format. Needs map_dir and
+  # send_renderer_data, and carla-driver-interface 2.4 (docs/t4_scene.md).
+  t4_scene: false
+  # How far back a scene reaches, the current 0.1 s row aside.
+  t4_scene_history_s: 3.0
+  # The ego's wheel base in the scenes' ego shape; null leaves it out.
+  t4_scene_wheel_base_m: null
+  # The scenes' goal: scenario (its route_to's) or road_ahead (the far end of
+  # the road ahead the policy is sent).
+  t4_scene_goal: scenario
+  # The scenes' map: run (the run's Lanelet2 map) or map_set (map_dir's, the
+  # one a policy reading the egodriver observations is given).
+  t4_scene_map: run
   control:
     lookahead_gain_s: 0.6
     min_lookahead_m: 4.0

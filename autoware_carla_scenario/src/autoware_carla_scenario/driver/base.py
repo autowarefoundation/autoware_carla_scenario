@@ -367,6 +367,42 @@ class DriverClientConfig:
     other formats :attr:`map_formats` names, if any.  Needs :attr:`map_dir`.
     """
 
+    t4_scene: bool = False
+    """Whether every drive also carries the rollout so far as a T4Scene
+    (``CarlaRendererData.t4_scene``), the exchange format of tier4/e2e-devkit,
+    for a policy that plans from scenes (``carla_driver_interface``'s
+    ``T4SceneDriver``).
+
+    History only, the current row last, on a 0.1 s grid in Autoware's ``map``
+    frame (docs/t4_scene.md): the ego with what the policy is told of it, the
+    road users near it, the lights, the current LiDAR sweep, the route and the
+    goal. Its map, the run's Lanelet2 map, is written into the map set once as
+    the ``t4`` format. Needs :attr:`send_renderer_data` and :attr:`map_dir`,
+    and carla-driver-interface 2.4 or later. Every other observation is sent as
+    before.
+    """
+
+    t4_scene_history_s: float = 3.0
+    """How far back a scene reaches, the current row aside: its rows are 0.1 s
+    apart. A run younger than this sends the rows it has."""
+
+    t4_scene_wheel_base_m: Optional[float] = None
+    """The ego's wheel base, written in the scenes' ego shape; ``None`` leaves
+    it out (CARLA 0.10 reports no wheel positions)."""
+
+    t4_scene_goal: str = "scenario"
+    """The scenes' goal: ``scenario``, where the scenario routes the ego
+    (none without a ``route_to``); ``road_ahead``, the far end of the road
+    ahead the policy is sent (``route_horizon_m``), where a policy reading
+    the egodriver observations has its goal."""
+
+    t4_scene_map: str = "run"
+    """The map the scenes are on: ``run``, the run's own Lanelet2 map;
+    ``map_set``, the map set's (``map_dir``, the one a policy reading the
+    egodriver observations is given -- roadgen's from the world's OpenDRIVE,
+    or ``lanelet2_path``), so a scene policy reads the same map as one of
+    those."""
+
     def __post_init__(self) -> None:
         if self.transport not in DRIVER_TRANSPORTS:
             raise ValueError(
@@ -397,6 +433,24 @@ class DriverClientConfig:
             raise ValueError(
                 "driver.lanelet2_path is written into the map set under "
                 "driver.map_dir, which is unset; set map_dir too"
+            )
+        if self.t4_scene and (self.map_dir is None or not self.send_renderer_data):
+            raise ValueError(
+                "driver.t4_scene rides in renderer_data and references its map in "
+                "the map set: it needs driver.send_renderer_data and driver.map_dir"
+            )
+        if self.t4_scene_goal not in ("scenario", "road_ahead"):
+            raise ValueError(
+                "driver.t4_scene_goal must be 'scenario' or 'road_ahead', got "
+                f"{self.t4_scene_goal!r}"
+            )
+        if self.t4_scene_map not in ("run", "map_set"):
+            raise ValueError(
+                f"driver.t4_scene_map must be 'run' or 'map_set', got {self.t4_scene_map!r}"
+            )
+        if self.t4_scene_history_s < 0.0:
+            raise ValueError(
+                f"driver.t4_scene_history_s must not be negative, got {self.t4_scene_history_s}"
             )
 
     @classmethod

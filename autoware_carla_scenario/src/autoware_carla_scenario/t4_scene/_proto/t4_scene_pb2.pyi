@@ -175,39 +175,101 @@ class StringColumn(_message.Message):
     values: _containers.RepeatedCompositeFieldContainer[OptionalString]
     def __init__(self, values: _Optional[_Iterable[_Union[OptionalString, _Mapping]]] = ...) -> None: ...
 
-class Annotations(_message.Message):
-    __slots__ = ("positions", "dimensions", "headings", "velocities", "accelerations", "labels", "track_ids", "orientations", "timestamp_ns")
+class BoxAnnotations(_message.Message):
+    __slots__ = ("positions", "headings", "velocities", "accelerations", "labels", "track_ids", "orientations", "dimensions")
     POSITIONS_FIELD_NUMBER: _ClassVar[int]
-    DIMENSIONS_FIELD_NUMBER: _ClassVar[int]
     HEADINGS_FIELD_NUMBER: _ClassVar[int]
     VELOCITIES_FIELD_NUMBER: _ClassVar[int]
     ACCELERATIONS_FIELD_NUMBER: _ClassVar[int]
     LABELS_FIELD_NUMBER: _ClassVar[int]
     TRACK_IDS_FIELD_NUMBER: _ClassVar[int]
     ORIENTATIONS_FIELD_NUMBER: _ClassVar[int]
-    TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
+    DIMENSIONS_FIELD_NUMBER: _ClassVar[int]
     positions: NumericArray
-    dimensions: NumericArray
     headings: NumericArray
     velocities: NumericArray
     accelerations: NumericArray
     labels: NumericArray
     track_ids: StringColumn
     orientations: NumericArray
+    dimensions: NumericArray
+    def __init__(self, positions: _Optional[_Union[NumericArray, _Mapping]] = ..., headings: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., labels: _Optional[_Union[NumericArray, _Mapping]] = ..., track_ids: _Optional[_Union[StringColumn, _Mapping]] = ..., orientations: _Optional[_Union[NumericArray, _Mapping]] = ..., dimensions: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+
+class CylinderAnnotations(_message.Message):
+    __slots__ = ("positions", "headings", "velocities", "accelerations", "labels", "track_ids", "orientations", "diameters", "heights")
+    POSITIONS_FIELD_NUMBER: _ClassVar[int]
+    HEADINGS_FIELD_NUMBER: _ClassVar[int]
+    VELOCITIES_FIELD_NUMBER: _ClassVar[int]
+    ACCELERATIONS_FIELD_NUMBER: _ClassVar[int]
+    LABELS_FIELD_NUMBER: _ClassVar[int]
+    TRACK_IDS_FIELD_NUMBER: _ClassVar[int]
+    ORIENTATIONS_FIELD_NUMBER: _ClassVar[int]
+    DIAMETERS_FIELD_NUMBER: _ClassVar[int]
+    HEIGHTS_FIELD_NUMBER: _ClassVar[int]
+    positions: NumericArray
+    headings: NumericArray
+    velocities: NumericArray
+    accelerations: NumericArray
+    labels: NumericArray
+    track_ids: StringColumn
+    orientations: NumericArray
+    diameters: NumericArray
+    heights: NumericArray
+    def __init__(self, positions: _Optional[_Union[NumericArray, _Mapping]] = ..., headings: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., labels: _Optional[_Union[NumericArray, _Mapping]] = ..., track_ids: _Optional[_Union[StringColumn, _Mapping]] = ..., orientations: _Optional[_Union[NumericArray, _Mapping]] = ..., diameters: _Optional[_Union[NumericArray, _Mapping]] = ..., heights: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+
+class PolygonAnnotations(_message.Message):
+    __slots__ = ("positions", "headings", "velocities", "accelerations", "labels", "track_ids", "orientations", "vertices", "offsets", "footprint_available", "heights")
+    POSITIONS_FIELD_NUMBER: _ClassVar[int]
+    HEADINGS_FIELD_NUMBER: _ClassVar[int]
+    VELOCITIES_FIELD_NUMBER: _ClassVar[int]
+    ACCELERATIONS_FIELD_NUMBER: _ClassVar[int]
+    LABELS_FIELD_NUMBER: _ClassVar[int]
+    TRACK_IDS_FIELD_NUMBER: _ClassVar[int]
+    ORIENTATIONS_FIELD_NUMBER: _ClassVar[int]
+    VERTICES_FIELD_NUMBER: _ClassVar[int]
+    OFFSETS_FIELD_NUMBER: _ClassVar[int]
+    FOOTPRINT_AVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    HEIGHTS_FIELD_NUMBER: _ClassVar[int]
+    positions: NumericArray
+    headings: NumericArray
+    velocities: NumericArray
+    accelerations: NumericArray
+    labels: NumericArray
+    track_ids: StringColumn
+    orientations: NumericArray
+    vertices: NumericArray
+    offsets: NumericArray
+    footprint_available: NumericArray
+    heights: NumericArray
+    def __init__(self, positions: _Optional[_Union[NumericArray, _Mapping]] = ..., headings: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., labels: _Optional[_Union[NumericArray, _Mapping]] = ..., track_ids: _Optional[_Union[StringColumn, _Mapping]] = ..., orientations: _Optional[_Union[NumericArray, _Mapping]] = ..., vertices: _Optional[_Union[NumericArray, _Mapping]] = ..., offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., footprint_available: _Optional[_Union[NumericArray, _Mapping]] = ..., heights: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+
+class Annotations(_message.Message):
+    __slots__ = ("boxes", "cylinders", "polygons", "timestamp_ns")
+    BOXES_FIELD_NUMBER: _ClassVar[int]
+    CYLINDERS_FIELD_NUMBER: _ClassVar[int]
+    POLYGONS_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
+    boxes: BoxAnnotations
+    cylinders: CylinderAnnotations
+    polygons: PolygonAnnotations
     timestamp_ns: int
-    def __init__(self, positions: _Optional[_Union[NumericArray, _Mapping]] = ..., dimensions: _Optional[_Union[NumericArray, _Mapping]] = ..., headings: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., labels: _Optional[_Union[NumericArray, _Mapping]] = ..., track_ids: _Optional[_Union[StringColumn, _Mapping]] = ..., orientations: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamp_ns: _Optional[int] = ...) -> None: ...
+    def __init__(self, boxes: _Optional[_Union[BoxAnnotations, _Mapping]] = ..., cylinders: _Optional[_Union[CylinderAnnotations, _Mapping]] = ..., polygons: _Optional[_Union[PolygonAnnotations, _Mapping]] = ..., timestamp_ns: _Optional[int] = ...) -> None: ...
 
 class AnnotationSequence(_message.Message):
-    __slots__ = ("values", "offsets", "available", "timestamps_ns")
+    __slots__ = ("values", "available", "box_offsets", "cylinder_offsets", "polygon_offsets", "timestamps_ns")
     VALUES_FIELD_NUMBER: _ClassVar[int]
-    OFFSETS_FIELD_NUMBER: _ClassVar[int]
     AVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    BOX_OFFSETS_FIELD_NUMBER: _ClassVar[int]
+    CYLINDER_OFFSETS_FIELD_NUMBER: _ClassVar[int]
+    POLYGON_OFFSETS_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
     values: Annotations
-    offsets: NumericArray
     available: NumericArray
+    box_offsets: NumericArray
+    cylinder_offsets: NumericArray
+    polygon_offsets: NumericArray
     timestamps_ns: NumericArray
-    def __init__(self, values: _Optional[_Union[Annotations, _Mapping]] = ..., offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+    def __init__(self, values: _Optional[_Union[Annotations, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., box_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., cylinder_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., polygon_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
 
 class T4Scene(_message.Message):
     __slots__ = ("scene_metadata", "timestamps_ns", "current_index", "frame_indices", "ego", "annotations", "global_origin", "global_origin_3d", "goal_poses", "goal_poses_3d", "map", "routes", "traffic_lights", "cameras", "lidar")
@@ -312,7 +374,7 @@ class RouteSequence(_message.Message):
     def __init__(self, rows: _Optional[_Iterable[_Union[RouteRow, _Mapping]]] = ...) -> None: ...
 
 class TrafficLights(_message.Message):
-    __slots__ = ("group_ids", "element_offsets", "element_colors", "element_shapes", "element_statuses", "element_confidences", "element_timestamps_ns", "lane_ids", "lane_states", "lane_is_arrow", "timestamp_ns")
+    __slots__ = ("group_ids", "element_offsets", "element_colors", "element_shapes", "element_statuses", "element_confidences", "element_timestamps_ns", "timestamp_ns")
     GROUP_IDS_FIELD_NUMBER: _ClassVar[int]
     ELEMENT_OFFSETS_FIELD_NUMBER: _ClassVar[int]
     ELEMENT_COLORS_FIELD_NUMBER: _ClassVar[int]
@@ -320,9 +382,6 @@ class TrafficLights(_message.Message):
     ELEMENT_STATUSES_FIELD_NUMBER: _ClassVar[int]
     ELEMENT_CONFIDENCES_FIELD_NUMBER: _ClassVar[int]
     ELEMENT_TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
-    LANE_IDS_FIELD_NUMBER: _ClassVar[int]
-    LANE_STATES_FIELD_NUMBER: _ClassVar[int]
-    LANE_IS_ARROW_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
     group_ids: NumericArray
     element_offsets: NumericArray
@@ -331,29 +390,20 @@ class TrafficLights(_message.Message):
     element_statuses: NumericArray
     element_confidences: NumericArray
     element_timestamps_ns: NumericArray
-    lane_ids: NumericArray
-    lane_states: NumericArray
-    lane_is_arrow: NumericArray
     timestamp_ns: int
-    def __init__(self, group_ids: _Optional[_Union[NumericArray, _Mapping]] = ..., element_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., element_colors: _Optional[_Union[NumericArray, _Mapping]] = ..., element_shapes: _Optional[_Union[NumericArray, _Mapping]] = ..., element_statuses: _Optional[_Union[NumericArray, _Mapping]] = ..., element_confidences: _Optional[_Union[NumericArray, _Mapping]] = ..., element_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., lane_ids: _Optional[_Union[NumericArray, _Mapping]] = ..., lane_states: _Optional[_Union[NumericArray, _Mapping]] = ..., lane_is_arrow: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamp_ns: _Optional[int] = ...) -> None: ...
+    def __init__(self, group_ids: _Optional[_Union[NumericArray, _Mapping]] = ..., element_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., element_colors: _Optional[_Union[NumericArray, _Mapping]] = ..., element_shapes: _Optional[_Union[NumericArray, _Mapping]] = ..., element_statuses: _Optional[_Union[NumericArray, _Mapping]] = ..., element_confidences: _Optional[_Union[NumericArray, _Mapping]] = ..., element_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamp_ns: _Optional[int] = ...) -> None: ...
 
 class TrafficLightSequence(_message.Message):
-    __slots__ = ("values", "group_offsets", "lane_offsets", "available", "timestamps_ns", "group_available", "lane_available")
+    __slots__ = ("values", "group_offsets", "available", "timestamps_ns")
     VALUES_FIELD_NUMBER: _ClassVar[int]
     GROUP_OFFSETS_FIELD_NUMBER: _ClassVar[int]
-    LANE_OFFSETS_FIELD_NUMBER: _ClassVar[int]
     AVAILABLE_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
-    GROUP_AVAILABLE_FIELD_NUMBER: _ClassVar[int]
-    LANE_AVAILABLE_FIELD_NUMBER: _ClassVar[int]
     values: TrafficLights
     group_offsets: NumericArray
-    lane_offsets: NumericArray
     available: NumericArray
     timestamps_ns: NumericArray
-    group_available: NumericArray
-    lane_available: NumericArray
-    def __init__(self, values: _Optional[_Union[TrafficLights, _Mapping]] = ..., group_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., lane_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., group_available: _Optional[_Union[NumericArray, _Mapping]] = ..., lane_available: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+    def __init__(self, values: _Optional[_Union[TrafficLights, _Mapping]] = ..., group_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
 
 class Camera(_message.Message):
     __slots__ = ("name", "image", "camera2ego_rotation", "camera2ego_translation", "intrinsics", "distortion", "timestamp_ns", "annotations")

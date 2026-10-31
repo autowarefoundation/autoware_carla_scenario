@@ -22,9 +22,12 @@ then the entity is not initialized, so the runner holds the scenario clock.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    Any,
     Dict,
     FrozenSet,
     List,
@@ -80,6 +83,7 @@ if TYPE_CHECKING:
     from ..sensor.carla_camera import CarlaCameraSensor
     from ..rerun_lidar import SensorRecorder
     from ..sensor.carla_lidar import CarlaLidarSensor
+    from ..t4_scene.live import LiveT4Scene
 
 
 logger = logging.getLogger(__name__)
@@ -196,6 +200,14 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The OpenDRIVE roads of the route to the scenario's goal, which pick the
         #: way the policy's road ahead takes at a fork; ``None`` without a goal.
         self._route_roads: Optional[Set[str]] = None
+        #: The road ahead last sent: the ego's pose then and the rig-frame points.
+        self._road_ahead: Optional[Tuple[Pose, Any]] = None
+        #: The goal as ``(x, y, yaw)`` in Autoware's ``map`` frame, a T4Scene's
+        #: (``t4_scene_goal: scenario``).
+        self._goal_in_map: Optional[Tuple[float, float, float]] = None
+        #: The run so far as T4Scenes (``driver.t4_scene``), while one runs.
+        self._t4: Optional["LiveT4Scene"] = None
+        self._scene_id: str = ""
 
     # ------------------------------------------------------------------
     # Properties
@@ -251,7 +263,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
             start = CarlaWorldPose.from_carla_transform(self.actor.get_transform())
         if start is not None:
-            self._route_roads = _route_roads(start, [*waypoints, goal])
+            lanelet_ids = _route_lanelets(start, [*waypoints, goal])
+            self._route_roads = None if lanelet_ids is None else _roads_of(lanelet_ids)
+        self._goal_in_map = _in_map_frame(goal)
         if self._handshake is not None:
             self._handshake.route_to(
                 world, goal, initial_pose, ground_projection, waypoints
@@ -332,6 +346,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # rolling route walk.
         self._map = run_carla_map(world)
 
+        if self._config.t4_scene:
+            self._t4 = _live_t4_scene(self._config, self._rear_axle_offset_m)
+            self._t4.start(world)
         if self._config.send_renderer_data:
             self._attach_lidars(world, actor)
             self._renderer = RendererDataBuilder(
@@ -347,6 +364,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         offer_driver_sensors(self._rear_axle_offset_m)
 
         session_uuid = str(uuid.uuid4())
+        #: What the run's T4Scenes are named: the session's.
+        self._scene_id = session_uuid
         try:
             self._client.start_session(session_uuid, str(self._map.name))
         except BaseException:
@@ -399,6 +418,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # policy step and the controller.
         observation = self._ego_observation(actor)
         self._pending_egomotion.append(observation)
+        if self._t4 is not None:
+            self._record_t4(world, elapsed, actor, observation)
 
         if self._is_policy_step():
             self._run_policy_step(actor, observation)
@@ -469,6 +490,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._pending_egomotion = []
         self._map = None
         self._renderer = None
+        self._t4 = None
+        self._road_ahead = None
 
         reason = self.termination_reason
         logger.info(
@@ -527,17 +550,40 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             logger.info("Attached %d driver LiDAR(s) to the ego", len(self._lidars))
 
     def _write_map(self) -> str:
-        """Write the world's map for the policy (``map_dir``); its id, or ``""``."""
+        """Write the world's map for the policy (``map_dir``); its id, or ``""``.
+
+        With T4Scenes, the run's Lanelet2 map they reference goes into the set
+        too, as its ``t4`` format.
+        """
         if self._config.map_dir is None or self._map is None:
             return ""
-        from ..driver.hdmap_export import export_map  # noqa: PLC0415
+        from ..driver.hdmap_export import MAP_FORMATS, export_map  # noqa: PLC0415
 
+        if self._t4 is not None and self._config.t4_scene_map == "map_set":
+            # The scenes go on the set's Lanelet2 map: write the set without
+            # them first, then again with the map they reference.
+            plain = export_map(
+                str(self._map.to_opendrive()),
+                str(self._map.name),
+                self._config.map_dir,
+                ("lanelet2",),
+                lanelet2_path=self._config.lanelet2_path,
+            )
+            self._t4.use_map(
+                Path(self._config.map_dir) / plain / MAP_FORMATS["lanelet2"]
+            )
+        resource = None if self._t4 is None else self._t4.map_resource
         return export_map(
             str(self._map.to_opendrive()),
             str(self._map.name),
             self._config.map_dir,
             self._config.map_formats,
             lanelet2_path=self._config.lanelet2_path,
+            t4_map=(
+                None
+                if resource is None
+                else resource.SerializeToString(deterministic=True)
+            ),
         )
 
     def _lidar_sweeps(self, pose: Optional[Pose] = None) -> List[LidarSweep]:
@@ -624,6 +670,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             route_roads=self._route_roads,
         )
         self._client.submit_route(self._sim_time_us, waypoints)
+        if self._t4 is not None:
+            # The T4Scene's route is this road ahead, on the map's lanelets.
+            self._road_ahead = (observation.pose, waypoints)
         if self._config.send_ground_truth and len(waypoints):
             self._client.submit_recording_ground_truth(
                 self._sim_time_us,
@@ -732,11 +781,93 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         """
         if self._renderer is None:
             return b""
+        sweeps = self._lidar_sweeps(observation.pose)
         return self._renderer.build(
             self._sim_time_us,
             observation.pose,
-            lidar=self._lidar_sweeps(observation.pose),
+            lidar=sweeps,
+            t4_scene=self._t4_scene(sweeps),
         )
+
+    def _record_t4(
+        self,
+        world: "carla.World",
+        elapsed: float,
+        actor: "carla.Actor",
+        observation: EgoObservation,
+    ) -> None:
+        """Add the tick to the run's T4Scenes, with what the policy is told of
+        the ego then."""
+        from ..t4_scene.live import EgoExtras  # noqa: PLC0415
+
+        assert self._t4 is not None  # noqa: S101 - checked by the caller
+        steering: Optional[float]
+        try:
+            steering = _tire_steering_angle(actor)
+        except Exception:  # noqa: BLE001 - the scene goes on without it
+            steering = None
+        self._t4.record(
+            world,
+            elapsed,
+            EgoExtras(
+                acceleration_rig=observation.linear_acceleration[:2],
+                angular_velocity=observation.angular_velocity[:3],
+                tire_steering_angle=steering,
+                velocity_rig=observation.linear_velocity[:2],
+            ),
+        )
+
+    def _t4_scene(self, sweeps: Sequence[LidarSweep]) -> bytes:
+        """The run so far as a serialized T4Scene, the current sweep (the first
+        LiDAR's) on its last row; empty without ``driver.t4_scene``."""
+        if self._t4 is None:
+            return b""
+        points = None
+        age_ns = 0
+        if sweeps:
+            import numpy as np  # noqa: PLC0415
+
+            sweep = sweeps[0]
+            points = np.frombuffer(sweep.points_xyzi, dtype="<f4").reshape(-1, 4)
+            age_ns = (self._sim_time_us - int(sweep.timestamp_us)) * 1000
+        sent = self._road_ahead_in_map()
+        road_ahead = None if sent is None else sent[0]
+        scene = self._t4.scene(
+            self._scene_id,
+            lidar_points=points,
+            lidar_age_ns=age_ns,
+            road_ahead=road_ahead,
+            road_ahead_origin=None if sent is None else sent[1],
+            goal_pose=(
+                _far_end(road_ahead)
+                if self._config.t4_scene_goal == "road_ahead"
+                else self._goal_in_map
+            ),
+        )
+        return b"" if scene is None else scene.SerializeToString()
+
+    def _road_ahead_in_map(self) -> Any:
+        """The road ahead last sent and where the ego then was, ``(N, 2)`` and
+        ``(2,)`` in Autoware's ``map`` frame; ``None`` before one was.
+
+        Both as the egodriver observations carry them -- in single precision
+        -- which is what a policy reading those walked the lanelets with: two
+        lanelets meeting at a join are a micrometre apart there, and which the
+        walk takes turns on the rounding.
+        """
+        if self._road_ahead is None or not len(self._road_ahead[1]):
+            return None
+        import numpy as np  # noqa: PLC0415
+
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+        pose, waypoints = self._road_ahead
+        told = Pose.from_proto(pose.to_proto())
+        rig = np.asarray(waypoints, dtype=np.float32).astype(np.float64)
+        # The local frame is CARLA's with y flipped; the map's adds its offset.
+        offset = np.asarray(MapManager.get_instance().mgrs_offset, dtype=np.float64)
+        points = told.transform_points(rig)[:, :2] + offset
+        return points, told.position[:2] + offset
 
     def _submit_camera_frames(self) -> None:
         """Encode and send the latest frame from each camera."""
@@ -805,18 +936,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         }
 
 
-def _route_roads(
+def _route_lanelets(
     start: "CarlaWorldPose", stops: Sequence["Lanelet2Pose"]
-) -> Optional[Set[str]]:
-    """The OpenDRIVE roads of the lane route from *start* through *stops*.
+) -> Optional[List[int]]:
+    """The lanelets of the lane route from *start* through *stops*, in order.
 
-    The lanelets are :func:`~autoware_carla_scenario.odd.route_plan.route_lanelets`'s,
-    the route the ODD plans for the scenario, and their roads
-    :func:`~autoware_carla_scenario.coordinate.route_road_ids`': those outside
-    the junctions, which say which way each is crossed.  ``None``, said once,
-    when a stop is on no lane route from the one before or the map cannot answer.
+    They are :func:`~autoware_carla_scenario.odd.route_plan.route_lanelets`'s,
+    the route the ODD plans for the scenario.  ``None``, said once, when a stop
+    is on no lane route from the one before or the map cannot answer.
     """
-    from ..coordinate import route_road_ids, to_lanelet2  # noqa: PLC0415
+    from ..coordinate import to_lanelet2  # noqa: PLC0415
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
     from ..odd.route_plan import PlannedRoute, RouteError, route_lanelets  # noqa: PLC0415
 
@@ -825,7 +954,7 @@ def _route_roads(
         mm = MapManager.get_instance()
         route = PlannedRoute(start=to_lanelet2(start), goal=goal, via=via)
         lanelets = route_lanelets(route, mm.lanelet_map, mm.routing_graph)
-        return set(route_road_ids([int(lanelet.id) for lanelet in lanelets]))
+        return [int(lanelet.id) for lanelet in lanelets]
     except RouteError as error:
         logger.warning(
             "No lane route to the goal (%s): the policy's road ahead takes the "
@@ -839,6 +968,92 @@ def _route_roads(
             exc_info=True,
         )
     return None
+
+
+def _roads_of(lanelet_ids: List[int]) -> Optional[Set[str]]:
+    """The OpenDRIVE roads of a lanelet route,
+    :func:`~autoware_carla_scenario.coordinate.route_road_ids`': those outside
+    the junctions, which say which way each is crossed; ``None`` when the map
+    cannot answer."""
+    from ..coordinate import route_road_ids  # noqa: PLC0415
+
+    try:
+        return set(route_road_ids(lanelet_ids))
+    except Exception:
+        logger.warning(
+            "Could not read the roads of the route to the goal: the policy's road "
+            "ahead takes the first way at a fork",
+            exc_info=True,
+        )
+        return None
+
+
+def _in_map_frame(pose: "Lanelet2Pose") -> Optional[Tuple[float, float, float]]:
+    """*pose* as ``(x, y, yaw)`` in Autoware's ``map`` frame, a T4Scene's;
+    ``None`` when the map cannot place it."""
+    from ..coordinate import to_map_frame  # noqa: PLC0415
+
+    try:
+        placed = to_map_frame(pose)
+    except Exception:  # noqa: BLE001 - a scene goes on without its goal
+        logger.debug("Could not place the goal in the map frame", exc_info=True)
+        return None
+    q = placed.rotation
+    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+    return (float(placed.position.x), float(placed.position.y), yaw)
+
+
+#: A goal's heading is taken over at least this much road, so a last point
+#: duplicated (or nearly) by the walk's sampling cannot spin it.
+_GOAL_HEADING_SPAN_M = 0.5
+
+
+def _far_end(points: Any) -> Optional[Tuple[float, float, float]]:
+    """``(x, y, yaw)`` at the far end of a road's ``(N, 2)`` points, heading
+    along its last ``_GOAL_HEADING_SPAN_M``; ``None`` for a road shorter."""
+    if points is None or not len(points):
+        return None
+    end = points[-1]
+    for before in points[-2::-1]:
+        if math.hypot(end[0] - before[0], end[1] - before[1]) >= _GOAL_HEADING_SPAN_M:
+            yaw = math.atan2(end[1] - before[1], end[0] - before[0])
+            return (float(end[0]), float(end[1]), yaw)
+    return None
+
+
+def _tire_steering_angle(actor: "carla.Actor") -> float:
+    """The front tyres' angle, radians, positive to the left (Autoware's)."""
+    import typesafe_carla.carla as _carla  # noqa: PLC0415
+
+    wheels = _carla.VehicleWheelLocation
+    left = float(actor.get_wheel_steer_angle(wheels.FL_Wheel))
+    right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
+    # CARLA reports degrees, positive to the right.
+    return -math.radians(0.5 * (left + right))
+
+
+def _live_t4_scene(
+    config: DriverClientConfig, rear_axle_offset_m: float
+) -> "LiveT4Scene":
+    """The run's T4Scenes, as ``driver.t4_scene*`` asks for them.
+
+    Raises:
+        RuntimeError: If carla-driver-interface is too old to carry a scene.
+    """
+    from carla_driver_interface.protocol import carla_driver_pb2  # noqa: PLC0415
+
+    from ..t4_scene.live import LiveT4Scene  # noqa: PLC0415
+
+    if "t4_scene" not in carla_driver_pb2.CarlaRendererData.DESCRIPTOR.fields_by_name:
+        raise RuntimeError(
+            "driver.t4_scene needs carla-driver-interface 2.4 or later, which "
+            "carries CarlaRendererData.t4_scene"
+        )
+    return LiveT4Scene(
+        round(config.t4_scene_history_s / 0.1) + 1,
+        rear_axle_offset_m=rear_axle_offset_m,
+        wheel_base_m=config.t4_scene_wheel_base_m,
+    )
 
 
 class _CarriedActor:

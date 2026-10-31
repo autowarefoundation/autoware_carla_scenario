@@ -30,6 +30,47 @@ once however many cases ran on it). Like the log itself it is best effort: a
 log that cannot be converted is logged as a warning and the run's verdict
 stands.
 
+## To a driver policy, every step
+
+With `driver.t4_scene=true` (`ego.entity=carla_driver`), every drive also
+carries the run so far as a T4Scene, in `CarlaRendererData.t4_scene`
+(carla-driver-interface 2.4 and later), for a policy that plans from scenes --
+`carla_driver_interface`'s `T4SceneDriver`, which hands it to a devkit driver
+(`t4_e2e_devkit.driver.AbstractT4Driver`):
+
+```bash
+uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
+    driver.map_dir=/tmp/maps driver.t4_scene=true
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `driver.t4_scene` | bool | `false` | Send each drive's scene; needs `driver.map_dir` and `driver.send_renderer_data` |
+| `driver.t4_scene_history_s` | float | `3.0` | How far back a scene reaches, the current row aside |
+| `driver.t4_scene_wheel_base_m` | float or null | `null` | The ego's wheel base in the scenes' ego shape; `null` leaves it out |
+| `driver.t4_scene_goal` | `scenario` or `road_ahead` | `scenario` | The scenes' goal: where the scenario routes the ego (`route_to`; none without one), or the far end of the road ahead the policy is sent -- where a policy reading the egodriver observations has its goal |
+| `driver.t4_scene_map` | `run` or `map_set` | `run` | The scenes' map: the run's Lanelet2 map, or the map set's (`map_dir`: roadgen's from the world's OpenDRIVE, or `lanelet2_path`), the one a policy reading the egodriver observations is given. The route and the lights are placed on it |
+
+Each scene is what the log converts to (below), built as the run goes from the
+same records (`t4_scene.live`): the last rows on the 0.1 s grid, history only,
+the current one last, its states unrounded (the log keeps millimetres). A run
+younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
+a log does not: the ego's velocity and acceleration as the egodriver
+observations carry them (of `base_link`, the acceleration an estimate), body
+angular velocity, front tyres' angle and odometry times; the first LiDAR's
+current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
+0-255 scale, the fifth column zero); the route on every row -- the road ahead
+the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets
+as OnePlanner's egodriver policy walked it (drivable lanelets' centrelines,
+within 2.5 m and heading the same way; successors and lane changes from a
+vehicle routing graph, junction bound ends within 0.3 m welded; the points and
+the ego's pose in single precision, as the egodriver observations carry them),
+after the few the ego has just passed -- and the goal (`t4_scene_goal`). A policy
+reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the `t4`
+format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene
+references. Every other observation is sent as before: a policy that does not
+read scenes is unchanged.
+
 ## After a run
 
 ```bash
@@ -67,8 +108,8 @@ machine any more) has no `map` and no `traffic_lights`.
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
 | `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities`, `longitudinal_speeds`, `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
-| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego: its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
-| `traffic_lights` | Effective lane states: each lanelet a light governs, with its light's state (red 1, yellow 2, green 3, else unknown 0) |
+| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
+| `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |
 
 What the log does not hold is left out, never made up:
@@ -83,8 +124,7 @@ What the log does not hold is left out, never made up:
   the contract has them for the ego only.
 - **A vehicle's class** is `vehicle`: the log has its blueprint, not the
   `base_type` that says car, truck or bus.
-- **Raw signal groups** are not observed (`group_available` false): the log
-  has CARLA's lights, not the map's regulatory elements and their bulbs.
+- **A light's bulbs** beyond its one round lamp: CARLA's light has one state.
 - **No route and no goal.**
 - **An entity spawned hidden** is on the scene from its `spawn` record to its
   `despawn` record, not while it is parked out of sight.
@@ -104,14 +144,16 @@ What the log does not hold is left out, never made up:
   the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and
   `base_link_to_rear_axle` is 0.
-- A light governs a lanelet as `TrafficSignalAction` maps them: when it
-  switches an OpenDRIVE signal (its `opendrive_id`) of the controller named
-  after the lanelet's traffic-light regulatory element
-  (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention); else, for a
-  map without such controllers (roadgen's, say), when one of its stop-line
-  waypoints is within 2 m of the lanelet's stop line (its traffic-light
-  regulatory element's, else its end) and faces the lanelet's way -- the
-  nearest such light, when several are.
+- A light shows a traffic-light regulatory element when it switches an
+  OpenDRIVE signal (its `opendrive_id`) of the controller named after the
+  element (`Controller_TL_{id}`, the Lanelet2-to-OpenDRIVE convention, as
+  `TrafficSignalAction` maps them); else, for a map without such controllers
+  (roadgen's, carla-ue5-maps'), when one of its stop-line waypoints is on a
+  lanelet the element governs or within 50 m of lanelets before one -- the
+  first such light, in the log's order. That is how
+  `carla_driver_interface.hdmap` finds a light on a Lanelet2 map: CARLA puts
+  its stop waypoints where its own junction starts, often metres before the
+  map's stop line.
 
 `scenario-t4scene` reads a map once however many of its logs ran on it.
 

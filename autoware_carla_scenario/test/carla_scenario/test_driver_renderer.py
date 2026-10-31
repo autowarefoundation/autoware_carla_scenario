@@ -427,3 +427,25 @@ def test_yawed_ego_measures_the_light_along_its_heading() -> None:
 
     straight = math.hypot(35.0, 10.0)
     assert message.ego_traffic_light_distance_m < straight
+
+
+def test_a_t4_scene_rides_along() -> None:
+    builder = RendererDataBuilder(_world(), _ego(), DriverClientConfig())
+    message = carla_driver_pb2.CarlaRendererData()
+    message.ParseFromString(builder.build(1_000, Pose.identity(), t4_scene=b"scene"))
+    assert message.t4_scene == b"scene"
+    assert message.snapshot_timestamp_us == 1_000
+
+
+def test_a_t4_scene_rides_along_even_without_ground_truth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = RendererDataBuilder(_world(), _ego(), DriverClientConfig())
+
+    def fail(*args: object) -> None:
+        raise RuntimeError("CARLA hiccup")
+
+    monkeypatch.setattr(builder, "_build", fail)
+    message = carla_driver_pb2.CarlaRendererData()
+    message.ParseFromString(builder.build(1_000, Pose.identity(), t4_scene=b"scene"))
+    assert message.t4_scene == b"scene"

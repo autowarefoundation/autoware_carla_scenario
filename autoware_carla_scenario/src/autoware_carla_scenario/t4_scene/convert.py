@@ -11,7 +11,8 @@ Lanelet2 map the run was on as a separate ``MapResource``.
 
 What the log does not hold is left out, not invented: the ego's acceleration,
 angular velocity and steering, a route and a goal; a vehicle's
-class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``).
+class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``);
+a light's bulbs beyond its one round lamp's colour.
 A tick the log does not have (it skips a tick without road users) is a row
 whose ego, objects and lights are unavailable, never an interpolated one.
 """
@@ -36,6 +37,7 @@ from ..constants import EGO_ROLES, FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
 from ._proto import t4_scene_pb2 as pb
 from .map_resource import map_resource
+from .route import RouteGraph
 
 __all__ = [
     "LOG_SUFFIX",
@@ -58,20 +60,30 @@ MAP_SUFFIX = ".t4scene.map.pb"
 #: The contract's object categories this module writes (``Annotations.labels``).
 _VEHICLE = 1
 _PEDESTRIAN = 7
-#: The contract's effective lane states (``TrafficLights.lane_states``); any
-#: other CARLA state (``Off``, ``Unknown``) is UNKNOWN, 0.
-_LANE_STATES = {"red": 1, "yellow": 2, "green": 3}
+#: The contract's bulb colours (``TrafficLights.element_colors``) of CARLA's
+#: light states; any other (``Off``, ``Unknown``) is UNKNOWN, 0.
+_COLORS = {"red": 1, "yellow": 2, "green": 3}
+#: ``TrafficLights.element_shapes``: CARLA's lamp is one round bulb.
+_CIRCLE = 1
+#: ``TrafficLights.element_statuses``.
+_STATUS_UNKNOWN, _STATUS_OFF, _STATUS_ON = 0, 1, 2
+_STATUSES = {**dict.fromkeys(_COLORS, _STATUS_ON), "off": _STATUS_OFF}
 #: The contract's turn indicators (``EgoSequence.turn_indicators``) of the
 #: log's ``turn_indicators`` states.
 _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
-#: How far (m) a light's stop-line waypoint may be from the stop line of a
-#: lanelet it governs: ``TrafficSignalAction``'s ``STOP_LINE_MATCH_M``.
-_STOP_LINE_MATCH_M = 2.0
+#: How far (m) of lanelets past the one a light's stop waypoint is on its
+#: traffic light regulatory elements are looked for; and how near (m) a
+#: lanelet's start is to another's end to follow it.  As
+#: ``carla_driver_interface.hdmap`` finds a light on a Lanelet2 map: a policy
+#: that took its lights from there is shown the same lanelets lit.
+_LIGHT_SEARCH_M = 50.0
+_JOIN_M = 0.3
 
 _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
 _DTYPES = {
     "?": pb.NumericArray.BOOL,
     "i8": pb.NumericArray.INT64,
+    "f4": pb.NumericArray.FLOAT32,
     "f8": pb.NumericArray.FLOAT64,
 }
 #: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
@@ -124,6 +136,61 @@ class _Log:
         default_factory=dict
     )
     result: Optional[dict[str, Any]] = None
+    #: Ticks between the scene's rows: only the ticks on that grid are kept.
+    step_frames: int = 1
+    #: Every light's state as of the last tick fed, folded from the deltas.
+    current_lights: dict[int, str] = field(default_factory=dict)
+
+    def feed(self, record: Mapping[str, Any]) -> None:
+        """Take one trajectory-log record, as the log holds it, in order."""
+        kind = record.get("type")
+        if kind == "tick":
+            frame = int(record["frame"])
+            if self.first_frame < 0:
+                self.first_frame = frame
+            self.last_frame = frame
+            # Light states are deltas: fold every tick's in, grid or not,
+            # into a new dict, so the rows share one until a light changes.
+            changes = record.get("lights")
+            if changes:
+                self.current_lights = {
+                    **self.current_lights,
+                    **{int(i): str(v) for i, v in changes.items()},
+                }
+            if (frame - self.first_frame) % self.step_frames == 0:
+                states = np.asarray(record["actors"], dtype=np.float64).reshape(-1, 10)
+                self.rows[frame] = (states, self.current_lights)
+        elif kind == "actor":
+            self.actors[int(record["id"])] = _Actor(
+                type_id=str(record["type_id"]),
+                role=str(record.get("role") or ""),
+                extent=_xyz(record["extent"]),
+                center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
+            )
+        elif kind == "rear_axle":
+            self.rear_axles[int(record["id"])] = float(record["offset"])
+        elif kind == "turn_indicators":
+            for actor_id, state in record["states"].items():
+                changes = self.turn_indicators.setdefault(int(actor_id), ([], []))
+                changes[0].append(int(record["frame"]))
+                changes[1].append(str(state))
+        elif kind == "world":
+            self.world = dict(record)
+        elif kind == "map":
+            self.map = dict(record)
+        elif kind == "traffic_light":
+            self.lights.append(dict(record))
+        elif kind == "spawn" and record.get("id") is not None:
+            self.spawned.setdefault(int(record["id"]), int(record["frame"]))
+        elif kind == "despawn" and record.get("id") is not None:
+            self.despawned.setdefault(int(record["id"]), int(record["frame"]))
+        elif kind == "result":
+            self.result = dict(record)
+
+    def forget_before(self, frame: int) -> None:
+        """Drop the rows before *frame*: a live log keeps only a window."""
+        for old in [f for f in self.rows if f < frame]:
+            del self.rows[old]
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
         """The (N, 10) actor states of the tick on *frame*; none without one."""
@@ -141,8 +208,7 @@ class _Log:
 
 
 def _read_log(path: Path, step_frames: int) -> _Log:
-    log = _Log()
-    lights: dict[int, str] = {}
+    log = _Log(step_frames=step_frames)
     with path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
             if not line.strip():
@@ -153,48 +219,7 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                 raise ValueError(
                     f"{path}:{number}: not a JSON line ({error})"
                 ) from None
-            kind = record.get("type")
-            if kind == "tick":
-                frame = int(record["frame"])
-                if log.first_frame < 0:
-                    log.first_frame = frame
-                log.last_frame = frame
-                # Light states are deltas: fold every tick's in, grid or not,
-                # into a new dict, so the rows share one until a light changes.
-                changes = record.get("lights")
-                if changes:
-                    lights = {**lights, **{int(i): str(v) for i, v in changes.items()}}
-                if (frame - log.first_frame) % step_frames == 0:
-                    states = np.asarray(record["actors"], dtype=np.float64).reshape(
-                        -1, 10
-                    )
-                    log.rows[frame] = (states, lights)
-            elif kind == "actor":
-                log.actors[int(record["id"])] = _Actor(
-                    type_id=str(record["type_id"]),
-                    role=str(record.get("role") or ""),
-                    extent=_xyz(record["extent"]),
-                    center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
-                )
-            elif kind == "rear_axle":
-                log.rear_axles[int(record["id"])] = float(record["offset"])
-            elif kind == "turn_indicators":
-                for actor_id, state in record["states"].items():
-                    changes = log.turn_indicators.setdefault(int(actor_id), ([], []))
-                    changes[0].append(int(record["frame"]))
-                    changes[1].append(str(state))
-            elif kind == "world":
-                log.world = record
-            elif kind == "map":
-                log.map = record
-            elif kind == "traffic_light":
-                log.lights.append(record)
-            elif kind == "spawn" and record.get("id") is not None:
-                log.spawned.setdefault(int(record["id"]), int(record["frame"]))
-            elif kind == "despawn" and record.get("id") is not None:
-                log.despawned.setdefault(int(record["id"]), int(record["frame"]))
-            elif kind == "result":
-                log.result = record
+            log.feed(record)
     if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log
@@ -306,9 +331,24 @@ class _StopLine(NamedTuple):
     heading: float
 
 
+class _Lanes(NamedTuple):
+    """A Lanelet2 map's lanelets, as far as finding a light's lanelets takes:
+    each one's outline, length, traffic light regulatory elements and the
+    lanelets that start where it ends."""
+
+    ids: tuple[int, ...]
+    outlines: tuple[npt.NDArray[np.float64], ...]
+    #: ``(L, 4)``: each outline's min x, min y, max x, max y.
+    boxes: npt.NDArray[np.float64]
+    lengths: Mapping[int, float]
+    elements: Mapping[int, tuple[int, ...]]
+    successors: Mapping[int, tuple[int, ...]]
+
+
 class _Map(NamedTuple):
     """A run's map, ready for its scenes: the resource, the source file's
-    SHA-256, and the stop lines of the lanelets its lights govern."""
+    SHA-256, the stop lines of the lanelets its lights govern and the
+    lanelets a light's stop waypoint is looked up on."""
 
     resource: pb.MapResource
     digest: str
@@ -318,6 +358,10 @@ class _Map(NamedTuple):
     #: Lanelet2-to-OpenDRIVE convention ``TrafficSignalAction`` follows);
     #: empty without an OpenDRIVE file or such controllers.
     signals: Mapping[int, tuple[str, ...]]
+    lanes: _Lanes
+    #: The drivable lanelets' graph a live scene's route is walked on
+    #: (:meth:`RouteGraph.match`); ``None`` where the map was not read for one.
+    route: Optional[RouteGraph] = None
 
 
 @functools.lru_cache(maxsize=4)
@@ -333,16 +377,28 @@ def _read_map(
 
     lanelet_map = load_lanelet2_map(lanelet2_path, xodr_path, projector_type)
     digest = hashlib.sha256(lanelet2_path.read_bytes()).hexdigest()
-    stop_lines = tuple(_stop_lines(lanelet_map))
-    signals: dict[int, tuple[str, ...]] = {}
+    network = None
     if xodr_path is not None:
         from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
+
+        network = open_road_network(xodr_path)
+    loaded = map_of(lanelet_map, digest, network)
+    # Last: the graph moves the map's points, which this map is read for alone.
+    return loaded._replace(route=RouteGraph.of(lanelet_map))
+
+
+def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
+    """A loaded Lanelet2 map, ready for scenes: its resource, the stop lines of
+    the lanelets its lights govern, and -- with the OpenDRIVE *network* -- the
+    signals each light's controller switches.  *digest* names its source."""
+    stop_lines = tuple(_stop_lines(lanelet_map))
+    signals: dict[int, tuple[str, ...]] = {}
+    if network is not None:
         from ..utils.traffic_light import (  # noqa: PLC0415
             get_signal_ids_for_controller,
             lanelet2_traffic_light_id_to_opendrive_controller_id,
         )
 
-        network = open_road_network(xodr_path)
         for element_id in {i for line in stop_lines for i in line.traffic_lights}:
             controller = lanelet2_traffic_light_id_to_opendrive_controller_id(
                 network, element_id
@@ -351,7 +407,9 @@ def _read_map(
                 signals[element_id] = tuple(
                     get_signal_ids_for_controller(network, controller)
                 )
-    return _Map(map_resource(lanelet_map), digest, stop_lines, signals)
+    return _Map(
+        map_resource(lanelet_map), digest, stop_lines, signals, _lanes_of(lanelet_map)
+    )
 
 
 def _load_map(
@@ -442,59 +500,116 @@ def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
     return governed
 
 
-def _distance_to(
-    segments: npt.NDArray[np.float64], point: npt.NDArray[np.float64]
-) -> float:
-    """The distance from *point* to the nearest of (S, 2, 2) *segments*."""
-    start, along = segments[:, 0], segments[:, 1] - segments[:, 0]
-    t = ((point - start) * along).sum(axis=1) / np.maximum(
-        (along**2).sum(axis=1), 1e-12
+def _lanes_of(lanelet_map: Any) -> _Lanes:
+    """The lanelets of *lanelet_map*, read for :func:`_elements_ahead`."""
+    ids: list[int] = []
+    outlines: list[npt.NDArray[np.float64]] = []
+    lengths: dict[int, float] = {}
+    elements: dict[int, tuple[int, ...]] = {}
+    starts: dict[int, npt.NDArray[np.float64]] = {}
+    ends: dict[int, npt.NDArray[np.float64]] = {}
+    for lanelet in lanelet_map.laneletLayer:
+        left = np.array([(p.x, p.y) for p in lanelet.leftBound], dtype=np.float64)
+        right = np.array([(p.x, p.y) for p in lanelet.rightBound], dtype=np.float64)
+        if len(left) < 2 or len(right) < 2:
+            continue
+        ids.append(int(lanelet.id))
+        outlines.append(np.vstack([left, right[::-1]]))
+        lengths[ids[-1]] = 0.5 * float(
+            np.linalg.norm(np.diff(left, axis=0), axis=1).sum()
+            + np.linalg.norm(np.diff(right, axis=0), axis=1).sum()
+        )
+        elements[ids[-1]] = tuple(
+            int(element.id)
+            for element in lanelet.regulatoryElements
+            if "subtype" in element.attributes
+            and element.attributes["subtype"] == "traffic_light"
+        )
+        starts[ids[-1]] = (left[0] + right[0]) / 2
+        ends[ids[-1]] = (left[-1] + right[-1]) / 2
+    start_ids = list(starts)
+    start_points = np.array([starts[i] for i in start_ids]).reshape(-1, 2)
+    successors = {
+        lanelet_id: tuple(
+            start_ids[k]
+            for k in np.flatnonzero(np.hypot(*(start_points - end).T) < _JOIN_M)
+            if start_ids[k] != lanelet_id
+        )
+        for lanelet_id, end in ends.items()
+    }
+    boxes = np.array(
+        [[*o.min(axis=0), *o.max(axis=0)] for o in outlines], dtype=np.float64
+    ).reshape(-1, 4)
+    return _Lanes(tuple(ids), tuple(outlines), boxes, lengths, elements, successors)
+
+
+def _inside(point: npt.NDArray[np.float64], outline: npt.NDArray[np.float64]) -> bool:
+    """Whether *point* is inside the polygon *outline* (even-odd rule)."""
+    x, y = float(point[0]), float(point[1])
+    xs, ys = outline[:, 0], outline[:, 1]
+    xs2, ys2 = np.roll(xs, -1), np.roll(ys, -1)
+    crosses = (ys > y) != (ys2 > y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        at = xs + (y - ys) * (xs2 - xs) / (ys2 - ys)
+    return bool(np.count_nonzero(crosses & (x < at)) % 2)
+
+
+def _elements_ahead(lanes: _Lanes, point: npt.NDArray[np.float64]) -> list[int]:
+    """The traffic light regulatory elements of the first lanelets on or ahead
+    of the lanelets *point* is on that carry one: each branch stops at its
+    first such lanelet, or once ``_LIGHT_SEARCH_M`` of lanelets lie behind it
+    (``carla_driver_interface.hdmap``'s ``rules_ahead``)."""
+    b = lanes.boxes
+    near = np.flatnonzero(
+        (b[:, 0] <= point[0])
+        & (point[0] <= b[:, 2])
+        & (b[:, 1] <= point[1])
+        & (point[1] <= b[:, 3])
     )
-    nearest = start + np.clip(t, 0.0, 1.0)[:, None] * along
-    return float(np.hypot(*(nearest - point).T).min())
+    start = {lanes.ids[i] for i in near if _inside(point, lanes.outlines[i])}
+    found: dict[int, None] = {}
+    queue = [(lanelet_id, 0.0) for lanelet_id in sorted(start)]
+    seen: set[int] = set()
+    while queue:
+        lanelet_id, travelled = queue.pop(0)
+        if lanelet_id in seen:
+            continue
+        seen.add(lanelet_id)
+        if lanes.elements[lanelet_id]:
+            found.update(dict.fromkeys(lanes.elements[lanelet_id]))
+            continue
+        ahead = (
+            travelled if lanelet_id in start else travelled + lanes.lengths[lanelet_id]
+        )
+        if ahead <= _LIGHT_SEARCH_M:
+            queue += [(nxt, ahead) for nxt in lanes.successors[lanelet_id]]
+    return list(found)
 
 
-def _lane_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
-    """The CARLA light (its id) governing each lanelet that has a traffic
-    light: one switching an OpenDRIVE signal its regulatory element's
-    controller names, as ``TrafficSignalAction`` maps them; else, as its
-    fallback does, the nearest light with a stop-line waypoint on the
-    lanelet's stop line, facing the lanelet's way."""
+def _element_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
+    """The CARLA light (its id) each traffic light regulatory element shows.
+
+    One switching an OpenDRIVE signal the element's controller names, as
+    ``TrafficSignalAction`` maps them; else the first light, in the log's
+    order, with a stop waypoint on a lanelet the element governs or before
+    it (:func:`_elements_ahead`) -- where CARLA puts its stop waypoints, at
+    its own junction's start, is not where a Lanelet2 map draws the stop line.
+    """
     by_signal: dict[str, int] = {}
     for light in log.lights:
         if light.get("opendrive_id") is not None:
             by_signal.setdefault(str(light["opendrive_id"]), int(light["id"]))
-    stops = [
-        (
-            int(light["id"]),
-            frame.positions(np.array(stop[:3], dtype=np.float64))[:2],
-            -math.radians(float(stop[3])),
-        )
-        for light in log.lights
-        for stop in light.get("stops") or ()
-    ]
-    governed: dict[int, int] = {}
-    for line in loaded.stop_lines:
-        switched = [
-            by_signal[signal]
-            for element in line.traffic_lights
-            for signal in loaded.signals.get(element, ())
-            if signal in by_signal
-        ]
+    lights: dict[int, int] = {}
+    for element, signals in loaded.signals.items():
+        switched = [by_signal[signal] for signal in signals if signal in by_signal]
         if switched:
-            governed[line.lanelet_id] = switched[0]
-            continue
-        nearest = min(
-            (
-                (_distance_to(line.segments, point), light_id)
-                for light_id, point, yaw in stops
-                if math.cos(yaw - line.heading) >= 0.5
-            ),
-            default=None,
-        )
-        if nearest is not None and nearest[0] <= _STOP_LINE_MATCH_M:
-            governed[line.lanelet_id] = nearest[1]
-    return governed
+            lights[element] = switched[0]
+    for light in log.lights:
+        for stop in light.get("stops") or ():
+            point = frame.positions(np.array(stop[:3], dtype=np.float64))[:2]
+            for element in _elements_ahead(loaded.lanes, point):
+                lights.setdefault(element, int(light["id"]))
+    return lights
 
 
 def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
@@ -634,55 +749,58 @@ def _fill_annotations(
     positions, dimensions, headings, velocities, labels, track_ids, orientations = (
         np.concatenate(column) for column in zip(*rows)
     )
-    values = scene.annotations.values
-    values.positions.CopyFrom(_array(positions, "f8"))
-    values.dimensions.CopyFrom(_array(dimensions, "f8"))
-    values.headings.CopyFrom(_array(headings, "f8"))
-    values.velocities.CopyFrom(_array(velocities, "f8"))
-    values.labels.CopyFrom(_array(labels, "i8"))
-    values.orientations.CopyFrom(_array(orientations, "f8"))
-    values.track_ids.values.extend(pb.OptionalString(value=str(i)) for i in track_ids)
+    # Every road user is a box (the contract's other groups, cylinders and
+    # polygons, are left absent).
+    boxes = scene.annotations.values.boxes
+    boxes.positions.CopyFrom(_array(positions, "f8"))
+    boxes.dimensions.CopyFrom(_array(dimensions, "f8"))
+    boxes.headings.CopyFrom(_array(headings, "f8"))
+    boxes.velocities.CopyFrom(_array(velocities, "f8"))
+    boxes.labels.CopyFrom(_array(labels, "i8"))
+    boxes.orientations.CopyFrom(_array(orientations, "f8"))
+    boxes.track_ids.values.extend(pb.OptionalString(value=str(i)) for i in track_ids)
     counts = [len(row[0]) for row in rows]
-    scene.annotations.offsets.CopyFrom(
+    scene.annotations.box_offsets.CopyFrom(
         _array(np.concatenate([[0], np.cumsum(counts)]), "i8")
     )
     scene.annotations.available.CopyFrom(_array(available, "?"))
 
 
 def _fill_lights(
-    scene: pb.T4Scene, log: _Log, frames: Sequence[int], lane_lights: Mapping[int, int]
+    scene: pb.T4Scene, log: _Log, frames: Sequence[int], group_lights: Mapping[int, int]
 ) -> None:
-    """Write the effective state of each governed lanelet on every row.
+    """Write each traffic light regulatory element's lamp on every row.
 
-    Only effective lane states: the log has CARLA's lights, not the map's
-    regulatory elements and their bulbs, so raw groups are not observed
-    (``group_available``), rather than observed empty.
+    A group is a regulatory element of the map, its one element the round lamp
+    of the CARLA light it shows (:func:`_element_lights`): its colour, on --
+    off for CARLA's ``Off`` -- and unknown otherwise. A consumer derives the
+    lanelets' states from the map's regulatory elements, as for any source.
     """
-    lanes = sorted(lane_lights)
+    groups = sorted(group_lights)
     available = np.array([f in log.rows for f in frames])
-    states = np.array(
-        [
-            [
-                _LANE_STATES.get(log.rows[f][1].get(lane_lights[lane], "").lower(), 0)
-                for lane in lanes
-            ]
-            for f in frames
-            if f in log.rows
-        ],
-        dtype=np.int64,
-    ).reshape(-1)
-    lights = scene.traffic_lights
-    lights.values.lane_ids.CopyFrom(_array(np.tile(lanes, int(available.sum())), "i8"))
-    lights.values.lane_states.CopyFrom(_array(states, "i8"))
-    # A CARLA light is one round lamp: no lane's state comes from an arrow.
-    lights.values.lane_is_arrow.CopyFrom(_array(np.zeros(len(states)), "?"))
-    lights.group_offsets.CopyFrom(_array(np.zeros(len(frames) + 1), "i8"))
-    lights.lane_offsets.CopyFrom(
-        _array(np.concatenate([[0], np.cumsum(available * len(lanes))]), "i8")
+    colors: list[int] = []
+    statuses: list[int] = []
+    for carla_frame in frames:
+        if carla_frame not in log.rows:
+            continue
+        lights = log.rows[carla_frame][1]
+        for group in groups:
+            state = lights.get(group_lights[group], "").lower()
+            colors.append(_COLORS.get(state, 0))
+            statuses.append(_STATUSES.get(state, _STATUS_UNKNOWN))
+    rows = int(available.sum())
+    values = scene.traffic_lights.values
+    values.group_ids.CopyFrom(_array(np.tile(groups, rows), "i8"))
+    # One element per group.
+    values.element_offsets.CopyFrom(_array(np.arange(len(colors) + 1), "i8"))
+    values.element_colors.CopyFrom(_array(colors, "i8"))
+    values.element_shapes.CopyFrom(_array(np.full(len(colors), _CIRCLE), "i8"))
+    values.element_statuses.CopyFrom(_array(statuses, "i8"))
+    values.element_confidences.CopyFrom(_array(np.ones(len(colors)), "f8"))
+    scene.traffic_lights.group_offsets.CopyFrom(
+        _array(np.concatenate([[0], np.cumsum(available * len(groups))]), "i8")
     )
-    lights.available.CopyFrom(_array(available, "?"))
-    lights.group_available.CopyFrom(_array(np.zeros(len(frames)), "?"))
-    lights.lane_available.CopyFrom(_array(available, "?"))
+    scene.traffic_lights.available.CopyFrom(_array(available, "?"))
 
 
 def trajectory_log_to_t4_scene(
@@ -732,23 +850,80 @@ def trajectory_log_to_t4_scene(
             f"step_s={step_s} is not a multiple of the log's tick ({FIXED_DELTA_SECONDS} s)"
         )
     log = _read_log(path, step_frames)
-    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
-    if ego_id is None:
-        raise ValueError(f"{path} has no ego (an actor whose role is 'ego' or 'hero')")
-    ego = log.actors[ego_id]
     frames = list(range(log.first_frame, log.last_frame + 1, step_frames))
     if not -len(frames) <= current_index < len(frames):
         raise ValueError(
             f"current_index={current_index} is outside the scene's {len(frames)} rows"
         )
-
-    scene = pb.T4Scene(current_index=current_index % len(frames))
     stem = (
         path.name[: -len(LOG_SUFFIX)] if path.name.endswith(LOG_SUFFIX) else path.stem
     )
+    loaded = None
+    if with_map:
+        loaded = _load_map(
+            log,
+            None if lanelet2_path is None else Path(lanelet2_path),
+            None if xodr_path is None else Path(xodr_path),
+            projector_type,
+        )
+    scene = log_to_scene(
+        log,
+        frames,
+        current_index % len(frames),
+        stem,
+        loaded,
+        max_distance_m=max_distance_m,
+        rear_axle_offset_m=rear_axle_offset_m,
+        source=str(path),
+    )
+    return T4SceneExport(
+        scene=scene, map_resource=None if loaded is None else loaded.resource
+    )
+
+
+def ego_of(log: _Log, source: str = "the log") -> int:
+    """The id of *log*'s ego.
+
+    Raises:
+        ValueError: If it has none.
+    """
+    ego_id = next((i for i, actor in log.actors.items() if _is_ego(actor.role)), None)
+    if ego_id is None:
+        raise ValueError(
+            f"{source} has no ego (an actor whose role is 'ego' or 'hero')"
+        )
+    return ego_id
+
+
+def log_to_scene(
+    log: _Log,
+    frames: Sequence[int],
+    current_index: int,
+    stem: str,
+    loaded: Optional[_Map],
+    *,
+    max_distance_m: Optional[float] = 100.0,
+    rear_axle_offset_m: Optional[float] = None,
+    source: str = "the log",
+    element_lights: Optional[Mapping[int, int]] = None,
+) -> pb.T4Scene:
+    """The scene of *log*'s rows on *frames* (CARLA frames on its grid), its
+    decision anchor at *current_index*: what :func:`trajectory_log_to_t4_scene`
+    writes, from a log read whole or fed live; *loaded* is its map, if any.
+    *element_lights* is :func:`_element_lights` of the log and map, when the
+    caller keeps it; worked out here otherwise.
+
+    Raises:
+        ValueError: If the log has no ego.
+    """
+    ego_id = ego_of(log, source)
+    ego = log.actors[ego_id]
+    scene = pb.T4Scene(current_index=current_index)
     _fill_metadata(scene, log, stem)
+    # Nanoseconds since the log's first tick: one clock for every scene of a
+    # run, however late its rows start.
     scene.timestamps_ns.CopyFrom(
-        _array([(f - frames[0]) * _TICK_NS for f in frames], "i8")
+        _array([(f - log.first_frame) * _TICK_NS for f in frames], "i8")
     )
     scene.frame_indices.CopyFrom(_array(frames, "i8"))
     _register_in_map_frame(scene)
@@ -761,25 +936,18 @@ def trajectory_log_to_t4_scene(
         rear_axle = log.rear_axles.get(ego_id, -0.5 * ego.extent[0])
     ego_origins = _fill_ego(scene, log, frames, ego_id, ego, frame, rear_axle)
     _fill_annotations(scene, log, frames, ego_id, ego_origins, frame, max_distance_m)
-
-    loaded = None
-    if with_map:
-        loaded = _load_map(
-            log,
-            None if lanelet2_path is None else Path(lanelet2_path),
-            None if xodr_path is None else Path(xodr_path),
-            projector_type,
-        )
     if loaded is None:
-        return T4SceneExport(scene=scene, map_resource=None)
+        return scene
     reference = scene.map
     reference.sha256 = loaded.resource.sha256
     reference.scope = pb.MapReference.FULL
     reference.has_elevation = True
     reference.map_id = f"lanelet2-sha256:{loaded.digest}"
     _register_in_map_frame(reference)
-    _fill_lights(scene, log, frames, _lane_lights(log, loaded, frame))
-    return T4SceneExport(scene=scene, map_resource=loaded.resource)
+    if element_lights is None:
+        element_lights = _element_lights(log, loaded, frame)
+    _fill_lights(scene, log, frames, element_lights)
+    return scene
 
 
 def write_t4_scene(

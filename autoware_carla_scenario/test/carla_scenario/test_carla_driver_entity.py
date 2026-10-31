@@ -11,7 +11,7 @@ import importlib.util
 import math
 from concurrent import futures
 from types import SimpleNamespace
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
 
 import grpc
@@ -1373,3 +1373,140 @@ def test_without_a_goal_the_road_ahead_takes_the_first_way() -> None:
     entity, _ = _entity()
 
     assert entity._route_roads is None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# T4Scenes (driver.t4_scene)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLiveScene:
+    """What the entity asks of its LiveT4Scene, recorded."""
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.ticks: list = []
+        self.asked: list = []
+        self.map_resource = None
+
+    def start(self, world) -> None:
+        self.started += 1
+
+    def record(self, world, elapsed, extras) -> None:
+        self.ticks.append((elapsed, extras))
+
+    def scene(self, stem, **kwargs):
+        from autoware_carla_scenario.t4_scene._proto import t4_scene_pb2
+
+        self.asked.append(kwargs)
+        return t4_scene_pb2.T4Scene(current_index=len(self.ticks) - 1)
+
+
+class _FakeRenderer:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def build(self, timestamp_us, pose, lidar=(), t4_scene=b"") -> bytes:
+        data = carla_driver_pb2.CarlaRendererData(snapshot_timestamp_us=timestamp_us)
+        data.t4_scene = t4_scene
+        return data.SerializeToString()
+
+
+def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.entity import carla_driver_entity as module
+    from autoware_carla_scenario.t4_scene._proto import t4_scene_pb2
+
+    live = _FakeLiveScene()
+    monkeypatch.setattr(module, "_live_t4_scene", lambda config, offset: live)
+    monkeypatch.setattr(module, "RendererDataBuilder", _FakeRenderer)
+    monkeypatch.setattr(CarlaDriverEntity, "_write_map", lambda self: "town-1")
+    monkeypatch.setattr(module, "_tire_steering_angle", lambda actor: 0.02)
+    sent: list = []
+
+    def road_ahead_in_map(self: CarlaDriverEntity) -> Any:
+        sent.append(self._road_ahead)  # noqa: SLF001
+        return "the road ahead", "where the ego was"
+
+    monkeypatch.setattr(CarlaDriverEntity, "_road_ahead_in_map", road_ahead_in_map)
+    entity, client = _entity(
+        policy_timestep_s=0.1,
+        send_renderer_data=True,
+        map_dir="/maps",
+        t4_scene=True,
+    )
+    entity._goal_in_map = (1.0, 2.0, 0.5)  # noqa: SLF001
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    for tick in range(3):
+        entity.on_tick(world, (tick + 1) * _TICK_S)
+
+    assert live.started == 1
+    # Every tick, with what the policy is told of the ego.
+    assert len(live.ticks) == 3
+    assert live.ticks[-1][1].tire_steering_angle == 0.02
+    # Every drive (ticks 1 and 3 at 0.1 s), with the route and goal.
+    assert len(client.renderer_payloads) == 2
+    for payload, ticks in zip(client.renderer_payloads, (1, 3)):
+        data = carla_driver_pb2.CarlaRendererData.FromString(payload)
+        scene = t4_scene_pb2.T4Scene.FromString(data.t4_scene)
+        assert scene.current_index == ticks - 1
+    # The road ahead the policy was sent this step, on the scene's lanelets.
+    assert live.asked[-1]["road_ahead"] == "the road ahead"
+    assert live.asked[-1]["road_ahead_origin"] == "where the ego was"
+    assert all(road is not None and len(road[1]) for road in sent)
+    assert live.asked[-1]["goal_pose"] == (1.0, 2.0, 0.5)
+    entity.on_scenario_end(world)
+    assert entity._t4 is None  # noqa: SLF001
+
+
+def test_route_to_keeps_the_routes_roads_and_the_goal_for_the_scenes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.entity import carla_driver_entity as module
+
+    monkeypatch.setattr(module, "_route_lanelets", lambda start, stops: [10, 11, 12])
+    monkeypatch.setattr(module, "_roads_of", lambda ids: {f"r{i}" for i in ids})
+    monkeypatch.setattr(module, "_in_map_frame", lambda pose: (5.0, 6.0, 0.25))
+    entity, _ = _entity()
+    entity.route_to(_world_with_route(), Lanelet2Pose(lanelet_id=12, s=0.0))
+
+    assert entity._route_roads == {"r10", "r11", "r12"}  # noqa: SLF001
+    assert entity._goal_in_map == (5.0, 6.0, 0.25)  # noqa: SLF001
+
+
+def test_the_road_aheads_far_end_heads_along_its_last_half_metre() -> None:
+    from autoware_carla_scenario.entity.carla_driver_entity import _far_end
+
+    road = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [10.0, 10.1]])
+    end = _far_end(road)
+    assert end is not None
+    x, y, yaw = end
+    assert (x, y) == (10.0, 10.1) and yaw == pytest.approx(math.pi / 2)
+    assert _far_end(np.array([[0.0, 0.0], [0.1, 0.0]])) is None
+    assert _far_end(None) is None
+
+
+def test_the_road_ahead_is_put_on_the_map_as_the_policy_was_told_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    mm = SimpleNamespace(mgrs_offset=(100.0, 200.0))
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    entity, _ = _entity()
+    pose = Pose.from_xyz_yaw(109.887769185, 0.810520982, 0.0, math.pi / 2)
+    entity._road_ahead = (pose, np.array([[1.4000001, 0.0, 0.0]]))  # noqa: SLF001
+    points, origin = entity._road_ahead_in_map()  # noqa: SLF001
+    # Single precision, as the egodriver observations carry them.
+    x32, y32 = float(np.float32(109.887769185)), float(np.float32(0.810520982))
+    np.testing.assert_allclose(origin, [x32 + 100.0, y32 + 200.0], rtol=0, atol=1e-9)
+    assert origin[0] != 109.887769185 + 100.0
+    np.testing.assert_allclose(
+        points,
+        [[x32 + 100.0, y32 + float(np.float32(1.4000001)) + 200.0]],
+        rtol=0,
+        atol=1e-6,
+    )
