@@ -927,12 +927,16 @@ def _plan_is_finite(
     """Whether *plan*'s poses, and its own *velocities* and *accelerations* when
     given, are all finite: a policy's NaN must not reach the controllers."""
     for pose in plan.poses:
-        if not (
-            bool(np.isfinite(pose.position).all())
-            and bool(np.isfinite(pose.quat_xyzw).all())
-        ):
+        if not _pose_is_finite(pose):
             return False
     return _all_finite(velocities) and _all_finite(accelerations)
+
+
+def _pose_is_finite(pose: Pose) -> bool:
+    """Whether *pose*'s position and orientation are all finite."""
+    return bool(np.isfinite(pose.position).all()) and bool(
+        np.isfinite(pose.quat_xyzw).all()
+    )
 
 
 def _diff_limit(
@@ -1127,7 +1131,7 @@ class TrajectoryFollower:
             A plan that is not all finite (a pose, or ``pid``, a given speed or
             acceleration that is NaN or infinite) is refused the same way: the last
             plan is tracked on, and with none yet, a full stop.  A non-finite yaw
-            rate is not fed back; a non-finite speed or time step, or a command
+            rate is not fed back; a non-finite speed, time step or ego pose, or a command
             that comes out non-finite, gives :meth:`_fallback` (no throttle, the
             stop brake, the steering held), the controllers' state untouched.
             Each is logged, the first time and then once in a hundred.
@@ -1147,8 +1151,13 @@ class TrajectoryFollower:
             plan_in_local = last
             plan_velocities_mps = self._last_given
             plan_accelerations_mps2 = self._last_given_accelerations
-        if not (math.isfinite(current_speed_mps) and math.isfinite(dt_s)):
-            self._refuse_non_finite("speed or time step")
+        if not (
+            math.isfinite(current_speed_mps)
+            and math.isfinite(dt_s)
+            and _pose_is_finite(pose_local_to_rig)
+        ):
+            # The ego's pose too: a NaN one would put NaN speeds on the plan.
+            self._refuse_non_finite("speed, time step or pose")
             return self._fallback()
         if yaw_rate_rps is not None and not math.isfinite(yaw_rate_rps):
             self._refuse_non_finite("yaw rate")

@@ -973,6 +973,56 @@ def test_a_non_finite_speed_or_step_brakes_and_keeps_the_state(
 
 
 @pytest.mark.parametrize("controller", _CONTROLLERS)
+@pytest.mark.parametrize("bad", [math.nan, math.inf])
+def test_a_non_finite_ego_pose_brakes_and_keeps_the_state(
+    controller: str, bad: float
+) -> None:
+    """A NaN ego pose would put NaN speeds on the plan, kept with it while it lasts."""
+    config = ControlConfig(longitudinal_controller=controller)
+    follower = _follower(config)
+    plan = _policy_plan(0.5)
+    _drive(follower, [plan] * 3)
+    steer = follower._previous_steer  # noqa: SLF001
+    # (A Pose cannot be built with a NaN orientation.)
+    command = follower.step(
+        plan,
+        Pose(np.array([bad, 0.0, 0.0]), np.array([0.0, 0.0, 0.0, 1.0])),
+        8.0,
+        _DT_S,
+        yaw_rate_rps=0.0,
+        now_us=0,
+    )
+    assert command == VehicleCommand(steer=steer, brake=config.stop_brake)
+    after = _drive(follower, [plan] * 3)
+    assert after == _drive(_follower(config), [plan] * 6)[3:]
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+def test_a_refused_plan_past_the_last_ones_end_is_tracked_sanely(
+    controller: str,
+) -> None:
+    """The last good plan, tracked on after a refusal, is in the past by then (as
+    a cached plan is while a policy is slow): tracked as it is, to its end, with
+    no non-finite command."""
+    follower = _follower(ControlConfig(longitudinal_controller=controller))
+    follower.step(_policy_plan(), Pose.identity(), 8.0, _DT_S, now_us=0)
+    for x_m, now_us in ((10.0, 2_000_000), (31.0, 10_000_000), (31.9, 60_000_000)):
+        command = follower.step(
+            _policy_plan(math.nan),
+            Pose.from_xyz_yaw(x_m, 0.0, 0.0, 0.0),
+            8.0,
+            _DT_S,
+            yaw_rate_rps=0.0,
+            now_us=now_us,
+        )
+        assert all(
+            math.isfinite(value)
+            for value in (command.throttle, command.steer, command.brake)
+        )
+        assert command.steer == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
 def test_a_non_finite_command_is_replaced_by_the_brake(controller: str) -> None:
     config = ControlConfig(longitudinal_controller=controller)
     follower = _follower(config)
