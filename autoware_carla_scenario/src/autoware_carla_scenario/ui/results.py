@@ -215,6 +215,8 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
     if cached is not None and cached[0] == stamp:
         return cached[1]
     extents: dict[int, tuple[float, float]] = {}
+    # Each box's offset from its actor's origin (none in older logs).
+    centers: dict[int, tuple[float, float]] = {}
     ego: int | None = None
     drive = DriveMetrics()
     try:
@@ -226,6 +228,8 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                 if record.get("type") == "actor":
                     extent = record.get("extent") or [0.0, 0.0]
                     extents[int(record["id"])] = (float(extent[0]), float(extent[1]))
+                    center = record.get("center") or [0.0, 0.0]
+                    centers[int(record["id"])] = (float(center[0]), float(center[1]))
                     if str(record.get("role", "")).lower() == "ego":
                         ego = int(record["id"])
                     continue
@@ -245,7 +249,13 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                     continue
                 t = float(record["t"])
                 speed = math.hypot(float(me[7]), float(me[8])) * 3.6
-                ego_box = _box(me[1], me[2], me[6], extents.get(ego, (2.4, 1.0)))
+                ego_box = _box(
+                    me[1],
+                    me[2],
+                    me[6],
+                    extents.get(ego, (2.4, 1.0)),
+                    centers.get(ego, (0.0, 0.0)),
+                )
                 for other, state in states.items():
                     # A road user parked under the map (hidden) is out of
                     # the scene.
@@ -259,6 +269,7 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                                 state[2],
                                 state[6],
                                 extents.get(other, (0.3, 0.3)),
+                                centers.get(other, (0.0, 0.0)),
                             ),
                         )
                     )
