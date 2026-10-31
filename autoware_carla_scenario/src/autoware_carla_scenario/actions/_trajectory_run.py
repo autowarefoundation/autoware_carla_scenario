@@ -1271,16 +1271,18 @@ def _vehicle_in_way(
 ) -> bool:
     """Whether another vehicle stands in *actor*'s way within its stopping
     distance (braking at 4 m/s²) past its own front and 2 m more, across its
-    width and 0.3 m."""
-    from ..utils.clearance import first_in_way  # noqa: PLC0415
+    width and 0.3 m, looked along from its bounding box's centre."""
+    from ..utils.clearance import actor_box_centre, first_in_way  # noqa: PLC0415
 
     try:
         extent = actor.bounding_box.extent
+        # From its box's centre, which its half length is measured from.
+        x, y = actor_box_centre(actor, transform)
         found = first_in_way(
             actor.get_world(),
             int(actor.id),
-            transform.location.x,
-            transform.location.y,
+            x,
+            y,
             transform.rotation.yaw,
             "vehicle",
             speed * speed / 8.0 + float(extent.x) + 2.0,

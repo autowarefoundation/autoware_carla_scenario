@@ -9,6 +9,12 @@ approach) went straight into whatever stood there.  :func:`first_in_way`
 answers for them, from one world snapshot a frame shared by every caller --
 the positions of all actors in one call -- and actor kinds and sizes read
 once per actor.
+
+An actor's bounding box is not centred on its origin: CARLA places it at
+``bounding_box.location`` in the actor's own frame (a car's sits about a
+metre forward of its origin, between the axles).  Every rectangle here is
+centred on the box -- the origin turned by the actor's heading and moved by
+that offset (:func:`box_centre`) -- not on the origin (#884).
 """
 
 from __future__ import annotations
@@ -19,14 +25,22 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["Obstacle", "claim_spot", "first_in_way", "overlaps"]
+__all__ = [
+    "Obstacle",
+    "actor_box_centre",
+    "box_centre",
+    "claim_spot",
+    "first_in_way",
+    "overlaps",
+]
 
 #: An actor this far (m) or more below the ground is out of the world.
 _HIDDEN_BELOW_M = -100.0
 
 
 class Obstacle:
-    """An actor in the way: where, how big (radius, m) and how fast."""
+    """An actor in the way: where (its bounding box's centre), how big
+    (radius, m) and how fast."""
 
     def __init__(
         self, actor_id: int, x: float, y: float, radius: float, speed: float
@@ -52,8 +66,13 @@ class _Cache:
         self.yaws: dict[int, float] = {}
         #: Each road user's half length and half width (m), by id.
         self.boxes: dict[int, tuple[float, float]] = {}
+        #: Each road user's bounding box offset from its origin, forward and
+        #: to the right (m, its own frame: CARLA's ``bounding_box.location``),
+        #: by id.
+        self.offsets: dict[int, tuple[float, float]] = {}
         #: Spots road users were put on this frame, which its snapshot does
-        #: not show yet: ``(id, x, y, yaw, half length, half width)``.
+        #: not show yet: ``(id, box centre x, y, yaw, half length, half
+        #: width)``.
         self.claims: list[tuple[int, float, float, float, float, float]] = []
         self.claims_frame = -1
 
@@ -69,6 +88,7 @@ def _states(world: "carla.World") -> list[tuple[int, float, float, float, float]
     if episode != _CACHE.episode:
         _CACHE.kinds = {}
         _CACHE.boxes = {}
+        _CACHE.offsets = {}
         _CACHE.episode = episode
         _CACHE.frame = -1  # a new episode's frames are read afresh
     if frame != _CACHE.frame:
@@ -109,8 +129,77 @@ def _kind(world: "carla.World", actor_id: int) -> tuple[str, float]:
                 extent = actor.bounding_box.extent
                 radius = math.hypot(float(extent.x), float(extent.y))
                 _CACHE.boxes[actor_id] = (float(extent.x), float(extent.y))
+                _CACHE.offsets[actor_id] = _offset_of(actor)
         _CACHE.kinds[actor_id] = (kind, radius)
     return _CACHE.kinds[actor_id]
+
+
+def _offset_of(actor: "carla.Actor") -> tuple[float, float]:
+    """*actor*'s bounding box offset from its origin, forward and to the
+    right (m): ``(0, 0)`` where it has none to read."""
+    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
+    try:
+        location = actor.bounding_box.location
+        return float(location.x), float(location.y)
+    except AttributeError:
+        return 0.0, 0.0
+
+
+def _turned(
+    x: float, y: float, yaw_deg: float, offset: tuple[float, float]
+) -> tuple[float, float]:
+    """``(x, y)`` moved by *offset* -- forward and to the right -- of a body
+    facing *yaw_deg* (CARLA's frame, left-handed: +y is right of +x)."""
+    forward, right = offset
+    if forward == 0.0 and right == 0.0:
+        return x, y
+    heading = math.radians(yaw_deg)
+    cos_h, sin_h = math.cos(heading), math.sin(heading)
+    return (
+        x + forward * cos_h - right * sin_h,
+        y + forward * sin_h + right * cos_h,
+    )
+
+
+def _centre(actor_id: int, x: float, y: float) -> tuple[float, float]:
+    """Where *actor_id*'s bounding box is centred this frame, its origin at
+    ``(x, y)`` (its offset read by :func:`_kind`)."""
+    return _turned(
+        x,
+        y,
+        _CACHE.yaws.get(actor_id, 0.0),
+        _CACHE.offsets.get(actor_id, (0.0, 0.0)),
+    )
+
+
+def box_centre(
+    world: "carla.World", actor_id: int, x: float, y: float, yaw_deg: float
+) -> tuple[float, float]:
+    """Where road user *actor_id*'s bounding box would be centred with its
+    origin put at CARLA ``(x, y)`` facing *yaw_deg*: the rectangle
+    :func:`overlaps` and :func:`claim_spot` take for one about to be put
+    there.  ``(x, y)`` itself for an actor not in the world, or one that is
+    neither a vehicle nor a walker, and for no actor (a negative id): a prop
+    not spawned yet, whose blueprint carries no bounding box to read (CARLA
+    knows an actor's box only once it stands in the world)."""
+    if actor_id < 0:
+        return x, y
+    _states(world)
+    _kind(world, actor_id)
+    return _turned(x, y, yaw_deg, _CACHE.offsets.get(actor_id, (0.0, 0.0)))
+
+
+def actor_box_centre(
+    actor: "carla.Actor", transform: "carla.Transform"
+) -> tuple[float, float]:
+    """Where *actor*'s bounding box is centred, *transform* being where the
+    actor is: what a vehicle looks ahead from."""
+    return _turned(
+        float(transform.location.x),
+        float(transform.location.y),
+        float(transform.rotation.yaw),
+        _offset_of(actor),
+    )
 
 
 def claim_spot(
@@ -122,9 +211,10 @@ def claim_spot(
     half_length: float,
     half_width: float,
 ) -> None:
-    """Note that *actor_id* is being put at CARLA ``(x, y)`` this frame:
-    :func:`overlaps` counts it there before the world's next snapshot shows
-    it (two entities due at one spot on the same tick do not both appear)."""
+    """Note that *actor_id* is being put, its bounding box centred at CARLA
+    ``(x, y)`` (:func:`box_centre`), this frame: :func:`overlaps` counts it
+    there before the world's next snapshot shows it (two entities due at one
+    spot on the same tick do not both appear)."""
     frame = int(world.get_snapshot().frame)
     if frame != _CACHE.claims_frame:
         _CACHE.claims = []
@@ -144,9 +234,10 @@ def overlaps(
 ) -> Optional[int]:
     """The id of a vehicle or walker whose outline (a rectangle, its
     bounding box) comes within *margin* of the rectangle *half_length* by
-    *half_width* at CARLA ``(x, y)`` facing *yaw_deg*, or ``None``: a road
-    user standing where one of that size would be put.  One in the lane
-    beside it does not count, as a circle round each would."""
+    *half_width* centred at CARLA ``(x, y)`` facing *yaw_deg*, or ``None``:
+    a road user standing where one of that size would be put (its box
+    centred there: :func:`box_centre`).  One in the lane beside it does not
+    count, as a circle round each would."""
     reach = math.hypot(half_length, half_width) + margin
     mine = (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin)
     states = _states(world)
@@ -160,7 +251,10 @@ def overlaps(
         if actor_id == self_id or oz < _HIDDEN_BELOW_M:
             continue
         kind, size = _kind(world, actor_id)
-        if not kind or math.hypot(ox - x, oy - y) > reach + size:
+        if not kind:
+            continue
+        ox, oy = _centre(actor_id, ox, oy)
+        if math.hypot(ox - x, oy - y) > reach + size:
             continue
         other_length, other_width = _CACHE.boxes.get(actor_id, (size, size))
         if _rectangles_meet(
@@ -230,6 +324,8 @@ def first_box_in_way(
         found_kind, radius = _kind(world, actor_id)
         if found_kind != kind:
             continue
+        ox, oy = _centre(actor_id, ox, oy)
+        dx, dy = ox - x, oy - y
         length, width = _CACHE.boxes.get(actor_id, (radius, radius))
         yaw = math.radians(_CACHE.yaws.get(actor_id, 0.0))
         if not _rectangles_meet(mine, (ox, oy, yaw, length, width)):
@@ -268,6 +364,8 @@ def first_in_way(
         found_kind, radius = _kind(world, actor_id)
         if found_kind != kind:
             continue
+        ox, oy = _centre(actor_id, ox, oy)
+        dx, dy = ox - x, oy - y
         ahead = dx * cos_h + dy * sin_h
         side = -dx * sin_h + dy * cos_h
         if ahead + radius <= 0.0 or ahead - radius > distance:

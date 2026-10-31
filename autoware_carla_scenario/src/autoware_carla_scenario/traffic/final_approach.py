@@ -17,6 +17,7 @@ import math
 from typing import TYPE_CHECKING, List, Optional
 
 from ..trajectory.model import ResolvedTrajectory
+from ..utils.clearance import actor_box_centre as _box_centre
 from ..utils.vehicles import as_vehicle
 
 if TYPE_CHECKING:
@@ -334,13 +335,15 @@ class FinalApproach:
             world = self._actor.get_world()
             own = int(self._actor.id)
             transform = self._actor.get_transform()
+            centre = _box_centre(self._actor, transform)
             behind = (
-                float(transform.location.x),
-                float(transform.location.y),
+                centre[0],
+                centre[1],
                 float(transform.rotation.yaw),
-                # Its centre: one whose centre is behind its own is not in
-                # its way going on, however near its corner (vehicle_56 at
-                # vehicle_58's rear, each waiting on the other).
+                # Its centre -- its bounding box's, as the other's is: one
+                # whose centre is behind its own is not in its way going on,
+                # however near its corner (vehicle_56 at vehicle_58's rear,
+                # each waiting on the other).
                 0.0,
             )
         except (AttributeError, RuntimeError):

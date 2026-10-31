@@ -36,7 +36,11 @@ class PlaceClearCondition(BaseCondition):
     looked at).  An actor parked under the map (spawned out of sight) does
     not count; one put on the place this very tick, which the world's snapshot
     does not show yet, does.  Typically an entity's appearance spot, so that it
-    is not brought in on top of another road user.
+    is not brought in on top of another road user.  Other road users'
+    outlines are their bounding boxes where they stand, ahead of a car's
+    origin; the rectangle itself is centred on *position*, no actor's box
+    being known to it (a vehicle spawned on *position* puts its origin there,
+    its body a metre or so further on).
 
     Args:
         position: The place's centre: a Lanelet2 pose, or any position a

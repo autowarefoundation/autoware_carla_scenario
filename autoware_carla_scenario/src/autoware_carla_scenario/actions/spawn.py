@@ -80,7 +80,9 @@ SHIFT_STEP_M: float = 2.0
 #: Metres a prop on the road surface is raised, so CARLA does not refuse it
 #: as colliding with the ground.
 _LIFT_M = 0.05
-#: Half the size (m) a prop is taken to have where its place is looked at.
+#: Half the size (m) a prop is taken to have where its place is looked at,
+#: centred on its origin: not spawned yet, it has no bounding box (nor its
+#: offset) to read -- a CARLA blueprint carries none.
 _PROP_HALF_M = 0.5
 #: The braking (m/s²) a place entered at speed has to leave room ahead for.
 _ENTRY_BRAKING_MPS2 = 4.0
@@ -675,14 +677,19 @@ def _taken(
     half_width: float,
     ahead: float = 0.0,
 ) -> int:
-    """The id of a road user whose outline overlaps the rectangle at CARLA
-    ``(x, y)`` facing *yaw*, stretched *ahead* m further forward (the room to
-    stop in), with a 0.3 m margin; or ``-1``."""
-    from ..utils.clearance import overlaps  # noqa: PLC0415
+    """The id of a road user whose outline overlaps the rectangle of
+    *actor_id* put with its origin at CARLA ``(x, y)`` facing *yaw* -- centred
+    on its bounding box, a car's ahead of its origin -- stretched *ahead* m
+    further forward (the room to stop in), with a 0.3 m margin; or ``-1``."""
+    from ..utils.clearance import box_centre, overlaps  # noqa: PLC0415
 
     heading = math.radians(yaw)
-    cx = x + math.cos(heading) * ahead / 2.0
-    cy = y + math.sin(heading) * ahead / 2.0
+    try:
+        bx, by = box_centre(world, actor_id, x, y, yaw)
+    except (AttributeError, RuntimeError):
+        bx, by = x, y
+    cx = bx + math.cos(heading) * ahead / 2.0
+    cy = by + math.sin(heading) * ahead / 2.0
     try:
         found = overlaps(
             world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width
@@ -732,11 +739,13 @@ def _hold(
     half_length: float,
     half_width: float,
 ) -> None:
-    """Hold the place for this frame (two put on one place on one tick do not
-    both land there)."""
-    from ..utils.clearance import claim_spot  # noqa: PLC0415
+    """Hold the place -- *actor_id*'s box, its origin put at ``(x, y)`` --
+    for this frame (two put on one place on one tick do not both land
+    there)."""
+    from ..utils.clearance import box_centre, claim_spot  # noqa: PLC0415
 
     try:
-        claim_spot(world, actor_id, x, y, yaw, half_length, half_width)
+        cx, cy = box_centre(world, actor_id, x, y, yaw)
+        claim_spot(world, actor_id, cx, cy, yaw, half_length, half_width)
     except (AttributeError, RuntimeError):
         pass
