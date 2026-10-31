@@ -120,7 +120,10 @@ copy_tree() {
 }
 
 # Run a Python snippet (on stdin) with the first interpreter that has tomllib
-# (3.11+); return 1 when there is none.
+# (3.11+), returning its status; return NO_TOMLLIB when there is none, so a
+# caller can tell "cannot read TOML here" (fall back) from "the snippet
+# failed" (stop: a broken manifest must not be papered over by a guess).
+readonly NO_TOMLLIB=3
 run_tomllib_python() {
     local interpreter
     for interpreter in python3 python3.14 python3.13 python3.12 python3.11; do
@@ -129,7 +132,7 @@ run_tomllib_python() {
         "${interpreter}" - "$@"
         return
     done
-    return 1
+    return "${NO_TOMLLIB}"
 }
 
 cp "${framework_dir}/pyproject.toml" "${out_dir}/framework/pyproject.toml"
@@ -172,14 +175,30 @@ PY
 # `license-files` (globs), relative to the member. A file named there but
 # missing from the context fails the build (uv_build: "license-files glob
 # ... did not match any files"), or, with an older backend, ships a wheel
-# without its license.
+# without its license. So a named file that does not exist, a glob that
+# matches nothing, or a path that leaves the member (PEP 639 forbids `..`
+# and absolute license-files patterns) fails here, before the image build.
 resolve_member_files() {
     run_tomllib_python "$1" <<'PY'
+import os
 import sys
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 member = Path(sys.argv[1])
+
+
+def fail(message: str) -> None:
+    print(f"assemble-context.sh: {member}/pyproject.toml: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def check_inside(key: str, value: str) -> None:
+    # Lexical, so a LICENSE that is a symlink to the repository's still counts.
+    if PurePosixPath(value).is_absolute() or os.path.normpath(value).startswith(".."):
+        fail(f"{key} {value!r} points outside the member directory")
+
+
 with (member / "pyproject.toml").open("rb") as handle:
     project = tomllib.load(handle).get("project", {})
 
@@ -188,26 +207,44 @@ readme = project.get("readme")
 if isinstance(readme, dict):
     readme = readme.get("file")
 if isinstance(readme, str):
+    check_inside("readme", readme)
+    if not (member / readme).is_file():
+        fail(f"readme {readme!r} does not exist")
     named.append(member / readme)
 license = project.get("license")
 if isinstance(license, dict) and isinstance(license.get("file"), str):
+    check_inside("license.file", license["file"])
+    if not (member / license["file"]).is_file():
+        fail(f"license.file {license['file']!r} does not exist")
     named.append(member / license["file"])
 for pattern in project.get("license-files", []):
-    named.extend(sorted(member.glob(pattern)))
+    check_inside("license-files glob", pattern)
+    matches = sorted(path for path in member.glob(pattern) if path.is_file())
+    if not matches:
+        fail(f"license-files glob {pattern!r} matches no file")
+    named.extend(matches)
 
 seen: set[Path] = set()
 for path in named:
-    if path.is_file() and path not in seen:
+    relative = str(path.relative_to(member))
+    if "\n" in relative:
+        fail(f"cannot carry a file whose name holds a newline: {relative!r}")
+    if path not in seen:
         seen.add(path)
-        print(path.relative_to(member))
+        print(relative)
 PY
 }
 
 declare -a member_paths=()
-if declared="$(resolve_declared_members)"; then
+status=0
+declared="$(resolve_declared_members)" || status=$?
+if [ "${status}" -eq 0 ]; then
     while IFS= read -r line; do
         [ -n "${line}" ] && member_paths+=("${line}")
     done <<< "${declared}"
+elif [ "${status}" -ne "${NO_TOMLLIB}" ]; then
+    echo "assemble-context.sh: could not read the workspace members from ${framework_dir}/pyproject.toml" >&2
+    exit 1
 else
     # No interpreter new enough for tomllib (3.11+). Fall back to the shape a
     # uv workspace has in practice -- a depth-one directory with a pyproject --
@@ -234,10 +271,15 @@ for member in "${member_paths[@]}"; do
     mkdir -p "${dst}"
     cp "${src}/pyproject.toml" "${dst}/pyproject.toml"
     declare -a member_files=()
-    if named="$(resolve_member_files "${src}")"; then
+    status=0
+    named="$(resolve_member_files "${src}")" || status=$?
+    if [ "${status}" -eq 0 ]; then
         while IFS= read -r line; do
             [ -n "${line}" ] && member_files+=("${line}")
         done <<< "${named}"
+    elif [ "${status}" -ne "${NO_TOMLLIB}" ]; then
+        echo "assemble-context.sh: could not resolve the files workspace member '${member}' declares" >&2
+        exit 1
     else
         # No tomllib: take the conventional names when present.
         for candidate in "${src}"/README.md "${src}"/LICENSE*; do

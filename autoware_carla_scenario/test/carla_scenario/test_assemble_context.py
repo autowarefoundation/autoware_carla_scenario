@@ -30,6 +30,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _has_tomllib_python() -> bool:
+    """Whether the assembler can read TOML, as its own lookup decides."""
+    for name in ("python3", "python3.14", "python3.13", "python3.12", "python3.11"):
+        interpreter = shutil.which(name)
+        if interpreter is not None and (
+            subprocess.run(
+                [interpreter, "-c", "import tomllib"], capture_output=True
+            ).returncode
+            == 0
+        ):
+            return True
+    return False
+
+
 @pytest.fixture(scope="module")
 def context(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A context assembled from a package whose scenario is named `dist`.
@@ -43,6 +57,11 @@ def context(tmp_path_factory: pytest.TempPathFactory) -> Path:
     assert (package / "src" / "dist_pkg" / "conf" / "scenario" / "dist").is_dir()
     (package / "dist").mkdir()
     (package / "dist" / "dist_pkg-0.1.0-py3-none-any.whl").write_bytes(b"stale")
+    # Named on tar's command line now, so pin that the excludes still apply.
+    for ignored in (".git", ".venv"):
+        (package / ignored).mkdir()
+        (package / ignored / "marker").write_text("")
+    (package / ".gitignore").write_text("dist/\n")
 
     out = tmp_path_factory.mktemp("context")
     subprocess.run(
@@ -61,6 +80,12 @@ def test_nested_dist_directory_is_kept(context: Path) -> None:
 
 def test_top_level_dist_directory_is_dropped(context: Path) -> None:
     assert not (context / "scenario" / "dist").exists()
+
+
+def test_top_level_vcs_and_venv_are_dropped_but_dotfiles_kept(context: Path) -> None:
+    assert not (context / "scenario" / ".git").exists()
+    assert not (context / "scenario" / ".venv").exists()
+    assert (context / "scenario" / ".gitignore").is_file()
 
 
 def test_member_carries_the_files_its_manifest_names(context: Path) -> None:
@@ -94,3 +119,55 @@ def test_framework_wheel_builds_with_its_license(context: Path, tmp_path: Path) 
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
     assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names), names
+
+
+@pytest.mark.skipif(
+    not _has_tomllib_python(), reason="without tomllib the assembler guesses"
+)
+@pytest.mark.parametrize(
+    ("declaration", "message"),
+    [
+        ('license-files = ["LICENSE*"]', "matches no file"),
+        ('license-files = ["../LICENSE"]', "points outside the member"),
+        ('readme = "README.md"', "does not exist"),
+        ('license = { file = "COPYING" }', "does not exist"),
+    ],
+)
+def test_missing_or_outside_member_file_fails_loudly(
+    tmp_path: Path, declaration: str, message: str
+) -> None:
+    """A file the backend will look for must not be skipped quietly.
+
+    Skipping it would only move the failure into the image build.
+    """
+    framework = tmp_path / "framework"
+    (framework / "member" / "src" / "member").mkdir(parents=True)
+    (framework / "member" / "src" / "member" / "__init__.py").write_text("")
+    (framework / "LICENSE").write_text("license\n")
+    (framework / "uv.lock").write_text("")
+    (framework / "pyproject.toml").write_text(
+        '[tool.uv.workspace]\nmembers = ["member"]\n'
+    )
+    (framework / "member" / "pyproject.toml").write_text(
+        f'[project]\nname = "member"\n{declaration}\n'
+    )
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "pyproject.toml").write_text('[project]\nname = "package"\n')
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_SCRIPT),
+            "--scenario",
+            str(package),
+            "--framework",
+            str(framework),
+            "--out",
+            str(tmp_path / "out"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert message in result.stderr
