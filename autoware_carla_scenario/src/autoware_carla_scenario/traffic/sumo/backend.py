@@ -147,6 +147,13 @@ from .physics_control import (
     steer_command,
     to_vehicle_frame,
 )
+from .signal_states import (
+    SUMO_TO_CARLA_SIGNAL,
+    green_together,
+    link_states,
+    permissive_links,
+    sumo_step,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +276,6 @@ _BACKGROUND_ROUTE_EDGES = 40
 _BACKGROUND_MAX_OFFSET_M = 5.0
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
-_CARLA_TO_SUMO_SIGNAL = {"Red": "r", "Yellow": "y", "Green": "G"}
-_SUMO_TO_CARLA_SIGNAL = {"r": "Red", "y": "Yellow", "g": "Green", "G": "Green"}
 
 
 def _load_traci(use_libsumo: bool) -> Any:
@@ -304,32 +309,6 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
     return 0.0, 0.0
 
 
-def _sumo_step(tick: float, step_length: Optional[float]) -> tuple[float, int]:
-    """SUMO's step length and how many steps it makes per CARLA *tick*.
-
-    Raises:
-        ValueError: If *step_length* is longer than the tick, does not divide
-            it, or is not a whole number of milliseconds -- SUMO's clock counts
-            those, so it would round the step and drift from CARLA's.
-    """
-    if step_length is None:
-        return tick, 1
-    steps = round(tick / step_length)
-    millis = step_length * 1000.0
-    if (
-        steps < 1
-        or abs(steps * step_length - tick) > 1e-6 * max(tick, 1.0)
-        or abs(millis - round(millis)) > 1e-6
-    ):
-        raise ValueError(
-            f"traffic.options.step_length_s ({step_length:g} s) must divide the "
-            f"world's fixed_delta_seconds ({tick:g} s) in whole milliseconds: "
-            "SUMO makes a whole number of steps per CARLA tick, and its clock "
-            "counts milliseconds"
-        )
-    return tick / steps, steps
-
-
 def is_bicycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a bicycle: its blueprint's
     ``base_type`` says so, as CARLA's bicycles' do."""
@@ -338,15 +317,6 @@ def is_bicycle(actor: Any) -> bool:
     except Exception:  # noqa: BLE001 - an actor without attributes is a car
         return False
     return base_type.lower() == "bicycle"
-
-
-def _green_together(phases: list[str], index: int) -> set[int]:
-    """The links green in a phase of *phases* where link *index* is green."""
-    together: set[int] = set()
-    for state in phases:
-        if index < len(state) and state[index] in "Gg":
-            together.update(i for i, c in enumerate(state) if c in "Gg")
-    return together
 
 
 def _write_type_distribution(
@@ -368,18 +338,6 @@ def _write_type_distribution(
         "</additional>\n"
     )
     return path
-
-
-def _ride_state(follows: str, states: list[str]) -> str:
-    """The state of a bicycle ride's signal link, from the *states* of the
-    vehicle links it *follows* (``with``) or must be clear of (``clear``)."""
-    if follows == "clear":
-        return "G" if all(state in "rR" for state in states) else "r"
-    if any(state in "Gg" for state in states):
-        return "g"  # with the traffic, giving way as a bicycle does
-    if any(state in "yY" for state in states):
-        return "y"
-    return "r"
 
 
 def _parked(actor: Any) -> bool:
@@ -533,6 +491,11 @@ class SumoTrafficBackend(TrafficBackend):
         self._lane_targets: dict[str, int] = {}
         #: (tls id, link index) -> the CARLA traffic light controlling it.
         self._signals: dict[tuple[str, int], Any] = {}
+        #: tls id -> the indices of the links CARLA's lights switch that are a
+        #: permissive green (``g``) in some phase of SUMO's own program: a CARLA
+        #: Green sets them ``g``, the rest ``G``.  Read once, when the signals
+        #: are matched, as the state SUMO shows later is the one set from CARLA.
+        self._permissive_links: dict[str, set[int]] = {}
         #: tls id -> each pedestrian crossing link it controls, with the
         #: vehicle links into or out of a road the crossing crosses.
         self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
@@ -785,7 +748,7 @@ class SumoTrafficBackend(TrafficBackend):
         """Build the network of the world, generate demand and start SUMO."""
         self.close()
         # Before anything is built: a step that does not fit is a config error.
-        step_length, self._substeps = _sumo_step(
+        step_length, self._substeps = sumo_step(
             context.fixed_delta_seconds, self._config.step_length_s
         )
         self._context = context
@@ -966,6 +929,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._config.traffic_light_authority != "none":
             self._signals = self._match_signals(world)
             if self._config.traffic_light_authority == "carla":
+                self._permissive_links = self._match_permissive()
                 self._crossing_links = self._match_crossings()
                 if self._config.cycle_on_sidewalks or self._config.net_path:
                     # Only such a network has edges for bicycles alone.
@@ -1285,6 +1249,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._bicycle_blueprints = None
         self._lane_targets = {}
         self._signals = {}
+        self._permissive_links = {}
         self._crossing_links = {}
         self._bicycle_rides = {}
         self._ego_actor = None
@@ -4153,31 +4118,40 @@ class SumoTrafficBackend(TrafficBackend):
 
     def _signals_to_sumo(self) -> None:
         tc = self._traci
-        by_tls: dict[str, dict[int, Any]] = {}
+        by_tls: dict[str, dict[int, str]] = {}
         for (tls, index), light in self._signals.items():
-            by_tls.setdefault(tls, {})[index] = light
-        for tls, lights in by_tls.items():
-            state = list(tc.trafficlight.getRedYellowGreenState(tls))
-            for index, light in lights.items():
-                char = _CARLA_TO_SUMO_SIGNAL.get(
-                    traffic_light_state_name(light.get_state())
-                )
-                if char is None:
-                    continue
-                if char == "G" and state[index] == "g":
-                    char = "g"  # a permissive green stays one
-                state[index] = char
-            # A bicycle ride goes with the traffic beside it, or crosses while
-            # the traffic it crosses is held; before the crossings, which wait
-            # for it as for any vehicle over their road.
-            for index, follows, links in self._bicycle_rides.get(tls, ()):
-                state[index] = _ride_state(follows, [state[i] for i in links])
-            # A crossing walks while nothing drives over the road it crosses:
-            # the CARLA lights decide the vehicles, and with them the people.
-            for index, foes in self._crossing_links.get(tls, ()):
-                clear = all(state[foe] in "rR" for foe in foes)
-                state[index] = "G" if clear else "r"
-            tc.trafficlight.setRedYellowGreenState(tls, "".join(state))
+            by_tls.setdefault(tls, {})[index] = traffic_light_state_name(
+                light.get_state()
+            )
+        for tls, carla in by_tls.items():
+            state = link_states(
+                tc.trafficlight.getRedYellowGreenState(tls),
+                carla,
+                self._permissive_links.get(tls, set()),
+                self._bicycle_rides.get(tls, []),
+                self._crossing_links.get(tls, []),
+            )
+            tc.trafficlight.setRedYellowGreenState(tls, state)
+
+    def _match_permissive(self) -> dict[str, set[int]]:
+        """The links CARLA's lights switch that some phase of SUMO's own
+        program shows as a permissive green (``g``), by tls id.
+
+        Read off SUMO's programs before anything sets a light's state: once
+        :meth:`_signals_to_sumo` has, the state SUMO reports is the one it set.
+        A link that is ``G`` in one phase and ``g`` in another (a protected,
+        then permissive turn) counts as permissive: a CARLA Green does not say
+        which of the two phases it is, and ``g`` only has the turn yield.
+        """
+        indices: dict[str, set[int]] = {}
+        for tls, index in self._signals:
+            indices.setdefault(tls, set()).add(index)
+        out: dict[str, set[int]] = {}
+        for tls, switched in indices.items():
+            permissive = permissive_links(self._program_states(tls), switched)
+            if permissive:
+                out[tls] = permissive
+        return out
 
     def _match_crossings(self) -> dict[str, list[tuple[int, list[int]]]]:
         """Each signalled pedestrian crossing, and the vehicle links it waits for.
@@ -4277,7 +4251,7 @@ class SumoTrafficBackend(TrafficBackend):
                 elif kind == ("bicycle", "bicycle"):
                     if phases is None:
                         phases = self._program_states(tls)
-                    together = _green_together(phases, index)
+                    together = green_together(phases, index)
                     foes = [i for i in vehicles if i not in together]
                     rides.append((index, "clear", foes))
             rides = [ride for ride in rides if ride[2]]
@@ -4347,7 +4321,7 @@ class SumoTrafficBackend(TrafficBackend):
         for (tls, index), light in self._signals.items():
             if tls not in states:
                 states[tls] = tc.trafficlight.getRedYellowGreenState(tls)
-            name = _SUMO_TO_CARLA_SIGNAL.get(states[tls][index])
+            name = SUMO_TO_CARLA_SIGNAL.get(states[tls][index])
             if name is not None:
                 wanted[id(light)] = (light, getattr(carla.TrafficLightState, name))
         # ... and only when it shows another: set_state() is an RPC, and the

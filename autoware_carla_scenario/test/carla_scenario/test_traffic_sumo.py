@@ -127,17 +127,17 @@ def test_the_lane_change_options_are_checked() -> None:
 
 
 def test_a_sumo_step_divides_the_carla_tick() -> None:
-    from autoware_carla_scenario.traffic.sumo.backend import _sumo_step
+    from autoware_carla_scenario.traffic.sumo.signal_states import sumo_step
 
-    assert _sumo_step(0.05, None) == (0.05, 1)
-    step, count = _sumo_step(0.05, 0.01)
+    assert sumo_step(0.05, None) == (0.05, 1)
+    step, count = sumo_step(0.05, 0.01)
     assert count == 5
     assert step == pytest.approx(0.01)
-    assert _sumo_step(0.1, 0.1) == (0.1, 1)
+    assert sumo_step(0.1, 0.1) == (0.1, 1)
     # 0.0125 divides the tick, but SUMO's clock would round it to 0.013.
     for bad in (0.03, 0.1, 0.0125):
         with pytest.raises(ValueError, match="step_length_s"):
-            _sumo_step(0.05, bad)
+            sumo_step(0.05, bad)
 
 
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
@@ -1535,6 +1535,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     backend._traci = SimpleNamespace(trafficlight=_Lights())
     backend._crossing_links = {}
     backend._bicycle_rides = {}
+    backend._permissive_links = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -1563,6 +1564,7 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     # Links 0-1 drive over the road crossing 4 crosses, 2-3 over crossing 5's.
     backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
     backend._bicycle_rides = {}
+    backend._permissive_links = {}
     backend._signals = {
         ("tls", 0): green,
         ("tls", 1): red,
@@ -1571,6 +1573,91 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     }
     backend._signals_to_sumo()
     assert states["tls"] == "GrrrrG"
+
+
+def _permissive_backend(
+    program: list[str], start: str, lights: dict[int, Any]
+) -> tuple[Any, dict[str, str]]:
+    """A backend whose tls ``tls`` runs *program*, shows *start*, and has
+    *lights* switching its links, with its permissive links matched."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    states = {"tls": start}
+    logic = SimpleNamespace(phases=[SimpleNamespace(state=s) for s in program])
+    trafficlight = SimpleNamespace(
+        getRedYellowGreenState=lambda tls: states[tls],
+        setRedYellowGreenState=lambda tls, state: states.__setitem__(tls, state),
+        getAllProgramLogics=lambda tls: [logic],
+    )
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=trafficlight)
+    backend._crossing_links = {}
+    backend._bicycle_rides = {}
+    backend._signals = {("tls", index): light for index, light in lights.items()}
+    backend._permissive_links = backend._match_permissive()
+    return backend, states
+
+
+def test_a_permissive_green_stays_one_after_a_red() -> None:
+    """A link SUMO's program gives a permissive green (``g``) gets one on
+    every CARLA Green, also after it has shown yellow and red."""
+    import typesafe_carla.carla as carla
+
+    shown = [carla.TrafficLightState.Green]
+    light = SimpleNamespace(get_state=lambda: int(shown[0]))
+    backend, states = _permissive_backend(
+        ["Gg", "yy", "rr"], "Gg", {0: light, 1: light}
+    )
+    assert backend._permissive_links == {"tls": {1}}
+    seen = []
+    for state in (
+        carla.TrafficLightState.Green,
+        carla.TrafficLightState.Yellow,
+        carla.TrafficLightState.Red,
+        carla.TrafficLightState.Green,
+    ):
+        shown[0] = state
+        backend._signals_to_sumo()
+        seen.append(states["tls"])
+    assert seen == ["Gg", "yy", "rr", "Gg"]
+
+
+def test_a_permissive_green_comes_from_the_program_not_the_first_phase() -> None:
+    """A link whose permissive green is in a later phase than the one SUMO
+    starts in still gets ``g``; a link never ``g`` gets ``G``."""
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, states = _permissive_backend(
+        ["Grr", "yrr", "rGg", "ryy"], "Grr", {0: green, 1: green, 2: green}
+    )
+    assert backend._permissive_links == {"tls": {2}}
+    backend._signals_to_sumo()
+    assert states["tls"] == "GGg"
+
+
+def test_a_protected_then_permissive_turn_gets_the_permissive_green() -> None:
+    """A link ``G`` in one phase and ``g`` in another yields on a CARLA
+    Green: the Green does not say which phase it is."""
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, states = _permissive_backend(
+        ["GrG", "yry", "GGg", "yyy", "rrr"], "GrG", {0: green, 2: green}
+    )
+    assert backend._permissive_links == {"tls": {2}}
+    backend._signals_to_sumo()
+    assert states["tls"] == "Grg"
+
+
+def test_only_links_carlas_lights_switch_are_matched_as_permissive() -> None:
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, _states = _permissive_backend(["ggg", "rrr"], "ggg", {1: green})
+    assert backend._permissive_links == {"tls": {1}}
+    backend, _states = _permissive_backend(["GGr", "rrG"], "GGr", {0: green})
+    assert backend._permissive_links == {}
 
 
 def test_sumo_light_states_are_sent_to_carla_only_when_they_change() -> None:
@@ -2536,14 +2623,14 @@ def test_a_bicycle_is_a_vehicle_whose_base_type_says_so() -> None:
 
 
 def test_a_bicycle_ride_goes_with_its_traffic_or_waits_for_it_to_stop() -> None:
-    from autoware_carla_scenario.traffic.sumo.backend import _ride_state
+    from autoware_carla_scenario.traffic.sumo.signal_states import ride_state
 
-    assert _ride_state("with", ["r", "G"]) == "g"
-    assert _ride_state("with", ["r", "g"]) == "g"
-    assert _ride_state("with", ["y", "r"]) == "y"
-    assert _ride_state("with", ["r", "r"]) == "r"
-    assert _ride_state("clear", ["r", "r"]) == "G"
-    assert _ride_state("clear", ["r", "y"]) == "r"
+    assert ride_state("with", ["r", "G"]) == "g"
+    assert ride_state("with", ["r", "g"]) == "g"
+    assert ride_state("with", ["y", "r"]) == "y"
+    assert ride_state("with", ["r", "r"]) == "r"
+    assert ride_state("clear", ["r", "r"]) == "G"
+    assert ride_state("clear", ["r", "y"]) == "r"
 
 
 def _riding(
