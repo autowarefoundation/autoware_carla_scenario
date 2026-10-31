@@ -14,9 +14,12 @@ from omegaconf import OmegaConf
 from autoware_carla_scenario.actions.environment import (
     EnvironmentAction,
     apply_weather_grip,
+    follow_tire_friction,
+    forget_tire_friction,
     tire_friction_range,
     world_tire_friction,
 )
+from autoware_carla_scenario.odd import probes
 from autoware_carla_scenario.odd.backend import CARLA_BACKEND
 from autoware_carla_scenario.visibility import visibility_range
 from autoware_carla_scenario.weather_rules import (
@@ -296,8 +299,6 @@ class TestGripByVehicle:
         # A vehicle spawned later gets its own too.
         late = _Vehicle(4, "vehicle.mini.cooper_s")
         world.fleet.append(late)
-        from autoware_carla_scenario.actions.environment import follow_tire_friction
-
         follow_tire_friction(world)
         assert late.frictions == pytest.approx([3.5 * 0.20] * 4)
 
@@ -310,6 +311,28 @@ class TestGripByVehicle:
         EnvironmentAction(wetness=100.0, tire_friction=0.7).execute(world)
         assert ego.frictions == pytest.approx([3.5 * 0.7] * 4)
         assert world_tire_friction(world.id) == pytest.approx(0.7)
+
+    def test_the_next_run_forgets_the_egos_own_grip(self, tmp_path) -> None:
+        # Issue #899: a soft reset or a retry keeps the episode (the world).
+        use_weather_rules(
+            {"vehicles": {"ego": str(_grip_file(tmp_path / "e.yaml", (0.30, 0.50)))}}
+        )
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        EnvironmentAction(wetness=100.0, tire_friction_quantile=0.0).execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(0.30)
+        assert probes.tire_friction(world) == pytest.approx(0.30)
+
+        # The next run, with neither rules nor a grip of its own.
+        use_weather_rules(None)
+        forget_tire_friction(world)
+        assert world_tire_friction(world.id) is None
+        assert probes.tire_friction(world) is None
+        assert ego.frictions == pytest.approx([3.5] * 4)
+        late = _Vehicle(2, "vehicle.mini.cooper", "npc1")
+        world.fleet.append(late)
+        follow_tire_friction(world)
+        assert late.frictions == pytest.approx([3.5] * 4)
 
     def test_without_vehicle_rules_the_world_has_one_grip(self) -> None:
         ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")

@@ -323,6 +323,10 @@ def forget_tire_friction(world: "carla.World") -> None:
     _TIRE_FACTORS.clear()
     _TIRE_BASES.clear()
     _TIRE_SEEN.clear()
+    # The ego's own grip and the weather each vehicle's was read off too:
+    # world_tire_friction() reads the ego's first.
+    _TIRE_WEATHER.clear()
+    _TIRE_EGO.clear()
 
 
 def follow_tire_friction(world: "carla.World") -> None:
