@@ -28,7 +28,6 @@ _SWEEPER_APP = """
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
 
