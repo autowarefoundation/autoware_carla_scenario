@@ -101,6 +101,34 @@ def test_a_roads_stated_rule_is_read(two_way_street: None) -> None:
     from autoware_carla_scenario.coordinate import road_traffic_rule
 
     assert road_traffic_rule("0") == "RHT"
+    with pytest.raises(KeyError):
+        road_traffic_rule("no such road")
+
+
+@pytest.mark.parametrize("rule", ["LHT", ""])
+def test_a_road_without_a_stated_rule_is_right_hand_traffic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rule: str
+) -> None:
+    """The street's road says LHT, or says nothing, which OpenDRIVE reads as RHT."""
+    attribute = ' rule="RHT"'
+    from types import SimpleNamespace
+
+    from pyxodr.road_objects.network import RoadNetwork
+
+    from autoware_carla_scenario.coordinate import road_traffic_rule
+
+    text = (TWO_WAY / "two_way_street.xodr").read_text()
+    assert text.count(attribute) == 1
+    xodr = tmp_path / "street.xodr"
+    xodr.write_text(text.replace(attribute, f' rule="{rule}"' if rule else ""))
+    network = RoadNetwork(str(xodr))
+    network.get_roads()
+    monkeypatch.setattr(
+        MapManager,
+        "get_instance",
+        classmethod(lambda cls: SimpleNamespace(road_network=network)),
+    )
+    assert road_traffic_rule("0") == (rule or "RHT")
 
 
 @pytest.fixture(scope="module")
