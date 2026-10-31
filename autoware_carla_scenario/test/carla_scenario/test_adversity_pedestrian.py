@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Iterator
+from types import SimpleNamespace
 
 import lanelet2.core
 import pytest
@@ -21,6 +23,7 @@ from autoware_carla_scenario.adversity import (
     CommandKind,
     adversity_command,
 )
+from autoware_carla_scenario.adversity import snapshot
 from autoware_carla_scenario.adversity.observation import (
     AgentSnapshot,
     Scene,
@@ -31,6 +34,7 @@ from autoware_carla_scenario.adversity.triggers import (
     running_red_light,
     stop_crossing,
 )
+from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.route.geometry import MapFeatures
 
 from . import _route_maps as rm
@@ -200,3 +204,82 @@ def test_the_dispatcher_asks_the_pedestrian_triggers(features: MapFeatures) -> N
         random.Random(0),
     )
     assert command == running_red_light(scene.pedestrian("p"), features)
+
+
+# -- RUNNING_RED_LIGHT on what a world reports (#923) -----------------------------
+
+
+@pytest.fixture
+def plain_map() -> Iterator[None]:
+    saved = MapManager._instance
+    MapManager.reset()
+    manager = MapManager.get_instance()
+    manager._mgrs_offset = (0.0, 0.0)
+    manager._z_offset = 0.0
+    yield
+    MapManager._instance = saved
+
+
+def _ai_walked(step_m: float) -> list[AgentSnapshot]:
+    """A walker at map (-15, -9), at the red crosswalk, moved *step_m* east
+    each 0.1 s tick while CARLA reports its velocity 0, as a walker on
+    ``controller.ai.walker`` does; its snapshot on the third tick."""
+    clock = {"elapsed": 0.0, "x": -15.0}
+
+    def transform() -> SimpleNamespace:
+        # CARLA's y is the map's flipped.
+        return SimpleNamespace(
+            location=SimpleNamespace(x=clock["x"], y=9.0, z=0.9),
+            rotation=SimpleNamespace(yaw=0.0, pitch=0.0, roll=0.0),
+            get_forward_vector=lambda: SimpleNamespace(x=1.0, y=0.0, z=0.0),
+        )
+
+    walker = SimpleNamespace(
+        id=11,
+        type_id="walker.pedestrian.0001",
+        attributes={"role_name": "p"},
+        bounding_box=SimpleNamespace(
+            extent=SimpleNamespace(x=0.25, y=0.25, z=0.9),
+            location=SimpleNamespace(x=0.0, y=0.0, z=0.0),
+        ),
+        get_transform=transform,
+        get_location=lambda: transform().location,
+        get_velocity=lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0),
+        get_acceleration=lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0),
+    )
+    world = SimpleNamespace(
+        get_snapshot=lambda: SimpleNamespace(
+            timestamp=SimpleNamespace(elapsed_seconds=clock["elapsed"])
+        ),
+        get_actors=lambda: SimpleNamespace(
+            filter=lambda pattern: [walker] if pattern == "walker.*" else []
+        ),
+    )
+    agents = snapshot.snapshot_world(world)
+    for _ in range(2):
+        clock["elapsed"] += 0.1
+        clock["x"] += step_m
+        agents = snapshot.snapshot_world(world)
+    return agents
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_an_ai_walked_pedestrian_at_a_red_crosswalk_is_not_waiting(
+    features: MapFeatures,
+) -> None:
+    agents = _ai_walked(0.14)  # 1.4 m/s
+    assert agents[0].speed == pytest.approx(1.4)
+    seen = Scene(features, agents, RED).pedestrian("p")
+    assert seen.nearest_crosswalk is not None
+    assert running_red_light(seen, features) is None
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_a_pedestrian_standing_at_a_red_crosswalk_crosses(
+    features: MapFeatures,
+) -> None:
+    agents = _ai_walked(0.0)
+    assert agents[0].speed == 0.0
+    seen = Scene(features, agents, RED).pedestrian("p")
+    command = running_red_light(seen, features)
+    assert command is not None and command.kind is CommandKind.TRAJECTORY

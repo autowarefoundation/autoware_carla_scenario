@@ -287,3 +287,149 @@ def test_signal_states_by_regulatory_element(monkeypatch: pytest.MonkeyPatch) ->
     assert reader.read()[1] is SignalState.YELLOW
     # The lights are looked up once, not on every read.
     assert resolved == [1, 2, 3, 4]
+
+
+# -- a walker's speed, measured from where it stood (#923) ------------------------
+
+
+class _Clocked:
+    """A world on a simulated clock, of the actors in *actors*."""
+
+    def __init__(self, actors: list[SimpleNamespace]) -> None:
+        self.actors = actors
+        self.elapsed = 0.0
+        self.frame = 0
+
+    def get_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            frame=self.frame,
+            timestamp=SimpleNamespace(elapsed_seconds=self.elapsed),
+        )
+
+    def get_actors(self) -> SimpleNamespace:
+        def pick(pattern: str) -> list[SimpleNamespace]:
+            prefix = pattern.rstrip("*")
+            return [a for a in self.actors if str(a.type_id).startswith(prefix)]
+
+        return SimpleNamespace(filter=pick)
+
+    def tick(self, seconds: float = 0.1) -> None:
+        self.elapsed += seconds
+        self.frame += 1
+
+
+def _placed(
+    type_id: str, actor_id: int, role: str, world: _Clocked, velocity: Any
+) -> SimpleNamespace:
+    """An actor placed at ``actor.at`` (CARLA x, y, z) as it is moved, which
+    reports *velocity* (CARLA's walker controller reports 0 while it walks)."""
+    actor = SimpleNamespace(
+        id=actor_id,
+        type_id=type_id,
+        attributes={"role_name": role},
+        at=[0.0, 0.0, 0.9],
+        bounding_box=SimpleNamespace(
+            extent=_vector(0.3, 0.3, 0.9), location=_vector(0.0, 0.0)
+        ),
+        get_velocity=lambda: velocity,
+        get_acceleration=lambda: _vector(0.0, 0.0),
+        get_speed_limit=lambda: 40.0,
+        get_world=lambda: world,
+    )
+
+    def transform() -> SimpleNamespace:
+        return SimpleNamespace(
+            location=_vector(*actor.at),
+            rotation=SimpleNamespace(yaw=0.0, pitch=0.0, roll=0.0),
+            get_forward_vector=lambda: _vector(1.0, 0.0),
+        )
+
+    actor.get_transform = transform
+    actor.get_location = lambda: transform().location
+    return actor
+
+
+def _walker(world: _Clocked, actor_id: int = 7) -> SimpleNamespace:
+    return _placed("walker.pedestrian.0001", actor_id, "p", world, _vector(0.0, 0.0))
+
+
+def _speeds(world: _Clocked) -> dict[str, float]:
+    return {agent.name: agent.speed for agent in snapshot.snapshot_world(world)}
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_a_walker_placed_by_its_controller_walks_at_its_measured_speed() -> None:
+    world = _Clocked([])
+    walker = _walker(world)
+    world.actors.append(walker)
+    assert _speeds(world)["p"] == 0.0  # nothing to measure from yet
+    for _ in range(3):
+        world.tick()
+        walker.at[0] += 0.14  # 1.4 m/s, while get_velocity() reads 0
+        assert _speeds(world)["p"] == pytest.approx(1.4)
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_snapshot_actor_measures_a_walker_on_its_worlds_clock() -> None:
+    world = _Clocked([])
+    walker = _walker(world)
+    snapshot.snapshot_actor(walker, "p")
+    world.tick()
+    walker.at[1] += 0.14
+    assert snapshot.snapshot_actor(walker, "p").speed == pytest.approx(1.4)
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_a_teleported_walker_is_no_sprint() -> None:
+    world = _Clocked([])
+    walker = _walker(world)
+    world.actors.append(walker)
+    _speeds(world)
+    world.tick()
+    walker.at[0] += 30.0  # put where its walk starts: 300 m/s
+    assert _speeds(world)["p"] == 0.0  # what CARLA reports
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_a_walker_brought_in_from_under_the_map_is_no_walk() -> None:
+    world = _Clocked([])
+    walker = _walker(world)
+    world.actors.append(walker)
+    _speeds(world)
+    world.tick()
+    walker.at[2] = -500.0  # parked under the map
+    assert "p" not in _speeds(world)
+    world.tick(4.0)
+    # Brought in 5 m from where it was before, 4 s on: no 1.25 m/s walk.
+    walker.at = [5.0, 0.0, 0.9]
+    assert _speeds(world)["p"] == 0.0
+    world.tick()
+    walker.at[0] += 0.14
+    assert _speeds(world)["p"] == pytest.approx(1.4)
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_another_world_starts_the_walkers_over() -> None:
+    world = _Clocked([])
+    walker = _walker(world)
+    world.actors.append(walker)
+    _speeds(world)
+    other = _Clocked([])
+    moved = _walker(other)  # the same actor id in another world
+    moved.at = [0.14, 0.0, 0.9]
+    other.actors.append(moved)
+    other.tick()
+    assert _speeds(other)["p"] == 0.0
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_a_vehicle_reads_what_carla_reports() -> None:
+    world = _Clocked([])
+    car = _placed("vehicle.audi.tt", 3, "npc1", world, _vector(3.0, 4.0, 1.0))
+    world.actors.append(car)
+    assert _speeds(world)["npc1"] == pytest.approx(5.0)
+    world.tick()
+    car.at[0] += 2.0  # moved 20 m/s, but CARLA says 5 m/s
+    agent = snapshot.snapshot_world(world)[0]
+    assert agent.speed == pytest.approx(5.0)
+    assert agent.speed_limit == 40.0
