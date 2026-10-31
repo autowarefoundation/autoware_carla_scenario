@@ -439,7 +439,7 @@ class _Walker:
     """A walker that keeps the custom pose it is given."""
 
     def __init__(self) -> None:
-        # Its own: walker_velocity remembers a walker's last place by id.
+        # Its own: WalkerVelocities remembers a walker's last place by id.
         self.id = next(_WALKER_IDS)
         self.type_id = "walker.pedestrian.0001"
         self.x = 0.0

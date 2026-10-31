@@ -12,11 +12,11 @@ import typesafe_carla.carla as carla
 from ..action_state import ActionState
 from ..conditions.and_condition import AndCondition
 from ..conditions.base import BaseCondition, ScenarioResult
-from ..conditions.composition.speed import walker_velocity
 from ..control_domain import ControlDomain, movement_of
 from ..entity._soma_motion import SomaMotion, WalkerRetarget, load_soma_motion
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
+from ..kinematics.walker_motion import WalkerVelocities
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -301,13 +301,23 @@ class _MotionPlayed(BaseCondition):
 
 class _Standing(BaseCondition):
     """Satisfied while the pedestrian stands: no faster than
-    :data:`STANDING_SPEED_MS`, measured as a walker moves (``walker_velocity``)."""
+    :data:`STANDING_SPEED_MS`, measured as a walker moves
+    (:class:`~..kinematics.walker_motion.WalkerVelocities`)."""
 
     _entity_name: str
+    _velocities: WalkerVelocities
 
     def __init__(self, entity_name: str, label: str) -> None:
         super().__init__(label=f"{label}_standing")
         self._entity_name = entity_name
+        # The pedestrian's velocity, measured from where it stood when last
+        # checked.
+        self._velocities = WalkerVelocities()
+
+    def close(self) -> None:
+        """Forget the pedestrian measured (the run is over)."""
+        self._velocities.clear()
+        super().close()
 
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         entity = find_pedestrian_entity(self._entity_name)
@@ -317,7 +327,7 @@ class _Standing(BaseCondition):
         if actor is None:
             return None
         walker: carla.Actor = actor
-        speed = walker_velocity(walker, elapsed).magnitude()
+        speed = self._velocities.walker(walker, elapsed).magnitude()
         if speed > STANDING_SPEED_MS:
             return None
         return ScenarioResult(
