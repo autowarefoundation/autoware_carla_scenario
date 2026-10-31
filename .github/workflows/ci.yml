@@ -96,13 +96,18 @@ jobs:
     # in every leg of this matrix.
     # Each shard keeps a cache of its own: a shard compiles only its share, and
     # the prune below would drop the other shard's verdicts from a shared one.
+    # Without one of its own, a shard starts from the leg's latest cache of
+    # any shard (or from before the legs were sharded): a verdict is keyed by
+    # what it compiled, so another shard's is never a wrong one.
     - name: Restore the Codon check verdicts
       if: env.CODON == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/typecheck-cache
         key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-${{ github.sha }}
-        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+        restore-keys: |
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
     # -n logical: one worker a vCPU. `auto` counts physical cores, two on the
     # x86_64 runner (four vCPUs), so the Codon leg ran on half the machine.
@@ -116,7 +121,8 @@ jobs:
     # every time, so it runs alone first (in the shard it hashes into) and the
     # rest runs in parallel.
     # pytest exits 5 when it selects nothing, which a shard's share of a
-    # selection may be: that, and only that, passes.
+    # selection may be: on a sharded leg that, and only that, passes. A leg
+    # run whole (`1/1`) that selects nothing fails.
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
@@ -126,7 +132,7 @@ jobs:
         pytest_shard() {
           local status=0
           uv run pytest -v --tb=short -o addopts= "$@" || status=$?
-          if [ "${status}" -eq 5 ]; then
+          if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
             echo "Nothing of this selection is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
             status=0
           fi
@@ -233,7 +239,9 @@ jobs:
       with:
         path: ${{ runner.temp }}/typecheck-cache
         key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-${{ github.sha }}
-        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+        restore-keys: |
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
     # As in the 'test' job, which says why the library compile runs alone.
     - name: Run tests
@@ -245,7 +253,7 @@ jobs:
         pytest_shard() {
           local status=0
           uv run pytest -v --tb=short -o addopts= "$@" || status=$?
-          if [ "${status}" -eq 5 ]; then
+          if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
             echo "Nothing of this selection is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
             status=0
           fi
@@ -281,7 +289,7 @@ jobs:
       run: |
         status=0
         uv run pytest -v --tb=short -o addopts= -m slow || status=$?
-        if [ "${status}" -eq 5 ]; then
+        if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
           echo "No slow test is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
           status=0
         fi

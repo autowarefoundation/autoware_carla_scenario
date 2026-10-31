@@ -22,7 +22,8 @@ runs:
       # A pull request's checkout is the merge of its head into its base:
       # HEAD^1 is the base it was merged into, so `git diff HEAD^1 HEAD` is the
       # pull request's change. It needs `fetch-depth: 2` on the checkout; with
-      # less (or no merge commit) the self-tests run.
+      # less (or no merge commit) the self-tests run. --no-renames: a rename
+      # lists both paths, so a file moved out of the checker still counts.
       run: |
         set -uo pipefail
         run=true
@@ -30,7 +31,7 @@ runs:
         if [ "${EVENT_NAME}" = "pull_request" ]; then
           reason="could not list the pull request's changes"
           if [ "$(git rev-list --parents -n 1 HEAD 2>/dev/null | wc -w)" -eq 3 ] \
-            && changed=$(git diff --name-only HEAD^1 HEAD); then
+            && changed=$(git diff --no-renames --name-only HEAD^1 HEAD); then
             run=false
             reason="the pull request changes nothing the checker reads"
             # What the self-tests read beyond the package's own modules: the
