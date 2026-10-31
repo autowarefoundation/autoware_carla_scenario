@@ -21,12 +21,21 @@ DECEL_WINDOW_S = 0.5
 
 
 def box(
-    x: float, y: float, yaw: float, extent: tuple[float, float]
+    x: float,
+    y: float,
+    yaw: float,
+    extent: tuple[float, float],
+    center: tuple[float, float] = (0.0, 0.0),
 ) -> list[tuple[float, float]]:
-    """The corners of a box on the ground: centred at *x*, *y*, turned by
-    *yaw* (degrees), *extent* its half length and half width."""
+    """The corners of a box on the ground: an actor's at *x*, *y* (its
+    origin), turned by *yaw* (degrees), *extent* its half length and half
+    width, *center* the box's offset from the origin in the actor's frame
+    (the trajectory log's ``center``; turned with the actor, as
+    ``metrics._box_of`` turns the bounding box's location)."""
     c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     ex, ey = extent
+    cx, cy = center
+    x, y = x + c * cx - s * cy, y + s * cx + c * cy
     return [
         (x + c * dx - s * dy, y + s * dx + c * dy)
         for dx, dy in ((ex, ey), (-ex, ey), (-ex, -ey), (ex, -ey))
