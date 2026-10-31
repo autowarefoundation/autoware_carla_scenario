@@ -1771,8 +1771,8 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
     [
         "scenario_base",
         "entity.ego",
+        # actions.lane_change too: it is the same program (the test below).
         "actions.turn",
-        "actions.lane_change",
         # BridgedEgoEntity derives from EgoVehicle, which imports
         # scenario_base through the model, and AutowareEgoEntity from it.
         "entity.bridged_ego",
@@ -1786,6 +1786,15 @@ def test_a_module_importing_a_checked_only_name_compiles_alone(module: str) -> N
     result = typecheck_library([f"{_PACKAGE}.{module}"])
     assert result.ok, result.format()
     assert "more they import" in result.scenario
+
+
+def test_actions_lane_change_checked_alone_is_the_program_of_actions_turn() -> None:
+    # Each imports the other, so either one named brings the same closure,
+    # and typecheck_library compiles the sorted closure: one program, the
+    # same cache key (#652). So the test above compiles actions.turn alone
+    # only; should the closures part, put actions.lane_change back on its list.
+    turn, lane_change = f"{_PACKAGE}.actions.turn", f"{_PACKAGE}.actions.lane_change"
+    assert {turn, *_dependencies(turn)} == {lane_change, *_dependencies(lane_change)}
 
 
 _FAKE = f"{_PACKAGE}.zz_library_check_case"

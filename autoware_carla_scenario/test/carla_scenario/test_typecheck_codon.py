@@ -15,7 +15,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
@@ -193,6 +193,191 @@ def _only_error(result: TypeCheckResult) -> Any:
     assert not result.ok, result.format()
     assert result.diagnostics, result.output
     return result.diagnostics[0]
+
+
+# ---------------------------------------------------------------------------
+# Many cases that each must compile, in one compile
+# ---------------------------------------------------------------------------
+
+
+class _Case(NamedTuple):
+    """One case of a test that only asserts that its code compiles."""
+
+    #: Statements as setup() runs them (``cfg`` is the config, as there).
+    setup: str
+    #: Module-level code after the scenario class.
+    module: str = ""
+    #: Import lines for the scenario module's header.
+    imports: str = ""
+
+
+#: The comment that opens the lines of each case in a merged scenario (and,
+#: with ``-``, closes them), so a failure names the case at its line.
+_CASE_MARK = "# acs-merged-case: "
+
+
+def _bindings(code: str) -> dict[str, str]:
+    """The names *code* binds in its own scope, each with what binds it: an
+    import statement's text (the same import in two cases is no clash), or
+    ``""`` for anything else (a def, a class, an assignment)."""
+    names: dict[str, str] = {}
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names[child.name] = ""
+            elif isinstance(child, (ast.Import, ast.ImportFrom)):
+                for alias in child.names:
+                    bound = alias.asname or alias.name.split(".")[0]
+                    names[bound] = ast.unparse(child)
+            elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                names[child.id] = ""
+            elif isinstance(child, ast.ExceptHandler) and child.name:
+                names[child.name] = ""
+            # What a def, a class, a lambda or a comprehension binds is its own.
+            if not isinstance(
+                child,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.Lambda,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                visit(child)
+
+    visit(ast.parse(textwrap.dedent(code)))
+    return names
+
+
+def _merged_groups(cases: dict[str, _Case]) -> list[list[str]]:
+    """*cases*, in order, in as few groups as keep each group's module-level
+    names apart: a name two cases define (or import differently) would make
+    one case's code another's, so such cases are compiled apart."""
+    groups: list[tuple[list[str], dict[str, str]]] = []
+    for case_id, case in cases.items():
+        bound = _bindings(case.imports + "\n" + case.module)
+        for members, taken in groups:
+            if not any(
+                name in taken and (not how or taken[name] != how)
+                for name, how in bound.items()
+            ):
+                members.append(case_id)
+                taken.update(bound)
+                break
+        else:
+            groups.append(([case_id], dict(bound)))
+    return [members for members, _ in groups]
+
+
+def _write_merged_case(
+    tmp_path: Path,
+    cases: dict[str, _Case],
+    *,
+    before: str = "",
+    after: str = "",
+    extra: str = "",
+    header: str = _HEADER,
+    modules: dict[str, str] | None = None,
+) -> tuple[type, type, Path]:
+    """One scenario that compiles every case of *cases*, as :func:`_write_case`
+    writes one.
+
+    Each case's setup() statements are a method of their own that setup()
+    calls (between *before* and *after*), so their locals stay apart, and
+    the check reaches them as it reaches setup()'s own lines; its
+    module-level code follows the scenario class, and its imports join the
+    header's.  The module-level names of *cases* must not clash
+    (:func:`_merged_groups`).  *extra* is shared code after the methods:
+    more of the class first, then of the module.
+    """
+    if len(_merged_groups(cases)) != 1:
+        raise AssertionError(f"the cases' module-level names clash: {list(cases)}")
+    imports = list(
+        dict.fromkeys(
+            line
+            for case in cases.values()
+            for line in case.imports.splitlines()
+            if line.strip()
+        )
+    )
+    if imports:
+        anchor = "from .configs import CaseConfig\n"
+        assert anchor in header, header
+        header = header.replace(anchor, "\n".join(imports) + "\n\n" + anchor, 1)
+    calls: list[str] = []
+    methods: list[str] = []
+    module_code: list[str] = []
+    for number, (case_id, case) in enumerate(cases.items()):
+        method = f"_acs_case_{number}"
+        calls.append(f"{_CASE_MARK}{case_id}\nself.{method}()\n{_CASE_MARK}-\n")
+        body = textwrap.dedent(case.setup).strip("\n") + "\n"
+        if re.search(r"\bcfg\b", body):
+            body = "cfg = self._config\n" + body
+        methods.append(
+            f"\n    {_CASE_MARK}{case_id}\n"
+            f"    def {method}(self) -> None:\n"
+            + textwrap.indent(body, " " * 8)
+            + f"    {_CASE_MARK}-\n"
+        )
+        if case.module.strip():
+            module_code.append(
+                f"\n\n{_CASE_MARK}{case_id}\n"
+                + textwrap.dedent(case.module).strip("\n")
+                + f"\n{_CASE_MARK}-\n"
+            )
+    return _write_case(
+        tmp_path,
+        textwrap.dedent(before) + "".join(calls) + textwrap.dedent(after),
+        "".join(methods) + extra + "".join(module_code),
+        header=header,
+        modules=modules,
+    )
+
+
+def _setup_cases(setups: list[str], ids: list[str]) -> dict[str, _Case]:
+    """Cases of setup() statements only, by their ids."""
+    return {case_id: _Case(setup) for case_id, setup in zip(ids, setups, strict=True)}
+
+
+def _assert_merged_compiles(result: TypeCheckResult, path: Path) -> None:
+    """*result* passed; or the failure names the case at each error's line."""
+    if result.ok:
+        return
+    spans: list[tuple[int, int, str]] = []
+    current: tuple[int, str] | None = None
+    lines = path.read_text().splitlines()
+    for number, line in enumerate(lines, start=1):
+        if _CASE_MARK not in line:
+            continue
+        if current is not None:
+            spans.append((current[0], number - 1, current[1]))
+        mark = line.split(_CASE_MARK, 1)[1].strip()
+        current = None if mark == "-" else (number + 1, mark)
+
+    def case_at(path_of: str | None, line: int | None) -> str:
+        if path_of == str(path) and line is not None:
+            for first, last, case_id in spans:
+                if first <= line <= last:
+                    return case_id
+        return f"none of the cases ({path_of}:{line})"
+
+    failing = sorted(
+        {case_at(d.path, d.line) for d in result.diagnostics}
+        or {"none of the cases (no location)"}
+    )
+    table = "\n".join(
+        f"  {path.name}:{first}-{last}: {case_id}" for first, last, case_id in spans
+    )
+    pytest.fail(
+        f"merged cases failed to compile; the failing case(s): {', '.join(failing)}\n"
+        f"{result.format()}\n\nthe lines of each case:\n{table}",
+        pytrace=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3365,29 +3550,31 @@ def read_text(world: carla.World) -> str:
 """
 
 
-@pytest.mark.parametrize(
-    "build",
-    [
-        'Metric("mine", read_optional)',
-        'Metric(key="mine", read=read_float, unit="m", aggregation="min")',
-        'Metric("mine", lambda world: 1.0, "Mine")',
-        'Metric("mine", lambda world: None)',
-        'Metric("mine", read_int)',
-    ],
-    ids=["optional", "float-keywords", "lambda", "none-lambda", "int"],
-)
-def test_a_scenario_may_build_its_own_metric(tmp_path: Path, build: str) -> None:
+_OWN_METRIC_BUILDS = {
+    "optional": 'Metric("mine", read_optional)',
+    "float-keywords": 'Metric(key="mine", read=read_float, unit="m", aggregation="min")',
+    "lambda": 'Metric("mine", lambda world: 1.0, "Mine")',
+    "none-lambda": 'Metric("mine", lambda world: None)',
+    "int": 'Metric("mine", read_int)',
+}
+
+
+def test_a_scenario_may_build_its_own_metric(tmp_path: Path) -> None:
     # Python's Metric takes any callable of a world that returns a float; a
     # Codon Callable field takes one of its exact type only, and crashed the
     # compiler on a function returning `float` or on a lambda.
-    setup = (
-        "from autoware_carla_scenario.metrics import Metric\n"
-        f"mine: Metric = {build}\n"
-        'logger.info("%s %s", mine.key, str(mine.read(self.world)))\n'
+    cases = {
+        case_id: _Case(
+            "from autoware_carla_scenario.metrics import Metric\n"
+            f"mine: Metric = {build}\n"
+            'logger.info("%s %s", mine.key, str(mine.read(self.world)))\n'
+        )
+        for case_id, build in _OWN_METRIC_BUILDS.items()
+    }
+    scenario, config, path = _write_merged_case(
+        tmp_path, cases, extra=_OWN_METRIC_READERS
     )
-    scenario, config, _ = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 def test_a_metric_read_that_returns_no_number_is_refused(tmp_path: Path) -> None:
@@ -3459,28 +3646,30 @@ def test_a_misused_measure_is_refused_at_its_line(
     assert error.line == _line_of(path, wrong)
 
 
-@pytest.mark.parametrize(
-    "build",
-    [
-        'Measure("mine", read_optional)',
-        'Measure(key="mine", read=read_float, unit="m", version=2)',
-        'Measure("mine", lambda world: 1.0, "m", "Mine")',
-        'Measure("mine", lambda world: None)',
-        'Measure("mine", read_int)',
-    ],
-    ids=["optional", "float-keywords", "lambda", "none-lambda", "int"],
-)
-def test_a_scenario_may_build_its_own_measure(tmp_path: Path, build: str) -> None:
+_OWN_MEASURE_BUILDS = {
+    "optional": 'Measure("mine", read_optional)',
+    "float-keywords": 'Measure(key="mine", read=read_float, unit="m", version=2)',
+    "lambda": 'Measure("mine", lambda world: 1.0, "m", "Mine")',
+    "none-lambda": 'Measure("mine", lambda world: None)',
+    "int": 'Measure("mine", read_int)',
+}
+
+
+def test_a_scenario_may_build_its_own_measure(tmp_path: Path) -> None:
     # Python's Measure takes any callable of a world that returns a float, as
     # Metric does (#203); the model's __new__ takes the same.
-    setup = (
-        "from autoware_carla_scenario.measures import Measure\n"
-        f"mine: Measure = {build}\n"
-        'logger.info("%s %d %s", mine.key, mine.version, str(mine.read(self.world)))\n'
+    cases = {
+        case_id: _Case(
+            "from autoware_carla_scenario.measures import Measure\n"
+            f"mine: Measure = {build}\n"
+            'logger.info("%s %d %s", mine.key, mine.version, str(mine.read(self.world)))\n'
+        )
+        for case_id, build in _OWN_MEASURE_BUILDS.items()
+    }
+    scenario, config, path = _write_merged_case(
+        tmp_path, cases, extra=_OWN_METRIC_READERS
     )
-    scenario, config, _ = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 def test_a_measure_read_that_returns_no_number_is_refused(tmp_path: Path) -> None:
@@ -3502,30 +3691,30 @@ _GAP_METHOD = """
 """
 
 
-@pytest.mark.parametrize(
-    "read",
-    [
-        "read_optional",
-        "read_float",
-        "read_int",
-        "lambda world: 1.0",
-        "lambda world: None",
-        "self._read_gap",
-    ],
-    ids=["optional", "float", "int", "lambda", "none-lambda", "bound-method"],
-)
+_MEASURE_READS = {
+    "optional": "read_optional",
+    "float": "read_float",
+    "int": "read_int",
+    "lambda": "lambda world: 1.0",
+    "none-lambda": "lambda world: None",
+    "bound-method": "self._read_gap",
+}
+
+
 def test_a_scenario_may_register_a_measure_read_as_python_does(
-    tmp_path: Path, read: str
+    tmp_path: Path,
 ) -> None:
     # register_measure() checks *read* as Measure and Metric do (#216): a
     # float, an int or None, or an Optional of one. A bound method is the
     # reader odd.md's "Scenario measures" shows.
-    setup = f'self.register_measure("mine", {read}, unit="m")\n'
-    scenario, config, _ = _write_case(
-        tmp_path, setup, extra=_GAP_METHOD + _OWN_METRIC_READERS
+    cases = {
+        case_id: _Case(f'self.register_measure("mine", {read}, unit="m")\n')
+        for case_id, read in _MEASURE_READS.items()
+    }
+    scenario, config, path = _write_merged_case(
+        tmp_path, cases, extra=_GAP_METHOD + _OWN_METRIC_READERS
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -3894,8 +4083,7 @@ lc = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
 """
 
 
-@pytest.mark.parametrize(
-    "setup",
+_MIXED_DICT_CASES = _setup_cases(
     [
         """
         self.register_pass_condition(
@@ -3923,16 +4111,18 @@ lc = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
     ],
     ids=["argument", "annotated", "conditions"],
 )
-def test_a_dict_display_of_different_classes_compiles(
-    tmp_path: Path, setup: str
-) -> None:
+
+
+def test_a_dict_display_of_different_classes_compiles(tmp_path: Path) -> None:
     # Codon types a dict display by its first item: each of these was refused
     # (`'LaneChangeAction' does not match expected type 'TurnAction'`) until
     # the check rewrote the display (_acs_dict, _acs_dict_into).
-    setup = _MIXED_DICT_IMPORTS + textwrap.dedent(setup)
-    scenario, config, _ = _write_case(tmp_path, setup)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    cases = {
+        case_id: _Case(_MIXED_DICT_IMPORTS + textwrap.dedent(case.setup))
+        for case_id, case in _MIXED_DICT_CASES.items()
+    }
+    scenario, config, path = _write_merged_case(tmp_path, cases)
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 _OWN_RULES = """
@@ -4016,13 +4206,18 @@ _OWN_RULES_IMPORT = (
 )
 
 
+_OWN_RULES_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig\n", _OWN_RULES_IMPORT, 1
+)
+
+
 def _own_rules_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
-    header = _HEADER.replace("from .configs import CaseConfig\n", _OWN_RULES_IMPORT, 1)
-    return _write_case(tmp_path, setup, header=header, modules={"rules.py": _OWN_RULES})
+    return _write_case(
+        tmp_path, setup, header=_OWN_RULES_HEADER, modules={"rules.py": _OWN_RULES}
+    )
 
 
-@pytest.mark.parametrize(
-    "setup",
+_OWN_RULES_CASES = _setup_cases(
     [
         'logger.info("%f", total(RULES) + total(PAIR))\n',
         """
@@ -4061,16 +4256,22 @@ def _own_rules_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
         "multi-line",
     ],
 )
+
+
 def test_a_list_display_of_the_scenarios_own_subclasses_compiles(
-    tmp_path: Path, setup: str
+    tmp_path: Path,
 ) -> None:
     # Codon types a list display by its first element and a List[Dbl] is no
     # List[Rule]: each of these was refused (`_acs_list(*items:
     # Tuple[Dbl,Neg])`, #480) until the check made the display a list of the
     # annotated element type, or of the nearest class the elements share.
-    scenario, config, _ = _own_rules_case(tmp_path, setup)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    scenario, config, path = _write_merged_case(
+        tmp_path,
+        _OWN_RULES_CASES,
+        header=_OWN_RULES_HEADER,
+        modules={"rules.py": _OWN_RULES},
+    )
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -4161,17 +4362,18 @@ def unknown() -> list[Shape]:
 """
 
 
+# The classes are defined in the scenario's module, above its class: the
+# check reads the bases of one module at a time.
+_OWN_SHAPES_HEADER = _HEADER.replace(
+    "\n\nclass CaseScenario", "\n" + _OWN_SHAPES + "\n\nclass CaseScenario", 1
+)
+
+
 def _own_shapes_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
-    # The classes are defined in the scenario's module, above its class: the
-    # check reads the bases of one module at a time.
-    header = _HEADER.replace(
-        "\n\nclass CaseScenario", "\n" + _OWN_SHAPES + "\n\nclass CaseScenario", 1
-    )
-    return _write_case(tmp_path, setup, header=header)
+    return _write_case(tmp_path, setup, header=_OWN_SHAPES_HEADER)
 
 
-@pytest.mark.parametrize(
-    "setup",
+_OWN_SHAPES_CASES = _setup_cases(
     [
         """
         d = {"a": Circle(), "b": Square()}
@@ -4235,17 +4437,20 @@ def _own_shapes_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
         "parameter-plus-display",
     ],
 )
+
+
 def test_a_dict_or_a_sum_of_the_scenarios_own_subclasses_compiles(
-    tmp_path: Path, setup: str
+    tmp_path: Path,
 ) -> None:
     # #489: a dict display of subclasses, and a list display added to a
     # list[Base] (`a + [Sub()]`, `a += [Sub()]`, `a.extend([Sub()])`), was
     # typed by its first element: `'Square' does not match expected type
     # 'Circle'`, `unsupported operand type(s) for +: 'List[Shape]' and
     # 'List[Square]'`.
-    scenario, config, _ = _own_shapes_case(tmp_path, setup)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    scenario, config, path = _write_merged_case(
+        tmp_path, _OWN_SHAPES_CASES, header=_OWN_SHAPES_HEADER
+    )
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -4473,8 +4678,7 @@ def test_a_dict_display_mixing_an_action_and_a_non_action_is_refused(
     assert error.line == _line_of(path, needle), error.format()
 
 
-@pytest.mark.parametrize(
-    "setup",
+_TYPED_BEFORE_CASES = _setup_cases(
     [
         'speeds = {"a": 1, "b": cfg.timeout_seconds}\nv: float = speeds["b"]\n',
         'limits = {"a": None, "b": cfg.timeout_seconds}\n',
@@ -4484,15 +4688,18 @@ def test_a_dict_display_mixing_an_action_and_a_non_action_is_refused(
     ],
     ids=["int-then-float", "none-first", "none-last", "str-none", "optional"],
 )
-def test_a_dict_display_codon_typed_before_still_compiles(
-    tmp_path: Path, setup: str
-) -> None:
+
+
+def test_a_dict_display_codon_typed_before_still_compiles(tmp_path: Path) -> None:
     # The rewrite only makes a condition (or an action) its base class: an int
     # and a float, or a value and None, stay Codon's display to type, which
     # promotes the int and makes the value optional (#250).
-    scenario, config, _ = _write_case(tmp_path, setup + 'logger.info("ok")\n')
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    cases = {
+        case_id: _Case(case.setup + 'logger.info("ok")\n')
+        for case_id, case in _TYPED_BEFORE_CASES.items()
+    }
+    scenario, config, path = _write_merged_case(tmp_path, cases)
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -4743,8 +4950,7 @@ from .configs import CaseConfig""",
 _GOAL = "Lanelet2Pose(lanelet_id=1, s=0.0)"
 
 
-@pytest.mark.parametrize(
-    "setup",
+_EMPTY_SEQUENCE_CASES = _setup_cases(
     [
         # RoutingAction's own default, `waypoints=()`.
         f"self.register_pre_tick(RoutingAction(EGO_ROLE_NAME, {_GOAL}))\n",
@@ -4780,17 +4986,20 @@ _GOAL = "Lanelet2Pose(lanelet_id=1, s=0.0)"
         "others",
     ],
 )
-def test_an_empty_sequence_compiles(tmp_path: Path, setup: str) -> None:
+
+
+def test_an_empty_sequence_compiles(tmp_path: Path) -> None:
     # An empty display has no element type in Codon (`[]` is a
     # List[NoneType], `()` a Tuple of no items), and each was refused where
     # Python takes a Sequence[X], RoutingAction's own default first (#264).
-    scenario, config, _ = _write_case(
+    scenario, config, path = _write_merged_case(
         tmp_path,
-        "self._setup_ego_spawn()\n" + textwrap.dedent(setup) + _TIMEOUT_SETUP,
+        _EMPTY_SEQUENCE_CASES,
+        before="self._setup_ego_spawn()\n",
+        after=_TIMEOUT_SETUP,
         header=_SEQUENCE_HEADER,
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -6419,29 +6628,39 @@ _TYPING_CALLS = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(_TYPING_CASES))
-def test_a_supported_typing_name_compiles_in_a_scenario(
-    tmp_path: Path, name: str
-) -> None:
+def _typing_cases() -> dict[str, _Case]:
+    """Each name of _TYPING_CASES this Python's typing has (a case the
+    scenario imports from typing, which a Python without it could not run)."""
     import typing
 
-    if not hasattr(typing, name):
-        pytest.skip(f"typing has no {name} before this Python")
-    imports, helper = _TYPING_CASES[name]
-    imports = f"{imports}, Optional, Callable" if name == "cast" else imports
-    header = _HEADER.replace(
-        "from .configs import CaseConfig\n",
-        f"from typing import {imports}\n\nfrom .configs import CaseConfig\n",
-        1,
+    cases = {}
+    for name in sorted(_TYPING_CASES):
+        if not hasattr(typing, name):
+            continue
+        imports, helper = _TYPING_CASES[name]
+        imports = f"{imports}, Optional, Callable" if name == "cast" else imports
+        cases[name] = _Case(
+            _TYPING_CALLS[name], helper, f"from typing import {imports}"
+        )
+    return cases
+
+
+#: The typing cases are compiled together, as few programs as their own
+#: names allow (Self defines a Counter, TypeGuard and TypeIs an is_pair).
+_TYPING_GROUPS = _merged_groups(_typing_cases())
+
+
+@pytest.mark.parametrize(
+    "names", _TYPING_GROUPS, ids=["+".join(g) for g in _TYPING_GROUPS]
+)
+def test_a_supported_typing_name_compiles_in_a_scenario(
+    tmp_path: Path, names: list[str]
+) -> None:
+    cases = _typing_cases()
+    scenario, config, path = _write_merged_case(
+        tmp_path, {name: cases[name] for name in names}, before=_TIMEOUT_SETUP
     )
-    scenario, config, _ = _write_case(
-        tmp_path,
-        _TIMEOUT_SETUP + _TYPING_CALLS[name],
-        "\n\n" + helper,
-        header=header,
-    )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 @pytest.mark.parametrize(
@@ -6818,19 +7037,26 @@ def _stdlib_header(imports: str) -> str:
     )
 
 
-@pytest.mark.parametrize("name", sorted(_STDLIB_CASES))
+_STDLIB_MERGED = {
+    name: _Case(call, helper, imports)
+    for name, (imports, helper, call) in sorted(_STDLIB_CASES.items())
+}
+
+#: The stdlib cases are compiled together, as few programs as their own
+#: names allow (several define a `total`, a `square` or a `skew`).
+_STDLIB_GROUPS = _merged_groups(_STDLIB_MERGED)
+
+
+@pytest.mark.parametrize(
+    "names", _STDLIB_GROUPS, ids=["+".join(g) for g in _STDLIB_GROUPS]
+)
 def test_a_supported_stdlib_name_compiles_in_a_scenario(
-    tmp_path: Path, name: str
+    tmp_path: Path, names: list[str]
 ) -> None:
-    imports, helper, call = _STDLIB_CASES[name]
-    scenario, config, _ = _write_case(
-        tmp_path,
-        _TIMEOUT_SETUP + call,
-        "\n\n" + helper,
-        header=_stdlib_header(imports),
+    scenario, config, path = _write_merged_case(
+        tmp_path, {name: _STDLIB_MERGED[name] for name in names}, before=_TIMEOUT_SETUP
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 # ---------------------------------------------------------------------------
@@ -6909,8 +7135,7 @@ _LOGGING_ACCEPTED: dict[str, str] = {
     ),
     "deprecated warn": 'logger.warn("x %s", 1)\n',
     "extra with int values": (
-        'logger.info("x", extra={"k": 1})\n'
-        'logger.warning("x %s", 1, extra={"a": 1})\n'
+        'logger.info("x", extra={"k": 1})\nlogger.warning("x %s", 1, extra={"a": 1})\n'
     ),
     "extra with str values": 'logger.error("x", extra={"k": "v"})\n',
     "extra and stacklevel on every level method": (
@@ -9883,20 +10108,23 @@ _STACKED_DECORATORS = {
 }
 
 
-@pytest.mark.parametrize("case", sorted(_STACKED_DECORATORS))
-def test_a_dropped_decorator_under_a_kept_one_compiles(
-    tmp_path: Path, case: str
-) -> None:
+def test_a_dropped_decorator_under_a_kept_one_compiles(tmp_path: Path) -> None:
     # `@property` / `@staticmethod` over `@abstractmethod`, `@override`,
     # `@functools.cache` or `@functools.lru_cache(...)`: the dropped one left
     # a blank line in the decorator list, a Codon syntax error (#595).
-    base, sub = _STACKED_DECORATORS[case]
-    read = "s.area()" if "staticmethod" in case else "s.area"
-    setup = f's: Shape = Sq()\nlogger.info("%f", {read})\n'
-    extra = f"{_STACK_IMPORTS}\n\nclass Shape(ABC):\n{base}\n\nclass Sq(Shape):\n{sub}"
-    scenario, config, _ = _write_case(tmp_path, setup, extra)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    # Each case's two classes are named after its number, apart from the
+    # other cases' in the one module.
+    cases = {}
+    for number, case in enumerate(sorted(_STACKED_DECORATORS)):
+        base, sub = _STACKED_DECORATORS[case]
+        read = "s.area()" if "staticmethod" in case else "s.area"
+        shape, sq = f"Shape{number}", f"Sq{number}"
+        cases[case] = _Case(
+            f's: {shape} = {sq}()\nlogger.info("%f", {read})\n',
+            f"class {shape}(ABC):\n{base}\n\nclass {sq}({shape}):\n{sub}",
+        )
+    scenario, config, path = _write_merged_case(tmp_path, cases, extra=_STACK_IMPORTS)
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 def test_an_error_on_a_moved_decorator_is_at_its_line(tmp_path: Path) -> None:
@@ -10366,8 +10594,7 @@ _R29_EXTRA = """
 """
 
 
-@pytest.mark.parametrize(
-    "setup",
+_TO_LANELET2_CASES = _setup_cases(
     [
         "p = to_lanelet2(to_opendrive(Lanelet2Pose(lanelet_id=1, s=0.0)))\n"
         'logger.info("%d", p.lanelet_id)\n',
@@ -10378,10 +10605,13 @@ _R29_EXTRA = """
     ],
     ids=["opendrive", "opendrive-literal", "carla-world"],
 )
-def test_to_lanelet2_takes_both_documented_poses(tmp_path: Path, setup: str) -> None:
-    scenario, config, _ = _write_case(tmp_path, setup, header=_R29_HEADER)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+
+
+def test_to_lanelet2_takes_both_documented_poses(tmp_path: Path) -> None:
+    scenario, config, path = _write_merged_case(
+        tmp_path, _TO_LANELET2_CASES, header=_R29_HEADER
+    )
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 def test_to_lanelet2_refuses_another_argument(tmp_path: Path) -> None:
@@ -10417,36 +10647,40 @@ _OPTIONAL_ACTION_SETUPS = {
 }
 
 
-@pytest.mark.parametrize("register", ["register_pre_tick", "register_post_tick"])
-@pytest.mark.parametrize("kind", sorted(_OPTIONAL_ACTION_SETUPS))
 def test_an_optional_action_registered_after_a_none_test_compiles(
-    tmp_path: Path, kind: str, register: str
+    tmp_path: Path,
 ) -> None:
-    setup = _OPTIONAL_ACTION_SETUPS[kind].replace("REG", register)
-    scenario, config, _ = _write_case(
+    cases = {
+        f"{kind}-{register}": _Case(
+            _OPTIONAL_ACTION_SETUPS[kind].replace("REG", register)
+        )
+        for register in ["register_pre_tick", "register_post_tick"]
+        for kind in sorted(_OPTIONAL_ACTION_SETUPS)
+    }
+    scenario, config, path = _write_merged_case(
         tmp_path,
-        setup,
+        cases,
         extra="\n    _a: Optional[SetSpeedAction]\n",
         header=_R29_HEADER,
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
-@pytest.mark.parametrize(
-    "read",
-    ["lambda w: self._gap(w) or 0.0", "lambda w: 0.0 or self._gap(w)"],
-    ids=["optional-first", "optional-last"],
-)
 def test_a_measure_read_that_defaults_an_optional_with_or_compiles(
-    tmp_path: Path, read: str
+    tmp_path: Path,
 ) -> None:
-    setup = f'self.register_measure("a", {read})\n'
-    scenario, config, _ = _write_case(
-        tmp_path, setup, extra=_R29_EXTRA, header=_R29_HEADER
+    cases = {
+        "optional-first": _Case(
+            'self.register_measure("a", lambda w: self._gap(w) or 0.0)'
+        ),
+        "optional-last": _Case(
+            'self.register_measure("a", lambda w: 0.0 or self._gap(w))'
+        ),
+    }
+    scenario, config, path = _write_merged_case(
+        tmp_path, cases, extra=_R29_EXTRA, header=_R29_HEADER
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 _OPTIONAL_BASE_SETUPS = {
@@ -10505,16 +10739,14 @@ def test_register_tick_still_refuses_a_non_action_non_callable(
     ), result.format()
 
 
-@pytest.mark.parametrize(
-    "read",
-    [
-        "lambda w: self._gap(w) or 0",
-        "lambda w: self._gap(w) or self._gap(w) or 0.0",
-        "lambda w: self._count(w) or 0",
-    ],
-    ids=["int-default", "nested", "optional-int"],
-)
-def test_more_measure_reads_with_or_compile(tmp_path: Path, read: str) -> None:
+_MORE_OR_READS = {
+    "int-default": "lambda w: self._gap(w) or 0",
+    "nested": "lambda w: self._gap(w) or self._gap(w) or 0.0",
+    "optional-int": "lambda w: self._count(w) or 0",
+}
+
+
+def test_more_measure_reads_with_or_compile(tmp_path: Path) -> None:
     extra = (
         _R29_EXTRA
         + """
@@ -10522,10 +10754,14 @@ def test_more_measure_reads_with_or_compile(tmp_path: Path, read: str) -> None:
         return None
 """
     )
-    setup = f'self.register_measure("a", {read})\n'
-    scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+    cases = {
+        case_id: _Case(f'self.register_measure("a", {read})\n')
+        for case_id, read in _MORE_OR_READS.items()
+    }
+    scenario, config, path = _write_merged_case(
+        tmp_path, cases, extra=extra, header=_R29_HEADER
+    )
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 def test_a_measure_read_of_str_or_float_is_refused(tmp_path: Path) -> None:
@@ -10558,26 +10794,29 @@ def test_the_optional_hint_is_not_given_for_unrelated_optionals(
     assert "does not convert an Optional of a subclass" not in result.format()
 
 
-@pytest.mark.parametrize(
-    "line",
-    [
-        'logger.info("%s", base.parts[-1])',
-        'logger.info("%s", "a" in base.parts)',
-        'logger.info("%d", len(base.parts))',
-        'logger.info("%s", base.parts[1:])',
-        'logger.info("%s", [p.upper() for p in base.parts])',
-        'logger.info("%s", "/".join(base.parts[1:]))',
-        'logger.info("%s", base.parts[0] == "/")',
-    ],
-)
-def test_a_scenario_may_index_slice_and_iterate_path_parts(
-    tmp_path: Path, line: str
-) -> None:
-    scenario, config, _ = _write_case(
-        tmp_path, f'from pathlib import Path\nbase = Path("/a/b.txt")\n{line}\n'
+_PATH_PARTS_LINES = {
+    f"line-{number}": line
+    for number, line in enumerate(
+        [
+            'logger.info("%s", base.parts[-1])',
+            'logger.info("%s", "a" in base.parts)',
+            'logger.info("%d", len(base.parts))',
+            'logger.info("%s", base.parts[1:])',
+            'logger.info("%s", [p.upper() for p in base.parts])',
+            'logger.info("%s", "/".join(base.parts[1:]))',
+            'logger.info("%s", base.parts[0] == "/")',
+        ]
     )
-    result = typecheck_scenario(scenario, config)
-    assert result.ok, result.format()
+}
+
+
+def test_a_scenario_may_index_slice_and_iterate_path_parts(tmp_path: Path) -> None:
+    cases = {
+        case_id: _Case(f'from pathlib import Path\nbase = Path("/a/b.txt")\n{line}\n')
+        for case_id, line in _PATH_PARTS_LINES.items()
+    }
+    scenario, config, path = _write_merged_case(tmp_path, cases)
+    _assert_merged_compiles(typecheck_scenario(scenario, config), path)
 
 
 # ---------------------------------------------------------------------------
