@@ -24,7 +24,9 @@ from autoware_carla_scenario.coordinate import (
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
 from autoware_carla_scenario.coordinate.projection import (
     LOCAL_XY,
+    PROJECTOR_BY_AUTOWARE_TYPE,
     load_lanelet2,
+    map_origin,
 )
 from autoware_carla_scenario.coordinate.projection import (
     read_projector_type as _read_projector_type,
@@ -129,6 +131,22 @@ class TestReadProjectorType:
         map_path = self._map_with_info(tmp_path, "projector_type: Local\n")
         assert _read_projector_type(map_path) == LOCAL_XY
 
+    def test_every_autoware_projection_is_read_as_autoware_reads_it(self):
+        # autoware_core's get_lanelet2_projector() (autoware_geography_utils):
+        # LocalCartesianUTM is UtmProjector, LocalCartesian LocalCartesianProjector
+        # (#859).  Local is Autoware's local_x/local_y reading.
+        assert PROJECTOR_BY_AUTOWARE_TYPE == {
+            "Local": LOCAL_XY,
+            "LocalCartesian": "local_cartesian",
+            "LocalCartesianUTM": "utm",
+            "MGRS": "mgrs",
+            "TransverseMercator": "transverse_mercator",
+        }
+
+    def test_local_cartesian_utm_maps_are_read_with_utm(self, tmp_path):
+        map_path = self._map_with_info(tmp_path, "projector_type: LocalCartesianUTM\n")
+        assert _read_projector_type(map_path) == "utm"
+
     def test_mgrs_maps_are_read_with_mgrs(self, tmp_path):
         map_path = self._map_with_info(tmp_path, "projector_type: MGRS\n")
         assert _read_projector_type(map_path) == "mgrs"
@@ -151,6 +169,49 @@ class TestReadProjectorType:
         # rather than the documented fallback.
         map_path = self._map_with_info(tmp_path, "- projector_type: Local\n")
         assert _read_projector_type(map_path) is None
+
+
+class TestLocalCartesianUtmMap:
+    """A ``LocalCartesianUTM`` map lands where Autoware puts it (#859)."""
+
+    ORIGIN = (35.68, 139.69, 0.0)
+
+    def test_the_fixture_map_is_read_as_autoware_reads_it(self, tmp_path):
+        import shutil
+
+        import lanelet2.io
+        import lanelet2.projection
+
+        map_path = tmp_path / "lanelet2_map.osm"
+        shutil.copyfile(OSM_PATH, map_path)
+        lat, lon, alt = self.ORIGIN
+        (tmp_path / "map_projector_info.yaml").write_text(
+            "projector_type: LocalCartesianUTM\n"
+            "vertical_datum: WGS84\n"
+            "map_origin:\n"
+            f"  latitude: {lat}\n"
+            f"  longitude: {lon}\n"
+            f"  altitude: {alt}\n",
+            encoding="utf-8",
+        )
+        stated, source = map_origin(map_path)
+        assert (stated, source) == (self.ORIGIN, "map_projector_info.yaml")
+        origin = lanelet2.io.Origin(*stated)
+
+        lanelet_map, projector, name = load_lanelet2(map_path, origin)
+        assert name == "utm"
+        assert isinstance(projector, lanelet2.projection.UtmProjector)
+
+        # Autoware: lanelet2.io.load() through UtmProjector at map_origin.
+        autoware = lanelet2.io.load(
+            str(map_path), lanelet2.projection.UtmProjector(origin)
+        )
+        expected = {p.id: (p.x, p.y, p.z) for p in autoware.pointLayer}
+        assert len(expected) == len(lanelet_map.pointLayer) > 0
+        worst = max(
+            math.dist((p.x, p.y, p.z), expected[p.id]) for p in lanelet_map.pointLayer
+        )
+        assert worst < 1e-6
 
 
 # ---------------------------------------------------------------------------
