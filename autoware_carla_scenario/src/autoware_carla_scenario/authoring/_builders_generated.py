@@ -110,6 +110,7 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "lane_change_abort",
         "pedestrian_run_red_light",
         "run_traffic_rule",
+        "stalled_object",
         "stop_crossing",
         "walk_straight",
         "turn_indicator",
@@ -1183,6 +1184,7 @@ def build_stalled_object_action(
         condition=condition,
         timing=timing,
         label=compiled.label,
+        overrides=compiled.node.overrides,
     )
 
 

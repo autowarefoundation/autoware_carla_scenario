@@ -55,7 +55,7 @@ from ..conditions.base import BaseCondition, ScenarioResult
 from ..entity_role import EntityRole
 from ..trajectory.model import TrajectoryFollowingMode
 from ._adversarial_execution import AdversarialExecution, start_execution
-from ..control_domain import ControlDomain, MOVEMENT
+from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -184,7 +184,7 @@ class AdversarialAction(BaseAction):
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The entity's movement: the adversity drives it along its path."""
-        return [(str(self._entity_name), domain) for domain in MOVEMENT]
+        return movement_of(str(self._entity_name))
 
     def execute(self, world: "carla.World") -> None:
         """Plan the command when triggered, then drive it a tick at a time."""
@@ -194,6 +194,12 @@ class AdversarialAction(BaseAction):
             return
         execution: AdversarialExecution = self._execution
         execution.tick(world, self._elapsed)
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Overridden mid-path: hand the vehicle back, as at the path's end."""
+        if self._execution is not None:
+            execution: AdversarialExecution = self._execution
+            execution.hand_back(world)
 
     def close(self) -> None:
         """Close the conditions, the trigger's and the path's."""

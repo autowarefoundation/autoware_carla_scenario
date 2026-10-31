@@ -57,7 +57,7 @@ from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
-from ..control_domain import MOVEMENT, ControlDomain
+from ..control_domain import ControlDomain, movement_of
 from .base import TickTiming
 
 if TYPE_CHECKING:
@@ -543,7 +543,7 @@ class RoutingAction(TrajectoryRun):
             or self._timed()
             or self._walks_pedestrian()
         ):
-            return [(entity, domain) for domain in MOVEMENT]
+            return movement_of(entity)
         return [(entity, ControlDomain.LATERAL)]
 
     def _reissues_by_default(self) -> bool:

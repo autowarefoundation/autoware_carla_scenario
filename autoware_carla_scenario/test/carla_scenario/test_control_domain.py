@@ -8,7 +8,7 @@ commanding anything.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -161,3 +161,46 @@ class TestOverride:
         _Command("speed", (LON,), until=_Switch(), overrides=True).tick(None, 0.0)
         with pytest.raises(ControlConflictError):
             _Command("speed2", (LON,)).tick(None, 0.05)
+
+
+class _Recording(_Command):
+    """A :class:`_Command` that remembers being stopped by an override."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.stopped_in: Optional[object] = None
+
+    def _stopped(self, world: Any) -> None:
+        self.stopped_in = world
+
+
+class TestRunsThatHandOff:
+    def test_an_overridden_action_undoes_what_its_run_left(self) -> None:
+        world = object()
+        holding = _Recording("cut_in", MOVEMENT, until=_Switch())
+        holding.tick(world, 0.0)
+        _Command("brake", (LON,), until=_Switch(), overrides=True).tick(world, 0.5)
+        assert holding.stopped_in is world
+
+    def test_an_init_action_left_running_controls_nothing(self) -> None:
+        """Nothing ticks an init action again: a route handed to the ego's
+        driver there must not keep the ego's lateral domain for the run."""
+        route = _Command("route", (LAT,), until=_Switch())
+        route.tick(None, 0.0)
+        route._settle_start(None, 0.0)
+        assert route.state is ActionState.RUNNING
+        assert control_holder("npc", LAT, 0.0) is None
+        _Command("turn", (LAT,)).tick(None, 0.0)
+
+    def test_an_adversity_s_own_path_takes_no_domain(self) -> None:
+        from autoware_carla_scenario.actions._adversarial_execution import (
+            AdversarialExecution,
+        )
+        from autoware_carla_scenario.adversity.geometry import PredictedState
+
+        path = [
+            PredictedState(x=0.0, y=0.0, yaw=0.0, speed=1.0, t=0.0),
+            PredictedState(x=1.0, y=0.0, yaw=0.0, speed=1.0, t=1.0),
+        ]
+        execution = AdversarialExecution("npc", path)
+        assert execution._follow._claims_control is False

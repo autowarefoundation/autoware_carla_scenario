@@ -42,6 +42,7 @@ __all__ = [
     "MOVEMENT",
     "ControlConflictError",
     "ControlDomain",
+    "movement_of",
 ]
 
 
@@ -62,14 +63,19 @@ MOVEMENT: tuple[ControlDomain, ...] = (
 )
 
 
+def movement_of(entity: str) -> list[tuple[str, ControlDomain]]:
+    """The claims on both domains of *entity*'s movement."""
+    return [(entity, domain) for domain in MOVEMENT]
+
+
 class ControlConflictError(RuntimeError):
     """An action fired to command a domain of an entity another action holds.
 
     Attributes:
         entity: The entity's role name.
         domain: The domain both command.
-        holder: The label of the action holding it.
-        claimant: The label of the action that fired.
+        holder: The action holding it, as ``Class 'label'``.
+        claimant: The action that fired, as ``Class 'label'``.
     """
 
     entity: str

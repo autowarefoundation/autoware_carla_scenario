@@ -15,7 +15,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M, STEP_BACK_M, road_threat
-from ..control_domain import ControlDomain, MOVEMENT
+from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -187,7 +187,7 @@ class WalkStraightAction(BaseAction):
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """Where and how fast the pedestrian walks: its movement."""
-        return [(str(self._entity_name), domain) for domain in MOVEMENT]
+        return movement_of(str(self._entity_name))
 
     def execute(self, world: "carla.World") -> None:
         """Tell the named pedestrian to start walking, then, for a walk that

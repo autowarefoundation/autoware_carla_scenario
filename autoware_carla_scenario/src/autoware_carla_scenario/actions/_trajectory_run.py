@@ -36,7 +36,7 @@ from ..trajectory.model import (
 )
 from ._departures import DepartureTimeline, TimelineVertex
 from ..utils.vehicles import as_vehicle
-from ..control_domain import ControlDomain, MOVEMENT
+from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -359,7 +359,7 @@ class TrajectoryRun(BaseAction):
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The entity's movement: it is driven, or placed, along the trajectory."""
-        return [(str(self._entity_name), domain) for domain in MOVEMENT]
+        return movement_of(str(self._entity_name))
 
     def execute(self, world: "carla.World") -> None:
         """Move the entity one tick along the trajectory."""

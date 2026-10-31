@@ -114,6 +114,7 @@ class BaseAction(ABC):
     _done: bool
     _lifecycle: ActionState
     _overrides: bool
+    _claims_control: bool
 
     def __init__(
         self,
@@ -143,6 +144,9 @@ class BaseAction(ABC):
         self._done = False
         self._lifecycle = ActionState.STANDBY
         self._overrides = overrides
+        # False for an action another drives as a part of its own run (an
+        # adversity's path), whose domains that one holds.
+        self._claims_control = True
 
     @property
     def timing(self) -> TickTiming:
@@ -256,19 +260,21 @@ class BaseAction(ABC):
         none: list[tuple[str, ControlDomain]] = []
         return none
 
-    def _take_control(self, at: float) -> None:
+    def _take_control(self, world: "carla.World", at: float) -> None:
         """Take the domains the action commands as it fires at *at*: for its
         run if it runs on, else for this tick.
 
         Raises:
             ControlConflictError: If another action holds one of them.
         """
+        if not self._claims_control:
+            return
         claims = self._control_claims()
         if not claims:
             return
         runs = self._until is not None or self.reissues_while_running
         for stopped in _SLOTS.take(self, claims, at, runs):
-            stopped._stop_overridden(self._control_name)
+            stopped._stop_overridden(world, self._control_name)
 
     @property
     def _control_name(self) -> str:
@@ -284,11 +290,18 @@ class BaseAction(ABC):
         (the default).  Read as the action fires."""
         return self._overrides
 
-    def _stop_overridden(self, by: str) -> None:
+    def _stop_overridden(self, world: "carla.World", by: str) -> None:
         """Stop the run, overridden by the action *by*: OpenSCENARIO's stop
         transition, to ``completeState``; what it held is given back."""
         logger.info("%s overridden by %s", self._control_name, by)
         self._lifecycle = ActionState.COMPLETE
+        self._stopped(world)
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Undo what the run left in place, now that it is stopped before its
+        end -- an entity it took from its driver, given back.  Nothing unless
+        the action takes one."""
+        return
 
     def _release_control(self) -> None:
         """Give back the domains the action took, as its run ends."""
@@ -325,11 +338,14 @@ class BaseAction(ABC):
         action's lifecycle to step through."""
         if self._lifecycle is not ActionState.START_TRANSITION:
             return
+        # Nothing ticks it again: what it commanded is left to the entity's
+        # driver (an action that keeps acting is put on the tick loop
+        # instead), so it controls nothing from here.
+        self._release_control()
         self._lifecycle = ActionState.RUNNING
         if self.reissues_while_running:
             return
         if self._until is None or self._until.check(world, elapsed) is not None:
-            self._release_control()
             self._lifecycle = (
                 ActionState.COMPLETE if self._once else ActionState.STANDBY
             )
@@ -411,7 +427,7 @@ class BaseAction(ABC):
         )
         # Before it commands anything: a conflict raises with the entity
         # untouched.
-        self._take_control(elapsed)
+        self._take_control(world, elapsed)
         self.execute(world)
         self._done = True
         # Held for this whole tick, so a condition watching `startTransition`
