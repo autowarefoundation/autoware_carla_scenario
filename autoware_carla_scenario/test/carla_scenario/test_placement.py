@@ -60,6 +60,32 @@ def test_the_solver_skips_where_nothing_is_read() -> None:
     assert s == pytest.approx(7.25, abs=1e-3)
 
 
+def _step(s: float) -> float:
+    # 5 before s = 10, where it jumps to 50 and falls 1.5 per metre after.
+    if s < 10.0:
+        return 5.0
+    return 50.0 - 1.5 * (s - 10.0)
+
+
+def test_the_solver_passes_over_a_jump_to_the_real_crossing() -> None:
+    # The reads at s = 9.5 and s = 10 straddle 20 across the jump; the
+    # measure reads 20 only at s = 30.
+    s = solve_along(_step, 20.0, 0.0, 40.0)
+
+    assert s == pytest.approx(30.0, abs=1e-3)
+    assert _step(s) == pytest.approx(20.0, abs=1e-3)
+
+
+def test_a_jump_alone_is_no_answer() -> None:
+    # Only the jump straddles 20 on [0, 15]: nothing there reads it.
+    with pytest.raises(
+        ValueError,
+        match=r"cannot read 20: .* reads 5\.00 to 50\.00, passing 20 only where "
+        r"it jumps or reads nothing \(first between s = 9\.50 and 10\.00\)",
+    ):
+        solve_along(_step, 20.0, 0.0, 15.0)
+
+
 def test_the_solver_says_what_it_can_reach() -> None:
     with pytest.raises(
         ValueError, match=r"the gap cannot read 40: .* reads 0\.00 to 20\.00"
