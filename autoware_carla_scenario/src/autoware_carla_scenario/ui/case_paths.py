@@ -5,7 +5,7 @@ session (:func:`session_dir`) or of a multirun job (:func:`job_dir`), both
 through :func:`contained`, which refuses a path that resolves outside the
 viewer's base; the files one case leaves (:class:`CaseFiles`), and the stems
 of the cases in a directory, in the order a runner hands them out
-(:func:`stem_order`).
+(:func:`stem_order`), and the one case of a directory that holds one run.
 
 Split out of ``ui.cases``, which re-exports every name here and keeps what
 reads the JSON documents of any type (``Any``) a batch leaves, so that the
@@ -140,3 +140,20 @@ def _stems_in(directory: Path) -> list[str]:
             if name.endswith(suffix) and len(name) > len(suffix):
                 stems.add(name[: -len(suffix)])
     return sorted(stems, key=stem_order)
+
+
+def _only_case(directory: Path) -> CaseFiles | None:
+    """The case of a directory that holds one run (a multirun job, a single
+    run): the first stem with a result, else the first with a log."""
+    stems = _stems_in(directory)
+    for stem in stems:
+        if (directory / f"{stem}{_RESULT}").is_file():
+            return CaseFiles(directory, stem)
+    return CaseFiles(directory, stems[0]) if stems else None
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
