@@ -363,25 +363,31 @@ def _install(
     The sensors are ``{label}.sensors.rrd`` beside the log -- left by a run
     whose merge failed, or taken out of the recording replaced here when it
     holds them -- and are merged into the new recording, then removed, as a
-    run does.  A merge that fails keeps them in that file.  When the
-    recording replaced holds sensors that cannot be taken out (no Rerun SDK,
-    or it fails), it is kept and the new one dropped, unless *overwrite*.
+    run does.  A merge that fails keeps them in that file.  Whether the
+    recording replaced holds sensors is read with the Rerun SDK's CLI; without
+    it (or when that fails) its bytes are scanned
+    (:func:`.rerun_lidar.carries_sensors`), and a recording that seems to
+    hold them is kept and the new one dropped, unless *overwrite*.
     """
     from . import rerun_lidar  # noqa: PLC0415
 
     recording = recording_path(trajectory)
     sensors = rerun_lidar.lidar_recording_path(trajectory.parent, label)
-    if (
-        not sensors.exists()
-        and recording.is_file()
-        and rerun_lidar.carries_sensors(recording)
-    ):
+    lost: Optional[str] = None
+    if not sensors.exists() and recording.is_file():
         try:
             rerun_lidar.extract_sensors(recording, sensors)
         except Exception as exc:  # noqa: BLE001 - reported, not raised
+            if rerun_lidar.carries_sensors(recording):
+                lost = f"{type(exc).__name__}: {exc}"
+            else:
+                # Nothing to keep: a recording of the trajectory alone, or
+                # one too broken to read (what converting again is for).
+                logger.debug("[%s] %s: %s", label, recording, exc)
+        if lost is not None:
             reason = (
                 f"{recording.name} holds sensor data that could not be kept "
-                f"({type(exc).__name__}: {exc}); it is left as it was "
+                f"({lost}); it is left as it was "
                 "(--overwrite / overwrite=True replaces it without them)"
             )
             if not overwrite:
@@ -395,11 +401,10 @@ def _install(
                     skipped=True,
                 )
             logger.warning(
-                "[%s] Replacing %s, and the sensor data in it: %s: %s",
+                "[%s] Replacing %s, and the sensor data in it: %s",
                 label,
                 recording,
-                type(exc).__name__,
-                exc,
+                lost,
             )
     os.replace(converted, recording)
     if sensors.is_file():
@@ -411,6 +416,22 @@ def _install(
             )
     logger.info("[%s] Rerun recording written to %s", label, recording)
     return RerunConversion(label, trajectory, recording, stats=stats)
+
+
+def _installed(
+    label: str,
+    trajectory: Path,
+    converted: Path,
+    stats: Optional[dict[str, Any]],
+    *,
+    overwrite: bool,
+) -> RerunConversion:
+    """:func:`_install`, a failure (moving the file, ...) reported as the
+    log's rather than ending the conversion of the others."""
+    try:
+        return _install(label, trajectory, converted, stats, overwrite=overwrite)
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return _failed(label, trajectory, f"{type(exc).__name__}: {exc}")
 
 
 def _failed(label: str, trajectory: Path, error: str) -> RerunConversion:
@@ -462,7 +483,7 @@ def convert_outputs(
                 conversions.append(_failed(label, path, f"{type(exc).__name__}: {exc}"))
             else:
                 conversions.append(
-                    _install(
+                    _installed(
                         label,
                         path,
                         converted,
@@ -479,7 +500,7 @@ def convert_outputs(
             label = _label(trajectory)
             if entry.get("ok"):
                 conversions.append(
-                    _install(
+                    _installed(
                         label,
                         trajectory,
                         Path(entry["output"]),

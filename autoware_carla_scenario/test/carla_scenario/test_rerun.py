@@ -505,6 +505,47 @@ def test_converting_a_run_without_sensors_again_is_unchanged(tmp_path: Path) -> 
     ]
 
 
+def test_a_recording_the_sdk_cannot_read_is_kept_only_if_it_seems_to_hold_sensors(
+    tmp_path: Path,
+) -> None:
+    """With the CLI, a recording it cannot read falls back to the byte scan:
+    a broken recording of the trajectory alone is replaced (what converting
+    again is for); one naming a sensor entity is kept."""
+    _real_sdk()
+    for stem, old in (("A", b"broken /world/lidar/top"), ("B", b"broken")):
+        log = _log(tmp_path, stem)
+        recording_path(log).write_bytes(old)
+    a, b = convert_outputs(tmp_path)
+    assert a.skipped and (tmp_path / "A.rrd").read_bytes() == b"broken /world/lidar/top"
+    assert b.ok and _entities(tmp_path / "B.rrd")
+    assert not list(tmp_path.glob(".*"))
+
+
+def test_sensors_are_kept_when_the_cli_output_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``rerun rrd print`` in a form :func:`extract_sensors` does not read
+    (another SDK) is a failure to keep the sensors, not a recording without
+    them: the recording is left as it was."""
+    import re
+
+    from autoware_carla_scenario import rerun_lidar
+
+    _real_sdk()
+    log = _in_run(tmp_path, "S")
+    before = recording_path(log).read_bytes()
+    monkeypatch.setattr(rerun_lidar, "_CHUNK_LINE", re.compile(r"^Chunk<(.*)>$"))
+    with pytest.raises(RuntimeError, match="cannot read the entities"):
+        rerun_lidar.extract_sensors(recording_path(log), tmp_path / "x.sensors.rrd")
+    [conversion] = convert_outputs(log)
+    assert conversion.skipped
+    assert recording_path(log).read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "S.rrd",
+        "S.trajectory.jsonl",
+    ]
+
+
 class _FakeModule(_FakeConverter):
     """The converter package, ``convert_dir`` included."""
 

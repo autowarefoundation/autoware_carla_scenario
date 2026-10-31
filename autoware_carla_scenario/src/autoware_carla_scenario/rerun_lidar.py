@@ -147,11 +147,16 @@ _SCAN_BLOCK = 1 << 20
 
 
 def carries_sensors(recording: Path) -> bool:
-    """Whether *recording* holds sensor entities (:data:`SENSOR_ENTITIES`).
+    """Whether *recording* seems to hold sensor entities
+    (:data:`SENSOR_ENTITIES`), without the Rerun SDK.
 
-    A recording names the entity of each of its chunks in the chunk's header,
-    which is not compressed, so this scans its bytes for the sensors' entity
-    paths: it needs no SDK, and reads the file once.
+    A heuristic, for when :func:`extract_sensors` cannot tell: it scans the
+    file's bytes for the sensors' entity paths.  Each chunk names its entity
+    in its Arrow schema, whose first mention of the path stays legible even
+    in an LZ4-compressed chunk (checked with the SDK's 0.38 encoding), and the
+    recording's footer names them again.  A recording that merely mentions
+    such a path elsewhere is a false positive: it is kept rather than
+    replaced, which errs on the safe side.
     """
     needles = [f"{root}/".encode() for root in SENSOR_ENTITIES]
     overlap = max(len(needle) for needle in needles) - 1
@@ -181,6 +186,8 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
         LidarRerunUnavailableError: The SDK's CLI is not installed.
         subprocess.CalledProcessError: Reading or writing a recording failed;
             *sensors* is not written.
+        RuntimeError: ``rerun rrd print`` lists the chunks in a form this
+            does not read (or lists none); *sensors* is not written.
     """
     cli = _cli()
     recording, sensors = Path(recording), Path(sensors)
@@ -190,11 +197,17 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
         capture_output=True,
         text=True,
     ).stdout
-    entities = {
-        match.group(1)
-        for match in map(_CHUNK_LINE.match, printed.splitlines())
-        if match is not None
-    }
+    chunks = [line for line in printed.splitlines() if line.startswith("Chunk(")]
+    matches = [_CHUNK_LINE.match(line) for line in chunks]
+    if not chunks or None in matches:
+        # Another SDK's output: dropping too little would duplicate data on
+        # a merge, and finding no sensors would lose them.
+        unread = next((c for c, m in zip(chunks, matches) if m is None), None)
+        raise RuntimeError(
+            f"cannot read the entities of {recording} from `rerun rrd print`"
+            + (f": {unread!r}" if unread is not None else ": no chunks")
+        )
+    entities = {match.group(1) for match in matches if match is not None}
     if not any(_is_sensor_entity(entity) for entity in entities):
         return False
     dropped = sorted(entity for entity in entities if not _is_sensor_entity(entity))

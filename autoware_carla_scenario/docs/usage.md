@@ -573,8 +573,9 @@ uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true \
 Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
 a camera frame is its JPEG (`driver.image_quality`). A merge that fails keeps
 `{ScenarioName}.sensors.rrd` beside the recording (logged; not a failed
-conversion); converting the run again (below) merges it. The two cannot be opened together instead: the viewer registers a
-file by its recording id, and the second replaces the first.
+conversion); converting the run again (below) merges it. The two cannot be
+opened together instead: the viewer registers a file by its recording id, and
+the second replaces the first.
 
 A run made without it (or by a version before it) can be converted afterwards,
 the same way:
@@ -598,8 +599,8 @@ sensors the run recorded:
   `--overwrite` (`overwrite=True`) replaces it anyway, without its sensors.
 
 A log that fails to convert leaves the recording it would have replaced as it
-was. The converter reads nothing but the log and the map files the log names, so it
-runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
+was. The converter reads nothing but the log and the map files the log names,
+so it runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
 still written: CARLA's own replayer (`client.replay_file()`) plays it back on a
 server running the same map.
 
