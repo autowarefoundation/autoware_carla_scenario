@@ -2369,12 +2369,12 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 <tr>
 <td><code>carla.host</code>, <code>carla.port</code></td>
 <td><code>localhost</code>, <code>2000</code></td>
-<td>the CARLA server the scenario runs on</td>
+<td>the CARLA server the scenario runs on; the port is a whole number from 1 to 65535</td>
 </tr>
 <tr>
 <td><code>carla.timeout</code></td>
 <td><code>10.0</code></td>
-<td>seconds, for RPCs and for each tick</td>
+<td>seconds (positive), for RPCs and for each tick</td>
 </tr>
 <tr>
 <td><code>ego.role_name</code></td>
@@ -2384,7 +2384,7 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 <tr>
 <td><code>ego.wait</code></td>
 <td><code>120.0</code></td>
-<td>seconds without an ego before a warning (it keeps waiting)</td>
+<td>seconds (not negative) without an ego before a warning (it keeps waiting)</td>
 </tr>
 <tr>
 <td><code>canvas</code></td>
@@ -2433,6 +2433,13 @@ written <code>"On": 1</code>), <code>signal:</code> and <code>field:</code>, <co
 Message, input and step names also take a whole number, as its decimal text
 (RTCM's <code>name: 1005</code>). Field <em>values</em> and <code>id</code> are numbers and stay unquoted
 (<code>id: 0x7DF</code>).</p>
+<p>The numbers the bridge itself uses are checked as well, naming the key:
+<code>carla.port</code> is a whole number from 1 to 65535 (<code>2000.7</code> is refused, not
+truncated); every duration -- <code>carla.timeout</code>, <code>ego.wait</code>, a message's
+<code>period</code>, a step's <code>sleep</code> and a wait's <code>timeout</code> -- is finite (YAML's <code>.inf</code>
+and <code>.nan</code> are refused), <code>ego.wait</code> and <code>sleep</code> are not negative and the others
+are positive; and a field's <code>scale</code> and <code>offset</code>, a sensor's <code>transform</code> and
+its <code>intensity_scale</code> are finite.</p>
 <p>A device is one hilspy channel: <code>url</code> (the transport), <code>codec</code> (<code>raw</code> when
 omitted) and <code>options</code> (codec options), exactly what <code>hilspy.open(url, codec,
 **options)</code> takes. It has <code>messages</code> (periodic messages filled from the ego's
@@ -2876,7 +2883,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 29, 2026 20:24:14 UTC"><span class="timeago" datetime="2026-10-29T20:24:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 29, 2026 20:24:14 UTC">2026-10-29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 03:00:56 UTC"><span class="timeago" datetime="2026-10-31T03:00:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 03:00:56 UTC">2026-10-31</span>
   </span>
 
     
