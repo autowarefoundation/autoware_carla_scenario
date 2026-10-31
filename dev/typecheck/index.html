@@ -4609,9 +4609,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-238 of the package's 344
-modules (69%; about 70,000 of
-120,100 lines) are <code>CHECKED</code>: the kinematics, the
+239 of the package's 345
+modules (69%; about 70,100 of
+120,200 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 238 CHECKED modules</summary>
+<summary>The 239 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -4795,6 +4795,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>authoring.framework_pin</code></td>
 <td>Work out how an exported scenario package should depend on this framework.</td>
+</tr>
+<tr>
+<td><code>authoring.requirements_pin</code></td>
+<td>Pin a wheelhouse's direct-reference requirements to the wheels built for them.</td>
 </tr>
 <tr>
 <td><code>authoring.uv_tool</code></td>
@@ -5765,7 +5769,7 @@ the first:</p>
 <li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes</li>
 <li><code>authoring.starter</code>: reaches pydantic models through authoring.models</li>
 <li><code>authoring.validator</code>: reaches pydantic models through authoring.models</li>
-<li><code>authoring.wheelhouse</code>: imports jinja2, packaging, tomllib, tomli, platform</li>
+<li><code>authoring.wheelhouse</code>: imports jinja2, packaging, tomllib, tomli, platform; its requirements pinning is checked as authoring.requirements_pin</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2</code>: imports google.protobuf</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2_grpc</code>: imports grpc</li>
 <li><code>autoware_bridge.grpc_server</code>: imports grpc, concurrent.futures</li>
