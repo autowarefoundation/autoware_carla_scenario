@@ -5,10 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..coordinate.traffic_light import (
-    get_signal_ids_for_controller,
-    lanelet2_traffic_light_id_to_opendrive_controller_id,
-)
+from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 from ..utils.traffic_light import traffic_light_state_name
 from .base import BaseCondition, ScenarioResult
 
@@ -21,10 +18,14 @@ logger = logging.getLogger(__name__)
 class TrafficSignalCondition(BaseCondition):
     """Check whether a traffic light matches an expected state.
 
-    Resolves a Lanelet2 regulatory element ID to OpenDRIVE signal IDs on the
-    first ``check()`` call and caches the result.  Subsequent calls reuse the
-    cached signal IDs to find matching CARLA traffic light actors and compare
-    their current state against the expected state.
+    Resolves a Lanelet2 regulatory element ID to CARLA traffic light actors on
+    the first ``check()`` that finds any, the way
+    :class:`~autoware_carla_scenario.actions.TrafficSignalAction` and the
+    signal controllers do
+    (:func:`~autoware_carla_scenario.coordinate.traffic_light.find_traffic_lights_for_lanelet2_id`:
+    by OpenDRIVE controller, or by stop line on a map where no controller is
+    named after the light), and caches their actor ids.  Subsequent calls read
+    those actors' current state and compare it against the expected state.
 
     The condition fires (returns ``passed=True``) only while every matching
     light shows the expected state, and returns ``None`` otherwise -- as
@@ -47,8 +48,10 @@ class TrafficSignalCondition(BaseCondition):
     _lanelet2_id: int
     _expected_state: "carla.TrafficLightState"
     _expected_name: str
+    _cached_actor_ids: Optional[set[int]]
     _cached_signal_ids: Optional[set[str]]
     _last_mismatch: Optional[str]
+    _warned_unresolved: bool
     _warned_no_actors: bool
 
     def __init__(
@@ -62,44 +65,40 @@ class TrafficSignalCondition(BaseCondition):
         self._lanelet2_id = lanelet2_regulatory_element_id
         self._expected_state = expected_state
         self._expected_name = traffic_light_state_name(expected_state)
+        self._cached_actor_ids: Optional[set[int]] = None
         self._cached_signal_ids: Optional[set[str]] = None
         self._last_mismatch: Optional[str] = None
+        self._warned_unresolved = False
         self._warned_no_actors = False
 
     # ------------------------------------------------------------------
-    # Signal ID resolution (lazy + cached)
+    # Light resolution (lazy + cached)
     # ------------------------------------------------------------------
 
-    def _resolve_signal_ids(self) -> Optional[set[str]]:
-        """Resolve the Lanelet2 ID to a set of OpenDRIVE signal IDs.
+    def _resolve_actor_ids(self, world: "carla.World") -> Optional[set[int]]:
+        """Resolve the Lanelet2 ID to the actor ids of its CARLA lights.
+
+        Warns once when the id resolves to no light, not on every tick it
+        is retried.
 
         Returns:
-            A set of signal ID strings, or ``None`` if resolution fails.
+            A set of actor ids, or ``None`` if resolution fails.
         """
-        controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(
-            self._lanelet2_id,
-        )
-        if controller_id is None:
-            logger.warning(
-                "TrafficSignalCondition [%s]: no OpenDRIVE controller found "
-                "for Lanelet2 regulatory element ID %d",
-                self.label,
-                self._lanelet2_id,
-            )
+        lights = find_traffic_lights_for_lanelet2_id(world, self._lanelet2_id)
+        if not lights:
+            if not self._warned_unresolved:
+                self._warned_unresolved = True
+                logger.warning(
+                    "TrafficSignalCondition [%s]: no traffic light actor found "
+                    "for Lanelet2 regulatory element ID %d (neither by OpenDRIVE "
+                    "controller nor by stop line), so this condition cannot "
+                    "fire until one is.",
+                    self.label,
+                    self._lanelet2_id,
+                )
             return None
-
-        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
-        controller: int = controller_id
-        signal_ids = get_signal_ids_for_controller(controller)
-        if not signal_ids:
-            logger.warning(
-                "TrafficSignalCondition [%s]: controller %d has no signal IDs",
-                self.label,
-                controller_id,
-            )
-            return None
-
-        return set(signal_ids)
+        self._cached_signal_ids = {light.get_opendrive_id() for light in lights}
+        return {int(light.id) for light in lights}
 
     # ------------------------------------------------------------------
     # BaseCondition interface
@@ -114,9 +113,10 @@ class TrafficSignalCondition(BaseCondition):
 
         ``None`` covers three situations:
 
-        * **Signal ID resolution fails.**  Warned, and retried next tick.
-        * **No matching actor is found.**  Warned once, because a condition
-          that never fires for a whole run should say why.
+        * **The id resolves to no light.**  Warned once, because a
+          condition that never fires for a whole run should say why, and
+          retried next tick.
+        * **The resolved lights are gone.**  Warned once, likewise.
         * **A matching light shows another state.**  The ordinary answer,
           logged at debug with the state each mismatching light *is*
           showing, which :meth:`get_details` also reports.
@@ -131,19 +131,19 @@ class TrafficSignalCondition(BaseCondition):
             expected state, ``None`` otherwise.
         """
         # Lazy resolution with caching
-        if self._cached_signal_ids is None:
-            resolved = self._resolve_signal_ids()
+        if self._cached_actor_ids is None:
+            resolved = self._resolve_actor_ids(world)
             if resolved is None:
                 return None
-            self._cached_signal_ids = resolved
+            self._cached_actor_ids = resolved
         # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
-        signal_ids: set[str] = self._cached_signal_ids
+        actor_ids: set[int] = self._cached_actor_ids
 
-        # Single-pass: find matching actors and collect mismatches
+        # Single-pass: find the resolved actors and collect mismatches
         match_count = 0
         mismatches: list[tuple[str, int]] = []
         for actor in world.get_actors().filter("traffic.traffic_light*"):
-            if actor.get_opendrive_id() in signal_ids:
+            if int(actor.id) in actor_ids:
                 match_count += 1
                 state = actor.get_state()
                 if state != self._expected_state:
@@ -155,10 +155,10 @@ class TrafficSignalCondition(BaseCondition):
                 self._warned_no_actors = True
                 logger.warning(
                     "TrafficSignalCondition [%s]: no traffic light actor "
-                    "matches signal IDs %s, so this condition cannot fire "
-                    "until one does.",
+                    "matches actor IDs %s any more, so this condition cannot "
+                    "fire until one does.",
                     self.label,
-                    sorted(signal_ids),
+                    sorted(actor_ids),
                 )
             return None
 
@@ -193,6 +193,11 @@ class TrafficSignalCondition(BaseCondition):
         return {
             "lanelet2_regulatory_element_id": self._lanelet2_id,
             "expected_state": self._expected_name,
+            "cached_actor_ids": (
+                sorted(self._cached_actor_ids)
+                if self._cached_actor_ids is not None
+                else None
+            ),
             "cached_signal_ids": (
                 sorted(self._cached_signal_ids)
                 if self._cached_signal_ids is not None

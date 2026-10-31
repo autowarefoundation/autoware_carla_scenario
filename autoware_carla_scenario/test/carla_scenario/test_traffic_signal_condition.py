@@ -35,11 +35,14 @@ class _FakeTransform:
 class _FakeTrafficLight:
     """Minimal traffic light stub with get_state() support."""
 
+    _ids = iter(range(1, 1_000_000))
+
     def __init__(
         self,
         opendrive_id: str = "",
         state: object = None,
     ) -> None:
+        self.id = next(_FakeTrafficLight._ids)
         self._state = state
         self._opendrive_id = opendrive_id
         self.type_id = "traffic.traffic_light"
@@ -85,12 +88,14 @@ class _FakeWorld:
 # Patch targets
 # ---------------------------------------------------------------------------
 
+# The condition resolves its lights through the coordinate module's resolver,
+# which the action and the signal controllers share (#901).
 _PATCH_CONTROLLER_ID = (
-    "autoware_carla_scenario.conditions.traffic_signal"
+    "autoware_carla_scenario.coordinate.traffic_light"
     ".lanelet2_traffic_light_id_to_opendrive_controller_id"
 )
 _PATCH_SIGNAL_IDS = (
-    "autoware_carla_scenario.conditions.traffic_signal" ".get_signal_ids_for_controller"
+    "autoware_carla_scenario.coordinate.traffic_light.get_signal_ids_for_controller"
 )
 
 
@@ -248,7 +253,7 @@ class TestTrafficSignalConditionNoActors:
 
         warnings = [r for r in caplog.records if "no_actors_warn" in r.getMessage()]
         assert len(warnings) == 1
-        assert "sig_1" in warnings[0].getMessage()
+        assert "242" in warnings[0].getMessage()
 
 
 # ---------------------------------------------------------------------------

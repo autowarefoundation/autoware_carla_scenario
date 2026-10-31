@@ -670,6 +670,12 @@ light happens to be showing.
 holds, so showing one puts the whole junction into a known state at once, and
 waiting for one is a statement about the junction rather than about a colour.
 
+The one-light pair and the controllers find a Lanelet2 light's CARLA lights alike,
+`coordinate.find_traffic_lights_for_lanelet2_id`: through the OpenDRIVE
+controller named after it, or, on a map where none is (a roadgen map), by the
+CARLA light whose stop waypoint lies on its stop line. A light an action sets
+is therefore the light a condition reads and a controller's phases drive.
+
 A junction is declared in two halves, split along what changes between
 scenarios and what does not.
 
