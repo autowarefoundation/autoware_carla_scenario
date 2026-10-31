@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -38,6 +40,41 @@ for _var in (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The shared fixture maps (the Nishishinjuku ``.osm`` and ``.xodr``).
 DATA_DIR = REPO_ROOT / "data"
+
+
+#: Runs only the K-th of N shards of the selected tests, given as ``K/N``
+#: (CI's Codon legs). A test's shard is a stable hash of its node id, the same
+#: in every process, xdist worker and run, so the N shards of one selection
+#: together run each of its tests exactly once. An environment variable rather
+#: than an option: the option of a conftest below the root is unknown to a run
+#: that names no path, and every xdist worker inherits the variable.
+TEST_SHARD_ENV = "AUTOWARE_CARLA_SCENARIO_TEST_SHARD"
+
+
+def _shard_of(nodeid: str, shards: int) -> int:
+    """The 1-based shard of *nodeid*."""
+    digest = hashlib.sha256(nodeid.encode()).digest()
+    return int.from_bytes(digest[:8], "big") % shards + 1
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    value = os.environ.get(TEST_SHARD_ENV, "").strip()
+    if not value:
+        return
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value)
+    if match is None or int(match[1]) > int(match[2]):
+        raise pytest.UsageError(
+            f"{TEST_SHARD_ENV}: expected K/N with 1 <= K <= N, not {value!r}"
+        )
+    shard, shards = int(match[1]), int(match[2])
+    kept = [item for item in items if _shard_of(item.nodeid, shards) == shard]
+    if len(kept) < len(items):
+        config.hook.pytest_deselected(
+            items=[item for item in items if _shard_of(item.nodeid, shards) != shard]
+        )
+        items[:] = kept
 
 
 @pytest.fixture

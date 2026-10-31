@@ -18,13 +18,31 @@ concurrency:
 
 # The nightly run on master runs only the fast test matrices, on every
 # interpreter of the range where a pull request runs only the floor and the
-# ceiling, and the Codon checks on each of them. Its Codon check verdicts are
-# the cache the next pull requests restore. The other jobs run on pull requests
-# only: on master they would repeat the pull request's verdict.
+# ceiling, and the Codon checks on each of them. The other jobs run on pull
+# requests only: on master they would repeat the pull request's verdict.
 #
-# The Codon checks (`-m codon`) are nine tenths of the fast suite. A pull
-# request runs them in one leg per architecture (`codon: true`): 3.10 on
-# x86_64, 3.14 on aarch64. Its other legs run the rest of the suite.
+# The Codon checks (`-m codon`, some 1,240 tests at ~11 s a compile) are nine
+# tenths of the fast suite. A pull request runs them in one leg per
+# architecture (`codon: true`): 3.10 on x86_64, 3.14 on aarch64. Its other
+# legs run the rest of the suite. Each Codon leg runs as two shards, two jobs
+# side by side (`shard: 1/2` and `2/2`): the conftest hashes a test's node id
+# into one of them (AUTOWARE_CARLA_SCENARIO_TEST_SHARD), so the two run every
+# test of the leg once between them, the non-Codon ones included. The nightly
+# run shards the same two legs and runs the others whole.
+#
+# Of the Codon checks, those marked `codon_selftest` test the checker itself on
+# code of their own (test_typecheck_codon.py and the others, and the shim and
+# driver tests of test_typecheck_library.py): a pull request runs them only
+# when it changes something they read (.github/actions/codon-selftests lists
+# what), and every other event runs them. The compile checks of the package's
+# own code -- the library check, the built-in scenarios, the template, a
+# scaffolded package -- run on every pull request.
+#
+# A Codon verdict is cached under a key of everything the compile reads
+# (typecheck/check.py's _cache_key), the whole package source included: a pull
+# request that changes the package's source compiles everything again, and one
+# that does not reuses the verdicts of the nightly run or of its own previous
+# push.
 
 jobs:
   test:
@@ -32,7 +50,7 @@ jobs:
     # 3.10 because that is what Autoware's own environment is. A pull request
     # runs the floor and the ceiling, which stand in for the interpreters
     # between them; master catches what only those break.
-    name: test (${{ matrix.python-version }})
+    name: test (${{ matrix.python-version }}${{ matrix.shard != '1/1' && format(', codon {0}', matrix.shard) || '' }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -40,15 +58,27 @@ jobs:
         # Kept literal: test_authoring_export.py checks it against
         # TESTED_PYTHONS and `requires-python`.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python-version":"3.11"}, {"python-version":"3.12"}, {"python-version":"3.13"}]' || '[]') }}
+        # The share of the leg's tests a job runs (`K/N`). Every leg is one
+        # shard but 3.10's, which the exclude drops and the include brings
+        # back as two.
+        shard: ["1/1"]
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python-version":"3.10"}, {"python-version":"3.11"}, {"python-version":"3.12"}, {"python-version":"3.13"}]' || '[{"python-version":"3.10"}]') }}
         include:
           - python-version: "3.10"
+            shard: "1/2"
+            codon: true
+          - python-version: "3.10"
+            shard: "2/2"
             codon: true
     env:
       CODON: ${{ matrix.codon || github.event_name != 'pull_request' }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        # The merge commit and its parents: codon-selftests diffs the pull
+        # request's merge against its base.
+        fetch-depth: 2
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
@@ -57,37 +87,77 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
+    - name: Decide whether to run the Codon checker's self-tests
+      if: env.CODON == 'true'
+      uses: ./.github/actions/codon-selftests
+
     # The slow tests are the 'slow-tests' job below: they export a package and
     # build a ~160 MB wheelhouse over the network, which is not something to do
     # in every leg of this matrix.
-    # The Codon compiles are nine tenths of the fast suite (~13 s each, some
-    # 260 of them). Their verdicts are keyed by everything the compile reads
-    # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
-    # compiles only what changed. Pull requests restore master's.
+    # Each shard keeps a cache of its own: a shard compiles only its share, and
+    # the prune below would drop the other shard's verdicts from a shared one.
+    # Without one of its own, a shard starts from the leg's latest cache of
+    # any shard (or from before the legs were sharded): a verdict is keyed by
+    # what it compiled, so another shard's is never a wrong one.
     - name: Restore the Codon check verdicts
       if: env.CODON == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/typecheck-cache
-        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
-        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
+        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-${{ github.sha }}
+        restore-keys: |
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
-    # worksteal: the Codon compiles take ~10 s a test, and with the default
+    # -n logical: one worker a vCPU. `auto` counts physical cores, two on the
+    # x86_64 runner (four vCPUs), so the Codon leg ran on half the machine.
+    # worksteal: the Codon compiles take ~11 s a test, and with the default
     # 'load' scheduling the last of them ran one after another on a single
     # worker while the others sat idle. An idle worker now takes over another
     # worker's queue.
+    # The library compile builds every checked module at once and is the
+    # largest Codon process of the suite. Run beside the other workers' Codon
+    # compiles it outgrew the arm64 runner, which was shut down at ~94 %
+    # every time, so it runs alone first (in the shard it hashes into) and the
+    # rest runs in parallel.
+    # pytest exits 5 when it selects nothing, which a shard's share of a
+    # selection may be: on a sharded leg that, and only that, passes. A leg
+    # run whole (`1/1`) that selects nothing fails.
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
-        MARKERS: ${{ env.CODON == 'true' && 'not slow' || 'not slow and not codon' }}
+        AUTOWARE_CARLA_SCENARIO_TEST_SHARD: ${{ matrix.shard }}
+        LIBRARY_COMPILE: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_the_checked_modules_compile
       run: |
+        pytest_shard() {
+          local status=0
+          uv run pytest -v --tb=short -o addopts= "$@" || status=$?
+          if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
+            echo "Nothing of this selection is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
+            status=0
+          fi
+          return "${status}"
+        }
+        if [ "${CODON}" != "true" ]; then
+          markers="not slow and not codon"
+        elif [ "${CODON_SELFTEST}" = "true" ]; then
+          markers="not slow"
+        else
+          markers="not slow and not codon_selftest"
+        fi
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}"
+        if [ "${CODON}" = "true" ]; then
+          pytest_shard "${LIBRARY_COMPILE}"
+        fi
+        pytest_shard -n logical --dist worksteal -m "${markers}" \
+          --deselect "${LIBRARY_COMPILE}"
 
     # A verdict this run did not read or write is for sources that no longer
-    # exist: drop it rather than carry it into every later cache.
+    # exist: drop it rather than carry it into every later cache. Only after a
+    # run of every Codon test of the shard: one without the self-tests would
+    # drop their verdicts.
     - name: Prune the Codon check verdicts this run did not use
-      if: env.CODON == 'true'
+      if: env.CODON == 'true' && env.CODON_SELFTEST == 'true'
       run: |
         find "${RUNNER_TEMP}/typecheck-cache" -type f \
           ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
@@ -122,24 +192,34 @@ jobs:
     # Linux aarch64, natively. Every runtime dependency ships an aarch64 wheel
     # (typesafe-carla and its Codon toolchain since 0.4.0); of the dev group,
     # libsass (under mkdocs-with-pdf) does not and is compiled from its sdist
-    # with the runner's g++. Otherwise this is the same suite as on x86_64,
-    # fast and slow tests both -- a wheelhouse is built for the exporting
-    # machine's platform. The floor and the ceiling of the range
-    # stand in for the interpreters between them.
-    name: test (${{ matrix.python-version }}, arm64)
+    # with the runner's g++ (setup-env caches the wheel it builds). Otherwise
+    # this is the same suite as on x86_64, fast and slow tests both -- a
+    # wheelhouse is built for the exporting machine's platform. The floor and
+    # the ceiling of the range stand in for the interpreters between them. The
+    # Codon leg runs as two shards, as the 'test' job's does.
+    name: test (${{ matrix.python-version }}, arm64${{ matrix.shard != '1/1' && format(', codon {0}', matrix.shard) || '' }})
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.14"]
+        shard: ["1/1"]
+        exclude:
+          - python-version: "3.14"
         include:
           - python-version: "3.14"
+            shard: "1/2"
+            codon: true
+          - python-version: "3.14"
+            shard: "2/2"
             codon: true
     env:
       CODON: ${{ matrix.codon || github.event_name != 'pull_request' }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # See the 'test' job.
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
@@ -148,47 +228,72 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
-    # The Codon compiles are nine tenths of the fast suite (~13 s each, some
-    # 260 of them). Their verdicts are keyed by everything the compile reads
-    # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
-    # compiles only what changed. Pull requests restore master's.
+    - name: Decide whether to run the Codon checker's self-tests
+      if: env.CODON == 'true'
+      uses: ./.github/actions/codon-selftests
+
+    # As in the 'test' job.
     - name: Restore the Codon check verdicts
       if: env.CODON == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/typecheck-cache
-        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
-        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
+        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-${{ github.sha }}
+        restore-keys: |
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ matrix.shard }}-
+          typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
-    # The library compile builds every checked module at once and is the
-    # largest Codon process of the suite. Run beside the other workers' Codon
-    # compiles it outgrew the arm64 runner, which was shut down at ~94 %
-    # every time, so it runs alone first and the rest runs in parallel.
+    # As in the 'test' job, which says why the library compile runs alone.
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
-        MARKERS: ${{ env.CODON == 'true' && 'not slow' || 'not slow and not codon' }}
+        AUTOWARE_CARLA_SCENARIO_TEST_SHARD: ${{ matrix.shard }}
         LIBRARY_COMPILE: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_the_checked_modules_compile
       run: |
+        pytest_shard() {
+          local status=0
+          uv run pytest -v --tb=short -o addopts= "$@" || status=$?
+          if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
+            echo "Nothing of this selection is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
+            status=0
+          fi
+          return "${status}"
+        }
+        if [ "${CODON}" != "true" ]; then
+          markers="not slow and not codon"
+        elif [ "${CODON_SELFTEST}" = "true" ]; then
+          markers="not slow"
+        else
+          markers="not slow and not codon_selftest"
+        fi
         touch "${RUNNER_TEMP}/typecheck-started"
         if [ "${CODON}" = "true" ]; then
-          uv run pytest -v --tb=short -o addopts= "${LIBRARY_COMPILE}"
+          pytest_shard "${LIBRARY_COMPILE}"
         fi
-        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "${MARKERS}" \
+        pytest_shard -n logical --dist worksteal -m "${markers}" \
           --deselect "${LIBRARY_COMPILE}"
 
-    # A verdict this run did not read or write is for sources that no longer
-    # exist: drop it rather than carry it into every later cache.
+    # As in the 'test' job.
     - name: Prune the Codon check verdicts this run did not use
-      if: env.CODON == 'true'
+      if: env.CODON == 'true' && env.CODON_SELFTEST == 'true'
       run: |
         find "${RUNNER_TEMP}/typecheck-cache" -type f \
           ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
 
-    # Repeats the pull request's verdict and seeds no cache: see the top.
+    # Repeats the pull request's verdict and seeds no cache: see the top. A
+    # sharded leg runs its share of them.
     - name: Run the slow tests
       if: github.event_name == 'pull_request'
-      run: uv run pytest -v --tb=short -o addopts= -m slow
+      env:
+        AUTOWARE_CARLA_SCENARIO_TEST_SHARD: ${{ matrix.shard }}
+      run: |
+        status=0
+        uv run pytest -v --tb=short -o addopts= -m slow || status=$?
+        if [ "${status}" -eq 5 ] && [ "${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}" != "1/1" ]; then
+          echo "No slow test is in shard ${AUTOWARE_CARLA_SCENARIO_TEST_SHARD}."
+          status=0
+        fi
+        exit "${status}"
 
   build:
     # The package builds to 'py3-none-any' with uv_build, so the artifact
