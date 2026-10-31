@@ -55,7 +55,10 @@ class TimeoutCondition(BaseCondition):
         Returns:
             ScenarioResult with passed=False if timed out, None otherwise.
         """
-        if elapsed >= self.timeout_seconds:
+        # elapsed is a difference of running sums of the tick, so a timeout
+        # that is a whole number of ticks can come out a hair short of it;
+        # without the tolerance the run would time out one tick late.
+        if elapsed >= self.timeout_seconds - 1e-9:
             return ScenarioResult(
                 passed=False,
                 message=f"Timeout after {elapsed:.2f}s (limit: {self.timeout_seconds}s)",

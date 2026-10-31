@@ -180,7 +180,11 @@ class SignalController:
                 self._enter(0, world, now)
             return
 
-        if now - self._phase_started_at >= self.phases[self._current].duration_seconds:
+        # CARLA's elapsed_seconds is a running sum of the tick, so a duration
+        # that is a whole number of ticks can come out a hair short of it; the
+        # tolerance stops that from holding the phase one tick too long.
+        duration = self.phases[self._current].duration_seconds
+        if now - self._phase_started_at >= duration - 1e-9:
             self._enter((self._current + 1) % len(self.phases), world, now)
 
     def change_phase_to(self, phase_name: str, world: "carla.World") -> bool:
@@ -223,7 +227,8 @@ class SignalController:
         reference_started = self.reference.started_at
         if reference_started is None:
             return False
-        return now - reference_started >= self.delay_seconds
+        # Tolerant of float error in the summed clock, as tick() is.
+        return now - reference_started >= self.delay_seconds - 1e-9
 
     def _enter(self, index: int, world: "carla.World", now: float) -> None:
         """Show phase *index* and start its clock."""
