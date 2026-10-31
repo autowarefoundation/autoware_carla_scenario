@@ -9,7 +9,8 @@
 #     <out>/framework/uv.lock               # pins every framework dependency
 #     <out>/framework/<member>/pyproject.toml
 #     <out>/framework/<member>/src/
-#     <out>/framework/<member>/README.md    # only when the member declares one
+#     <out>/framework/<member>/README.md    # whatever the member's [project]
+#     <out>/framework/<member>/LICENSE      # readme and license-files name
 #     <out>/scenario/                       # the generated scenario package,
 #                                           # minus VCS, caches and build output
 #     <out>/slim-venv.py                    # both run by the venv stage
@@ -88,7 +89,24 @@ rm -rf "${out_dir:?}"/framework "${out_dir:?}"/scenario
 mkdir -p "${out_dir}/framework" "${out_dir}/scenario"
 
 # Copy a source tree while dropping everything the build does not read.
+#
+# Caches and VCS metadata go at any depth. Build output (`dist/`) goes only at
+# the top of the tree: tar's --exclude matches a name at any depth, which
+# would also drop a package's own `dist` directory -- a scenario config group
+# `conf/scenario/dist/`, say. So the top level is listed here, without it,
+# and tar is handed that list instead of `.`.
 copy_tree() {
+    local entry name
+    local -a entries=()
+    for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+        name="${entry##*/}"
+        case "${name}" in
+            dist) continue ;;
+        esac
+        entries+=("./${name}")
+    done
+    [ ${#entries[@]} -gt 0 ] || return 0
     tar -C "$1" \
         --exclude=.git \
         --exclude=.venv \
@@ -97,9 +115,21 @@ copy_tree() {
         --exclude=.ruff_cache \
         --exclude=__pycache__ \
         --exclude='*.pyc' \
-        --exclude=dist \
         --exclude='*.egg-info' \
-        -cf - . | tar -C "$2" -xf -
+        -cf - "${entries[@]}" | tar -C "$2" -xf -
+}
+
+# Run a Python snippet (on stdin) with the first interpreter that has tomllib
+# (3.11+); return 1 when there is none.
+run_tomllib_python() {
+    local interpreter
+    for interpreter in python3 python3.14 python3.13 python3.12 python3.11; do
+        command -v "${interpreter}" >/dev/null 2>&1 || continue
+        "${interpreter}" -c 'import tomllib' >/dev/null 2>&1 || continue
+        "${interpreter}" - "$@"
+        return
+    done
+    return 1
 }
 
 cp "${framework_dir}/pyproject.toml" "${out_dir}/framework/pyproject.toml"
@@ -117,11 +147,7 @@ cp "${framework_dir}/uv.lock" "${out_dir}/framework/uv.lock"
 # --all-packages` skips a member that is not on disk without a word -- so a
 # member missed here would ship an image quietly lacking that wheel.
 resolve_declared_members() {
-    local interpreter
-    for interpreter in python3 python3.14 python3.13 python3.12 python3.11; do
-        command -v "${interpreter}" >/dev/null 2>&1 || continue
-        "${interpreter}" -c 'import tomllib' >/dev/null 2>&1 || continue
-        "${interpreter}" - "${framework_dir}" <<'PY'
+    run_tomllib_python "${framework_dir}" <<'PY'
 import sys
 import tomllib
 from pathlib import Path
@@ -139,9 +165,42 @@ for pattern in workspace.get("members", []):
 for path in seen:
     print(path.relative_to(root))
 PY
-        return 0
-    done
-    return 1
+}
+
+# The files outside src/ that a member's build backend reads: what its
+# [project] table names as `readme`, `license = {file = ...}` and
+# `license-files` (globs), relative to the member. A file named there but
+# missing from the context fails the build (uv_build: "license-files glob
+# ... did not match any files"), or, with an older backend, ships a wheel
+# without its license.
+resolve_member_files() {
+    run_tomllib_python "$1" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+member = Path(sys.argv[1])
+with (member / "pyproject.toml").open("rb") as handle:
+    project = tomllib.load(handle).get("project", {})
+
+named: list[Path] = []
+readme = project.get("readme")
+if isinstance(readme, dict):
+    readme = readme.get("file")
+if isinstance(readme, str):
+    named.append(member / readme)
+license = project.get("license")
+if isinstance(license, dict) and isinstance(license.get("file"), str):
+    named.append(member / license["file"])
+for pattern in project.get("license-files", []):
+    named.extend(sorted(member.glob(pattern)))
+
+seen: set[Path] = set()
+for path in named:
+    if path.is_file() and path not in seen:
+        seen.add(path)
+        print(path.relative_to(member))
+PY
 }
 
 declare -a member_paths=()
@@ -174,8 +233,21 @@ for member in "${member_paths[@]}"; do
     dst="${out_dir}/framework/${member}"
     mkdir -p "${dst}"
     cp "${src}/pyproject.toml" "${dst}/pyproject.toml"
-    # Declared via [project] readme; the build backend fails without it.
-    [ -f "${src}/README.md" ] && cp "${src}/README.md" "${dst}/README.md"
+    declare -a member_files=()
+    if named="$(resolve_member_files "${src}")"; then
+        while IFS= read -r line; do
+            [ -n "${line}" ] && member_files+=("${line}")
+        done <<< "${named}"
+    else
+        # No tomllib: take the conventional names when present.
+        for candidate in "${src}"/README.md "${src}"/LICENSE*; do
+            [ -f "${candidate}" ] && member_files+=("$(basename "${candidate}")")
+        done
+    fi
+    for file in "${member_files[@]+"${member_files[@]}"}"; do
+        mkdir -p "$(dirname "${dst}/${file}")"
+        cp "${src}/${file}" "${dst}/${file}"
+    done
     if [ -d "${src}/src" ]; then
         mkdir -p "${dst}/src"
         copy_tree "${src}/src" "${dst}/src"
