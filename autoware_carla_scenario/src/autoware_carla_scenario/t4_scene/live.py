@@ -20,7 +20,12 @@ does not hold, on the rows it has them:
   (``route_waypoints_in_rig``) walked along the map's lanelets, with the few
   just passed -- and the goal.
 
-History only: the current row is the last.  Before the run has
+History only: the current row is the last, and it is the tick the scene is
+asked for on -- a drive's -- whichever it is: the rows are ``step_s`` apart
+counted back from it, so a policy stepping at any multiple of the tick (0.05,
+0.15 s, ...) is shown its own tick, and the current sweep is placed on it at
+its true time.  On a tick on the offline converter's grid (a whole ``step_s``
+since the first) the rows are the converter's.  Before the run has
 ``history_rows`` rows, the scene has fewer -- the driver decides what a short
 history means, nothing is made up here.
 """
@@ -117,11 +122,12 @@ class _LiveRecorder(TrajectoryRecorder):
 
 
 class LiveT4Scene:
-    """The run's history as a T4Scene, on a 0.1 s grid, as it runs.
+    """The run's history as a T4Scene, rows 0.1 s apart, as it runs.
 
     Args:
         history_rows: Rows a scene holds, the current one included.
-        step_s: The grid's step: a multiple of the tick.
+        step_s: The rows' step, counted back from the current tick: a
+            multiple of the tick.
         max_distance_m: Road users this close to the ego are its objects.
         rear_axle_offset_m: Where the ego's ``base_link`` is from its actor
             origin, as the run takes it; by default as the recorder reads it.
@@ -146,12 +152,14 @@ class LiveT4Scene:
     ) -> None:
         if history_rows < 1:
             raise ValueError(f"history_rows must be at least 1, not {history_rows}")
-        frames = step_frames(step_s)
+        self._step_frames = step_frames(step_s)
         self.history_rows = history_rows
         self.max_distance_m = max_distance_m
         self.rear_axle_offset_m = rear_axle_offset_m
         self.wheel_base_m = wheel_base_m
-        self._log = _Log(step_frames=frames)
+        # Every tick is a row the log keeps: the scene's rows are counted back
+        # from whichever tick it is asked for on, not from the run's first.
+        self._log = _Log(step_frames=1)
         self._recorder = _LiveRecorder(
             self._log,
             map_source=map_source,
@@ -181,16 +189,14 @@ class LiveT4Scene:
         log = self._log
         if log.last_frame < 0:
             return
-        # A scene's rows are on the grid; a tick between them is read for
-        # nothing but the lights, which the log keeps.
-        if (
-            extras is not None
-            and (log.last_frame - log.first_frame) % log.step_frames == 0
-        ):
+        # Any tick may be a scene's row: the rows are counted back from the
+        # tick a scene is asked for on.
+        if extras is not None:
             self._extras[log.last_frame] = extras
-        # The oldest row a scene now shows, counted back from the newest on
-        # the grid, not from this tick.
-        oldest = self.frames()[0]
+        # The oldest row a scene asked for now, or on any later tick, can
+        # show: a full history back from this tick (a young run's scene on
+        # this tick starts later, but the next tick's may reach further back).
+        oldest = log.last_frame - (self.history_rows - 1) * self._step_frames
         log.forget_before(oldest)
         for frame in [f for f in self._extras if f < oldest]:
             del self._extras[frame]
@@ -227,15 +233,15 @@ class LiveT4Scene:
     # -- the scene --------------------------------------------------------------
 
     def frames(self) -> list[int]:
-        """The CARLA frames of the rows a scene now holds, oldest first."""
+        """The CARLA frames of the rows a scene now holds, oldest first: the
+        last tick taken, and the ones a step, two, ... before it."""
         log = self._log
         if log.last_frame < 0:
             return []
-        current = log.last_frame - (log.last_frame - log.first_frame) % log.step_frames
-        first = max(
-            log.first_frame, current - (self.history_rows - 1) * log.step_frames
-        )
-        return list(range(first, current + 1, log.step_frames))
+        current = log.last_frame
+        step = self._step_frames
+        back = min(self.history_rows - 1, (current - log.first_frame) // step)
+        return list(range(current - back * step, current + 1, step))
 
     def scene(
         self,
