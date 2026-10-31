@@ -394,6 +394,25 @@ def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
     assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 0, 1, 0]
 
 
+def test_an_entity_parked_under_the_map_is_off_the_scene(tmp_path: Path) -> None:
+    """A hidden road user is parked 500 m under the map with no despawn
+    recorded (#844): it is no box while it is down there."""
+    hidden = _state(2, 5.0, 0.0)
+    hidden[3] = -499.5
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        _tick(100, _state(1, 0.0, 0.0), hidden),
+        _tick(102, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+    )
+    for max_distance_m in (50.0, None):
+        scene = trajectory_log_to_t4_scene(
+            log, with_map=False, max_distance_m=max_distance_m
+        ).scene
+        assert list(_numeric(scene.annotations.box_offsets)) == [0, 0, 1]
+
+
 def test_a_row_without_the_ego_has_no_objects_near_it(tmp_path: Path) -> None:
     log = _write_log(
         tmp_path / "Run.trajectory.jsonl",
