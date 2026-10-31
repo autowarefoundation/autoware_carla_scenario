@@ -127,17 +127,17 @@ def test_the_lane_change_options_are_checked() -> None:
 
 
 def test_a_sumo_step_divides_the_carla_tick() -> None:
-    from autoware_carla_scenario.traffic.sumo.backend import _sumo_step
+    from autoware_carla_scenario.traffic.sumo.signal_states import sumo_step
 
-    assert _sumo_step(0.05, None) == (0.05, 1)
-    step, count = _sumo_step(0.05, 0.01)
+    assert sumo_step(0.05, None) == (0.05, 1)
+    step, count = sumo_step(0.05, 0.01)
     assert count == 5
     assert step == pytest.approx(0.01)
-    assert _sumo_step(0.1, 0.1) == (0.1, 1)
+    assert sumo_step(0.1, 0.1) == (0.1, 1)
     # 0.0125 divides the tick, but SUMO's clock would round it to 0.013.
     for bad in (0.03, 0.1, 0.0125):
         with pytest.raises(ValueError, match="step_length_s"):
-            _sumo_step(0.05, bad)
+            sumo_step(0.05, bad)
 
 
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
@@ -2609,14 +2609,14 @@ def test_a_bicycle_is_a_vehicle_whose_base_type_says_so() -> None:
 
 
 def test_a_bicycle_ride_goes_with_its_traffic_or_waits_for_it_to_stop() -> None:
-    from autoware_carla_scenario.traffic.sumo.backend import _ride_state
+    from autoware_carla_scenario.traffic.sumo.signal_states import ride_state
 
-    assert _ride_state("with", ["r", "G"]) == "g"
-    assert _ride_state("with", ["r", "g"]) == "g"
-    assert _ride_state("with", ["y", "r"]) == "y"
-    assert _ride_state("with", ["r", "r"]) == "r"
-    assert _ride_state("clear", ["r", "r"]) == "G"
-    assert _ride_state("clear", ["r", "y"]) == "r"
+    assert ride_state("with", ["r", "G"]) == "g"
+    assert ride_state("with", ["r", "g"]) == "g"
+    assert ride_state("with", ["y", "r"]) == "y"
+    assert ride_state("with", ["r", "r"]) == "r"
+    assert ride_state("clear", ["r", "r"]) == "G"
+    assert ride_state("clear", ["r", "y"]) == "r"
 
 
 def _riding(
