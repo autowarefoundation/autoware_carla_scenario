@@ -28,7 +28,10 @@ as a new ``mission_version``, and the node changes Autoware's route to it with
 ``/api/routing/change_route_points`` -- once the route is SET, retrying a
 rejected change on the next poll and giving up on that version, with an error
 in the log, after ``reroute_max_attempts`` rejections.  The initial pose of a
-re-route is not used: localization is already running.
+re-route is not used: localization is already running.  A re-route after the
+ego has reached its goal (the route ARRIVED, which neither routing service
+takes, and Autoware stopped) clears the route (``/api/routing/clear_route``),
+then sets the new one and engages again as the startup did.
 
 Throughout the run it also forwards Autoware's turn-indicator command
 (``turn_indicators_topic``, ``/control/command/turn_indicators_cmd``) with
@@ -57,6 +60,7 @@ from autoware_adapi_v1_msgs.msg import LocalizationInitializationState
 from autoware_adapi_v1_msgs.msg import OperationModeState
 from autoware_adapi_v1_msgs.msg import RouteState
 from autoware_adapi_v1_msgs.srv import ChangeOperationMode
+from autoware_adapi_v1_msgs.srv import ClearRoute
 from autoware_adapi_v1_msgs.srv import InitializeLocalization
 from autoware_adapi_v1_msgs.srv import SetRoutePoints
 from .ad_api import (
@@ -66,6 +70,7 @@ from .ad_api import LOCALIZATION_INITIALIZATION_STATE_TOPIC
 from .ad_api import LOCALIZATION_INITIALIZE_SERVICE
 from .ad_api import OPERATION_MODE_STATE_TOPIC
 from .ad_api import ROUTING_CHANGE_ROUTE_POINTS_SERVICE
+from .ad_api import ROUTING_CLEAR_ROUTE_SERVICE
 from .ad_api import ROUTING_SET_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTING_STATE_TOPIC
 from .ad_api import ReadinessAggregator
@@ -190,6 +195,8 @@ class ScenarioBridgeNode(Node):
         self._routed_version = 0
         self._route_request_version = 0
         self._reroute_requested = False
+        # A clear_route in flight, for a re-route after the route ARRIVED.
+        self._clear_requested = False
         self._reroute_rejections = 0
         self._abandoned_version: Optional[int] = None
         self._route_watch_timer = None
@@ -322,6 +329,9 @@ class ScenarioBridgeNode(Node):
         )
         self._change_route_cli = self.create_client(
             SetRoutePoints, ROUTING_CHANGE_ROUTE_POINTS_SERVICE, callback_group=group
+        )
+        self._clear_route_cli = self.create_client(
+            ClearRoute, ROUTING_CLEAR_ROUTE_SERVICE, callback_group=group
         )
         self._engage_cli = self.create_client(
             ChangeOperationMode,
@@ -463,6 +473,10 @@ class ScenarioBridgeNode(Node):
                 self._reroute_rejections = 0
             self._expire_stalled_steps()
             self._ensure_reroute()
+        # A re-route after arrival goes through the startup's own steps once the
+        # route is cleared; the AD API states, which drive them otherwise, may
+        # have gone quiet while one of their services was not up.
+        self._advance()
 
     # ------------------------------------------------------------------
     # Startup steps (each called under _lock, each idempotent + retrying)
@@ -527,12 +541,20 @@ class ScenarioBridgeNode(Node):
                     # Unlike the startup's steps, a route change is not done
                     # once: the next re-route needs the latch free again.
                     self._reroute_requested = False
+            elif latch == "_clear_requested":
+                # The ARRIVED route is gone: route the new mission and engage
+                # again with the startup's steps, which run once it is UNSET.
+                with self._lock:
+                    self._clear_requested = False
+                    self._route_requested = False
+                    self._route_accepted = False
+                    self._engage_requested = False
             return
         # Rejected (e.g. service not settled yet / ERROR_PLANNER_UNREADY): clear
         # the latch so the next pass retries.
         with self._lock:
             setattr(self, latch, False)
-            if latch == "_reroute_requested":
+            if latch in ("_reroute_requested", "_clear_requested"):
                 self._reroute_rejections += 1
                 if self._reroute_rejections >= self._reroute_max_attempts:
                     self._abandoned_version = self._route_request_version
@@ -663,7 +685,8 @@ class ScenarioBridgeNode(Node):
         set_route_points routes the mission, whatever its version -- and only for
         a version Autoware does not already have, nor one given up on.  Held
         until the route is SET: the AD API changes no other (an earlier change
-        still CHANGING included).
+        still CHANGING included).  An ARRIVED route is cleared instead
+        (:meth:`_ensure_route_cleared`), and the new one set as at startup.
         """
         if not self._readiness_reported or self._mission is None:
             return
@@ -671,6 +694,9 @@ class ScenarioBridgeNode(Node):
             return
         version = self._mission.version
         if version == self._routed_version or version == self._abandoned_version:
+            return
+        if self._aggregator.route_arrived:
+            self._ensure_route_cleared(version)
             return
         if not self._aggregator.route_changeable:
             return
@@ -682,6 +708,28 @@ class ScenarioBridgeNode(Node):
             self._route_request(self._mission),
             "_reroute_requested",
             "route change",
+        )
+
+    def _ensure_route_cleared(self, version: int) -> None:
+        """Clear an ARRIVED route so a re-route to *version* can be set.
+
+        Autoware has reached the goal and stopped, and the AD API takes no route
+        in ARRIVED: change_route_points wants SET, set_route_points UNSET.
+        Once the clear is accepted the startup's own steps set the new route
+        when the state reads UNSET, then engage again (:meth:`_on_step_response`).
+        A cleared route whose new one is not set yet (``_route_requested`` clear)
+        is not cleared again.
+        """
+        if self._clear_requested or not self._route_requested:
+            return
+        if not self._clear_route_cli.service_is_ready():
+            return
+        self._route_request_version = version
+        self._issue(
+            self._clear_route_cli,
+            ClearRoute.Request(),
+            "_clear_requested",
+            "route clear",
         )
 
     def _maybe_engage(self) -> None:
@@ -797,6 +845,8 @@ def main(args: Optional[list] = None) -> None:
             "RouteState.UNKNOWN": RouteState.UNKNOWN,
             "RouteState.UNSET": RouteState.UNSET,
             "RouteState.SET": RouteState.SET,
+            "RouteState.ARRIVED": RouteState.ARRIVED,
+            "RouteState.CHANGING": RouteState.CHANGING,
             "OperationModeState.AUTONOMOUS": OperationModeState.AUTONOMOUS,
         }
     )

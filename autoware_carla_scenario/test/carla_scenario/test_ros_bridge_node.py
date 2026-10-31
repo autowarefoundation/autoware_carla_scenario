@@ -29,9 +29,12 @@ from autoware_carla_scenario.autoware_bridge import (
 )
 from autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api import (
     OPERATION_MODE_AUTONOMOUS,
+    ROUTE_STATE_ARRIVED,
+    ROUTE_STATE_CHANGING,
     ROUTE_STATE_SET,
     ROUTE_STATE_UNSET,
     ROUTING_CHANGE_ROUTE_POINTS_SERVICE,
+    ROUTING_CLEAR_ROUTE_SERVICE,
     ROUTING_SET_ROUTE_POINTS_SERVICE,
 )
 
@@ -205,6 +208,11 @@ class _ChangeOperationMode:
         pass
 
 
+class _ClearRoute:
+    class Request:
+        pass
+
+
 def _module(name: str, **attributes: Any) -> types.ModuleType:
     module = types.ModuleType(name)
     for key, value in attributes.items():
@@ -217,7 +225,13 @@ def _fake_ros_modules() -> dict[str, types.ModuleType]:
     states = {
         "LocalizationInitializationState": SimpleNamespace(INITIALIZED=3),
         "OperationModeState": SimpleNamespace(AUTONOMOUS=OPERATION_MODE_AUTONOMOUS),
-        "RouteState": SimpleNamespace(UNKNOWN=0, UNSET=ROUTE_STATE_UNSET, SET=2),
+        "RouteState": SimpleNamespace(
+            UNKNOWN=0,
+            UNSET=ROUTE_STATE_UNSET,
+            SET=ROUTE_STATE_SET,
+            ARRIVED=ROUTE_STATE_ARRIVED,
+            CHANGING=ROUTE_STATE_CHANGING,
+        ),
     }
     qos = _module(
         "rclpy.qos",
@@ -239,6 +253,7 @@ def _fake_ros_modules() -> dict[str, types.ModuleType]:
         "autoware_adapi_v1_msgs.srv": _module(
             "autoware_adapi_v1_msgs.srv",
             ChangeOperationMode=_ChangeOperationMode,
+            ClearRoute=_ClearRoute,
             InitializeLocalization=_InitializeLocalization,
             SetRoutePoints=_SetRoutePoints,
         ),
@@ -470,7 +485,7 @@ def test_a_change_waits_for_the_route_to_be_set(
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge)
     _drive_to_ready(node)
-    node._on_route_state(_route_state(3))  # noqa: SLF001 - CHANGING
+    node._on_route_state(_route_state(ROUTE_STATE_CHANGING))  # noqa: SLF001
 
     bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0))
     _watch(node)
@@ -504,3 +519,56 @@ def test_a_rejected_change_is_retried_then_given_up_on(
     bridge.reroute(BridgePose.from_yaw(150.0, 0.0, 0.0, 0.0))
     _watch(node)
     assert _xs(_change_calls(node)[-1][0]) == ([], 150.0)
+
+
+def test_a_re_route_after_arrival_clears_the_route_sets_it_and_engages_again(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """ARRIVED takes neither routing service: the route is cleared first."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    _drive_to_ready(node)
+    engage = node.clients["/api/operation_mode/change_to_autonomous"].calls
+    node._on_route_state(_route_state(ROUTE_STATE_ARRIVED))  # noqa: SLF001
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001 - STOP
+
+    bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0), _WAYPOINTS)
+    _watch(node)
+
+    assert _change_calls(node) == []
+    clears = node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls
+    assert len(clears) == 1
+    _watch(node)  # in flight: not sent again
+    clears[-1][1].answer(True)
+    _watch(node)  # still reads ARRIVED: cleared, not cleared again
+    assert len(clears) == 1
+    assert len(_route_calls(node)) == 1
+
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    assert len(_route_calls(node)) == 2
+    assert _xs(_route_calls(node)[-1][0]) == ([30.0, 60.0], 120.0)
+    _route_calls(node)[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+    assert len(engage) == 2
+    engage[-1][1].answer(True)
+
+    _watch(node)  # the route Autoware has now: nothing more
+    assert _change_calls(node) == []
+    assert len(clears) == 1
+    assert len(_route_calls(node)) == 2
+
+
+def test_the_node_checks_every_route_state_it_relies_on(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() checks each of ad_api's values against the messages, none missing."""
+
+    class _Started(Exception):
+        pass
+
+    def _init(**_kwargs: Any) -> None:
+        raise _Started
+
+    monkeypatch.setattr(node_module.rclpy, "init", _init)
+    with pytest.raises(_Started):
+        node_module.main()

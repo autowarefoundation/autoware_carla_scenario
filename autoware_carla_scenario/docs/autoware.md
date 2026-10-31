@@ -36,7 +36,10 @@ The change waits for the route to be SET; one Autoware rejects -- its mission
 planner refuses a re-route it does not consider safe while driving, say -- is
 retried on the next poll, and given up on after `reroute_max_attempts` (10)
 rejections, with an error in the node's log, leaving Autoware on the route it
-had. A bridge implementation of your own re-routes by implementing
+had. A re-route after the ego has reached its goal -- the route ARRIVED, which
+neither routing service takes, and Autoware stopped -- clears the route
+(`/api/routing/clear_route`), sets the new one with `set_route_points` and
+engages again, as the startup did. A bridge implementation of your own re-routes by implementing
 `AutowareBridge.reroute()`; one that does not raises `NotImplementedError` at
 the re-route instead of leaving Autoware on its old route without a word.
 

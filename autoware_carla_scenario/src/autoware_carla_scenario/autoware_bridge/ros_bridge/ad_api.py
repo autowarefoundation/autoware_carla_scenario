@@ -23,6 +23,8 @@ ROUTING_SET_ROUTE_POINTS_SERVICE = "/api/routing/set_route_points"
 #: Service: change the route that is SET to a new goal (+ optional waypoints),
 #: while driving; same request type (``SetRoutePoints``) as set_route_points.
 ROUTING_CHANGE_ROUTE_POINTS_SERVICE = "/api/routing/change_route_points"
+#: Service: clear the route, which takes an ARRIVED route back to UNSET.
+ROUTING_CLEAR_ROUTE_SERVICE = "/api/routing/clear_route"
 #: Topic: RouteState.
 ROUTING_STATE_TOPIC = "/api/routing/state"
 #: Topic: OperationModeState.
@@ -40,6 +42,10 @@ ROUTE_STATE_SET = 2
 ROUTE_STATE_UNSET = 1
 #: RouteState.UNKNOWN -- what the AD API reports before the planner is up.
 ROUTE_STATE_UNKNOWN = 0
+#: RouteState.ARRIVED -- the vehicle reached the goal; Autoware stops.
+ROUTE_STATE_ARRIVED = 3
+#: RouteState.CHANGING -- a route change is being planned.
+ROUTE_STATE_CHANGING = 4
 #: OperationModeState.AUTONOMOUS.
 OPERATION_MODE_AUTONOMOUS = 2
 
@@ -50,6 +56,8 @@ ENUM_VALUES: dict[str, int] = {
     "RouteState.UNKNOWN": ROUTE_STATE_UNKNOWN,
     "RouteState.UNSET": ROUTE_STATE_UNSET,
     "RouteState.SET": ROUTE_STATE_SET,
+    "RouteState.ARRIVED": ROUTE_STATE_ARRIVED,
+    "RouteState.CHANGING": ROUTE_STATE_CHANGING,
     "OperationModeState.AUTONOMOUS": OPERATION_MODE_AUTONOMOUS,
 }
 
@@ -130,6 +138,15 @@ class ReadinessAggregator:
         an earlier change is still CHANGING.
         """
         return self.route_state == ROUTE_STATE_SET
+
+    @property
+    def route_arrived(self) -> bool:
+        """Whether the vehicle has reached the goal of the route.
+
+        Neither set_route_points (UNSET only) nor change_route_points (SET
+        only) takes a route then: it has to be cleared first.
+        """
+        return self.route_state == ROUTE_STATE_ARRIVED
 
     def update_operation_mode(
         self, mode: int, is_control_enabled: bool, is_autonomous_available: bool
