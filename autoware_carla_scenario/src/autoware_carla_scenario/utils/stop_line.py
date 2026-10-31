@@ -85,9 +85,14 @@ def regulatory_element_stop_lines(
 
     Adds the id of each one returned to *seen_ids*.  Searches three patterns:
 
-    1. **Traffic light RE**: ``reg_elem.stopLine``
-    2. **Traffic sign RE**: ``ref_line`` parameter (any linestring in the
-       ``ref_line`` role is treated as a stop line regardless of its attributes)
+    1. **Traffic light RE**: ``reg_elem.stopLine``, where it is a property
+       (lanelet2's ``TrafficLight`` and ``RightOfWay``, Autoware's
+       ``AutowareTrafficLight``).  On Autoware's ``DetectionArea`` and
+       ``NoStoppingArea`` ``stopLine`` is a method, and is not read here.
+    2. **Traffic sign or detection area RE**: ``ref_line`` parameter (any
+       linestring in the ``ref_line`` role is treated as a stop line
+       regardless of its attributes; a detection area's ``stopLine()`` is
+       the line in that role)
     3. **Road marking RE**: ``refers`` parameter with ``type="stop_line"``
 
     Which pattern applies is asked of the element (``hasattr``, its
@@ -101,16 +106,32 @@ def regulatory_element_stop_lines(
     if hasattr(reg_elem, "stopLine"):
         try:
             stop_line = reg_elem.stopLine
-            if stop_line is not None and stop_line.id not in seen_ids:
+            if TYPE_CHECKING:
+                # The model declares stopLine only where it is a property.
+                is_line = True
+            else:
+                # A DetectionArea's (or NoStoppingArea's) stopLine is a
+                # method: its bound method is no line (pattern 2 reads it).
+                # The `types` module is not modelled for Codon.
+                from types import BuiltinMethodType, MethodType  # noqa: PLC0415
+
+                is_line = not isinstance(stop_line, (BuiltinMethodType, MethodType))
+            if is_line and stop_line is not None and stop_line.id not in seen_ids:
                 seen_ids.add(stop_line.id)
                 results.append(stop_line)
         except Exception:
             pass
 
     attrs = reg_elem.attributes if hasattr(reg_elem, "attributes") else None
+    subtype = ""
+    if attrs is not None:
+        found = _attr_get(attrs, "subtype")
+        if found is not None:
+            subtype = found
 
-    # Pattern 2: Traffic sign — ref_line role (all ref_line entries are stop lines)
-    if attrs is not None and _attr_get(attrs, "subtype") == "traffic_sign":
+    # Pattern 2: Traffic sign or detection area — ref_line role (all ref_line
+    # entries are stop lines; a detection area's stopLine() reads that role)
+    if subtype == "traffic_sign" or subtype == "detection_area":
         try:
             params = reg_elem.parameters
             if "ref_line" in params:
@@ -122,7 +143,7 @@ def regulatory_element_stop_lines(
             pass
 
     # Pattern 3: Road marking — refers with type="stop_line"
-    if attrs is not None and _attr_get(attrs, "subtype") == "road_marking":
+    if subtype == "road_marking":
         if TYPE_CHECKING:
             # A `refers` parameter may be any of lanelet2's primitives, which
             # the model types as what they all have; this pattern returns them
@@ -169,7 +190,8 @@ def get_stop_line_linestrings(
     Searches three types of regulatory elements:
 
     1. **Traffic light RE**: ``reg_elem.stopLine``
-    2. **Traffic sign RE**: all linestrings in the ``ref_line`` parameter
+    2. **Traffic sign or detection area RE**: all linestrings in the
+       ``ref_line`` parameter
     3. **Road marking RE**: ``reg_elem.parameters['refers']`` with ``type="stop_line"``
 
     Duplicate stop lines (same linestring ID) are excluded.

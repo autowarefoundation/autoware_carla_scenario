@@ -108,7 +108,7 @@ class HasStopLineConstraint(Constraint):
     :func:`~autoware_carla_scenario.utils.stop_line._collect_stop_lines_from_reg_elems`:
 
     1. Traffic light RE with a ``stopLine`` attribute.
-    2. Traffic sign RE with a ``ref_line`` parameter.
+    2. Traffic sign or detection area RE with a ``ref_line`` parameter.
     3. Road marking RE with a ``refers`` parameter containing ``type="stop_line"``.
     """
 
@@ -220,9 +220,12 @@ class OnRouteConstraint(Constraint):
 class HasTrafficLightStopLineConstraint(Constraint):
     """Matches lanelets whose stop line originates from a traffic-light RE.
 
-    Only Pattern 1 of ``_collect_stop_lines_from_reg_elems`` is checked:
-    the regulatory element must have a ``stopLine`` attribute (i.e. it is a
-    traffic-light regulatory element, not a traffic sign or road marking).
+    Only Pattern 1 of ``_collect_stop_lines_from_reg_elems`` is checked, and
+    only on traffic lights: the regulatory element must have the subtype
+    ``traffic_light`` (as ``MapFeatures.is_traffic_light`` asks) and a
+    ``stopLine``.  Other elements have a ``stopLine`` too -- lanelet2's
+    ``RightOfWay``, and Autoware's ``DetectionArea`` and ``NoStoppingArea``,
+    where it is a method -- and are no traffic light.
     """
 
     type: str = "has_traffic_light_stop_line"
@@ -230,6 +233,9 @@ class HasTrafficLightStopLineConstraint(Constraint):
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if *lanelet* has a traffic-light stop line."""
         for reg_elem in lanelet.regulatoryElements:
+            attrs = reg_elem.attributes
+            if "subtype" not in attrs or str(attrs["subtype"]) != "traffic_light":
+                continue
             if hasattr(reg_elem, "stopLine"):
                 try:
                     stop_line = reg_elem.stopLine
