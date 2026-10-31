@@ -321,6 +321,17 @@ class TestRoutingActionBuilder:
         assert action.goal.s == 4.0
         assert action.label == "Drive to the far side"
 
+    def test_a_card_that_overrides_builds_an_action_that_does(self) -> None:
+        document = self._document_with_a_goal("ego")
+        document.actions[0].overrides = True
+        compiled = compile_document(document)
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+        assert action.overrides is True
+        document.actions[0].overrides = False
+        compiled = compile_document(document)
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+        assert action.overrides is False
+
     def test_the_action_names_its_entity_rather_than_holding_one(self) -> None:
         """Like every other action, and for the same reason.
 

@@ -10,6 +10,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -40,6 +41,8 @@ class TurnAction(BaseAction):
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         once: If ``True`` (default) the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
         search_distance: Maximum distance (m) to look ahead for a junction.
         waypoint_step: Sampling distance (m) between waypoints.
         post_junction_distance: How far (m) past the junction exit to extend
@@ -65,11 +68,18 @@ class TurnAction(BaseAction):
         *,
         label: str = "turn_signal",
         once: bool = True,
+        overrides: bool = False,
         search_distance: float = 200.0,
         waypoint_step: float = 2.0,
         post_junction_distance: float = 20.0,
     ) -> None:
-        super().__init__(label=label, condition=condition, timing=timing, once=once)
+        super().__init__(
+            label=label,
+            condition=condition,
+            timing=timing,
+            once=once,
+            overrides=overrides,
+        )
         self._entity_name = str(entity_name)
         self._direction = direction
         self._search_distance = search_distance
@@ -79,6 +89,10 @@ class TurnAction(BaseAction):
     # ------------------------------------------------------------------
     # BaseAction interface
     # ------------------------------------------------------------------
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The way the vehicle turns: its lateral domain."""
+        return [(str(self._entity_name), ControlDomain.LATERAL)]
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to turn at the next junction."""

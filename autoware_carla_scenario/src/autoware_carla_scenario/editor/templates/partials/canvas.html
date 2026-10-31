@@ -76,6 +76,7 @@
         <span class="dot"></span>
         <span>{{ action.phase.replace('_', ' ') }}</span>
         {% if not action.once %}<span class="dot"></span><span>repeats</span>{% endif %}
+        {% if action.overrides %}<span class="dot"></span><span>overrides</span>{% endif %}
         {# Waypoint conditions are edited in the inspector; the card says it
            has some, since they change when the action ends. #}
         {% if action.advance_conditions %}

@@ -181,14 +181,18 @@ class MapManager:
         (lat, lon, alt), anchored_by = map_origin(lanelet2_path, xodr_path)
         self._geo_origin = (lat, lon, alt)
         logger.info(
-            "Anchoring %s at (%s, %s) from %s",
+            "Anchoring %s at (%s, %s, %s) from %s",
             lanelet2_path.name,
             lat,
             lon,
+            alt,
             anchored_by,
         )
 
-        origin = lanelet2.io.Origin(lat, lon)
+        # With the altitude, as Autoware's get_lanelet2_projector() builds it:
+        # LocalCartesianProjector measures z from the origin's altitude (the
+        # other projections ignore it), so dropping it shifts every z.
+        origin = lanelet2.io.Origin(lat, lon, alt)
         self._lanelet_map, projector, projector_type = load_lanelet2(
             lanelet2_path, origin, projector_type
         )

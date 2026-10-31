@@ -136,8 +136,8 @@ class BaseAction:
 
     def __init__(self, label: str, condition = None,
                  timing: TickTiming = TickTiming("post_tick"), *_kw, once: bool = True,
-                 until = None, reissue = None):
-        _keyword_only(_kw, "BaseAction(): once, until and reissue")
+                 until = None, reissue = None, overrides: bool = False):
+        _keyword_only(_kw, "BaseAction(): once, until, reissue and overrides")
         _expect_optional_condition(condition)
         _expect_optional_condition(until)
         _expect_optional_bool(reissue)
@@ -188,6 +188,8 @@ class BaseAction:
                                "BaseAction.take_despawns() returns List[Tuple[str, int]]")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
+        elif name == "overrides":
+            _acs_expect_return(r, bool, "BaseAction.overrides returns bool")
         elif name == "needs_tick_loop":
             _acs_expect_return(r, bool, "BaseAction.needs_tick_loop returns bool")
         elif name == "execute":
@@ -237,6 +239,10 @@ class BaseAction:
 
     @property
     def reissues_while_running(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def overrides(self) -> bool:
         raise NotImplementedError()
 
     def execute(self, world: carla.World) -> None:
@@ -318,8 +324,8 @@ class LaneChangeAction(BaseAction):
 
     def __init__(self, entity_name, direction: LaneChangeDirection, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change",
-                 once: bool = True, until = None):
-        _keyword_only(_kw, "LaneChangeAction(): label, once and until")
+                 once: bool = True, overrides: bool = False, until = None):
+        _keyword_only(_kw, "LaneChangeAction(): label, once, overrides and until")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once, until=until)
 
@@ -376,8 +382,8 @@ class TurnIndicatorAction(BaseAction):
 
     def __init__(self, entity_name, state: TurnIndicatorState, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "turn_indicator", once: bool = True):
-        _keyword_only(_kw, "TurnIndicatorAction(): label and once")
+                 label: str = "turn_indicator", once: bool = True, overrides: bool = False):
+        _keyword_only(_kw, "TurnIndicatorAction(): label, once and overrides")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -424,7 +430,7 @@ class RoutingAction(BaseAction):
 
     def __init__(self, entity_name, goal: Optional[Lanelet2Pose] = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
-                 once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
+                 once: bool = True, overrides: bool = False, initial_pose: Optional[CarlaWorldPose] = None,
                  ground_projection = None, waypoints = (), walking_speed: float = 1.4,
                  cross_factor = None, turn_back_ttc_s: Optional[float] = None,
                  turn_back_distance_m: Optional[float] = None,
@@ -434,7 +440,7 @@ class RoutingAction(BaseAction):
                  initial_distance_offset: float = 0.0, until = None,
                  control_config = None, speed = None, stop_at_end: bool = True,
                  stop_at_goal: bool = False):
-        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
+        _keyword_only(_kw, "RoutingAction(): label, once, overrides, initial_pose, ground_projection, "
                            "waypoints, walking_speed, cross_factor, turn_back_ttc_s, "
                            "turn_back_distance_m, turn_back_within_m, trajectory, mode, time_reference, "
                            "initial_distance_offset, until, control_config, "
@@ -531,8 +537,8 @@ class StalledObjectAction(BaseAction):
 
     def __init__(self, entity_name, pose, start_time: float = 0.0, end_time = None,
                  condition = None, timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "stalled_object"):
-        _keyword_only(_kw, "StalledObjectAction(): label")
+                 label: str = "stalled_object", overrides: bool = False):
+        _keyword_only(_kw, "StalledObjectAction(): label and overrides")
         _expect_role(entity_name)
         _expect_optional_float(end_time)
         super().__init__(label, condition, timing)
@@ -587,8 +593,8 @@ class SetSpeedAction(BaseAction):
 
     def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "set_speed",
-                 once: bool = True, until = None, reissue = None):
-        _keyword_only(_kw, "SetSpeedAction(): label, once, until and reissue")
+                 once: bool = True, overrides: bool = False, until = None, reissue = None):
+        _keyword_only(_kw, "SetSpeedAction(): label, once, overrides, until and reissue")
         _expect_role(entity_name)
         _expect_optional_float(rate_kmh_s)
         super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
@@ -628,9 +634,9 @@ class TurnAction(BaseAction):
 
     def __init__(self, entity_name, direction: TurnDirection, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "turn_signal",
-                 once: bool = True, search_distance: float = 200.0, waypoint_step: float = 2.0,
+                 once: bool = True, overrides: bool = False, search_distance: float = 200.0, waypoint_step: float = 2.0,
                  post_junction_distance: float = 20.0):
-        _keyword_only(_kw, "TurnAction(): label, once, search_distance, waypoint_step and post_junction_distance")
+        _keyword_only(_kw, "TurnAction(): label, once, overrides, search_distance, waypoint_step and post_junction_distance")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -694,10 +700,10 @@ class WalkStraightAction(BaseAction):
 
     def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",
-                 once: bool = True, turn_back_ttc_s: Optional[float] = None,
+                 once: bool = True, overrides: bool = False, turn_back_ttc_s: Optional[float] = None,
                  turn_back_distance_m: Optional[float] = None,
                  turn_back_within_m: float = 1.0):
-        _keyword_only(_kw, "WalkStraightAction(): label, once and the turn_back_* options")
+        _keyword_only(_kw, "WalkStraightAction(): label, once, overrides and the turn_back_* options")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -710,6 +716,25 @@ class WalkStraightAction(BaseAction):
         raise NotImplementedError()
 
 
+class PlayMotionAction(BaseAction):
+    def __init__(self, label):
+        compile_error("PlayMotionAction(): no constructor takes these arguments "
+                      "(required: entity_name, motion_path)")
+
+    def __init__(self, entity_name, motion_path, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "play_motion",
+                 once: bool = True, fps: Optional[float] = None, loop: bool = False,
+                 duration_s: Optional[float] = None, upper_body_only: bool = True):
+        _keyword_only(_kw, "PlayMotionAction(): label, once, fps, loop, duration_s and "
+                      "upper_body_only")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def playing(self) -> bool:
+        raise NotImplementedError()
+
+
 class AdversarialBrakeAction(BaseAction):
     def __init__(self, label):
         compile_error("AdversarialBrakeAction(): no constructor takes these arguments "
@@ -717,9 +742,9 @@ class AdversarialBrakeAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "adversarial_brake",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "AdversarialBrakeAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "AdversarialBrakeAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -743,9 +768,9 @@ class IgnoreLeaderAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "ignore_leader",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "IgnoreLeaderAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "IgnoreLeaderAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -769,9 +794,9 @@ class AdversarialCutInAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "adversarial_cut_in",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "AdversarialCutInAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "AdversarialCutInAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -795,9 +820,9 @@ class AdversarialMergeAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "adversarial_merge",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "AdversarialMergeAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "AdversarialMergeAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -821,9 +846,9 @@ class LaneChangeAbortAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change_abort",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "LaneChangeAbortAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "LaneChangeAbortAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -847,9 +872,9 @@ class HeadOnAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "head_on",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "HeadOnAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "HeadOnAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -873,9 +898,9 @@ class RunTrafficRuleAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "run_traffic_rule",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "RunTrafficRuleAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "RunTrafficRuleAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -899,9 +924,9 @@ class JaywalkAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "jaywalk",
-                 once: bool = True, seed: Optional[int] = None, thresholds = None,
+                 once: bool = True, overrides: bool = False, seed: Optional[int] = None, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "JaywalkAction(): label, once, seed, thresholds and following_mode")
+        _keyword_only(_kw, "JaywalkAction(): label, once, overrides, seed, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -925,9 +950,9 @@ class PedestrianRunRedLightAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "pedestrian_run_red_light",
-                 once: bool = True, thresholds = None,
+                 once: bool = True, overrides: bool = False, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "PedestrianRunRedLightAction(): label, once, thresholds and following_mode")
+        _keyword_only(_kw, "PedestrianRunRedLightAction(): label, once, overrides, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
@@ -951,9 +976,9 @@ class StopCrossingAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "stop_crossing",
-                 once: bool = True, seed: Optional[int] = None, thresholds = None,
+                 once: bool = True, overrides: bool = False, seed: Optional[int] = None, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "StopCrossingAction(): label, once, seed, thresholds and following_mode")
+        _keyword_only(_kw, "StopCrossingAction(): label, once, overrides, seed, thresholds and following_mode")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 

@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 __all__ = ["cached_z_offset", "z_offset_key"]
 
 #: Bumped whenever the computation changes, so values from the old one are not reused.
-_METHOD_VERSION = 1
+#: 2: the Lanelet2 map is anchored at the origin's altitude too, which moves a
+#: LocalCartesian map's z (and so its offset) under an unchanged projection key.
+_METHOD_VERSION = 2
 
 
 #: Each file's digest by what it is now (``(path, device, inode, size,

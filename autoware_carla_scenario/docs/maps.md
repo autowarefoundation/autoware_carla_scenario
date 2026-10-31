@@ -112,6 +112,12 @@ and the way Autoware does:
 `LocalCartesianUTM` is read through UTM, not a local tangent plane, despite
 its name: the two place a city-sized map tens of metres apart.
 
+The projector is anchored at the whole `map_origin` -- latitude, longitude
+and `altitude` -- as Autoware's `get_lanelet2_projector()` anchors it. Only
+`LocalCartesian` uses the altitude: it measures every z from it, so near an
+origin at 40 m a node's z, and the map-frame poses sent to Autoware, are its
+`ele` less 40 m. The other projections ignore it.
+
 A `projector_type: Local` map stores its map frame in each node's `local_x` and
 `local_y` tags (and `local_z`, when it has one), which is what Autoware's own
 loader reads. So does this framework: such a map is read with the `local_xy`

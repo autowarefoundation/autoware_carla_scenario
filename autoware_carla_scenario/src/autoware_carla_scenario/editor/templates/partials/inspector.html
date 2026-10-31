@@ -83,6 +83,15 @@
           <span>Fire only once</span>
         </label>
       </div>
+      {% if target.type in overriding_actions %}
+      <div class="ed-field">
+        <label class="ed-check">
+          <input type="checkbox" name="overrides" value="on" {% if target.overrides %}checked{% endif %}>
+          <span>Override a running action</span>
+        </label>
+        <p class="ed-help">Another action already controlling this entity's speed, steering or lights is stopped. Unchecked, the run ends in error instead.</p>
+      </div>
+      {% endif %}
     </form>
     {# Every lanelet this action names, each with its map and the choice between
        a pinned lanelet and a constraint search. Outside the form above: the

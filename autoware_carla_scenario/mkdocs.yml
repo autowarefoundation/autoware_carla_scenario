@@ -99,6 +99,7 @@ nav:
   - ROS 2 over DDS: ros2.md
   - HILS Bridge: hils.md
   - Traffic Backends: traffic_backends.md
+  - Pedestrian Motions (SOMA): pedestrian_motion.md
   - Trajectories and Recorded-Scene Replay: trajectory.md
   - Trajectory Log: trajectory_log.md
   - T4 Dataset: t4_dataset.md

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..conditions.base import BaseCondition, find_actor_in_list
 from ..entity_role import EntityRole
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, set_turn_indicators
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -35,6 +36,8 @@ class TurnIndicatorAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+        overrides: Take over a control domain of the entity another action
+            holds (:attr:`~BaseAction.overrides`).
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -50,10 +53,21 @@ class TurnIndicatorAction(BaseAction):
         *,
         label: str = "turn_indicator",
         once: bool = True,
+        overrides: bool = False,
     ) -> None:
-        super().__init__(label=label, condition=condition, timing=timing, once=once)
+        super().__init__(
+            label=label,
+            condition=condition,
+            timing=timing,
+            once=once,
+            overrides=overrides,
+        )
         self._entity_name = str(entity_name)
         self._state = state
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The vehicle's indicators: its lighting domain."""
+        return [(str(self._entity_name), ControlDomain.LIGHTING)]
 
     def execute(self, world: "carla.World") -> None:
         """Set the named vehicle's turn indicators."""
