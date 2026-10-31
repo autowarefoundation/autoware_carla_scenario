@@ -423,13 +423,16 @@ def _start(
     monkeypatch: pytest.MonkeyPatch,
     world: "_World",
     driver: Optional[DriverClientConfig] = None,
+    section: Optional[dict[str, Any]] = None,
 ) -> T4Recording:
     monkeypatch.setattr(t4, "_map_offset", lambda: OFFSETS)
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
     lanelet2 = tmp_path / "map" / "lanelet2_map.osm"
     lanelet2.parent.mkdir()
     lanelet2.write_text("<osm/>")
-    recording = T4Recorder(T4Settings.from_driver(driver or _driver(), {})).start(
+    recording = T4Recorder(
+        T4Settings.from_driver(driver or _driver(), section or {})
+    ).start(
         tmp_path / "out",
         "CutInScenario",
         world,  # type: ignore[arg-type]
@@ -447,11 +450,13 @@ def _record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     driver: Optional[DriverClientConfig] = None,
+    section: Optional[dict[str, Any]] = None,
+    world: Optional[_World] = None,
 ) -> tuple[Path, _World]:
     """Ten ticks of the fake world at 10 Hz (a sweep every other tick), with
     the recorder's own sensors on the ego."""
-    world = _World()
-    recording = _start(tmp_path, monkeypatch, world, driver)
+    world = world or _World()
+    recording = _start(tmp_path, monkeypatch, world, driver, section)
     assert not recording.fed_by_driver
     assert len(world.sensors) == 2
     for frame in range(101, 111):
@@ -518,6 +523,79 @@ def test_the_boxes_are_the_road_users_near_the_ego(
     )
     assert first["size"] == [1.8, 4.0, 1.4]  # width, length, height
     assert first["num_lidar_pts"] == 2
+
+
+class _HidingWorld(_World):
+    """The fake world with two more cars parked out of it, 500 m below the
+    ground (a hidden spawn, a trajectory entity before its start): one is
+    revealed 20 m ahead of the ego from frame 104 to 108 and hidden again
+    after, the other stays hidden."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.actors[4] = _Actor(4, "vehicle.audi.tt", (2.0, 0.9, 0.7))
+        self.actors[5] = _Actor(5, "vehicle.audi.tt", (2.0, 0.9, 0.7))
+
+    def revealed(self, frame: int) -> bool:
+        return 104 <= frame <= 108
+
+    def get_snapshot(self) -> _Snapshot:
+        snapshot = super().get_snapshot()
+        x = self.ego_x(self.frame)
+        z = 0.0 if self.revealed(self.frame) else -500.0
+        snapshot.append(_ActorSnapshot(4, _transform(x + 20.0, 0.0, z), _xyz(10.0)))
+        snapshot.append(_ActorSnapshot(5, _transform(x + 20.0, 5.0, -500.0), _xyz()))
+        return snapshot
+
+
+def _boxes_by_instance(root: Path) -> dict[str, list[dict[str, Any]]]:
+    boxes: dict[str, list[dict[str, Any]]] = {}
+    for annotation in _table(root, "sample_annotation"):
+        boxes.setdefault(annotation["instance_token"], []).append(annotation)
+    return boxes
+
+
+@pytest.mark.parametrize("section", [{"max_distance_m": None}, {}])
+def test_a_hidden_actor_gets_no_box_until_it_is_revealed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]
+) -> None:
+    """An actor parked out of the world is not on the scene: no box, even with
+    no distance limit (#908); revealed, it is annotated from the key frame it
+    appears on, as one instance, until it is hidden again."""
+    root, world = _record(tmp_path, monkeypatch, section=section, world=_HidingWorld())
+    annotations = _table(root, "sample_annotation")
+    # Every box is on the ground (the map's elevation offset, give or take a box).
+    assert all(abs(a["translation"][2] - OFFSETS[2]) < 5.0 for a in annotations)
+    instances = {i["token"]: i for i in _table(root, "instance")}
+    # The car in every frame, the revealed car on two, the pedestrian 500 m
+    # away only without a limit; the car that stays hidden never.
+    unlimited = section.get("max_distance_m", 100.0) is None
+    assert len(instances) == (3 if unlimited else 2)
+    assert len(annotations) == (12 if unlimited else 7)
+    sample_frame = {
+        s["token"]: 101 + 2 * n
+        for n, s in enumerate(
+            sorted(_table(root, "sample"), key=lambda s: s["timestamp"])
+        )
+    }
+    (revealed,) = [
+        boxes for boxes in _boxes_by_instance(root).values() if len(boxes) == 2
+    ]
+    assert sorted(sample_frame[a["sample_token"]] for a in revealed) == [105, 107]
+    first, last = sorted(revealed, key=lambda a: sample_frame[a["sample_token"]])
+    np.testing.assert_allclose(
+        first["translation"][:2],
+        [world.ego_x(105) + 20.0 + OFFSETS[0], OFFSETS[1]],
+        atol=1e-9,
+    )
+    instance = instances[first["instance_token"]]
+    assert instance["nbr_annotations"] == 2
+    assert (instance["first_annotation_token"], instance["last_annotation_token"]) == (
+        first["token"],
+        last["token"],
+    )
+    assert (first["prev"], first["next"]) == ("", last["token"])
+    assert (last["prev"], last["next"]) == (first["token"], "")
 
 
 def test_t4_devkit_loads_the_dataset(
