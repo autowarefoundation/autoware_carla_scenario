@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
+
+import pytest
 
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.debug_markers import DebugMarkers, DebugPolyline
@@ -47,6 +49,7 @@ def _run(
     scenario_out: list[Any] | None = None,
     traffic_backend: Any = None,
     write_result: Any = None,
+    rerun: Any = None,
 ) -> ScenarioRunner:
     """Run a scenario of three ticks through run_scenario, on stand-ins."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
@@ -55,6 +58,7 @@ def _run(
         runner._client.stop_recorder.side_effect = RuntimeError("std::exception")
     if traffic_backend is not None:
         runner._traffic_backend = traffic_backend
+    runner.rerun = rerun
     world = MagicMock()
     frame = {"n": 0}
 
@@ -104,6 +108,46 @@ def test_the_trajectory_log_ends_with_the_verdict(tmp_path: Path) -> None:
     trajectory.record_result.assert_called_once()
     assert trajectory.record_result.call_args.args[0].passed
     trajectory.close.assert_called_once()
+
+
+def test_the_log_goes_to_rerun_once_the_result_is_written(tmp_path: Path) -> None:
+    # A log without its result record is converted with the result JSON
+    # beside it: handed over before that is written, the converter could
+    # read it half written.
+    order: list[str] = []
+    written: list[Any] = []
+
+    def write_result(json_path: Path, *_: Any) -> None:
+        order.append("result")
+        written.append(_[3])
+
+    trajectory = MagicMock()
+    trajectory.active = True
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+    rerun = MagicMock()
+    rerun.submit.side_effect = lambda path, label: order.append("rerun")
+    _run(tmp_path, trajectory, write_result=write_result, rerun=rerun)
+    assert order == ["result", "rerun"]
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
+    # The result names its recording all the same.
+    assert written[0].rerun_recording == str(tmp_path / "S.rrd")
+
+
+def test_the_log_goes_to_rerun_when_the_result_cannot_be_written(
+    tmp_path: Path,
+) -> None:
+    trajectory = MagicMock()
+    trajectory.active = True
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+    rerun = MagicMock()
+    with pytest.raises(OSError):
+        _run(
+            tmp_path,
+            trajectory,
+            write_result=MagicMock(side_effect=OSError("disk full")),
+            rerun=rerun,
+        )
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
 
 
 def test_a_failing_recorder_stop_still_ends_the_trajectory_log(tmp_path: Path) -> None:

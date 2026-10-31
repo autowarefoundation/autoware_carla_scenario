@@ -273,11 +273,12 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.rerun": _each(
         "INSTALL_HINT RECORDING_SUFFIX RerunConversion RerunUnavailableError "
-        "convert_outputs main recording_path report require_converter",
+        "convert_outputs main report require_converter",
         "makes Rerun recordings of a run's trajectory logs with the "
         "autoware-carla-scenario-rerun package, which the runner does after a "
         "run (rerun.enabled), not a scenario; the model declares only the "
-        "RerunConverter the checked runner hands each log to",
+        "RerunConverter the checked runner hands each log to and "
+        "recording_path, which names the recording it makes",
     ),
     f"{_PACKAGE}.t4": _each(
         "DATASET_SUFFIX INSTALL_HINT LIDAR_CHANNEL T4Settings T4UnavailableError "

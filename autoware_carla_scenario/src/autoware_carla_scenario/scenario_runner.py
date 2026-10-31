@@ -64,7 +64,7 @@ from .world_reset import (
 )
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
-from .rerun import RerunConverter
+from .rerun import RerunConverter, recording_path
 from .t4 import T4Recorder, T4Recording
 from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
@@ -1341,6 +1341,8 @@ class ScenarioRunner:
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
         npc_events: Optional["NpcCollisionMonitor"] = None
+        # The log the Rerun converter takes once the result JSON is written.
+        rerun_log: Optional[Path] = None
         # The scenario's seed is the run's (autoware_carla_scenario.seed): what
         # setup() builds with no seed of its own draws from it.  The one before
         # comes back when the run ends.
@@ -1893,11 +1895,19 @@ class ScenarioRunner:
                 )
                 if self.rerun is not None:
                     # Converted in the background while the next case runs;
-                    # the run waits for it at its end (rerun.py).
-                    converter: RerunConverter = self.rerun
-                    recording = converter.submit(trajectory.path, file_stem)
+                    # the run waits for it at its end (rerun.py).  A log
+                    # without its result record (the recorder failed writing
+                    # it) is converted with the result JSON beside it, so a
+                    # run with a result hands its log over once that is
+                    # written, below: handed over now, the converter could
+                    # read it while it is written.
                     if result is not None:
-                        result.rerun_recording = str(recording)
+                        result.rerun_recording = str(recording_path(trajectory.path))
+                        rerun_log = trajectory.path
+                    else:
+                        # An exception is on its way: no result is written.
+                        converter: RerunConverter = self.rerun
+                        converter.submit(trajectory.path, file_stem)
                 if self.t4scene is not None:
                     # Best effort, as the log itself: a failure is logged.
                     exporter: T4SceneExporter = self.t4scene
@@ -1936,19 +1946,25 @@ class ScenarioRunner:
             )
             json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
-            if TYPE_CHECKING:
-                # The result document of mixed value types, with the traffic
-                # and environment records (UNCALLED in typecheck/library.py).
-                pass
-            else:
-                _write_result(
-                    json_path,
-                    self.output_dir,
-                    file_stem,
-                    scenario,
-                    result,
-                    traffic_record,
-                )
+            try:
+                if TYPE_CHECKING:
+                    # The result document of mixed value types, with the
+                    # traffic and environment records (UNCALLED in
+                    # typecheck/library.py).
+                    pass
+                else:
+                    _write_result(
+                        json_path,
+                        self.output_dir,
+                        file_stem,
+                        scenario,
+                        result,
+                        traffic_record,
+                    )
+            finally:
+                if rerun_log is not None and self.rerun is not None:
+                    written: RerunConverter = self.rerun
+                    written.submit(rerun_log, file_stem)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
                 _record_run(coverage, case, result, scenario.outcome_weight)

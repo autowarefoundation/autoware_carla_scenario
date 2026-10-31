@@ -8,6 +8,10 @@ from pathlib import Path
 from ._tc import _keyword_only as _acs_keyword_only
 
 
+def recording_path(trajectory: Path) -> Path:
+    raise NotImplementedError()
+
+
 class RerunConverter:
     # The converter package, which Python holds as `Any`: taken as it comes.
     def __init__(self, *_kw, strict: bool = False, converter = None,
