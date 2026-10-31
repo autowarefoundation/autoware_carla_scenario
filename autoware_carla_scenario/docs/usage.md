@@ -573,8 +573,9 @@ uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true \
 Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
 a camera frame is its JPEG (`driver.image_quality`). A merge that fails keeps
 `{ScenarioName}.sensors.rrd` beside the recording (logged; not a failed
-conversion). The two cannot be opened together instead: the viewer registers a
-file by its recording id, and the second replaces the first.
+conversion); converting the run again (below) merges it. The two cannot be
+opened together instead: the viewer registers a file by its recording id, and
+the second replaces the first.
 
 A run made without it (or by a version before it) can be converted afterwards,
 the same way:
@@ -585,9 +586,21 @@ python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12
 python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
 ```
 
-or from Python, `autoware_carla_scenario.rerun.convert_outputs(path)`. The
-converter reads nothing but the log and the map files the log names, so it
-runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
+or from Python, `autoware_carla_scenario.rerun.convert_outputs(path)`. It also
+converts a run again (with `--strict`, or a newer converter), and keeps the
+sensors the run recorded:
+
+- a `{ScenarioName}.sensors.rrd` left beside the log (a merge that failed) is
+  merged into the new recording and removed, as during a run;
+- the sensors in a `{ScenarioName}.rrd` it replaces (`world/lidar/**`,
+  `world/ego/pose/cameras/**`) are carried over into the new one. That needs
+  the Rerun SDK's CLI (`rerun-lidar` extra); without it, or if it fails, the
+  old recording is left as it was and reported as `[SKIPPED]` (exit status 1).
+  `--overwrite` (`overwrite=True`) replaces it anyway, without its sensors.
+
+A log that fails to convert leaves the recording it would have replaced as it
+was. The converter reads nothing but the log and the map files the log names,
+so it runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
 still written: CARLA's own replayer (`client.replay_file()`) plays it back on a
 server running the same map.
 
