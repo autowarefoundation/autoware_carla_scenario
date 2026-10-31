@@ -1385,7 +1385,12 @@ class TestFilesThatAreNotDrafts:
         assert response.status_code == 404
 
     @pytest.mark.parametrize(
-        ("name", "text"), [("notes", "just some text\n"), ("broken", "a: [\n")]
+        ("name", "text"),
+        [
+            ("notes", "just some text\n"),
+            ("broken", "a: [\n"),
+            ("config", "name: x\nversion: 3\n"),
+        ],
     )
     def test_deleting_one_by_id_is_a_404_and_leaves_it(
         self, client: TestClient, tmp_path: Path, name: str, text: str
