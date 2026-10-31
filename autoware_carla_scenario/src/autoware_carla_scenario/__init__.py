@@ -97,6 +97,7 @@ if TYPE_CHECKING:
         TrafficSinkAction as TrafficSinkAction,
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
+        PlayMotionAction as PlayMotionAction,
     )
     from .actions.stalled_object import (
         StalledObjectAction as StalledObjectAction,
@@ -525,6 +526,7 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    "PlayMotionAction",
     # Adversarial actions (#393) and NADE (#395)
     "AdversarialTrafficAction",
     "NadeAdversity",
@@ -618,6 +620,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     ),
     "TurnAction": (".actions", "TurnAction"),
     "WalkStraightAction": (".actions", "WalkStraightAction"),
+    "PlayMotionAction": (".actions", "PlayMotionAction"),
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
     "TrafficParametersAction": (".actions", "TrafficParametersAction"),
     "TrafficSinkAction": (".actions", "TrafficSinkAction"),

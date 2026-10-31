@@ -710,6 +710,25 @@ class WalkStraightAction(BaseAction):
         raise NotImplementedError()
 
 
+class PlayMotionAction(BaseAction):
+    def __init__(self, label):
+        compile_error("PlayMotionAction(): no constructor takes these arguments "
+                      "(required: entity_name, motion_path)")
+
+    def __init__(self, entity_name, motion_path, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "play_motion",
+                 once: bool = True, fps: Optional[float] = None, loop: bool = False,
+                 duration_s: Optional[float] = None, upper_body_only: bool = True):
+        _keyword_only(_kw, "PlayMotionAction(): label, once, fps, loop, duration_s and "
+                      "upper_body_only")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def playing(self) -> bool:
+        raise NotImplementedError()
+
+
 class AdversarialBrakeAction(BaseAction):
     def __init__(self, label):
         compile_error("AdversarialBrakeAction(): no constructor takes these arguments "

@@ -1492,9 +1492,9 @@ class TestEnvironmentTrack:
     ) -> None:
         """The other half of the rule above, for the kind that has its own.
 
-        A pedestrian walks, follows a trajectory -- a recorded one, say -- or
-        carries out a pedestrian's adversity, and is offered nothing a
-        vehicle does to its lane.
+        A pedestrian walks, follows a trajectory -- a recorded one, say --
+        carries out a pedestrian's adversity, or plays a motion on its
+        skeleton, and is offered nothing a vehicle does to its lane.
         """
         client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
         body = client.get(f"/draft/{draft_id}").text
@@ -1509,6 +1509,7 @@ class TestEnvironmentTrack:
         pedestrian_only = {
             "jaywalk",
             "pedestrian_run_red_light",
+            "play_motion",
             "stop_crossing",
             "walk_straight",
         }
