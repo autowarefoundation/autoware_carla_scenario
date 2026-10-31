@@ -238,6 +238,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.route.search",
     "autoware_carla_scenario.scenario_base",
     "autoware_carla_scenario.scenario_config",
+    "autoware_carla_scenario.scenario_glob",
     "autoware_carla_scenario.scenario_queue",
     "autoware_carla_scenario.scenario_runner",
     "autoware_carla_scenario.seed",

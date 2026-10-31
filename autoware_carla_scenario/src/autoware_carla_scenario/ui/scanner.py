@@ -51,7 +51,10 @@ def list_scenario_configs() -> list[str]:
     (:func:`scenario_conf_dirs`: the built-in examples and those of the
     installed scenario packages) for YAML files and returns relative paths
     without the ``.yaml`` suffix (e.g. ``"intersection_passing/left_turn"``),
-    each name once, as the ``scenario`` CLI's glob resolves them.
+    each name once.  This is the viewer's scenario list, ordered by path
+    component; patterns are not matched against it but resolved as the
+    ``scenario`` CLI resolves them
+    (:func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`).
     """
     names: set[str] = set()
     for conf_dir in scenario_conf_dirs():

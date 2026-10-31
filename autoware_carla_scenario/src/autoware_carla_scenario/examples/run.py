@@ -106,6 +106,7 @@ from autoware_carla_scenario.registry import (
     register_conf_dir,
     register_scenario,
 )
+from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
 
 from .argv import (
     BatchCase,
@@ -1038,27 +1039,19 @@ def _resolve_scenario_glob(pattern: str) -> list[str]:
 
     Each returned name is a Hydra config path relative to ``scenario/`` without
     the ``.yaml`` suffix (e.g. ``"intersection_passing/left_turn"``).  Matches
-    from external scenario packages are included alongside the built-ins.
+    from external scenario packages are included alongside the built-ins.  The
+    viewer's launcher resolves its patterns with the same
+    :func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`.
     """
-    names: set[str] = set()
-    searched_dirs: list[Path] = []
-    for conf_dir in get_conf_dirs():
-        scenario_dir = conf_dir / "scenario"
-        if not scenario_dir.is_dir():
-            continue
-        searched_dirs.append(scenario_dir)
-        for m in scenario_dir.glob(f"{pattern}.yaml"):
-            rel = m.relative_to(scenario_dir).with_suffix("")
-            # Hydra config names always use forward slashes, so normalise
-            # away any OS-specific separator.
-            names.add(rel.as_posix())
+    conf_dirs = get_conf_dirs()
+    names = resolve_scenario_glob(pattern, conf_dirs)
     if not names:
         print(  # noqa: T201
             f"Error: no scenario configs match pattern '{pattern}' "
-            f"under {[str(d) for d in searched_dirs]}"
+            f"under {[str(d) for d in scenario_dirs(conf_dirs)]}"
         )
         sys.exit(1)
-    return sorted(names)
+    return names
 
 
 def _compose_config(scenario_name: str, overrides: list[str]) -> DictConfig:
