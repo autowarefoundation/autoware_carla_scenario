@@ -286,6 +286,13 @@ class RendererDataBuilder:
         Poses carry yaw only.  A policy reads this quaternion to orient the
         actor's bounding box in the ground plane, which roll and pitch do not
         affect for a vehicle on a road.
+
+        The position is the centre of the bounding box, as the field's name
+        says and a policy reads it (stl_driver's ``forecast_actors`` takes it
+        for the box centre), not the actor's origin: a CARLA vehicle's origin
+        is often well behind its box centre, and at ground level under it
+        (#854).  The box's offset is rotated by the actor's yaw only, like
+        the pose itself.
         """
         states: List[carla_driver_pb2.CarlaActorState] = []
         horizon = self._config.actor_horizon_m
@@ -294,12 +301,18 @@ class RendererDataBuilder:
         for actor in self._world.get_actors().filter("*vehicle*"):
             if actor.id == self._ego.id:
                 continue
-            pose = to_local_pose(actor.get_transform())
+            box = actor.bounding_box
+            centre = box.location
+            # The offset is in the actor's own CARLA frame (y right): its y
+            # flips into the right-handed local frame, like the pose's.
+            pose = to_local_pose(actor.get_transform()) @ Pose.from_xyz_yaw(
+                float(centre.x), -float(centre.y), float(centre.z), 0.0
+            )
             if float(np.linalg.norm(pose.position - ego_position)) > horizon:
                 continue
 
             velocity = actor.get_velocity()
-            extent = actor.bounding_box.extent
+            extent = box.extent
             states.append(
                 carla_driver_pb2.CarlaActorState(
                     track_id=str(actor.id),

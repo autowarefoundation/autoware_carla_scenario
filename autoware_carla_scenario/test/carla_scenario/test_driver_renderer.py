@@ -79,16 +79,21 @@ def _vehicle(
     vx: float = 0.0,
     vy: float = 0.0,
     extent: tuple = (2.4, 1.0, 0.75),
+    box_location: tuple = (0.0, 0.0, 0.0),
+    yaw: float = 0.0,
 ) -> MagicMock:
     actor = MagicMock()
     actor.id = actor_id
     actor.type_id = "vehicle.tesla.model3"
     actor.get_transform.return_value = SimpleNamespace(
         location=SimpleNamespace(x=x, y=y, z=0.0),
-        rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=0.0),
+        rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=yaw),
     )
     actor.get_velocity.return_value = SimpleNamespace(x=vx, y=vy, z=0.0)
     actor.bounding_box.extent = SimpleNamespace(x=extent[0], y=extent[1], z=extent[2])
+    actor.bounding_box.location = SimpleNamespace(
+        x=box_location[0], y=box_location[1], z=box_location[2]
+    )
     return actor
 
 
@@ -325,6 +330,28 @@ def test_other_vehicles_are_reported_in_the_local_frame() -> None:
     assert actor.pose_local_to_aabb.vec.x == pytest.approx(20.0)
     assert actor.pose_local_to_aabb.vec.y == pytest.approx(-4.0)
     assert actor.dynamic_state.linear_velocity.x == pytest.approx(6.0)
+
+
+def test_the_pose_is_the_centre_of_the_bounding_box() -> None:
+    """#854: a vehicle's origin sits behind and below its box centre."""
+    other = _vehicle(2, x=20.0, box_location=(1.3, 0.0, 0.75))
+    message = _build(_world(actors=[other]), _ego())
+    vec = message.actors[0].pose_local_to_aabb.vec
+    assert (vec.x, vec.y, vec.z) == pytest.approx((21.3, 0.0, 0.75))
+
+
+def test_the_box_offset_turns_with_the_actor_and_keeps_its_yaw() -> None:
+    # CARLA yaw 90 degrees faces South (+y in CARLA), i.e. -y in the local
+    # frame; a box 1.3 m ahead and 0.2 m to the right (CARLA +y, towards West).
+    other = _vehicle(2, x=20.0, y=4.0, box_location=(1.3, 0.2, 0.75), yaw=90.0)
+    message = _build(_world(actors=[other]), _ego())
+    pose = message.actors[0].pose_local_to_aabb
+    assert (pose.vec.x, pose.vec.y, pose.vec.z) == pytest.approx(
+        (20.0 - 0.2, -4.0 - 1.3, 0.75)
+    )
+    # The quaternion is the actor's own yaw, -90 degrees in the local frame.
+    yaw = 2.0 * math.atan2(pose.quat.z, pose.quat.w)
+    assert yaw == pytest.approx(-math.pi / 2.0)
 
 
 def test_actor_velocity_flips_with_the_handedness() -> None:
