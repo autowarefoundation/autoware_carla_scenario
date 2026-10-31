@@ -224,6 +224,94 @@ class TestLocalCartesianUtmMap:
         assert nearest > 1.0
 
 
+class TestLocalCartesianOriginAltitude:
+    """A ``LocalCartesian`` map's z is measured from the origin's altitude (#863).
+
+    Autoware's ``get_lanelet2_projector()`` anchors the projector at
+    ``GPSPoint{latitude, longitude, altitude}``; ``LocalCartesianProjector``
+    subtracts that altitude from every z, so an origin read without it puts
+    the whole map ``altitude`` metres off.
+    """
+
+    ALTITUDE = 40.0
+
+    @classmethod
+    def _map(cls, tmp_path):
+        """The fixture map beside a LocalCartesian descriptor; (osm, origin)."""
+        import shutil
+
+        import lanelet2.io
+
+        map_path = tmp_path / "lanelet2_map.osm"
+        shutil.copyfile(OSM_PATH, map_path)
+        lat, lon, _ = _parse_geo_reference(XODR_PATH.read_text(encoding="utf-8"))
+        (tmp_path / "map_projector_info.yaml").write_text(
+            "projector_type: LocalCartesian\n"
+            "vertical_datum: WGS84\n"
+            "map_origin:\n"
+            f"  latitude: {lat}\n"
+            f"  longitude: {lon}\n"
+            f"  altitude: {cls.ALTITUDE}\n",
+            encoding="utf-8",
+        )
+        return map_path, lanelet2.io.Origin(lat, lon, cls.ALTITUDE)
+
+    @staticmethod
+    def _autoware(map_path, origin):
+        """The map as Autoware reads it: LocalCartesianProjector at map_origin."""
+        import lanelet2.io
+        import lanelet2.projection
+
+        return lanelet2.io.load(
+            str(map_path), lanelet2.projection.LocalCartesianProjector(origin)
+        )
+
+    @staticmethod
+    def _worst(lanelet_map, expected_map) -> float:
+        expected = {p.id: (p.x, p.y, p.z) for p in expected_map.pointLayer}
+        assert len(expected) == len(lanelet_map.pointLayer) > 0
+        return max(
+            math.dist((p.x, p.y, p.z), expected[p.id]) for p in lanelet_map.pointLayer
+        )
+
+    def test_the_origin_carries_the_altitude(self, tmp_path):
+        map_path, _ = self._map(tmp_path)
+        stated, source = map_origin(map_path, XODR_PATH)
+        assert source == "map_projector_info.yaml"
+        assert stated[2] == self.ALTITUDE
+
+    def test_the_sweeper_reads_it_as_autoware_does(self, tmp_path):
+        from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+        map_path, origin = self._map(tmp_path)
+        swept = load_lanelet2_map(map_path, XODR_PATH)
+        assert self._worst(swept, self._autoware(map_path, origin)) < 1e-6
+
+    def test_the_run_reads_it_as_autoware_does(self, tmp_path):
+        map_path, origin = self._map(tmp_path)
+        autoware = self._autoware(map_path, origin)
+
+        MapManager.reset()
+        mm = MapManager.get_instance()
+        try:
+            mm.initialize(XODR_PATH, map_path)
+            assert mm.geo_origin[2] == self.ALTITUDE
+            assert self._worst(mm.lanelet_map, autoware) < 1e-6
+
+            # What the run hands Autoware as a pose lands on Autoware's own
+            # map: the map-frame z of a lanelet's first centerline point is
+            # that point's z in the map Autoware loaded.
+            lanelet = next(iter(autoware.laneletLayer))
+            sent = to_map_frame(Lanelet2Pose(lanelet_id=lanelet.id, s=0.0))
+            assert sent.position.z == pytest.approx(lanelet.centerline[0].z, abs=1e-3)
+        finally:
+            mm._lanelet_map = None
+            mm._road_network = None
+            mm._geo_origin = None
+            mm._mgrs_offset = None
+            MapManager.reset()
+
+
 # ---------------------------------------------------------------------------
 # TestLocalProjection – how a projector_type: Local map is read
 # ---------------------------------------------------------------------------
