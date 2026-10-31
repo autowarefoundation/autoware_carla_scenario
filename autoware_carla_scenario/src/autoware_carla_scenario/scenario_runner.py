@@ -1359,7 +1359,7 @@ class ScenarioRunner:
             # what this run's weather leaves, not what the last run's left in
             # the same episode (a soft world reset keeps it).
             forget_visibility()
-            forget_tire_friction()
+            forget_tire_friction(world)
             # CARLA's pedestrian navigation (the AI walker controllers' choice
             # of where to go) from the run's seed, before any walker is spawned.
             world.set_pedestrians_seed(seed)
