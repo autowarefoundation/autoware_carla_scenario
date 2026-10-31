@@ -32,10 +32,11 @@ from autoware_carla_scenario.typecheck.check import (
     replaced_models,
 )
 from autoware_carla_scenario.typecheck.cli import main as scenario_check
-from autoware_carla_scenario.typecheck.doc_counts import (
+from autoware_carla_scenario.typecheck.library_docs import (
     PLACEHOLDER,
-    doc_counts,
-    render_counts,
+    library_docs,
+    module_summary,
+    render_library_docs,
 )
 from autoware_carla_scenario.typecheck.library import (
     CHECKED,
@@ -210,7 +211,7 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
 
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
-_HOOK = Path(__file__).resolve().parents[2] / "mkdocs_hooks" / "typecheck_counts.py"
+_HOOK = Path(__file__).resolve().parents[2] / "mkdocs_hooks" / "typecheck_library.py"
 
 
 def _docs_text() -> str:
@@ -218,7 +219,7 @@ def _docs_text() -> str:
 
 
 def _hook() -> Any:
-    spec = importlib.util.spec_from_file_location("_typecheck_counts_hook", _HOOK)
+    spec = importlib.util.spec_from_file_location("_typecheck_library_hook", _HOOK)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -229,30 +230,63 @@ def _page(src_uri: str) -> SimpleNamespace:
     return SimpleNamespace(file=SimpleNamespace(src_uri=src_uri))
 
 
-def test_the_docs_count_the_checked_modules_and_the_uncalled_functions() -> None:
-    # docs/typecheck.md's "What is checked of the framework" counts what this
-    # manifest lists. The numbers are filled in when the docs are built
-    # (#789), so moving a module into CHECKED does not edit the page; what is
-    # pinned here is that the sentences keep their placeholders (#240).
+def _short(name: str) -> str:
+    return name.removeprefix(f"{_PACKAGE}.")
+
+
+def test_checked_is_sorted_one_module_a_line() -> None:
+    # So a module moved into CHECKED is a line of its own, where no other
+    # pull request's lines are (#789).
+    assert list(CHECKED) == sorted(CHECKED), "keep CHECKED sorted"
+    source = (
+        _HOOK.parents[1] / "src" / _PACKAGE / "typecheck" / "library.py"
+    ).read_text(encoding="utf-8")
+    body = source[source.index("CHECKED: tuple[str, ...] = (\n") :]
+    body = body[body.index("\n") + 1 : body.index("\n)\n")]
+    assert body.splitlines() == [f'    "{name}",' for name in CHECKED]
+
+
+def test_the_docs_count_and_list_the_library_check_through_placeholders() -> None:
+    # docs/typecheck.md's "What is checked of the framework" counts and lists
+    # what this manifest holds. The docs build fills them in (#789), so
+    # moving a module into CHECKED does not edit the page; what is pinned
+    # here is that the page keeps its placeholders (#240).
     text = _docs_text()
     for sentence in (
-        "{{ counts.checked_modules }} of the package's {{ counts.package_modules }} "
-        "modules ({{ counts.checked_percent }}%; about {{ counts.checked_lines }} "
-        "of {{ counts.package_lines }} lines) are `CHECKED`",
-        "{{ counts.uncalled }} functions and methods of those modules are "
-        "`UNCALLED` ({{ counts.uncalled_protected }} of them protected helpers",
-        "The {{ counts.excluded }} `EXCLUDED` modules fall in three groups.",
+        (
+            "{{ library.checked_modules }} of the package's "
+            "{{ library.package_modules }} modules ({{ library.checked_percent }}%; "
+            "about {{ library.checked_lines }} of {{ library.package_lines }} "
+            "lines) are `CHECKED`"
+        ),
+        (
+            "{{ library.uncalled }} functions and methods of those modules are "
+            "`UNCALLED` ({{ library.uncalled_protected }} of them protected helpers"
+        ),
+        "The {{ library.excluded }} `EXCLUDED` modules fall in three groups.",
+        "{{ library.checked_table }}",
+        "{{ library.uncalled_list }}",
+        "{{ library.excluded_list }}",
     ):
         assert sentence in text, f"docs/typecheck.md lost {sentence!r}"
-    # The EXCLUDED groups name no counts of their own, which nothing computes
-    # and every move out of EXCLUDED would have to edit (#269, #789).
-    total = "The {{ counts.excluded }} `EXCLUDED` modules fall in"
+    # Every value is used; none is a count or a list written by hand.
+    assert {m.group(1) for m in PLACEHOLDER.finditer(text)} == set(library_docs())
+    section = text[
+        text.index("### What is checked of the framework") : text.index(
+            "### What is compiled"
+        )
+    ]
+    # (Issue numbers, #45, and versions, Codon 0.19, are not counts.)
+    assert not re.search(
+        r"(?<![#.\w])\d{2,}\b", section.split("-->", 1)[1]
+    ), "a number written into What is checked of the framework"
+    # The EXCLUDED groups name no counts of their own (#269, #789).
+    total = "The {{ library.excluded }} `EXCLUDED` modules fall in"
     breakdown = text[
         text.index(total) : text.index("The scenario check is not limited")
     ]
     groups = re.findall(r"- \*\*([^*]+)\*\*", breakdown)
     assert len(groups) == 3, groups
-    assert not [g for g in groups if re.search(r"\d", g)], groups
 
 
 def test_the_docs_counts_are_computed_from_the_manifest() -> None:
@@ -267,7 +301,8 @@ def test_the_docs_counts_are_computed_from_the_manifest() -> None:
         if name.rsplit(".", 1)[-1].startswith("_")
         and not name.rsplit(".", 1)[-1].startswith("__")
     ]
-    assert doc_counts() == {
+    values = library_docs()
+    assert {k: v for k, v in values.items() if "\n" not in v} == {
         "checked_modules": str(len(CHECKED)),
         "package_modules": str(len(modules)),
         "checked_percent": str(round(100 * len(CHECKED) / len(modules))),
@@ -280,34 +315,79 @@ def test_the_docs_counts_are_computed_from_the_manifest() -> None:
     assert len(CHECKED) + len(EXCLUDED) == len(modules)
 
 
-def test_the_docs_hook_fills_in_every_count_on_the_typecheck_page() -> None:
-    markdown = _DOCS.read_text(encoding="utf-8")
-    rendered = " ".join(
-        _hook().on_page_markdown(markdown, _page("typecheck.md")).split()
-    )
-    assert not PLACEHOLDER.search(rendered)
-    assert "{{ counts." not in rendered, "a placeholder the hook did not fill in"
-    counts = doc_counts()
+def test_the_docs_lists_hold_every_entry_of_the_manifest() -> None:
+    values = library_docs()
+    modules = package_modules()
+    table = values["checked_table"].splitlines()
+    rows = [line.strip() for line in table if line.strip().startswith("| `")]
+    assert [row.split("`")[1] for row in rows] == [_short(m) for m in sorted(CHECKED)]
+    for row, name in zip(rows, sorted(CHECKED)):
+        summary = module_summary(name, modules[name])
+        assert row.endswith(f"| {summary or '-'} |"), row
+    for key, entries in (("uncalled_list", UNCALLED), ("excluded_list", EXCLUDED)):
+        items = [
+            line.strip()
+            for line in values[key].splitlines()
+            if line.strip().startswith("- `")
+        ]
+        assert items == [
+            f"- `{_short(name)}`: {entries[name]}" for name in sorted(entries)
+        ], key
+    # The lists sit in collapsible blocks: a header, then indented lines.
+    for key in ("checked_table", "uncalled_list", "excluded_list"):
+        header, *body = values[key].splitlines()
+        assert header.startswith('??? note "'), key
+        assert all(line == "" or line.startswith("    ") for line in body), key
+
+
+def test_a_module_summary_is_its_docstrings_first_paragraph() -> None:
+    modules = package_modules()
     assert (
-        f"{counts['checked_modules']} of the package's {counts['package_modules']} "
-        f"modules ({counts['checked_percent']}%; about {counts['checked_lines']} "
-        f"of {counts['package_lines']} lines) are `CHECKED`" in rendered
+        module_summary(
+            f"{_PACKAGE}.kinematics.vector", modules[f"{_PACKAGE}.kinematics.vector"]
+        )
+        == "Immutable 3-D vector with full arithmetic support."
+    )
+    # reST markup becomes Markdown, and the module's own name is dropped.
+    assert (
+        module_summary(
+            f"{_PACKAGE}.actions.spawn", modules[f"{_PACKAGE}.actions.spawn"]
+        )
+        == "Put something into the scene mid-run -- the counterpart of `despawn`."
+    )
+    assert module_summary(
+        f"{_PACKAGE}.coordinate", modules[f"{_PACKAGE}.coordinate"]
+    ).startswith("mutual conversion between Lanelet2")
+
+
+def test_the_docs_hook_fills_in_the_typecheck_page() -> None:
+    markdown = _DOCS.read_text(encoding="utf-8")
+    raw = _hook().on_page_markdown(markdown, _page("typecheck.md"))
+    assert "{{ library." not in raw, "a placeholder the hook did not fill in"
+    rendered = " ".join(raw.split())
+    values = library_docs()
+    assert (
+        f"{values['checked_modules']} of the package's {values['package_modules']} "
+        f"modules ({values['checked_percent']}%; about {values['checked_lines']} "
+        f"of {values['package_lines']} lines) are `CHECKED`" in rendered
     )
     assert (
         f"{len(UNCALLED)} functions and methods of those modules are `UNCALLED` "
-        f"({counts['uncalled_protected']} of them protected helpers" in rendered
+        f"({values['uncalled_protected']} of them protected helpers" in rendered
     )
     assert f"The {len(EXCLUDED)} `EXCLUDED` modules fall in three groups." in rendered
+    for key in ("checked_table", "uncalled_list", "excluded_list"):
+        assert values[key] in raw, key
 
 
-def test_the_docs_hook_leaves_other_pages_and_refuses_an_unknown_count() -> None:
+def test_the_docs_hook_leaves_other_pages_and_refuses_an_unknown_name() -> None:
     hook = _hook()
-    other = "{{ counts.checked_modules }} and {{ counts.nonsense }}"
+    other = "{{ library.checked_modules }} and {{ library.nonsense }}"
     assert hook.on_page_markdown(other, _page("index.md")) == other
-    with pytest.raises(PluginError, match=r"counts\.nonsense"):
+    with pytest.raises(PluginError, match=r"library\.nonsense"):
         hook.on_page_markdown(other, _page("typecheck.md"))
     # The page's quoted code keeps its braces.
-    assert render_counts('f"{name} {{x}}"', {}) == 'f"{name} {{x}}"'
+    assert render_library_docs('f"{name} {{x}}"', {}) == 'f"{name} {{x}}"'
 
 
 def test_every_uncalled_function_is_one_of_a_checked_module() -> None:
