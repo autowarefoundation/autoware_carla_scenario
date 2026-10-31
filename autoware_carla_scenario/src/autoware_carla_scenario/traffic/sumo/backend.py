@@ -533,6 +533,11 @@ class SumoTrafficBackend(TrafficBackend):
         self._lane_targets: dict[str, int] = {}
         #: (tls id, link index) -> the CARLA traffic light controlling it.
         self._signals: dict[tuple[str, int], Any] = {}
+        #: tls id -> the indices of the links CARLA's lights switch that are a
+        #: permissive green (``g``) in some phase of SUMO's own program: a CARLA
+        #: Green sets them ``g``, the rest ``G``.  Read once, when the signals
+        #: are matched, as the state SUMO shows later is the one set from CARLA.
+        self._permissive_links: dict[str, set[int]] = {}
         #: tls id -> each pedestrian crossing link it controls, with the
         #: vehicle links into or out of a road the crossing crosses.
         self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
@@ -966,6 +971,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._config.traffic_light_authority != "none":
             self._signals = self._match_signals(world)
             if self._config.traffic_light_authority == "carla":
+                self._permissive_links = self._match_permissive()
                 self._crossing_links = self._match_crossings()
                 if self._config.cycle_on_sidewalks or self._config.net_path:
                     # Only such a network has edges for bicycles alone.
@@ -1285,6 +1291,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._bicycle_blueprints = None
         self._lane_targets = {}
         self._signals = {}
+        self._permissive_links = {}
         self._crossing_links = {}
         self._bicycle_rides = {}
         self._ego_actor = None
@@ -4158,14 +4165,15 @@ class SumoTrafficBackend(TrafficBackend):
             by_tls.setdefault(tls, {})[index] = light
         for tls, lights in by_tls.items():
             state = list(tc.trafficlight.getRedYellowGreenState(tls))
+            permissive = self._permissive_links.get(tls, set())
             for index, light in lights.items():
                 char = _CARLA_TO_SUMO_SIGNAL.get(
                     traffic_light_state_name(light.get_state())
                 )
                 if char is None:
                     continue
-                if char == "G" and state[index] == "g":
-                    char = "g"  # a permissive green stays one
+                if char == "G" and index in permissive:
+                    char = "g"  # a permissive green in SUMO's program stays one
                 state[index] = char
             # A bicycle ride goes with the traffic beside it, or crosses while
             # the traffic it crosses is held; before the crossings, which wait
@@ -4178,6 +4186,31 @@ class SumoTrafficBackend(TrafficBackend):
                 clear = all(state[foe] in "rR" for foe in foes)
                 state[index] = "G" if clear else "r"
             tc.trafficlight.setRedYellowGreenState(tls, "".join(state))
+
+    def _match_permissive(self) -> dict[str, set[int]]:
+        """The links CARLA's lights switch that some phase of SUMO's own
+        program shows as a permissive green (``g``), by tls id.
+
+        Read off SUMO's programs before anything sets a light's state: once
+        :meth:`_signals_to_sumo` has, the state SUMO reports is the one it set.
+        A link that is ``G`` in one phase and ``g`` in another (a protected,
+        then permissive turn) counts as permissive: a CARLA Green does not say
+        which of the two phases it is, and ``g`` only has the turn yield.
+        """
+        indices: dict[str, set[int]] = {}
+        for tls, index in self._signals:
+            indices.setdefault(tls, set()).add(index)
+        out: dict[str, set[int]] = {}
+        for tls, switched in indices.items():
+            permissive = {
+                index
+                for state in self._program_states(tls)
+                for index in switched
+                if index < len(state) and state[index] == "g"
+            }
+            if permissive:
+                out[tls] = permissive
+        return out
 
     def _match_crossings(self) -> dict[str, list[tuple[int, list[int]]]]:
         """Each signalled pedestrian crossing, and the vehicle links it waits for.
