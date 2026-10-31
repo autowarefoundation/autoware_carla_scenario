@@ -19,6 +19,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from . import cases, recordings, results, runner, scanner, slurm_launch
 from .models import RunProgress
 
@@ -55,14 +56,17 @@ def _session_dir_or_404(session_type: str, date: str, time: str) -> Path:
 def _resolve_scenario_names(scenario: str) -> list[str]:
     """Expand a scenario pattern to concrete config names.
 
-    If *scenario* contains glob metacharacters the pattern is matched
-    against available configs.  Otherwise the name is returned as-is.
+    If *scenario* contains glob metacharacters
+    (:func:`~autoware_carla_scenario.scenario_glob.is_scenario_glob`, the
+    CLI's test) it is matched as the
+    ``scenario`` CLI matches it
+    (:func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`
+    over :func:`scanner.scenario_conf_dirs`): ``*`` within one path
+    component, the names sorted as strings, ``[]`` when nothing matches.
+    Otherwise the name is returned as-is, as the CLI runs it.
     """
-    if any(ch in scenario for ch in ("*", "?", "[")):
-        import fnmatch  # noqa: PLC0415
-
-        all_names = scanner.list_scenario_configs()
-        return [n for n in all_names if fnmatch.fnmatch(n, scenario)]
+    if is_scenario_glob(scenario):
+        return resolve_scenario_glob(scenario, scanner.scenario_conf_dirs())
     return [scenario]
 
 

@@ -151,7 +151,7 @@ def test_one_failing_scenario_stops_the_run(
 
     monkeypatch.setattr(sweep_resolver, "resolve_sweep", resolve)
     monkeypatch.setattr(
-        app_module.scanner, "list_scenario_configs", lambda: ["a/good", "b/bad"]
+        app_module, "_resolve_scenario_names", lambda pattern: ["a/good", "b/bad"]
     )
     response = client.post(
         "/api/run", json={"scenario": "*/*", "extra_overrides": [], "sweeper": "x"}
@@ -194,7 +194,7 @@ def test_the_scenarios_of_a_run_share_their_odd_draws(
 
     monkeypatch.setattr(sweep_resolver, "resolve_sweep", resolve)
     monkeypatch.setattr(
-        app_module.scanner, "list_scenario_configs", lambda: ["a/one", "b/two"]
+        app_module, "_resolve_scenario_names", lambda pattern: ["a/one", "b/two"]
     )
     response = client.post(
         "/api/run", json={"scenario": "*/*", "extra_overrides": [], "sweeper": "x"}
