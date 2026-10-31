@@ -748,8 +748,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         trajectory_recorder,
         ("EGO_ROLES", "RECORDED_KINDS", "SCHEMA_VERSION", "TrajectoryRecorder"),
     ),
-    # What the checked scenario_runner and scenario_queue hold of it.
-    "rerun": (rerun_module, ("RerunConverter",)),
+    # What the checked scenario_runner and scenario_queue hold of it, and the
+    # log suffix the checked t4_scene.grid reads.
+    "rerun": (rerun_module, ("RerunConverter", "TRAJECTORY_SUFFIX")),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
     # What the checked scenario_runner and scenario_queue hold of it.
