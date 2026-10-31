@@ -32,6 +32,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -50,7 +51,10 @@ __all__ = [
     "CameraMount",
     "LidarRecorder",
     "LidarRerunUnavailableError",
+    "SENSOR_ENTITIES",
     "active_recorder",
+    "carries_sensors",
+    "extract_sensors",
     "lidar_recording_path",
     "merge_into",
     "require_sdk",
@@ -66,6 +70,8 @@ SENSORS_SUFFIX = ".sensors.rrd"
 LIDAR_SUFFIX = SENSORS_SUFFIX
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun-lidar]'"
+#: The entities the sensors are recorded under: the LiDARs and the cameras.
+SENSOR_ENTITIES = ("world/lidar", "world/ego/pose/cameras")
 
 #: Heights (m, above the ego's rig) the colours run over, blue to red.
 _COLOUR_LOW_M = -2.5
@@ -97,6 +103,16 @@ def lidar_recording_path(directory: Path, stem: str) -> Path:
     return Path(directory) / f"{stem}{SENSORS_SUFFIX}"
 
 
+def _cli() -> Path:
+    """The Rerun SDK's CLI (``rerun``), or :class:`LidarRerunUnavailableError`."""
+    spec = importlib.util.find_spec("rerun_cli")
+    if spec is None or spec.origin is None:
+        raise LidarRerunUnavailableError(
+            f"merging or keeping sensor recordings needs the Rerun SDK's CLI: {INSTALL_HINT}"
+        )
+    return Path(spec.origin).parent / "rerun"
+
+
 def merge_into(recording: Path, lidar: Path) -> Path:
     """Merge the LiDAR recording *lidar* into the run's *recording*, in place,
     with the Rerun SDK's CLI (``rerun rrd merge``), and remove *lidar*.
@@ -105,12 +121,7 @@ def merge_into(recording: Path, lidar: Path) -> Path:
         LidarRerunUnavailableError: The SDK's CLI is not installed.
         subprocess.CalledProcessError: The merge failed; both files are kept.
     """
-    spec = importlib.util.find_spec("rerun_cli")
-    if spec is None or spec.origin is None:
-        raise LidarRerunUnavailableError(
-            f"merging the sensor recording needs the Rerun SDK's CLI: {INSTALL_HINT}"
-        )
-    cli = Path(spec.origin).parent / "rerun"
+    cli = _cli()
     recording, lidar = Path(recording), Path(lidar)
     merged = recording.with_name(f".{recording.name}.merging")
     try:
@@ -124,6 +135,101 @@ def merge_into(recording: Path, lidar: Path) -> Path:
         merged.unlink(missing_ok=True)
     lidar.unlink()
     return recording
+
+
+def _is_sensor_entity(entity: str) -> bool:
+    path = entity.strip("/")
+    return any(path == root or path.startswith(root + "/") for root in SENSOR_ENTITIES)
+
+
+#: How much of a recording :func:`carries_sensors` reads at a time.
+_SCAN_BLOCK = 1 << 20
+
+
+def carries_sensors(recording: Path) -> bool:
+    """Whether *recording* seems to hold sensor entities
+    (:data:`SENSOR_ENTITIES`), without the Rerun SDK.
+
+    A heuristic, for when :func:`extract_sensors` cannot tell: it scans the
+    file's bytes for the sensors' entity paths.  Each chunk names its entity
+    in its Arrow schema, whose first mention of the path stays legible even
+    in an LZ4-compressed chunk (checked with the SDK's 0.38 encoding), and the
+    recording's footer names them again.  A recording that merely mentions
+    such a path elsewhere is a false positive: it is kept rather than
+    replaced, which errs on the safe side.
+    """
+    needles = [f"{root}/".encode() for root in SENSOR_ENTITIES]
+    overlap = max(len(needle) for needle in needles) - 1
+    tail = b""
+    with open(recording, "rb") as stream:
+        while block := stream.read(_SCAN_BLOCK):
+            window = tail + block
+            if any(needle in window for needle in needles):
+                return True
+            tail = window[-overlap:]
+    return False
+
+
+#: An entity of a chunk, as ``rerun rrd print`` names it.
+_CHUNK_LINE = re.compile(r"^Chunk\([^)]*\) with [^-]* - (/.*?)(?: - data columns:.*)?$")
+
+
+def extract_sensors(recording: Path, sensors: Path) -> bool:
+    """Write the sensor entities of *recording* (:data:`SENSOR_ENTITIES`) into
+    *sensors*, a recording :func:`merge_into` can merge into another, with the
+    Rerun SDK's CLI (``rerun rrd print`` lists the entities, ``rerun rrd
+    filter`` drops the others).  *recording* is not changed.
+
+    Returns whether it holds any; when it does not, *sensors* is not written.
+
+    Raises:
+        LidarRerunUnavailableError: The SDK's CLI is not installed.
+        subprocess.CalledProcessError: Reading or writing a recording failed;
+            *sensors* is not written.
+        RuntimeError: ``rerun rrd print`` lists the chunks in a form this
+            does not read (or lists none); *sensors* is not written.
+    """
+    cli = _cli()
+    recording, sensors = Path(recording), Path(sensors)
+    printed = subprocess.run(
+        [str(cli), "rrd", "print", str(recording)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    chunks = [line for line in printed.splitlines() if line.startswith("Chunk(")]
+    matches = [_CHUNK_LINE.match(line) for line in chunks]
+    if not chunks or None in matches:
+        # Another SDK's output: dropping too little would duplicate data on
+        # a merge, and finding no sensors would lose them.
+        unread = next((c for c, m in zip(chunks, matches) if m is None), None)
+        raise RuntimeError(
+            f"cannot read the entities of {recording} from `rerun rrd print`"
+            + (f": {unread!r}" if unread is not None else ": no chunks")
+        )
+    entities = {match.group(1) for match in matches if match is not None}
+    if not any(_is_sensor_entity(entity) for entity in entities):
+        return False
+    dropped = sorted(entity for entity in entities if not _is_sensor_entity(entity))
+    partial = sensors.with_name(f".{sensors.name}.extracting")
+    try:
+        subprocess.run(
+            [
+                str(cli),
+                "rrd",
+                "filter",
+                *(arg for entity in dropped for arg in ("--drop-entity", entity)),
+                str(recording),
+                "-o",
+                str(partial),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        os.replace(partial, sensors)
+    finally:
+        partial.unlink(missing_ok=True)
+    return True
 
 
 def active_recorder() -> Optional["SensorRecorder"]:
