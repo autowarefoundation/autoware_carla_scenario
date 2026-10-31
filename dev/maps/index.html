@@ -2343,7 +2343,40 @@ directories (<code>map.directory</code>) go through the same file checks.</p>
 <h3 id="how-a-map-is-read">How a map is read<a class="headerlink" href="#how-a-map-is-read" title="Permanent link">&para;</a></h3>
 <p><code>map_projector_info.yaml</code> names the projection the map's lat/lon is read
 with, and every loader in this framework -- the run's <code>MapManager</code>, the
-sweeper, the editor's preview, the ODD route check -- reads it the same way.</p>
+sweeper, the editor's preview, the ODD route check -- reads it the same way,
+and the way Autoware does:</p>
+<table>
+<thead>
+<tr>
+<th><code>projector_type</code></th>
+<th>Read with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MGRS</code></td>
+<td><code>mgrs</code> (<code>MGRSProjector</code>)</td>
+</tr>
+<tr>
+<td><code>LocalCartesianUTM</code></td>
+<td><code>utm</code> (<code>UtmProjector</code> at <code>map_origin</code>)</td>
+</tr>
+<tr>
+<td><code>LocalCartesian</code></td>
+<td><code>local_cartesian</code> (<code>LocalCartesianProjector</code> at <code>map_origin</code>)</td>
+</tr>
+<tr>
+<td><code>TransverseMercator</code></td>
+<td><code>transverse_mercator</code> (<code>TransverseMercatorProjector</code> at <code>map_origin</code>)</td>
+</tr>
+<tr>
+<td><code>Local</code></td>
+<td><code>local_xy</code> (each node's local tags; see below)</td>
+</tr>
+</tbody>
+</table>
+<p><code>LocalCartesianUTM</code> is read through UTM, not a local tangent plane, despite
+its name: the two place a city-sized map tens of metres apart.</p>
 <p>A <code>projector_type: Local</code> map stores its map frame in each node's <code>local_x</code> and
 <code>local_y</code> tags (and <code>local_z</code>, when it has one), which is what Autoware's own
 loader reads. So does this framework: such a map is read with the <code>local_xy</code>
@@ -2541,7 +2574,7 @@ elsewhere has to be added there to be previewed.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 23:57:43 UTC"><span class="timeago" datetime="2026-10-30T23:57:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 23:57:43 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 10:38:31 UTC"><span class="timeago" datetime="2026-10-31T10:38:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 10:38:31 UTC">2026-10-31</span>
   </span>
 
     
