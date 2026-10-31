@@ -11,6 +11,7 @@ from packaging.requirements import Requirement
 
 from autoware_carla_scenario import environment
 from autoware_carla_scenario.environment import (
+    PinSource,
     RunEnvironment,
     _pin,
     _source,
@@ -45,20 +46,20 @@ def test_a_lock_pins_every_distribution(tmp_path: Path) -> None:
 
 
 def test_how_each_source_is_pinned() -> None:
-    assert _pin("a", "1.0", {"kind": "index"}) == "a==1.0"
+    assert _pin("a", "1.0", PinSource(kind="index")) == "a==1.0"
     assert _pin(
         "a",
         "1.0",
-        {"kind": "vcs", "vcs": "git", "url": "https://x/a.git", "commit": "abc"},
+        PinSource(kind="vcs", vcs="git", url="https://x/a.git", commit="abc"),
     ) == ("a @ git+https://x/a.git@abc")
     assert (
-        _pin("a", "1.0", {"kind": "archive", "url": "https://x/a.whl"})
+        _pin("a", "1.0", PinSource(kind="archive", url="https://x/a.whl"))
         == "a @ https://x/a.whl"
     )
     assert _pin(
         "a",
         "1.0",
-        {"kind": "editable", "path": "/src/a", "commit": "abc", "dirty": True},
+        PinSource(kind="editable", path="/src/a", commit="abc", dirty=True),
     ) == ("a==1.0  # editable from /src/a, git abc with uncommitted changes")
 
 
@@ -111,7 +112,7 @@ REPOSITORY = "https://github.com/autowarefoundation/autoware_carla_scenario.git"
 COMMIT = "9e15ebae" + "0" * 32
 
 
-def _pin_of(direct_url: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def _pin_of(direct_url: dict[str, Any]) -> tuple[PinSource, str]:
     source = _source(_Dist(direct_url))  # type: ignore[arg-type]
     pin = _pin("autoware-carla-scenario", "2.63.0", source)
     # Whatever the lock writes has to be a requirement pip and uv accept (a
@@ -134,8 +135,8 @@ def test_a_git_pin_keeps_its_subdirectory() -> None:
             "subdirectory": "autoware_carla_scenario",
         }
     )
-    assert source["subdirectory"] == "autoware_carla_scenario"
-    assert source["requested"] == "master"
+    assert source.subdirectory == "autoware_carla_scenario"
+    assert source.requested == "master"
     assert pin == (
         f"autoware-carla-scenario @ git+{REPOSITORY}@{COMMIT}"
         "#subdirectory=autoware_carla_scenario"
@@ -175,7 +176,7 @@ def test_an_archive_pin_keeps_its_hash_and_subdirectory(
             "subdirectory": "pkg",
         }
     )
-    assert source["subdirectory"] == "pkg"
+    assert source.subdirectory == "pkg"
     assert pin == f"autoware-carla-scenario @ https://x/repo.tar.gz{fragment}"
 
 
@@ -190,5 +191,5 @@ def test_a_local_directory_names_its_subdirectory(tmp_path: Path) -> None:
             }
         )
     )
-    assert source["kind"] == "editable"
-    assert source["path"] == str(tmp_path / "pkg")
+    assert source.kind == "editable"
+    assert source.path == str(tmp_path / "pkg")
