@@ -8,7 +8,9 @@ from either.  The pattern is matched with :meth:`pathlib.Path.glob` as
 one path component (``**`` crosses them), and a name without glob
 characters (:func:`is_scenario_glob`) matches its one file.  The names are
 Hydra config paths relative to ``scenario/`` without the ``.yaml`` suffix
-(``"lane_change/left"``), each once, in plain string order.
+(``"lane_change/left"``), each once, in plain string order.  The viewer's
+scenario list (``ui.scanner.list_scenario_configs``) is every name under
+the config directories (:func:`scenario_names`), ordered by path component.
 
 Free of heavy imports (only :mod:`pathlib`), so the viewer can resolve a
 pattern without importing CARLA through ``examples.run``.
@@ -18,7 +20,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["is_scenario_glob", "resolve_scenario_glob", "scenario_dirs"]
+__all__ = [
+    "is_scenario_glob",
+    "resolve_scenario_glob",
+    "scenario_dirs",
+    "scenario_names",
+]
 
 
 def is_scenario_glob(value: str) -> bool:
@@ -49,3 +56,22 @@ def resolve_scenario_glob(pattern: str, conf_dirs: list[Path]) -> list[str]:
             # away any OS-specific separator.
             names.add(match.relative_to(scenario_dir).with_suffix("").as_posix())
     return sorted(names)
+
+
+def scenario_names(conf_dirs: list[Path]) -> list[str]:
+    """Every config name under ``scenario/`` of *conf_dirs*.
+
+    The relative path of each YAML file without the ``.yaml`` suffix (e.g.
+    ``"intersection_passing/left_turn"``), each name once, ordered by path
+    component.
+    """
+    names: set[str] = set()
+    for conf_dir in conf_dirs:
+        scenario_dir = conf_dir / "scenario"
+        if not scenario_dir.is_dir():
+            continue
+        for p in scenario_dir.rglob("*.yaml"):
+            # Hydra config names always use forward slashes.
+            names.add(p.relative_to(scenario_dir).with_suffix("").as_posix())
+    # Ordered by path component, as the directory walk always listed them.
+    return sorted(names, key=lambda name: name.split("/"))

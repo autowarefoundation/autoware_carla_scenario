@@ -33,6 +33,8 @@ from typing import Any
 # The path guard and the case stems, compiled by the library check; every
 # name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
+from .case_paths import _mtime as _mtime
+from .case_paths import _only_case as _only_case
 from .case_paths import _RESULT as _RESULT
 from .case_paths import _STEM_NUMBER as _STEM_NUMBER
 from .case_paths import _TRAJECTORY as _TRAJECTORY
@@ -181,13 +183,6 @@ def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:
 _batch_cache: dict[str, tuple[tuple[float, ...], list[CaseFiles | None]]] = {}
 
 
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
 def batch_case_files(directory: Path) -> list[CaseFiles | None]:
     """The files of each case of the batch in *directory*, in the order of its
     ``batch_results.json`` (``None`` for a case whose files are not found).
@@ -212,16 +207,6 @@ def batch_case_files(directory: Path) -> list[CaseFiles | None]:
     files = [None if s is None else CaseFiles(directory, s) for s in stems]
     _batch_cache[key] = (stamp, files)
     return files
-
-
-def _only_case(directory: Path) -> CaseFiles | None:
-    """The case of a directory that holds one run (a multirun job, a single
-    run): the first stem with a result, else the first with a log."""
-    stems = _stems_in(directory)
-    for stem in stems:
-        if (directory / f"{stem}{_RESULT}").is_file():
-            return CaseFiles(directory, stem)
-    return CaseFiles(directory, stems[0]) if stems else None
 
 
 def case_files(
