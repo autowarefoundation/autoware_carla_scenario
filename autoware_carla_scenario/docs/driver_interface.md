@@ -145,7 +145,7 @@ driver:
   send_actor_ground_truth: true
   traffic_light_sight_distance_m: 60.0
   actor_horizon_m: 150.0
-  random_seed: 0
+  random_seed: null           # null: the run's seed (`seed`)
   cameras:
     - logical_id: camera_front_wide_120fov
       image_width: 960
@@ -463,7 +463,7 @@ Each grows with its intensity (0-100). Clear weather leaves a sweep as CARLA cas
 | Field | Default | |
 |---|---|---|
 | `weather_noise` | `1.0` | Scale of the weather noise: 0 off, 1 as tuned, more exaggerates it |
-| `noise_seed` | `0` | Seed of the noise; with the sweep's frame, it repeats a run's sweeps |
+| `noise_seed` | `null` | Seed of the noise (the run's `seed` when null); with the sweep's frame, it repeats a run's sweeps |
 | `fog_density_scale` | `server.fog_density_scale`, else `0.001` | The server's `carla.Weather.FogDensityScale`; normally left to `server` |
 
 How thick a `fog_density` looks is the server's `carla.Weather.FogDensityScale`, and the

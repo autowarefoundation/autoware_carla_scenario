@@ -658,7 +658,7 @@ class TrafficSourceAction(BaseAction):
     def __init__(self, constraints, *_kw, initial_vehicles: int = 0,
                  vehicles_per_minute: float = 0.0, max_vehicles = None,
                  speed_kmh: float = 30.0, min_gap_m: float = 15.0, blueprint = None,
-                 seed: int = 0, label: str = "traffic_source", condition = None,
+                 seed: Optional[int] = None, label: str = "traffic_source", condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
                  until = None, reissue = None):
         _keyword_only(_kw, "TrafficSourceAction(): everything after the constraints")
@@ -899,7 +899,7 @@ class JaywalkAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "jaywalk",
-                 once: bool = True, seed: int = 0, thresholds = None,
+                 once: bool = True, seed: Optional[int] = None, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
         _keyword_only(_kw, "JaywalkAction(): label, once, seed, thresholds and following_mode")
         _expect_role(entity_name)
@@ -951,7 +951,7 @@ class StopCrossingAction(BaseAction):
 
     def __init__(self, entity_name, location: AdversityLocation, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "stop_crossing",
-                 once: bool = True, seed: int = 0, thresholds = None,
+                 once: bool = True, seed: Optional[int] = None, thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
         _keyword_only(_kw, "StopCrossingAction(): label, once, seed, thresholds and following_mode")
         _expect_role(entity_name)
@@ -1081,7 +1081,7 @@ class AdversarialTrafficAction(BaseAction):
 
     def __init__(self, adversities: List[NadeAdversity], condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "adversarial_traffic", seed: int = 0,
+                 label: str = "adversarial_traffic", seed: Optional[int] = None,
                  settings: NadeSettings = NadeSettings(), thresholds = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow"),
                  drive_background: bool = True):

@@ -87,7 +87,7 @@ class DriverLidarSpec:
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
     weather_noise: float = 1.0
-    noise_seed: int = 0
+    noise_seed: Optional[int] = None
     fog_density_scale: float = 0.001
     position_x: float = 0.0
     position_y: float = 0.0
@@ -198,7 +198,7 @@ class DriverConfig:
     send_actor_ground_truth: bool = True
     traffic_light_sight_distance_m: float = 60.0
     actor_horizon_m: float = 150.0
-    random_seed: int = 0
+    random_seed: Optional[int] = None
     cameras: List[DriverCameraSpec] = [DriverCameraSpec()]
     lidars: List[DriverLidarSpec] = List[DriverLidarSpec]()
     map_dir: Optional[str] = None
