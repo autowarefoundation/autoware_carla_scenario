@@ -11,6 +11,7 @@ from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
+from ..control_domain import ControlDomain, control_slots
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
@@ -106,6 +107,7 @@ class BaseAction(ABC):
     _reissue: Optional[bool]
     _done: bool
     _lifecycle: ActionState
+    _control: int
 
     def __init__(
         self,
@@ -133,6 +135,7 @@ class BaseAction(ABC):
         self._reissue = reissue
         self._done = False
         self._lifecycle = ActionState.STANDBY
+        self._control = 0
 
     @property
     def timing(self) -> TickTiming:
@@ -238,9 +241,39 @@ class BaseAction(ABC):
         """
         return self.REISSUES_BY_DEFAULT
 
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The ``(entity, domain)`` the action commands when it fires
+        (:mod:`~autoware_carla_scenario.control_domain`); none unless it
+        moves, steers, lights or animates an entity.  Asked as it fires, so
+        the answer may depend on what the entity is."""
+        none: list[tuple[str, ControlDomain]] = []
+        return none
+
+    def _take_control(self, at: float) -> None:
+        """Take the domains the action commands as it fires at *at*: for its
+        run if it runs on, else for this tick.
+
+        Raises:
+            ControlConflictError: If another action holds one of them.
+        """
+        claims = self._control_claims()
+        if not claims:
+            return
+        runs = self._until is not None or self.reissues_while_running
+        self._control = control_slots().take(
+            f"{type(self).__name__} '{self.label}'", claims, at, runs
+        )
+
+    def _release_control(self) -> None:
+        """Give back the domains the action took, as its run ends."""
+        if self._control:
+            control_slots().release(self._control)
+            self._control = 0
+
     def close(self) -> None:
         """Close the action's trigger and its *until* condition, at the run's
-        end (:meth:`BaseCondition.close`)."""
+        end (:meth:`BaseCondition.close`), and give back what it controls."""
+        self._release_control()
         self._condition.close()
         if self._until is not None:
             # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
@@ -272,6 +305,7 @@ class BaseAction(ABC):
         if self.reissues_while_running:
             return
         if self._until is None or self._until.check(world, elapsed) is not None:
+            self._release_control()
             self._lifecycle = (
                 ActionState.COMPLETE if self._once else ActionState.STANDBY
             )
@@ -317,6 +351,7 @@ class BaseAction(ABC):
                 # that has not finished.
                 return
             self._lifecycle = ActionState.END_TRANSITION
+            self._release_control()
             if not just_started or self._until is not None or reissues:
                 # A manoeuvre that genuinely took time holds `endTransition`
                 # for a tick, so a condition can watch for it.  An action given
@@ -350,6 +385,9 @@ class BaseAction(ABC):
             type(self).__name__,
             result.message,
         )
+        # Before it commands anything: a conflict raises with the entity
+        # untouched.
+        self._take_control(elapsed)
         self.execute(world)
         self._done = True
         # Held for this whole tick, so a condition watching `startTransition`

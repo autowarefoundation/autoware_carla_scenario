@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..conditions.base import BaseCondition, find_actor_in_list
 from ..entity_role import EntityRole
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, set_turn_indicators
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -54,6 +55,10 @@ class TurnIndicatorAction(BaseAction):
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = str(entity_name)
         self._state = state
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The vehicle's indicators: its lighting domain."""
+        return [(str(self._entity_name), ControlDomain.LIGHTING)]
 
     def execute(self, world: "carla.World") -> None:
         """Set the named vehicle's turn indicators."""

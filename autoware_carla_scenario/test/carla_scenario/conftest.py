@@ -127,3 +127,17 @@ def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     # As is where an ego that started its scenario outside a run (#739) has
     # its base_link, which the trajectory log and the T4 dataset read.
     ego_base_link.clear_ego_base_link()
+
+
+@pytest.fixture(autouse=True)
+def _control_slots_cleared() -> Iterator[None]:
+    """Forget who controls which entity, as each test begins.
+
+    The holds are process-wide and only a ``ScenarioRunner.run_scenario``
+    clears them; an action a test left running would otherwise hold its
+    entity's domains in the next test of the same xdist worker.
+    """
+    from autoware_carla_scenario.control_domain import reset_control_slots
+
+    reset_control_slots()
+    yield

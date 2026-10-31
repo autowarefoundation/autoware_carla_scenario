@@ -41,6 +41,7 @@ from autoware_carla_scenario.actions._departures import (
     TimelineVertex,
 )
 from autoware_carla_scenario.conditions.base import ScenarioResult
+from autoware_carla_scenario.control_domain import reset_control_slots
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
@@ -570,6 +571,8 @@ def _drive(
             speeds.append(actor.speed)
     finally:
         unregister_entity("npc9")
+        # The vehicle goes with its entity: the next drive's is a fresh one.
+        reset_control_slots()
     return action, actor, elapsed, speeds
 
 

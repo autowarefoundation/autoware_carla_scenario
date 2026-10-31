@@ -12,6 +12,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -161,6 +162,10 @@ class SetSpeedAction(BaseAction):
         given, and repeating it would say the same thing again.
         """
         return self._rate_kmh_s is not None
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The vehicle's speed: its longitudinal domain."""
+        return [(str(self._entity_name), ControlDomain.LONGITUDINAL)]
 
     def execute(self, world: "carla.World") -> None:
         """Command the target, or this tick's step towards it."""

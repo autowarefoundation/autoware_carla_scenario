@@ -55,6 +55,7 @@ from ..conditions.base import BaseCondition, ScenarioResult
 from ..entity_role import EntityRole
 from ..trajectory.model import TrajectoryFollowingMode
 from ._adversarial_execution import AdversarialExecution, start_execution
+from ..control_domain import ControlDomain, MOVEMENT
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -176,6 +177,10 @@ class AdversarialAction(BaseAction):
         """Remember the scenario time, which :meth:`execute` is not given."""
         self._elapsed = elapsed
         super().tick(world, elapsed)
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The entity's movement: the adversity drives it along its path."""
+        return [(str(self._entity_name), domain) for domain in MOVEMENT]
 
     def execute(self, world: "carla.World") -> None:
         """Plan the command when triggered, then drive it a tick at a time."""

@@ -10,6 +10,7 @@ from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
+from ..control_domain import ControlDomain
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -79,6 +80,10 @@ class TurnAction(BaseAction):
     # ------------------------------------------------------------------
     # BaseAction interface
     # ------------------------------------------------------------------
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """The way the vehicle turns: its lateral domain."""
+        return [(str(self._entity_name), ControlDomain.LATERAL)]
 
     def execute(self, world: "carla.World") -> None:
         """Ask the named entity to turn at the next junction."""

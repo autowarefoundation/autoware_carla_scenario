@@ -150,6 +150,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.conditions.traffic_signal_controller",
     "autoware_carla_scenario.conditions.trajectory_time",
     "autoware_carla_scenario.constants",
+    "autoware_carla_scenario.control_domain",
     "autoware_carla_scenario.coordinate",
     "autoware_carla_scenario.coordinate.frames",
     "autoware_carla_scenario.coordinate.lane_distance",

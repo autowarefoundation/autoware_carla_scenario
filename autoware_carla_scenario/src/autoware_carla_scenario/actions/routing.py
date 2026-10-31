@@ -57,6 +57,7 @@ from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
+from ..control_domain import MOVEMENT, ControlDomain
 from .base import TickTiming
 
 if TYPE_CHECKING:
@@ -520,6 +521,28 @@ class RoutingAction(TrajectoryRun):
     # ------------------------------------------------------------------
     # BaseAction / TrajectoryRun interface
     # ------------------------------------------------------------------
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """``follow``/``position``: the entity's movement.  ``driver``: its
+        lateral domain (the route its driver takes), and its longitudinal one
+        too where the action sets the pace -- a speed, a timed waypoint, a
+        stop at the goal -- or walks a pedestrian."""
+        entity = str(self._entity_name)
+        lateral = [(entity, ControlDomain.LATERAL)]
+        if self._mode is not RoutingMode.DRIVER:
+            return [(entity, domain) for domain in MOVEMENT]
+        paced = (
+            self._given_speed is not None
+            or self._stop_at_goal
+            or self._timed()
+            or (
+                find_vehicle_entity(entity) is None
+                and find_pedestrian_entity(entity) is not None
+            )
+        )
+        if paced:
+            return [(entity, domain) for domain in MOVEMENT]
+        return lateral
 
     def _reissues_by_default(self) -> bool:
         """``follow``/``position`` move the entity every tick; ``driver`` mode
