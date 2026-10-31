@@ -206,6 +206,17 @@ class TestSource:
         with pytest.raises(ValueError):
             TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=-1.0)
 
+    def test_a_vehicle_parked_under_the_map_takes_no_room(self) -> None:
+        # #853: an entity parked 500 m under the map until its spawn.
+        def vehicle(x: float, y: float, z: float) -> Any:
+            return SimpleNamespace(get_location=lambda: carla.Location(x=x, y=y, z=z))
+
+        world = _World()
+        world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
+            filter=lambda pattern: [vehicle(1.0, 2.0, 0.3), vehicle(5.0, 6.0, -499.7)]
+        )
+        assert background_traffic._vehicle_positions(world) == [(1.0, 2.0)]
+
 
 class TestSink:
     def test_it_removes_the_vehicles_on_its_lanelets_only(self) -> None:

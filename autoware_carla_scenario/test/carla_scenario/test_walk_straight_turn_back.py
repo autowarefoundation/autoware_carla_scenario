@@ -345,3 +345,28 @@ def test_a_negative_turn_back_option_is_refused(option: str) -> None:
     with pytest.raises(ValueError, match=f"{option} must not be negative"):
         options: dict[str, Any] = {option: -1.0}
         WalkStraightAction("walker1", **options)
+
+
+class _ParkedVehicle(_Vehicle):
+    """A vehicle parked 500 m under the map, as an entity is until its spawn."""
+
+    def get_location(self) -> carla.Location:
+        at = super().get_location()
+        return carla.Location(x=at.x, y=at.y, z=at.z - 500.0)
+
+
+def test_a_vehicle_parked_under_the_map_is_no_threat(loaded_map: MapManager) -> None:
+    # #853: its lane projection is 2D, so it read as on the road above.
+    from autoware_carla_scenario.actions._road_threat import road_threat
+
+    at = _world_at(CROSSING_S, KERB_T + 0.5)
+    location = carla.Location(x=at.x, y=at.y, z=at.z)
+    world = MagicMock()
+    for vehicle, expected in (
+        (_Vehicle(CROSSING_S + 8.0), "vehicle 7 8.0 m away along the road"),
+        (_ParkedVehicle(CROSSING_S + 8.0), None),
+    ):
+        world.get_actors.return_value.filter.side_effect = (
+            lambda pattern, v=vehicle: [v] if pattern == "vehicle.*" else []
+        )
+        assert road_threat(world, location, 0.0, 0.0, 10.0, 2.0) == expected
