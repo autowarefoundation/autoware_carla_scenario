@@ -322,15 +322,15 @@ def test_the_docs_lists_hold_every_entry_of_the_manifest() -> None:
     rows = [line.strip() for line in table if line.strip().startswith("| `")]
     assert [row.split("`")[1] for row in rows] == [_short(m) for m in sorted(CHECKED)]
     for row, name in zip(rows, sorted(CHECKED)):
-        summary = module_summary(name, modules[name])
-        assert row.endswith(f"| {summary or '-'} |"), row
+        summary = _unescaped(row.split(" | ", 1)[1].removesuffix(" |"))
+        assert summary == (module_summary(name, modules[name]) or "-"), row
     for key, entries in (("uncalled_list", UNCALLED), ("excluded_list", EXCLUDED)):
         items = [
             line.strip()
             for line in values[key].splitlines()
             if line.strip().startswith("- `")
         ]
-        assert items == [
+        assert [_unescaped(item) for item in items] == [
             f"- `{_short(name)}`: {entries[name]}" for name in sorted(entries)
         ], key
     # The lists sit in collapsible blocks: a header, then indented lines.
@@ -338,6 +338,20 @@ def test_the_docs_lists_hold_every_entry_of_the_manifest() -> None:
         header, *body = values[key].splitlines()
         assert header.startswith('??? note "'), key
         assert all(line == "" or line.startswith("    ") for line in body), key
+
+
+def _unescaped(markdown: str) -> str:
+    return re.sub(r"\\([_*|])", r"\1", markdown).replace("&lt;", "<")
+
+
+def test_the_docs_lists_escape_markdown_outside_code_spans() -> None:
+    # A reason names ``TrajectoryVertex.__init__`` bare: unescaped, Markdown
+    # prints it as a bold "init".
+    values = library_docs()
+    assert "TrajectoryVertex.\\_\\_init\\_\\_ " in values["uncalled_list"]
+    assert (
+        "`conditions.base.BaseCondition.__init_subclass__`" in values["uncalled_list"]
+    )
 
 
 def test_a_module_summary_is_its_docstrings_first_paragraph() -> None:

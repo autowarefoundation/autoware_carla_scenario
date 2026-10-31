@@ -72,6 +72,23 @@ def module_summary(name: str, path: Path) -> str:
     return re.sub(rf"^{own}\s+(?:-{{1,2}}|–)\s+", "", text)
 
 
+#: A code span, or a run of text between two.
+_CODE_SPAN = re.compile(r"(`[^`]*`)")
+
+
+def _plain(text: str) -> str:
+    """*text* with ``_``, ``*`` and ``<`` outside its code spans escaped.
+
+    The reasons and docstrings are prose with code spans, but name
+    ``__init__`` or ``cls.__dict__`` bare, which Markdown would print as
+    bold ``init``.
+    """
+    parts = _CODE_SPAN.split(text)
+    for i in range(0, len(parts), 2):
+        parts[i] = re.sub(r"([_*])", r"\\\1", parts[i]).replace("<", "&lt;")
+    return "".join(parts)
+
+
 def _collapsible(title: str, lines: list[str]) -> str:
     body = "\n".join(f"    {line}" if line else "" for line in lines)
     return f'??? note "{title}"\n\n{body}\n'
@@ -80,13 +97,13 @@ def _collapsible(title: str, lines: list[str]) -> str:
 def _checked_table(modules: Mapping[str, Path]) -> str:
     rows = ["| Module | What it is |", "| --- | --- |"]
     for name in sorted(CHECKED):
-        summary = module_summary(name, modules[name]).replace("|", "\\|")
+        summary = _plain(module_summary(name, modules[name])).replace("|", "\\|")
         rows.append(f"| `{_short(name)}` | {summary or '-'} |")
     return _collapsible(f"The {len(CHECKED)} CHECKED modules", rows)
 
 
 def _reasons(title: str, entries: Mapping[str, str]) -> str:
-    items = [f"- `{_short(name)}`: {entries[name]}" for name in sorted(entries)]
+    items = [f"- `{_short(name)}`: {_plain(entries[name])}" for name in sorted(entries)]
     return _collapsible(title, items)
 
 
