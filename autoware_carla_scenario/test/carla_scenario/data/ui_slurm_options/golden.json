@@ -288,44 +288,8 @@
     "launcher=slurm"
    ]
   },
-  "float-inf": {
-   "fields": {
-    "array_parallelism": null,
-    "cases_per_task": null,
-    "env": {},
-    "gres": null,
-    "mem": null,
-    "partition": null,
-    "python": null,
-    "remote_cwd": null,
-    "setup": [],
-    "start_stagger_seconds": Infinity,
-    "time": null
-   },
-   "overrides": [
-    "launcher=slurm",
-    "launcher.start_stagger_seconds=inf"
-   ]
-  },
-  "float-nan": {
-   "fields": {
-    "array_parallelism": null,
-    "cases_per_task": null,
-    "env": {},
-    "gres": null,
-    "mem": null,
-    "partition": null,
-    "python": null,
-    "remote_cwd": null,
-    "setup": [],
-    "start_stagger_seconds": NaN,
-    "time": null
-   },
-   "overrides": [
-    "launcher=slurm",
-    "launcher.start_stagger_seconds=nan"
-   ]
-  },
+  "float-inf": "ValueError: start_stagger_seconds must be a finite number",
+  "float-nan": "ValueError: start_stagger_seconds must be a finite number",
   "float-negative": "ValueError: start_stagger_seconds must be at least 0",
   "float-negative-zero": {
    "fields": {

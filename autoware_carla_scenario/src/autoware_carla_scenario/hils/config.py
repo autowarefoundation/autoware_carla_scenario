@@ -409,6 +409,26 @@ def _finite(value: Any, where: str) -> float:
     return number
 
 
+def _seconds(value: Any, where: str, *, zero: bool = False) -> float:
+    """A duration: a finite number, positive (or, with *zero*, not negative)."""
+    seconds = _finite(value, where)
+    if seconds < 0.0 or (seconds == 0.0 and not zero):
+        raise HilsConfigError(
+            f"{where}: must {'not be negative' if zero else 'be positive'}, "
+            f"got {value!r}"
+        )
+    return seconds
+
+
+def _port(value: Any, where: str) -> int:
+    """A TCP port: an integer (not a bool) in 1..65535."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HilsConfigError(f"{where}: expected an integer port, got {value!r}")
+    if not 1 <= value <= 65535:
+        raise HilsConfigError(f"{where}: must be within 1-65535, got {value!r}")
+    return value
+
+
 def _signal(name: str, where: str) -> str:
     if name not in SIGNALS:
         raise HilsConfigError(
@@ -424,8 +444,8 @@ def _field(value: Any, where: str) -> FieldSource:
             raise HilsConfigError(f"{where}: a mapping names a signal")
         return FieldSource(
             signal=_signal(_text(value["signal"], f"{where}.signal"), where),
-            scale=_number(value.get("scale", 1.0), f"{where}.scale"),
-            offset=_number(value.get("offset", 0.0), f"{where}.offset"),
+            scale=_finite(value.get("scale", 1.0), f"{where}.scale"),
+            offset=_finite(value.get("offset", 0.0), f"{where}.offset"),
         )
     if isinstance(value, str):
         if value.startswith("$$"):
@@ -447,9 +467,7 @@ def _message(value: Any, where: str) -> MessageSpec:
         raise HilsConfigError(f"{where}: a message has a name")
     period = section.get("period")
     if period is not None:
-        period = _number(period, f"{where}.period")
-        if period <= 0.0:
-            raise HilsConfigError(f"{where}.period: must be positive")
+        period = _seconds(period, f"{where}.period")
     fields = _keys(
         _mapping(section.get("fields"), f"{where}.fields"), f"{where}.fields"
     )
@@ -473,7 +491,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
     spec = SensorSpec(
         blueprint=blueprint,
         transform=tuple(  # type: ignore[arg-type]
-            _number(transform.get(k, 0.0), f"{where}.transform.{k}")
+            _finite(transform.get(k, 0.0), f"{where}.transform.{k}")
             for k in _TRANSFORM_KEYS
         ),
         attributes={
@@ -483,7 +501,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
             ).items()
         },
         encoding=_text(section.get("encoding", "bgra"), f"{where}.encoding"),
-        intensity_scale=_number(
+        intensity_scale=_finite(
             section.get("intensity_scale", 255.0), f"{where}.intensity_scale"
         ),
     )
@@ -585,9 +603,7 @@ def _step(
     kind = kinds[0]
     if kind == "sleep":
         _only(section, ("sleep",), where)
-        seconds = _number(section["sleep"], f"{where}.sleep")
-        if seconds < 0.0:
-            raise HilsConfigError(f"{where}.sleep: must not be negative")
+        seconds = _seconds(section["sleep"], f"{where}.sleep", zero=True)
         return StepSpec(kind="sleep", seconds=seconds)
     device = _text(section[kind], f"{where}.{kind}")
     if device not in devices:
@@ -610,9 +626,7 @@ def _step(
                 raise HilsConfigError(
                     f"{where}.fields.{key}: expected a constant, got {expected!r}"
                 )
-        timeout = _number(section.get("timeout", 10.0), f"{where}.timeout")
-        if timeout <= 0.0:
-            raise HilsConfigError(f"{where}.timeout: must be positive")
+        timeout = _seconds(section.get("timeout", 10.0), f"{where}.timeout")
         return StepSpec(
             kind="wait",
             device=device,
@@ -799,10 +813,10 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
         command_mode=mode,
         lifecycle=_lifecycle(root.get("lifecycle"), devices),
         host=_text(carla.get("host", "localhost"), "carla.host"),
-        port=int(_number(carla.get("port", 2000), "carla.port")),
-        timeout=_number(carla.get("timeout", 10.0), "carla.timeout"),
+        port=_port(carla.get("port", 2000), "carla.port"),
+        timeout=_seconds(carla.get("timeout", 10.0), "carla.timeout"),
         role_name=_text(ego.get("role_name", str(EGO_ROLE_NAME)), "ego.role_name"),
-        ego_wait=_number(ego.get("wait", 120.0), "ego.wait"),
+        ego_wait=_seconds(ego.get("wait", 120.0), "ego.wait", zero=True),
         canvas=canvas,
         clock=clock,
     )

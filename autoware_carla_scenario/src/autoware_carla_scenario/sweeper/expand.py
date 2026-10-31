@@ -87,6 +87,7 @@ def expand_sweep(
     odd: Any = None,
     controls: Mapping[str, Any] | None = None,
     drawn: OddDraws | None = None,
+    seed: int | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -100,6 +101,8 @@ def expand_sweep(
     the scenario's (its config's ``controls``): what its parameters set.
     *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
     the sampler goes on from them, and the cases drawn here are added to it.
+    *seed* is the run's (the config's ``seed``): the
+    draws' when ``odd_sample.seed`` is not given or null.
 
     With ``sweep.case_index``, only the case at that (0-based) index is kept.
 
@@ -111,6 +114,8 @@ def expand_sweep(
     """
     check_constraint_keys(sweep)
     odd_sample = sweep.get("odd_sample") or {}
+    if odd_sample and odd_sample.get("seed") is None and seed is not None:
+        odd_sample = {**odd_sample, "seed": seed}
     if sweep.get("route"):
         if sweep.get("constraints"):
             raise ValueError(
@@ -575,10 +580,11 @@ def expand_config(
     check_constraint_keys(sweep)
     odd = OmegaConf.select(cfg, "odd")
     controls = scenario_controls(cfg)
+    seed = _config_seed(cfg)
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.
         return expand_sweep(
-            sweep, None, arguments, odd=odd, controls=controls, drawn=drawn
+            sweep, None, arguments, odd=odd, controls=controls, drawn=drawn, seed=seed
         )
 
     from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
@@ -586,8 +592,21 @@ def expand_config(
 
     lanelet_map = load_map(resolve_map_paths(OmegaConf.select(cfg, "map")))
     return expand_sweep(
-        sweep, lanelet_map, arguments, odd=odd, controls=controls, drawn=drawn
+        sweep,
+        lanelet_map,
+        arguments,
+        odd=odd,
+        controls=controls,
+        drawn=drawn,
+        seed=seed,
     )
+
+
+def _config_seed(cfg: DictConfig) -> int | None:
+    """The run's seed, the config's top-level ``seed``; ``None`` when it has none
+    (:mod:`autoware_carla_scenario.seed`)."""
+    value = OmegaConf.select(cfg, "seed")
+    return None if value is None else int(value)
 
 
 def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
