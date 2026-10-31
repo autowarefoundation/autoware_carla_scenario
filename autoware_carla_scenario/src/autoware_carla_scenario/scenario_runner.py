@@ -1597,6 +1597,9 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
+            # Walkers measured outside a run (or by a run that never reached
+            # its cleanup) are not this run's.
+            forget_walkers()
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )

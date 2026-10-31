@@ -375,7 +375,11 @@ def _ahead(monkeypatch: pytest.MonkeyPatch, world: _Clock) -> Any:
         return SimpleNamespace(id=66, x=at.x, y=at.y, ahead=at.x, side=at.y)
 
     monkeypatch.setattr(clearance, "first_box_in_way", found)
-    _trajectory_run.forget_walkers()
+    # Looked up, so the leaving tests fail on their assertions where walkers
+    # are not measured.
+    forget = getattr(_trajectory_run, "forget_walkers", None)
+    if forget is not None:
+        forget()
 
     def look() -> int:
         return _trajectory_run._in_way_ahead(
@@ -430,6 +434,38 @@ def test_a_teleported_walker_is_not_read_as_leaving(
     world.elapsed += 0.05
     world.walker.at = SimpleNamespace(x=3.0, y=4.0, z=0.0)  # 50 m/s: put there
     assert look() == 66
+
+
+def test_a_walker_on_its_controller_looks_as_far_ahead_as_it_walks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_vehicle_before_walker`` looks a second's walk ahead: for a walker on
+    CARLA's controller, which reports standing, that walk is measured."""
+    from autoware_carla_scenario.actions import _trajectory_run
+    from autoware_carla_scenario.utils import clearance
+
+    reaches: List[float] = []
+
+    def found(*args: Any) -> Any:
+        reaches.append(float(args[6]))
+        return None
+
+    monkeypatch.setattr(clearance, "first_box_in_way", found)
+    forget = getattr(_trajectory_run, "forget_walkers", None)
+    if forget is not None:
+        forget()
+    walker = _ai_walker(1.5)
+    world = _Clock(walker)
+    walker.get_world = lambda: world
+    walker.get_transform = lambda: SimpleNamespace(
+        location=walker.at, rotation=SimpleNamespace(yaw=90.0)
+    )
+    walker.bounding_box = SimpleNamespace(extent=SimpleNamespace(x=0.3, y=0.3, z=0.9))
+    assert not _trajectory_run._vehicle_before_walker(walker)
+    world.elapsed += 0.05
+    walker.at = SimpleNamespace(x=3.0, y=1.57, z=0.0)  # 1.4 m/s
+    assert not _trajectory_run._vehicle_before_walker(walker)
+    assert reaches == pytest.approx([1.8, 3.2])
 
 
 def test_a_vehicles_velocity_is_what_carla_reports() -> None:
