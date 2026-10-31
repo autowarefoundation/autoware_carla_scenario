@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
+from ...kinematics.walker_motion import WalkerVelocities
 from ...coordinate.lane_distance import lane_gap
 from ...coordinate.poses import CarlaWorldPose
 from ..base import ScenarioResult, find_actor_by_role_name
@@ -91,6 +92,7 @@ class TimeHeadwayCondition(CompositionCondition):
     _target: str
     _coordinate_system: DistanceCoordinateSystem
     _comparison: ScalarComparisonRule
+    _velocities: WalkerVelocities
 
     def __init__(
         self,
@@ -112,6 +114,15 @@ class TimeHeadwayCondition(CompositionCondition):
         self._comparison = ScalarComparisonRule(
             field="headway", rule=rule, value=value, tolerance=tolerance
         )
+        # A walker's velocity, measured from where it stood when last checked.
+        self._velocities = WalkerVelocities()
+
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
 
     def failure_category(self) -> Optional[FailureCategory]:
         """Too little headway: :attr:`~FailureCategory.SAFETY_MARGIN`."""
@@ -130,8 +141,12 @@ class TimeHeadwayCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, world: "carla.World") -> Optional[float]:
+    def _measure(self, world: "carla.World", elapsed: float = 0.0) -> Optional[float]:
         """Return the headway in seconds, or ``None`` when it is undefined.
+
+        A walker's velocity is measured from where it stood when last checked
+        (*elapsed* the scenario's time): CARLA's walker controller places its
+        walker, and ``get_velocity`` reads 0.
 
         Two cases have no answer rather than a large one.  A stationary
         follower has no headway: reporting an unbounded value would make a
@@ -152,7 +167,11 @@ class TimeHeadwayCondition(CompositionCondition):
         tgt_loc = target.get_location()
         offset = Vector3(tgt_loc.x - src_loc.x, tgt_loc.y - src_loc.y, 0.0)
 
-        velocity = Vector3.from_carla_vector3d(source.get_velocity())
+        read = self._velocities.velocity(source, elapsed)
+        if read is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        velocity: Vector3 = read
         travel = Vector3(velocity.x, velocity.y, 0.0)
         speed = travel.magnitude()
         if speed < _SPEED_EPSILON:
@@ -184,7 +203,7 @@ class TimeHeadwayCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the headway satisfies the comparison rule."""
-        headway = self._measure(world)
+        headway = self._measure(world, elapsed)
         if headway is None:
             return None
         if not self._comparison.satisfied(headway):

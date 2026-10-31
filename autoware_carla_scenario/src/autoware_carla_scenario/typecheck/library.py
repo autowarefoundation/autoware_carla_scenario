@@ -209,6 +209,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.kinematics.frames",
     "autoware_carla_scenario.kinematics.vector",
     "autoware_carla_scenario.kinematics.velocity",
+    "autoware_carla_scenario.kinematics.walker_motion",
     "autoware_carla_scenario.maps",
     "autoware_carla_scenario.maps.cache",
     "autoware_carla_scenario.maps.catalogue",

@@ -81,6 +81,12 @@ These are version 2 of the vehicle-ahead measures (:attr:`Measure.version`);
 version 1 was centre to centre along the ego's heading, a vehicle counted
 within three half-lanes of the ego's centre line.  Coverage keeps the two
 apart (docs/odd.md, "Measure versions").
+
+A pedestrian's speed is measured from where it stood the frame it was last
+read to where it stands now, over the simulated time between
+(:class:`~autoware_carla_scenario.kinematics.walker_motion.WalkerVelocities`):
+CARLA's walker controller moves its walker by placing it, so its
+``get_velocity()`` reads 0.
 """
 
 from __future__ import annotations
@@ -96,6 +102,7 @@ import lanelet2.geometry
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
 from .entity_role import find_actor_in_world
+from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
 from .utils.stop_line import regulatory_element_stop_lines
 
@@ -307,6 +314,8 @@ _SET_OFF: dict[int, float] = {}
 _DEFINITIONS: dict[str, int] = {}
 #: What the run has been warned of already (warned once a run).
 _WARNED: dict[str, int] = {}
+#: The pedestrians' velocities, measured from where they stood (a run's).
+_WALKERS = WalkerVelocities()
 
 
 def _frame_of(world: "carla.World") -> Optional[int]:
@@ -340,7 +349,11 @@ def _around(world: "carla.World") -> Optional[list[_Around]]:
         found = (
             None
             if ego is None
-            else _pedestrians_around(ego, list(world.get_actors().filter("walker.*")))
+            else _pedestrians_around(
+                ego,
+                list(world.get_actors().filter("walker.*")),
+                simulated_seconds(world),
+            )
         )
     except Exception:
         found = None
@@ -366,15 +379,19 @@ def in_ego_frame(
 
 
 def _pedestrians_around(
-    ego: "carla.Actor", actors: "list[carla.Actor]"
+    ego: "carla.Actor", actors: "list[carla.Actor]", elapsed: Optional[float] = None
 ) -> list[_Around]:
+    """*actors*' walkers in *ego*'s frame, each with its speed measured from
+    where it stood when last read (*elapsed* the simulated time now; without
+    one, what CARLA reports)."""
     transform = ego.get_transform()
     found: list[_Around] = []
     for actor in actors:
         if actor.id == ego.id or not actor.type_id.startswith("walker."):
             continue
-        ahead, lateral = in_ego_frame(transform, actor.get_location())
-        velocity = actor.get_velocity()
+        location = actor.get_location()
+        ahead, lateral = in_ego_frame(transform, location)
+        velocity = _WALKERS.walker(actor, elapsed, location)
         found.append(
             _Around(
                 actor_id=actor.id,
@@ -1583,6 +1600,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     _SET_OFF.clear()
     _DEFINITIONS.clear()
     _WARNED.clear()
+    _WALKERS.clear()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:

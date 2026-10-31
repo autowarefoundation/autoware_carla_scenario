@@ -7,50 +7,13 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
+from ...kinematics.walker_motion import WalkerVelocities
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
-
-
-#: Each walker's last place and the velocity measured to it, by actor id:
-#: ``(elapsed, x, y, z, vx, vy, vz)``.
-_PLACED: dict[int, tuple[float, float, float, float, float, float, float]] = {}
-
-
-def walker_velocity(entity: "carla.Actor", elapsed: float) -> Vector3:
-    """*entity*'s (a walker's) velocity, measured from where it stood when
-    last asked: CARLA's walker controller moves a walker by placing it, so
-    ``get_velocity()`` reads 0 for one walking on its controller.  The first
-    time it is asked, and again once the scenario's clock has gone back,
-    what CARLA reports."""
-    location = entity.get_location()
-    key = int(entity.id)
-    velocity = Vector3.from_carla_vector3d(entity.get_velocity())
-    before = _PLACED.get(key)
-    if before is not None:
-        when, x, y, z, vx, vy, vz = before
-        span = elapsed - when
-        if span == 0.0:
-            return Vector3(vx, vy, vz)  # asked again this tick
-        if span > 0.0:
-            velocity = Vector3(
-                (location.x - x) / span,
-                (location.y - y) / span,
-                (location.z - z) / span,
-            )
-    _PLACED[key] = (
-        elapsed,
-        location.x,
-        location.y,
-        location.z,
-        velocity.x,
-        velocity.y,
-        velocity.z,
-    )
-    return velocity
 
 
 class SpeedDirection(Enum):
@@ -114,6 +77,7 @@ class SpeedCondition(CompositionCondition):
     _direction: SpeedDirection
     _coordinate_system: SpeedCoordinateSystem
     _reference_entity_name: Optional[str]
+    _velocities: WalkerVelocities
 
     def __init__(
         self,
@@ -146,6 +110,15 @@ class SpeedCondition(CompositionCondition):
         self._reference_entity_name = (
             str(reference_entity_name) if reference_entity_name is not None else None
         )
+        # A walker's velocity, measured from where it stood when last checked.
+        self._velocities = WalkerVelocities()
+
+    def close(self) -> None:
+        """Forget the walkers measured (the run is over), then close the
+        guards (:meth:`CompositionCondition.close`): a condition registered
+        once is checked again next run."""
+        self._velocities.clear()
+        super().close()
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
@@ -173,18 +146,19 @@ class SpeedCondition(CompositionCondition):
             entity: The target actor whose velocity is measured.
             world: The world, to look up the reference entity in.
             elapsed: The scenario's elapsed time, to measure a walker's
-                velocity by (:func:`walker_velocity`).
+                velocity by
+                (:class:`~...kinematics.walker_motion.WalkerVelocities`).
 
         Returns:
             The speed value (m/s), or ``None`` if the reference entity
             required for :attr:`SpeedCoordinateSystem.ENTITY` cannot be
             found or has a degenerate forward vector.
         """
-        if str(entity.type_id).startswith("walker."):
-            vel = walker_velocity(entity, elapsed)
-        else:
-            velocity: carla.Vector3D = entity.get_velocity()
-            vel = Vector3.from_carla_vector3d(velocity)
+        read = self._velocities.velocity(entity, elapsed)
+        if read is None:
+            return None  # a walker not measured yet
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        vel: Vector3 = read
 
         if self._direction == SpeedDirection.MAGNITUDE:
             return vel.magnitude()
