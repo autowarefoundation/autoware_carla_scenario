@@ -1104,10 +1104,16 @@ class TrafficManagerBackend(TrafficBackend):
                 # A path given before it was kept (the ego's, at its init).
                 kept.path = list(self._given[actor.id])
             self._kept[actor.id] = kept
-        if actor.id in self._drawn:
-            return
-        self._drawn.add(actor.id)
-        self._draw_for(actor, self.vehicle_parameters)
+        if actor.id not in self._drawn:
+            self._drawn.add(actor.id)
+            self._draw_for(actor, self.vehicle_parameters)
+        if self._sight_kmh >= 0.0:
+            # Held to sight at once, not at the next update: one resumed after
+            # a speed was set on it while released would drive at that speed
+            # until then.
+            tm = self._require_tm("follow_visibility")
+            if tm is not None:
+                self._hold_to_sight(tm, actor, self._sight_kmh)
 
     def _draw_for(self, actor: "carla.Actor", parameters: VehicleParameters) -> None:
         """Give *actor* its own draw of each field *parameters* sets."""

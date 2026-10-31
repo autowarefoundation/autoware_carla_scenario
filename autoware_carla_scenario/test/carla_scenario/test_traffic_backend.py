@@ -723,6 +723,34 @@ class TestTrafficManagerVisibility:
         assert tm.target_kmh(car) == pytest.approx(60.0)
         backend.close()
 
+    def test_a_vehicle_resumed_in_the_fog_is_held_at_once(self) -> None:
+        """A speed set while it was released is held as it is resumed, not
+        at the next update."""
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            forget_visibility,
+            set_world_visibility,
+            sight_speed,
+        )
+
+        car = _Actor(2, speed_limit=50.0)
+        backend, world, tm = self._following(car)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        set_world_visibility(4, 20.0)
+        backend.tick(world, 0.05)
+        limit = sight_speed(20.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        backend.release(entity, world)
+        backend.set_desired_speed(entity, world, 60.0)  # the scenario's to drive
+        assert tm.target_kmh(car) == pytest.approx(60.0)
+        backend.resume(entity, world)
+        assert tm.target_kmh(car) == pytest.approx(limit)
+        forget_visibility()
+        backend.tick(world, 0.10)
+        assert tm.target_kmh(car) == pytest.approx(60.0)
+        backend.close()
+
     def test_a_speed_factor_drawn_while_held_is_held_at_once(self) -> None:
         """A new draw drops the speed it was given (in the TrafficManager as
         here): held from the draw, and given the draw back."""
