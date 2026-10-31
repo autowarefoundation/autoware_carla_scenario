@@ -83,6 +83,31 @@ def test_the_metrics_read_off_a_trajectory_log(tmp_path: Path) -> None:
     assert metrics["distance_m"] == pytest.approx(43.0, abs=0.1)
 
 
+def test_a_road_user_parked_under_the_map_is_no_gap(tmp_path: Path) -> None:
+    """A hidden road user is parked 500 m under the map, here right under the
+    ego's path (#844): it is not 0 m away."""
+    log = tmp_path / "Case.trajectory.jsonl"
+    lines = [
+        json.dumps({"type": "world", "schema_version": 2}),
+        json.dumps(
+            {"type": "actor", "id": 1, "role": "Ego", "extent": [2.0, 1.0, 0.7]}
+        ),
+        json.dumps(
+            {"type": "actor", "id": 2, "role": "npc1", "extent": [2.0, 1.0, 0.7]}
+        ),
+    ]
+    for step in range(41):
+        tick = json.loads(
+            _tick(round(step * 0.05, 2), (step * 0.5, 0.0, 10.0), (10.0, 0.0))
+        )
+        tick["actors"][1][3] = -500.0
+        lines.append(json.dumps(tick))
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    metrics = results.case_metrics(log)
+    assert metrics["distance_m"] == pytest.approx(20.0)
+    assert "min_gap_m" not in metrics
+
+
 def test_records_other_than_ticks_and_actors_are_skipped(tmp_path: Path) -> None:
     """A record that merely names "tick" or "actor" (a label, a role) is not
     read as a tick: a spawn or despawn line, or a collision's role list."""
