@@ -15,11 +15,21 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import autoware_carla_scenario
 import autoware_carla_scenario.registry as registry
 from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import scanner, sweep_resolver
 
-_BUILTIN_LEFT = scanner.BUILTIN_CONF_DIR / "scenario" / "lane_change" / "left.yaml"
+# Located from the package rather than ``scanner.BUILTIN_CONF_DIR``, so that a
+# scanner without it fails the tests that use it, not their collection.
+_BUILTIN_LEFT = (
+    Path(autoware_carla_scenario.__file__).resolve().parent
+    / "examples"
+    / "conf"
+    / "scenario"
+    / "lane_change"
+    / "left.yaml"
+)
 
 
 @pytest.fixture
@@ -91,3 +101,18 @@ def test_builtin_dir_listed_once_and_first(
 
     monkeypatch.setattr(registry, "_CONF_DIRS", [probe_package])
     assert scanner.scenario_conf_dirs() == [scanner.BUILTIN_CONF_DIR, probe_package]
+
+
+def test_broken_package_leaves_builtin_scenarios(
+    probe_package: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A package whose entry point raises (e.g. its scenario module fails to
+    import) is logged and skipped: the viewer still lists the built-ins."""
+
+    def broken() -> None:
+        raise ImportError("probe_pkg is broken")
+
+    monkeypatch.setattr(importlib.metadata.EntryPoint, "load", lambda self: broken)
+    names = TestClient(app_module.app).get("/api/scenarios").json()
+    assert "lane_change/left" in names
+    assert "probe_pkg/left" not in names
