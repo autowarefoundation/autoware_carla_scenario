@@ -1524,6 +1524,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#who-controls-the-pedestrian" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who controls the pedestrian
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2023,6 +2034,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#who-controls-the-pedestrian" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who controls the pedestrian
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2138,12 +2160,24 @@ rather than replayed joint for joint:</p>
 <p>When the motion ends (with <code>loop</code>, when <code>duration_s</code> is up) the walker is
 handed back to its animation (<code>blend_pose(0.0)</code>).</p>
 <div class="admonition warning">
-<p class="admonition-title">A walker stands while it plays a motion</p>
+<p class="admonition-title">A walker plays a motion standing</p>
 <p>CARLA's custom pose is the whole skeleton: the bones the motion does not
-drive hold the animation frame the motion began on. A walking pedestrian
-would glide with frozen legs, so stop it first (<code>WalkStraightAction</code> at
-speed 0).</p>
+drive hold the animation frame the motion began on, so a walking
+pedestrian would glide with frozen legs. The action therefore fires only
+while the pedestrian stands (no faster than <code>STANDING_SPEED_MS</code>, 0.1 m/s)
+<em>and</em> its trigger holds: stop it first (<code>WalkStraightAction</code> at speed 0).
+A walking pedestrian's motion waits until it stands.</p>
 </div>
+<h2 id="who-controls-the-pedestrian">Who controls the pedestrian<a class="headerlink" href="#who-controls-the-pedestrian" title="Permanent link">&para;</a></h2>
+<p>The motion takes the pedestrian's <strong>animation</strong>
+<a href="../architecture/">control domain</a>: a second motion on it while one plays ends
+the run in error, unless that one is built with <code>overrides=True</code> (<em>Override a
+running action</em> on its card), which stops the first.</p>
+<p>Driving the whole body (<code>upper_body_only=False</code>), the motion takes the
+pedestrian's <strong>movement</strong> (longitudinal and lateral) too, since its legs are
+the motion's: a <code>WalkStraightAction</code> or a route on it while it plays is an
+error. With <code>upper_body_only=True</code> the movement stays free; a walk started
+under the motion would glide the pedestrian with its legs frozen.</p>
 <p>A bone the walker's skeleton lacks is left to the animation, with a warning
 naming it; the bone names are those of CARLA's walkers (<code>crl_arm__L</code>,
 <code>crl_foreArm__L</code>, ...).</p>
@@ -2185,7 +2219,12 @@ naming it; the bone names are those of CARLA's walkers (<code>crl_arm__L</code>,
 <tr>
 <td><code>upper_body_only</code></td>
 <td><code>True</code></td>
-<td>Drive the spine, neck and arms only</td>
+<td>Drive the spine, neck and arms only (animation domain); <code>False</code>: the whole body (animation and movement)</td>
+</tr>
+<tr>
+<td><code>overrides</code></td>
+<td><code>False</code></td>
+<td>Take over a domain another action holds, stopping it</td>
 </tr>
 </tbody>
 </table>
@@ -2211,7 +2250,7 @@ naming it; the bone names are those of CARLA's walkers (<code>crl_arm__L</code>,
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 05:33:29 UTC"><span class="timeago" datetime="2026-10-31T05:33:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 05:33:29 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 11:24:24 UTC"><span class="timeago" datetime="2026-10-31T11:24:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 11:24:24 UTC">2026-10-31</span>
   </span>
 
     

@@ -1833,6 +1833,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#builds-wait-for-their-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Builds wait for their memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2063,6 +2074,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#builds-wait-for-their-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Builds wait for their memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2250,6 +2272,22 @@ that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.</p>
 <p>The test suite shares such a directory between its xdist workers. CI keeps
 one from run to run, so a run compiles only the programs whose inputs changed.</p>
+<h3 id="builds-wait-for-their-memory">Builds wait for their memory<a class="headerlink" href="#builds-wait-for-their-memory" title="Permanent link">&para;</a></h3>
+<p>Codon's peak memory grows with what it compiles: about 1.9 GB for a scenario
+or a module of the framework, about 9.3 GB for the whole library check
+(2.8 million characters of source). Builds started side by side -- the xdist
+workers of the test suite, the checker's own pool of four -- would otherwise
+together outgrow a 16 GB machine, and the out-of-memory killer would take a
+build (a SIGKILL, above) or, on a CI runner, the runner itself ("The runner has
+received a shutdown signal").</p>
+<p>So each build first waits for its share (<code>typecheck/memory_gate.py</code>). The
+builds of a machine record what they hold in one directory
+(<code>$TMPDIR/acs-codon-gate-&lt;uid&gt;</code>), and one is started when what the running
+builds hold plus its own estimate fits the machine's memory (or its cgroup's
+limit) less 1.5 GB, or when none is running: a build too large for the machine
+still runs, alone. The holds of a process that died are forgotten. Set
+<code>AUTOWARE_CARLA_SCENARIO_CODON_GATE</code> to another directory to share it
+differently, or to <code>0</code> to start every build at once.</p>
 <h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
 <p>The check needs typesafe_carla (the <code>typesafe-carla</code> package, from PyPI) and
 the Codon compiler it pins (<code>typesafe-carla-toolchain</code>, 0.19, which
@@ -4658,7 +4696,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 253 of the package's 364
 modules (70%; about 73,000 of
-126,000 lines) are <code>CHECKED</code>: the kinematics, the
+126,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -7790,7 +7828,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 10:47:39 UTC"><span class="timeago" datetime="2026-10-31T10:47:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 10:47:39 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 12:49:04 UTC"><span class="timeago" datetime="2026-10-31T12:49:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 12:49:04 UTC">2026-10-31</span>
   </span>
 
     
