@@ -308,6 +308,8 @@ class _Snapshot(list):
     def __init__(self, frame: int, actors: list[_ActorSnapshot]) -> None:
         super().__init__(actors)
         self.frame = frame
+        # 20 Hz, the framework's fixed step.
+        self.timestamp = SimpleNamespace(elapsed_seconds=0.05 * frame)
 
     def find(self, actor_id: int) -> Optional[_ActorSnapshot]:
         return next((a for a in self if a.id == actor_id), None)
@@ -602,6 +604,77 @@ def test_a_hidden_actor_gets_no_box_until_it_is_revealed(
     )
     assert (first["prev"], first["next"]) == ("", last["token"])
     assert (last["prev"], last["next"]) == (first["token"], "")
+
+
+class _WalkingWorld(_World):
+    """The fake world with the pedestrian walking east at 1.4 m/s beside the
+    ego, reporting 0 as one on CARLA's walker controller does, and the car
+    ahead reporting 7 m/s while it keeps up with the ego at 10.  With
+    *hidden*, the pedestrian is under the map on those frames."""
+
+    def __init__(self, hidden: tuple[int, ...] = ()) -> None:
+        super().__init__()
+        self.hidden = hidden
+
+    def walker_x(self, frame: int) -> float:
+        return 10.0 + 1.4 * 0.05 * (frame - 100)
+
+    def get_snapshot(self) -> _Snapshot:
+        snapshot = super().get_snapshot()
+        z = -500.0 if self.frame in self.hidden else 0.0
+        snapshot[1] = _ActorSnapshot(2, snapshot[1].get_transform(), _xyz(7.0))
+        snapshot[2] = _ActorSnapshot(
+            3, _transform(self.walker_x(self.frame), 3.0, z), _xyz()
+        )
+        return snapshot
+
+
+def _velocities_by_category(root: Path) -> dict[str, list[list[float]]]:
+    """Each category's box velocities, key frame by key frame."""
+    samples = {s["token"]: s["timestamp"] for s in _table(root, "sample")}
+    categories = {c["token"]: c["name"] for c in _table(root, "category")}
+    instances = {
+        i["token"]: categories[i["category_token"]] for i in _table(root, "instance")
+    }
+    found: dict[str, list[tuple[int, list[float]]]] = {}
+    for a in _table(root, "sample_annotation"):
+        found.setdefault(instances[a["instance_token"]], []).append(
+            (samples[a["sample_token"]], a["velocity"])
+        )
+    return {name: [v for _, v in sorted(rows)] for name, rows in found.items()}
+
+
+def test_a_walker_on_its_controller_is_annotated_walking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CARLA's walker controller places its walker, which reports 0 while it
+    walks: its velocity is measured from where it stood on the key frame
+    before (#924).  A vehicle's is the one CARLA reports."""
+    root, _ = _record(tmp_path, monkeypatch, world=_WalkingWorld())
+    velocities = _velocities_by_category(root)
+    walker = velocities["pedestrian"]
+    assert len(walker) == 5
+    np.testing.assert_allclose(walker[0], [0.0, 0.0, 0.0], atol=1e-9)
+    for velocity in walker[1:]:
+        np.testing.assert_allclose(velocity, [1.4, 0.0, 0.0], atol=1e-6)
+    for velocity in velocities["car"]:
+        np.testing.assert_allclose(velocity, [7.0, 0.0, 0.0], atol=1e-9)
+
+
+def test_a_walker_brought_in_from_under_the_map_is_no_spike(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A walker hidden under the map and brought in again has not walked
+    there: the key frame it reappears on reads what CARLA reports, the next
+    its walk."""
+    world = _WalkingWorld(hidden=(105, 106))
+    root, _ = _record(tmp_path, monkeypatch, world=world)
+    walker = _velocities_by_category(root)["pedestrian"]
+    # Key frames 101, 103, (105 hidden: no box), 107, 109.
+    assert len(walker) == 4
+    np.testing.assert_allclose(walker[1], [1.4, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(walker[2], [0.0, 0.0, 0.0], atol=1e-9)
+    np.testing.assert_allclose(walker[3], [1.4, 0.0, 0.0], atol=1e-6)
 
 
 def test_t4_devkit_loads_the_dataset(

@@ -34,7 +34,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   "lights": {id: "Red"|"Yellow"|"Green"|"Off"|"Unknown"}}`` -- ``t`` is the
   scenario's simulated time (the clock pass/fail conditions report);
   ``control`` only for the ego; ``lights`` only the lights whose state changed
-  since the last written tick (all of them in the first).  An ego's tick
+  since the last written tick (all of them in the first).  A walker's
+  ``vx, vy, vz`` is measured from where it stood the tick before (one
+  walking on CARLA's walker controller reports 0), every other actor's is
+  what CARLA reports.  An ego's tick
   also carries ``"angular_velocity": {id: [wx, wy, wz]}`` (deg/s, CARLA's
   axes), which a reader moving the ego's velocity to its ``base_link`` needs;
   a file written before it was recorded has none.  Ticks without any
@@ -105,6 +108,7 @@ from .constants import EGO_ROLES
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .ego_plan import PlanMarkers
+from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .utils.traffic_light import traffic_light_state_name
 from .utils.turn_indicator import turn_indicator_state
 from .waypoint_arrival import WaypointArrival
@@ -320,6 +324,11 @@ class TrajectoryRecorder:
         self._markers: Any = None
         self._conditions: dict[tuple[str, int], bool] = {}
         self._actions: dict[tuple[str, int], str] = {}
+        # The recorded walkers, and their velocities measured from where each
+        # stood the tick before: CARLA's walker controller places its walker,
+        # which then reports 0 (#924).
+        self._walker_ids: set[int] = set()
+        self._walkers = WalkerVelocities()
 
     @property
     def active(self) -> bool:
@@ -327,6 +336,7 @@ class TrajectoryRecorder:
 
     def start(self, world: carla.World) -> None:
         """Open the file and write the world and its traffic lights."""
+        self._walkers.clear()
         try:
             self._out = self._open()
             # The run's map, not a fresh get_map(): only its name is wanted,
@@ -640,6 +650,7 @@ class TrajectoryRecorder:
     def close(self) -> None:
         """Close the file; a failing close (full disk, ...) is logged, never raised."""
         out, self._out = self._out, None
+        self._walkers.clear()
         if out is None:
             return
         try:
@@ -713,6 +724,8 @@ class TrajectoryRecorder:
                 role = actor.attributes.get("role_name", "")
                 box = actor.bounding_box
                 self._known[actor.id] = actor
+                if is_walker(actor):
+                    self._walker_ids.add(int(actor.id))
                 if role.lower() in EGO_ROLES:
                     self._egos[actor.id] = actor
                 self._emit(
@@ -745,11 +758,17 @@ class TrajectoryRecorder:
         rows = []
         angular: dict[str, list[float]] = {}
         kept = self._state_value
+        # The simulated time, to measure the walkers' velocities by.
+        simulated = float(snapshot.timestamp.elapsed_seconds)
         for s in snapshot:
             if self._known.get(s.id) is None:
                 continue
-            tf, v = s.get_transform(), s.get_velocity()
+            tf = s.get_transform()
             loc, rot = tf.location, tf.rotation
+            if s.id in self._walker_ids:
+                v = self._walkers.walker(s, simulated, loc)
+            else:
+                v = s.get_velocity()
             if s.id in self._egos:
                 # The snapshot carries it: no request to the server.
                 w = s.get_angular_velocity()

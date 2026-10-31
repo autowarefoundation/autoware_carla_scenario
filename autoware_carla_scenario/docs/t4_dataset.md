@@ -117,7 +117,10 @@ step apart.
   the distortion before dividing by depth, so project with OpenCV
   (`cv2.projectPoints`).
 - A **box** is its centre and orientation in the map frame, and its size
-  `(width, length, height)`; velocities are in the map frame too.
+  `(width, length, height)`; velocities are in the map frame too. A
+  pedestrian's velocity is measured from where it stood at the key frame
+  before (one walking on CARLA's walker controller reports 0); every other
+  road user's is the one CARLA reports.
 
 ## Reading it
 
