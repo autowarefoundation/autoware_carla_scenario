@@ -96,6 +96,10 @@ _SMOOTH_STOP_WEAK_HOLD_S: float = 0.5
 #: ``std::numeric_limits<double>::epsilon()``, where Autoware compares with it.
 _DOUBLE_EPSILON: float = 2.220446049250313e-16
 
+#: A non-finite plan or measurement is logged the first time, then once in this many
+#: (as the HILS entity logs the non-finite command fields it drops).
+_NON_FINITE_LOG_EVERY: int = 100
+
 #: The fields only the ``time_indexed`` controller reads, which a ``pid`` config
 #: setting away from their defaults is warned about (:meth:`ControlConfig.from_mapping`).
 _TIME_INDEXED_FIELDS: Tuple[str, ...] = (
@@ -899,6 +903,42 @@ def _stop_distance(
     return signed
 
 
+def _finite_or(value: float, fallback: float) -> float:
+    """*value*, or *fallback* when it is NaN or infinite: what controller state is
+    updated with, so one bad input cannot latch in it."""
+    return value if math.isfinite(value) else fallback
+
+
+def _all_finite(values: Optional[List[float]]) -> bool:
+    """Whether every one of *values* (none counts) is finite."""
+    if values is None:
+        return True
+    for value in values:
+        if not math.isfinite(value):
+            return False
+    return True
+
+
+def _plan_is_finite(
+    plan: Trajectory,
+    velocities: Optional[List[float]],
+    accelerations: Optional[List[float]],
+) -> bool:
+    """Whether *plan*'s poses, and its own *velocities* and *accelerations* when
+    given, are all finite: a policy's NaN must not reach the controllers."""
+    for pose in plan.poses:
+        if not _pose_is_finite(pose):
+            return False
+    return _all_finite(velocities) and _all_finite(accelerations)
+
+
+def _pose_is_finite(pose: Pose) -> bool:
+    """Whether *pose*'s position and orientation are all finite."""
+    return bool(np.isfinite(pose.position).all()) and bool(
+        np.isfinite(pose.quat_xyzw).all()
+    )
+
+
 def _diff_limit(
     value: float, previous: float, dt: float, upper: float, lower: float
 ) -> float:
@@ -965,6 +1005,9 @@ class TrajectoryFollower:
     _last_given: Optional[List[float]]
     _last_given_accelerations: Optional[List[float]]
     _started: bool
+    # How many non-finite plans, measurements and commands were refused (the log's
+    # rate limit); not cleared by reset().
+    _non_finite: int
 
     def __init__(
         self,
@@ -983,6 +1026,7 @@ class TrajectoryFollower:
             )
         self._config = config
         self.powertrain = powertrain
+        self._non_finite = 0
         self.reset()
 
     @property
@@ -1083,9 +1127,44 @@ class TrajectoryFollower:
             stop.  ``pid``: a plan of fewer than two points is ignored, as
             Autoware's ``setTrajectory`` ignores it, and the last plan is tracked
             on; with none yet, a full stop.
+
+            A plan that is not all finite (a pose, or ``pid``, a given speed or
+            acceleration that is NaN or infinite) is refused the same way: the last
+            plan is tracked on, and with none yet, a full stop.  A non-finite yaw
+            rate is not fed back; a non-finite speed, time step or ego pose, or a command
+            that comes out non-finite, gives :meth:`_fallback` (no throttle, the
+            stop brake, the steering held), the controllers' state untouched.
+            Each is logged, the first time and then once in a hundred.
         """
-        if self._config.longitudinal_controller == "time_indexed":
-            return self._step_time_indexed(
+        time_indexed = self._config.longitudinal_controller == "time_indexed"
+        given_checked: Optional[List[float]] = None
+        accelerations_checked: Optional[List[float]] = None
+        if not time_indexed:
+            # time_indexed does not read the plan's own speeds.
+            given_checked = plan_velocities_mps
+            accelerations_checked = plan_accelerations_mps2
+        if not _plan_is_finite(plan_in_local, given_checked, accelerations_checked):
+            self._refuse_non_finite("plan")
+            last = self._last_plan
+            if last is None:
+                return self._hold_still()
+            plan_in_local = last
+            plan_velocities_mps = self._last_given
+            plan_accelerations_mps2 = self._last_given_accelerations
+        if not (
+            math.isfinite(current_speed_mps)
+            and math.isfinite(dt_s)
+            and _pose_is_finite(pose_local_to_rig)
+        ):
+            # The ego's pose too: a NaN one would put NaN speeds on the plan.
+            self._refuse_non_finite("speed, time step or pose")
+            return self._fallback()
+        if yaw_rate_rps is not None and not math.isfinite(yaw_rate_rps):
+            self._refuse_non_finite("yaw rate")
+            yaw_rate_rps = None
+        if time_indexed:
+            self._last_plan = plan_in_local
+            command = self._step_time_indexed(
                 plan_in_local,
                 pose_local_to_rig,
                 current_speed_mps,
@@ -1094,6 +1173,40 @@ class TrajectoryFollower:
                 now_us,
                 gear,
             )
+        else:
+            command = self._step_pid(
+                plan_in_local,
+                pose_local_to_rig,
+                current_speed_mps,
+                dt_s,
+                yaw_rate_rps,
+                now_us,
+                gear,
+                plan_velocities_mps,
+                plan_accelerations_mps2,
+            )
+        if not (
+            math.isfinite(command.throttle)
+            and math.isfinite(command.steer)
+            and math.isfinite(command.brake)
+        ):
+            self._refuse_non_finite("command")
+            return self._fallback()
+        return command
+
+    def _step_pid(
+        self,
+        plan_in_local: Trajectory,
+        pose_local_to_rig: Pose,
+        current_speed_mps: float,
+        dt_s: float,
+        yaw_rate_rps: Optional[float],
+        now_us: Optional[int],
+        gear: int,
+        plan_velocities_mps: Optional[List[float]],
+        plan_accelerations_mps2: Optional[List[float]],
+    ) -> VehicleCommand:
+        """:meth:`step` with the ``pid`` longitudinal controller."""
         given = plan_velocities_mps
         given_accelerations = plan_accelerations_mps2
         if self._refresh_profile(
@@ -1152,6 +1265,25 @@ class TrajectoryFollower:
         self.reset()
         return VehicleCommand(throttle=0.0, steer=0.0, brake=self._config.stop_brake)
 
+    def _fallback(self) -> VehicleCommand:
+        """The command for a step that could not be computed: no throttle, the stop
+        brake, and the steering held where it was (not snapped to straight at
+        speed); the controllers' state is kept for the next good step."""
+        return VehicleCommand(
+            throttle=0.0, steer=self._previous_steer, brake=self._config.stop_brake
+        )
+
+    def _refuse_non_finite(self, what: str) -> None:
+        """Log a refused non-finite *what*: the first time, then once in a hundred."""
+        if self._non_finite % _NON_FINITE_LOG_EVERY == 0:
+            logger.warning(
+                "TrajectoryFollower: refused a non-finite %s (NaN or infinite; "
+                "%d refused so far)",
+                what,
+                self._non_finite + 1,
+            )
+        self._non_finite += 1
+
     def _lookahead_m(self, speed_mps: float) -> float:
         """Pure pursuit's lookahead distance at *speed_mps*."""
         return float(
@@ -1204,6 +1336,9 @@ class TrajectoryFollower:
         angle = math.atan(self._config.wheelbase_m * curvature)
         if yaw_rate_rps is not None:
             angle += self._yaw_rate_feedback(speed_mps, yaw_rate_rps, curvature, dt_s)
+        if not math.isfinite(angle):
+            # steer_command would read NaN as full lock (min(1.0, nan) is 1.0).
+            return self._previous_steer
 
         # Rig frame is right-handed (positive angle = left); CARLA steers positive right.
         command = -steer_command(angle, self._config)
@@ -1226,17 +1361,24 @@ class TrajectoryFollower:
         # The measured yaw rate answers the previous step's command, so it is held
         # against the curvature asked then; against this step's, every change in the
         # plan would read as a steering error for one step.
-        asked, self._asked_curvature = self._asked_curvature, curvature
+        asked = self._asked_curvature
+        if math.isfinite(curvature):
+            self._asked_curvature = curvature
         if asked is None or speed_mps < config.yaw_rate_min_speed_mps:
             return self._yaw_rate_trim
         # The yaw-rate error as a steering angle: what the bicycle model says it would
         # take to turn by the missing yaw rate.
         error = config.wheelbase_m * (asked - yaw_rate_rps / speed_mps)
         limit = config.yaw_rate_trim_limit_rad
-        self._yaw_rate_trim = float(
-            np.clip(
-                self._yaw_rate_trim + config.yaw_rate_ki * error * dt_s, -limit, limit
-            )
+        self._yaw_rate_trim = _finite_or(
+            float(
+                np.clip(
+                    self._yaw_rate_trim + config.yaw_rate_ki * error * dt_s,
+                    -limit,
+                    limit,
+                )
+            ),
+            self._yaw_rate_trim,
         )
         return self._yaw_rate_trim
 
@@ -1421,7 +1563,7 @@ class TrajectoryFollower:
         kept = max(int(config.delay_compensation_time / dt), 0)
         while len(self._vel_history) > kept:
             self._vel_history.pop(0)
-        self._previous_acc = acceleration
+        self._previous_acc = _finite_or(acceleration, self._previous_acc)
         return acceleration, velocity
 
     def _predicted_state_after_delay(
@@ -1610,11 +1752,12 @@ class TrajectoryFollower:
                     config.max_jerk,
                     config.min_jerk,
                 )
-            self._previous_raw_vel = raw_vel
-            self._previous_raw_acc = raw_acc
+            self._previous_raw_vel = _finite_or(raw_vel, self._previous_raw_vel)
+            self._previous_raw_acc = _finite_or(raw_acc, self._previous_raw_acc)
             gain = config.lpf_acc_error_gain
-            self._lpf_acc_error = gain * self._lpf_acc_error + (1.0 - gain) * (
-                current_acc - raw_acc
+            self._lpf_acc_error = _finite_or(
+                gain * self._lpf_acc_error + (1.0 - gain) * (current_acc - raw_acc),
+                self._lpf_acc_error,
             )
             acceleration = raw_acc - self._lpf_acc_error * config.acc_feedback_gain
             velocity = raw_vel
@@ -1658,8 +1801,9 @@ class TrajectoryFollower:
                     break
             ahead = trajectory[future]
             gain = config.lpf_vel_error_gain
-            self._lpf_vel_error = gain * self._lpf_vel_error + (1.0 - gain) * (
-                ahead.vel - current_vel
+            self._lpf_vel_error = _finite_or(
+                gain * self._lpf_vel_error + (1.0 - gain) * (ahead.vel - current_vel),
+                self._lpf_vel_error,
             )
             connect = self._lpf_vel_error / horizon
             target_acc = ahead.acc
@@ -1677,8 +1821,9 @@ class TrajectoryFollower:
         )
         integrate = moving or (config.enable_integration_at_low_speed and stuck)
         gain = config.lpf_vel_error_gain
-        self._lpf_vel_error = gain * self._lpf_vel_error + (1.0 - gain) * (
-            target.vel - current_vel
+        self._lpf_vel_error = _finite_or(
+            gain * self._lpf_vel_error + (1.0 - gain) * (target.vel - current_vel),
+            self._lpf_vel_error,
         )
         feedback = self._pid_calculate(self._lpf_vel_error, dt, integrate)
         # Feedforward from time to arc length: the plan's acceleration, scaled.
@@ -1695,12 +1840,13 @@ class TrajectoryFollower:
             max(config.kp * error, config.min_p_effort), config.max_p_effort
         )
         if integrate:
-            self._pid_integral += error * dt
+            integral = self._pid_integral + error * dt
             if config.ki != 0.0:
-                self._pid_integral = min(
-                    max(self._pid_integral, config.min_i_effort / config.ki),
+                integral = min(
+                    max(integral, config.min_i_effort / config.ki),
                     config.max_i_effort / config.ki,
                 )
+            self._pid_integral = _finite_or(integral, self._pid_integral)
         integral = config.ki * self._pid_integral
         differential = 0.0
         if self._pid_first:
@@ -1710,7 +1856,7 @@ class TrajectoryFollower:
         derivative = min(
             max(config.kd * differential, config.min_d_effort), config.max_d_effort
         )
-        self._pid_previous_error = error
+        self._pid_previous_error = _finite_or(error, self._pid_previous_error)
         return min(
             max(proportional + integral + derivative, config.min_out), config.max_out
         )
@@ -1885,12 +2031,15 @@ class TrajectoryFollower:
         )
         target = max(0.0, speed + correction)
         error = target - max(0.0, current_speed_mps)
-        self._integral = float(
-            np.clip(
-                self._integral + error * dt_s,
-                -config.integral_limit,
-                config.integral_limit,
-            )
+        self._integral = _finite_or(
+            float(
+                np.clip(
+                    self._integral + error * dt_s,
+                    -config.integral_limit,
+                    config.integral_limit,
+                )
+            ),
+            self._integral,
         )
         asked = (
             acceleration + config.speed_kp * error + config.speed_ki * self._integral

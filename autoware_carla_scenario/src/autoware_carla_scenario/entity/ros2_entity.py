@@ -14,6 +14,10 @@ applies its command:
   Ackermann controller, as VisionPilot's ``carla_control_publisher`` hands it over
   ``/carla/hero/ackermann_control_cmd``.
 
+A command that is not all finite (a NaN or an infinity in a pose, a speed, an
+acceleration, a steering angle or a jerk) is refused: the last good command of its
+kind drives on, and with none, the ego brakes.
+
 Nothing waits for a command: the loop runs at the pace
 ``ScenarioRunner`` sets (``max_tick_rate_hz``), and a source that falls silent
 goes stale after its ``stale_s``.  That is how a ROS 2 bridge that relays to CARLA
@@ -69,6 +73,9 @@ __all__ = ["Ros2EgoEntity", "plan_from_trajectory"]
 
 #: Below this speed (m/s) a trajectory without timing is not timed from it.
 _MIN_TIMING_SPEED_MPS: float = 0.1
+
+#: A refused non-finite command is logged the first time, then once in this many.
+_NON_FINITE_LOG_EVERY: int = 100
 
 
 def plan_from_trajectory(
@@ -149,6 +156,11 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     _plan_steps: int
     #: Whether the last tick tracked that plan, rather than another command.
     _tracking: bool
+    #: The last finite Ackermann command applied: ``(steer_rad, speed_mps,
+    #: acceleration_mps2, jerk_mps3)``, CARLA's sign; ``None`` before any.
+    _last_ackermann: Optional[Tuple[float, float, float, float]]
+    #: Non-finite commands refused so far (the log's rate limit).
+    _non_finite: int
 
     def __init__(
         self,
@@ -172,6 +184,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._planned = None
         self._plan_steps = 0
         self._tracking = False
+        self._last_ackermann = None
+        self._non_finite = 0
 
     # ------------------------------------------------------------------
     # Properties
@@ -231,6 +245,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._planned = None
         self._plan_steps = 0
         self._tracking = False
+        self._last_ackermann = None
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
         mount: "carla.Actor" = actor
@@ -387,6 +402,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         if name != self._active:
             logger.info("Ego driven by command source %r", name)
             self._follower.reset()
+            # A refused command falls back on the source's own last good one.
+            self._planned = None
+            self._last_ackermann = None
         elif self._active_fresh and not fresh:
             logger.warning(
                 "Command source %r went stale; %s",
@@ -418,6 +436,13 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         # attribute of a union (docs/typecheck.md).
         if isinstance(command, TrajectoryCommand):
             trajectory: TrajectoryCommand = command
+            if not _trajectory_is_finite(trajectory):
+                self._refuse_non_finite("trajectory")
+                planned = self._planned
+                if planned is None:
+                    actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
+                    return
+                trajectory = planned[0]
             vehicle_command = self._follower.step(
                 self._plan(trajectory, selection.received_us),
                 observation.pose,
@@ -458,6 +483,21 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             control_jerk = control.jerk_mps3
             if control_jerk is not None:
                 jerk_mps3 = control_jerk
+        if (
+            math.isfinite(steer_rad)
+            and math.isfinite(speed_mps)
+            and math.isfinite(acceleration_mps2)
+            and math.isfinite(jerk_mps3)
+        ):
+            self._last_ackermann = (steer_rad, speed_mps, acceleration_mps2, jerk_mps3)
+        else:
+            # max(0.0, nan) is 0.0 and CARLA would take NaN steering as given.
+            self._refuse_non_finite("Ackermann command")
+            last = self._last_ackermann
+            if last is None:
+                actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
+                return
+            steer_rad, speed_mps, acceleration_mps2, jerk_mps3 = last
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         actor.apply_ackermann_control(
@@ -469,6 +509,18 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 jerk=float(jerk_mps3),
             )
         )
+
+    def _refuse_non_finite(self, what: str) -> None:
+        """Log a refused non-finite *what*: the first time, then once in a hundred."""
+        if self._non_finite % _NON_FINITE_LOG_EVERY == 0:
+            logger.warning(
+                "Command source %r sent a non-finite %s (NaN or infinite); "
+                "its last good command drives on (%d refused so far)",
+                self._active,
+                what,
+                self._non_finite + 1,
+            )
+        self._non_finite += 1
 
     def debug_markers(self) -> DebugMarkers:
         """The trajectory being tracked, as a line along the road; none while
@@ -495,6 +547,23 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 ego_plan_markers(plan, anchor_us, self._plan_steps),
             )
         return self._planned[1]
+
+
+def _trajectory_is_finite(command: TrajectoryCommand) -> bool:
+    """Whether every pose, speed and acceleration of *command* is finite."""
+    for point in command.points:
+        if not (
+            math.isfinite(point.velocity_mps) and math.isfinite(point.acceleration_mps2)
+        ):
+            return False
+        pose = point.pose
+        for index in range(3):
+            if not math.isfinite(float(pose.position[index])):
+                return False
+        for index in range(4):
+            if not math.isfinite(float(pose.quat_xyzw[index])):
+                return False
+    return True
 
 
 def _steering_tire_angle(actor: "carla.Actor") -> float:

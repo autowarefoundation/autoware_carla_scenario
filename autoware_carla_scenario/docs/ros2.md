@@ -176,6 +176,11 @@ Once every source is stale, `on_stale` decides: `hold` keeps applying the last c
 (what a relay node does when its upstream stops), `brake` brakes to a stop. Before any
 command has arrived, the ego is held on its brakes.
 
+A command that is not all finite (a NaN or an infinity in a steering angle, a speed,
+an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
+refused, with a warning: the active source's last good command of that kind drives
+on, and with none, the ego is held on its brakes.
+
 ```yaml
 ros2:
   domain_id: 0
