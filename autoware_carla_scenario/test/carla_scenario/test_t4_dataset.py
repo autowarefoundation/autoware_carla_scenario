@@ -534,7 +534,9 @@ class _HidingWorld(_World):
     def __init__(self) -> None:
         super().__init__()
         self.actors[4] = _Actor(4, "vehicle.audi.tt", (2.0, 0.9, 0.7))
-        self.actors[5] = _Actor(5, "vehicle.audi.tt", (2.0, 0.9, 0.7))
+        self.actors[5] = _Actor(
+            5, "vehicle.carlamotors.firetruck", (4.5, 1.3, 1.9), {"base_type": "truck"}
+        )
 
     def revealed(self, frame: int) -> bool:
         return 104 <= frame <= 108
@@ -572,6 +574,10 @@ def test_a_hidden_actor_gets_no_box_until_it_is_revealed(
     unlimited = section.get("max_distance_m", 100.0) is None
     assert len(instances) == (3 if unlimited else 2)
     assert len(annotations) == (12 if unlimited else 7)
+    # Registered but never boxed, the hidden truck leaves no category either.
+    assert {c["name"] for c in _table(root, "category")} == (
+        {"car", "pedestrian"} if unlimited else {"car"}
+    )
     sample_frame = {
         s["token"]: 101 + 2 * n
         for n, s in enumerate(
