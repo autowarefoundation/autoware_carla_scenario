@@ -149,7 +149,16 @@ class Range:
         if value is None:
             return cls()
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return cls(float(value), float(value))
+            number = float(value)
+            # Built inside the try, as a mapping's is: an infinite bare number
+            # is refused with the field's name.
+            try:
+                exact = cls(number, number)
+            except ValueError as exc:
+                raise ValueError(f"{name}: {exc}") from exc
+            if whole and not number.is_integer():
+                raise ValueError(f"{name} is a count, a whole number, got {value!r}")
+            return exact
         if not isinstance(value, Mapping):
             # Concatenated: Codon's parser rejects an escaped brace in an f-string.
             raise ValueError(

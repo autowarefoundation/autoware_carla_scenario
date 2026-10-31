@@ -17,6 +17,7 @@ import pytest
 from autoware_carla_scenario.route.model import (
     JunctionSegmentSpec,
     LaneSegmentSpec,
+    Range,
     RouteMatch,
     RouteSegmentMatch,
     anchor_problem,
@@ -92,6 +93,12 @@ class TestParsing:
             ({"segments": [_lane(shape="wiggly")]}, "shape must be one of"),
             ({"segments": [_junction(traffic_light="maybe")]}, "traffic_light"),
             ({"segments": [_lane(lanes_left={"min": 1.5})]}, "a count"),
+            ({"segments": [_lane(lanes_left=1.5)]}, "lanes_left is a count"),
+            ({"segments": [_lane(lanes_right=2.5)]}, "lanes_right is a count"),
+            (
+                {"segments": [_lane(length=float("inf"))]},
+                r"segments\[0\]\.length: a range bound must be finite",
+            ),
             ({"segments": [_lane()], "max_matches": 0}, "max_matches"),
             ({"segments": [_lane()], "colour": 1}, "does not take"),
         ],
@@ -101,6 +108,26 @@ class TestParsing:
     ) -> None:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
+
+    def test_a_bare_number_is_a_count_only_when_whole(self) -> None:
+        """A bare number is held to ``whole`` as a mapping is (#796)."""
+        name = "segments[0].lanes_left"
+        assert Range.parse(name, 2, whole=True) == Range(2.0, 2.0)
+        assert Range.parse(name, 2.0, whole=True) == Range(2.0, 2.0)
+        assert Range.parse("segments[0].length", 1.5) == Range(1.5, 1.5)
+        with pytest.raises(ValueError, match=r"lanes_left is a count, a whole number"):
+            Range.parse(name, 1.5, whole=True)
+        with pytest.raises(ValueError, match=r"lanes_left\.min is a count"):
+            Range.parse(name, {"min": 1.5, "max": 1.5}, whole=True)
+
+    def test_an_infinite_bare_number_is_refused_with_its_name(self) -> None:
+        for whole in (False, True):
+            with pytest.raises(
+                ValueError, match=r"^segments\[0\]\.lanes_left: a range bound"
+            ):
+                Range.parse("segments[0].lanes_left", float("inf"), whole=whole)
+            with pytest.raises(ValueError, match=r"^segments\[0\]\.length: a range"):
+                Range.parse("segments[0].length", float("-inf"), whole=whole)
 
     def test_anchors(self) -> None:
         assert parse_anchor("start") == ("start", -1, "")
