@@ -4609,8 +4609,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-247 of the package's 355
-modules (70%; about 71,100 of
+249 of the package's 357
+modules (70%; about 71,200 of
 122,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 247 CHECKED modules</summary>
+<summary>The 249 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5285,6 +5285,10 @@ first paragraph of its docstring:</p>
 <td>Log the collisions of the road users other than the ego, and walkers that fall.</td>
 </tr>
 <tr>
+<td><code>odd.control_diagnostics</code></td>
+<td>A problem with the <code>controls</code> of a scenario config, and its one-line text.</td>
+</tr>
+<tr>
 <td><code>odd.probes</code></td>
 <td>Probes: functions that read one ODD attribute from the world.</td>
 </tr>
@@ -5419,6 +5423,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>slurm.settings</code></td>
 <td>The <code>launcher</code> config: who runs a batch's cases (docs/slurm.md).</td>
+</tr>
+<tr>
+<td><code>slurm.stems</code></td>
+<td>The names a SLURM batch gives its cases' files and the keys of its configs.</td>
 </tr>
 <tr>
 <td><code>slurm.task_timing</code></td>
@@ -5843,7 +5851,7 @@ the first:</p>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
 <li><code>odd.cli</code>: imports argparse, and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
-<li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express</li>
+<li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics'</li>
 <li><code>odd.model</code>: re-exports openodd's model (a Rust extension)</li>
 <li><code>odd.openodd</code>: re-exports openodd's reader (a Rust extension)</li>
 <li><code>odd.registry</code>: wraps openodd's registry (a Rust extension) and imports odd.model (openodd's model) at module level</li>
@@ -5863,7 +5871,7 @@ the first:</p>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (<code>dict[str, Any]</code>)</li>
-<li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths</li>
+<li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
 <li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
