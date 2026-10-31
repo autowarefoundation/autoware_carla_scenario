@@ -1858,6 +1858,32 @@ def _interrupt_on_sigterm() -> Iterator[None]:
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
+#: How :func:`main` hands ``--resume-from`` to the sweeper
+#: (``LaneletConstraintSweeper`` reads it).
+RESUME_FROM_ENV = "SWEEP_RESUME_FROM"
+
+
+@contextmanager
+def _environ_for_run(name: str, value: str | None) -> Iterator[None]:
+    """Set the environment variable *name* to *value* for the ``with`` block,
+    and put back what it was (unset included) when it ends, however it ends.
+
+    *value* ``None`` leaves the variable as it is.
+    """
+    if value is None:
+        yield
+        return
+    previous = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
+
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly.
 
@@ -1887,9 +1913,17 @@ def _main() -> None:
 
     # Pass via environment variable so the sweeper can read it without
     # going through Hydra's CLI parser (which rejects unknown overrides).
-    if resume_from > 0:
-        os.environ["SWEEP_RESUME_FROM"] = str(resume_from)
+    # For this run only: a later main() in the same process (tests, an
+    # embedding runner) without --resume-from must not resume from it.
+    with _environ_for_run(
+        RESUME_FROM_ENV, str(resume_from) if resume_from > 0 else None
+    ):
+        _dispatch(resume_from)
 
+
+def _dispatch(resume_from: int) -> None:
+    """Run what ``sys.argv`` (``--resume-from`` taken off) selects: a batch
+    of the scenarios a glob or a SLURM launcher names, or one through Hydra."""
     # --no-wait: a launcher=slurm batch is submitted, and this exits.
     no_wait = "--no-wait" in sys.argv
     if no_wait:
