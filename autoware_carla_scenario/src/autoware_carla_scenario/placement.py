@@ -76,6 +76,10 @@ _STOP_LINE_SEARCH_M = 5.0
 _NUDGE_M = 0.5
 #: The fewest metres of ``s`` :func:`solve_along` narrows a crossing to.
 _MIN_INTERVAL_M = 1e-7
+#: How many times the tolerance the best point of a narrowed crossing may miss
+#: the target by and still be taken: one that misses by more sat on a jump of
+#: the measure, not on a crossing (:func:`_narrow`).
+_LOOSE_TOLERANCE_FACTOR = 10.0
 
 
 def _narrow(
@@ -88,7 +92,11 @@ def _narrow(
 ) -> Optional[float]:
     """Bisect ``[low, high]``, across which ``read_at`` crosses *target*.
 
-    ``None`` when a point inside reads nothing.
+    ``None`` when a point inside reads nothing, or when the bisection ends on
+    no point that reads within :data:`_LOOSE_TOLERANCE_FACTOR` times
+    *tolerance* of *target*: the measure jumps over the target there (the
+    vehicle ahead changes, a stop line is passed) rather than crossing it,
+    and :func:`solve_along` keeps scanning for a real crossing.
     """
     below = low_value < target
     best = low
@@ -107,6 +115,8 @@ def _narrow(
             low = mid
         else:
             high = mid
+    if best_error > _LOOSE_TOLERANCE_FACTOR * tolerance:
+        return None
     return best
 
 
@@ -142,6 +152,12 @@ def solve_along(
     previous: Optional[float] = None
     lowest = float("inf")
     highest = float("-inf")
+    # The first pair of reads that straddle the target with no crossing
+    # between them, for the error: "reads 5 to 50" alone does not say why 20
+    # was not found.
+    jumped = False
+    jump_low = 0.0
+    jump_high = 0.0
     count = int((high - low) / step)
     for i in range(count + 2):
         s = min(low + i * step, high)
@@ -157,15 +173,23 @@ def solve_along(
                 found = _narrow(read_at, target, previous_s, previous, s, tolerance)
                 if found is not None:
                     return found
+                if not jumped:
+                    jumped, jump_low, jump_high = True, previous_s, s
         previous_s, previous = s, value
     if lowest > highest:
         raise ValueError(
             f"{what} cannot read {target:g}: it reads nothing for s in "
             f"[{low:g}, {high:g}]"
         )
+    passes = ""
+    if jumped:
+        passes = (
+            f", passing {target:g} only where it jumps or reads nothing "
+            f"(first between s = {jump_low:.2f} and {jump_high:.2f})"
+        )
     raise ValueError(
         f"{what} cannot read {target:g}: for s in [{low:g}, {high:g}] it reads "
-        f"{lowest:.2f} to {highest:.2f}"
+        f"{lowest:.2f} to {highest:.2f}{passes}"
     )
 
 

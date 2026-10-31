@@ -7,6 +7,10 @@ from pathlib import Path
 
 from ._tc import _keyword_only as _acs_keyword_only
 
+# The trajectory log's suffix (`{stem}.trajectory.jsonl`), which the checked
+# t4_scene.grid reads.
+TRAJECTORY_SUFFIX: str = ".trajectory.jsonl"
+
 
 def recording_path(trajectory: Path) -> Path:
     raise NotImplementedError()

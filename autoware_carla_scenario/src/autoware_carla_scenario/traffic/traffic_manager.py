@@ -140,6 +140,15 @@ _DEAD_END_STEP_M: float = 5.0
 #: Waypoints a search walks at the most; a road that branches more than that
 #: is taken to go on.
 _DEAD_END_MAX_WAYPOINTS: int = 256
+#: The road a lane change's target lane is followed along, beyond twice the
+#: straight-line distance the vehicle has come from where it was asked to
+#: change lane, m: the vehicle has driven at least that far along the lane,
+#: and on a bend more (:meth:`TrafficManagerBackend.lane_change_finished`).
+_LANE_CHANGE_AHEAD_MARGIN_M: float = 50.0
+#: Step the target lane is followed in, m: shorter than a road in a junction.
+_LANE_CHANGE_AHEAD_STEP_M: float = 2.0
+#: Waypoints that walk visits at the most.
+_LANE_CHANGE_AHEAD_MAX_WAYPOINTS: int = 4096
 
 
 #: How near (m) a point where its path crosses to the lane beside a vehicle is
@@ -621,7 +630,9 @@ class TrafficManagerBackend(TrafficBackend):
         Records the lane aimed at on the entity so :meth:`lane_change_finished`
         can tell a completed manoeuvre from a vehicle that merely drove onto the
         next road: lane ids are scoped to a road, so ``(road_id, lane_id)``
-        changes without the vehicle having moved sideways at all.
+        changes without the vehicle having moved sideways at all.  Its
+        waypoint is kept too, so the lane can be followed onto the roads after
+        it should the vehicle settle there.
 
         The bookkeeping lives on the entity rather than here because it is the
         state of *that vehicle's* manoeuvre: a backend is shared by every
@@ -636,12 +647,26 @@ class TrafficManagerBackend(TrafficBackend):
             return
 
         carla_map = run_carla_map(world)
-        entity._lane_change_target = _adjacent_lane(
-            carla_map, actor.get_location(), direction
-        )
+        here = carla_map.get_waypoint(actor.get_location(), project_to_road=True)
+        neighbour: Optional["carla.Waypoint"] = None
+        if here is not None:
+            # Codon does not narrow an Optional (docs/typecheck.md).
+            origin: "carla.Waypoint" = here
+            neighbour = _adjacent_lane(origin, direction)
+        entity._lane_change_target = None
+        entity._lane_change_waypoint = neighbour
+        entity._lane_change_ahead = None
+        entity._lane_change_horizon_m = 0.0
+        entity._lane_change_origin = here
+        entity._lane_change_origin_ahead = None
+        entity._lane_change_crossed = False
+        if neighbour is not None:
+            # Codon does not narrow an Optional (docs/typecheck.md).
+            lane: "carla.Waypoint" = neighbour
+            entity._lane_change_target = _lane_key_of(lane)
         entity._lane_change_map = carla_map
         self._lane_changed.append(entity)
-        if entity._lane_change_target is None:
+        if neighbour is None:
             logger.warning(
                 "%s: no lane %s to change into",
                 _entity_name(entity),
@@ -660,6 +685,14 @@ class TrafficManagerBackend(TrafficBackend):
         enough: a vehicle whose centre has just crossed the boundary is still
         diagonal across two lanes, and calling that finished would let a
         reaction fire mid-manoeuvre.
+
+        The target lane is the one aimed at or where its successors lead: a
+        lane change often takes longer than a road is long, and lane ids are
+        scoped to a road, so the vehicle settles on the next road's lane.  A
+        lane the original lane's successors lead to as well (the two merge,
+        or meet again past a junction) counts only once the vehicle has been
+        seen on one only the target leads to: a vehicle that never left its
+        lane reaches it too.
 
         A manoeuvre the TrafficManager never makes simply never finishes; see
         :meth:`TrafficBackend.lane_change_finished` for why that is the honest
@@ -687,7 +720,13 @@ class TrafficManagerBackend(TrafficBackend):
         if found is None:
             return False
         waypoint: "carla.Waypoint" = found
-        if _lane_key_of(waypoint) != aimed:
+
+        # The side first, every tick: the vehicle crosses onto the target
+        # lane before it is centred, and that is where it is seen to cross.
+        key = _lane_key_of(waypoint)
+        if key == aimed:
+            entity._lane_change_crossed = True
+        elif not _on_target_side(entity, key, transform.location):
             return False
 
         # ``get_waypoint`` projects onto the lane centre, so the distance to it
@@ -697,7 +736,6 @@ class TrafficManagerBackend(TrafficBackend):
             > LANE_CHANGE_CENTER_TOLERANCE_M
         ):
             return False
-
         return (
             _heading_error_deg(transform.rotation.yaw, waypoint.transform.rotation.yaw)
             <= LANE_CHANGE_HEADING_TOLERANCE_DEG
@@ -1536,33 +1574,113 @@ def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:
 
 
 def _adjacent_lane(
-    carla_map: "carla.Map",
-    location: "carla.Location",
-    direction: LaneChangeDirection,
-) -> Optional[Tuple[int, int]]:
-    """Return the ``(road_id, lane_id)`` beside *location* in *direction*.
+    waypoint: "carla.Waypoint", direction: LaneChangeDirection
+) -> Optional["carla.Waypoint"]:
+    """Return the waypoint of the lane beside *waypoint* in *direction*.
 
     ``None`` when there is no lane that way, which is the honest answer to a
     lane change that cannot happen.
     """
-    waypoint = carla_map.get_waypoint(location, project_to_road=True)
-    if waypoint is None:
-        return None
     neighbour: Optional["carla.Waypoint"] = None
     if direction is LaneChangeDirection.RIGHT:
         neighbour = waypoint.get_right_lane()
     else:
         neighbour = waypoint.get_left_lane()
-    if neighbour is None:
-        return None
-    # Codon does not narrow an Optional (docs/typecheck.md).
-    lane: "carla.Waypoint" = neighbour
-    return _lane_key_of(lane)
+    return neighbour
 
 
 def _lane_key_of(waypoint: "carla.Waypoint") -> Tuple[int, int]:
     """Return the ``(road_id, lane_id)`` a waypoint sits on."""
     return (waypoint.road_id, waypoint.lane_id)
+
+
+def _on_target_side(
+    entity: DrivenEntity, key: Tuple[int, int], location: "carla.Location"
+) -> bool:
+    """Whether the lane *key*, which is not the one aimed at, is where
+    *entity*'s target lane leads rather than where its original lane does.
+
+    A lane both lead to is the target side only once the vehicle has been
+    there (``_lane_change_crossed``); being on one only the target leads to
+    records that it has.
+    """
+    if not hasattr(entity, "_lane_change_waypoint") or not hasattr(
+        entity, "_lane_change_origin"
+    ):
+        return False
+    ahead = _lane_keys_reached(entity, location)
+    if key not in ahead:
+        return False
+    behind = entity._lane_change_origin_ahead
+    if behind is not None:
+        left: set[Tuple[int, int]] = behind
+        if key in left:
+            return entity._lane_change_crossed
+    entity._lane_change_crossed = True
+    return True
+
+
+def _lane_keys_reached(
+    entity: DrivenEntity, location: "carla.Location"
+) -> set[Tuple[int, int]]:
+    """The lanes *entity*'s lane change target leads to, for one at *location*.
+
+    Walked from the target's waypoint as far as the vehicle can have driven
+    (:data:`_LANE_CHANGE_AHEAD_MARGIN_M`), and kept on the entity: walked
+    again only when the vehicle has come further than the last walk reached,
+    then at least twice as far.  The original lane is walked as far beside
+    it, into ``_lane_change_origin_ahead``.  Empty without a target waypoint.
+    """
+    target = entity._lane_change_waypoint
+    if target is None:
+        return set[Tuple[int, int]]()
+    start: "carla.Waypoint" = target
+    needed = (
+        2.0 * location.distance(start.transform.location) + _LANE_CHANGE_AHEAD_MARGIN_M
+    )
+    cached = entity._lane_change_ahead
+    if cached is not None and needed <= entity._lane_change_horizon_m:
+        known: set[Tuple[int, int]] = cached
+        return known
+    horizon = max(needed, 2.0 * entity._lane_change_horizon_m)
+    keys = _lane_keys_ahead(start, horizon)
+    entity._lane_change_ahead = keys
+    entity._lane_change_horizon_m = horizon
+    origin = entity._lane_change_origin
+    if origin is not None:
+        beside: "carla.Waypoint" = origin
+        entity._lane_change_origin_ahead = _lane_keys_ahead(beside, horizon)
+    return keys
+
+
+def _lane_keys_ahead(start: "carla.Waypoint", distance: float) -> set[Tuple[int, int]]:
+    """The ``(road_id, lane_id)`` of every lane *start*'s lane leads to within
+    *distance* metres, its own included.
+
+    Walked in :data:`_LANE_CHANGE_AHEAD_STEP_M` steps down every branch,
+    nearest first, and no further than
+    :data:`_LANE_CHANGE_AHEAD_MAX_WAYPOINTS` waypoints.
+    """
+    keys: set[Tuple[int, int]] = set()
+    keys.add(_lane_key_of(start))
+    # Breadth first: every step is as long, so a waypoint is first reached
+    # the shortest way, and a branch that meets another again is not cut
+    # short by having been reached the long way round first.
+    frontier: List[Tuple["carla.Waypoint", float]] = [(start, 0.0)]
+    index = 0
+    # Where branches meet again, the road on is walked once.
+    seen: set[Tuple[int, int, int, int]] = set()
+    while index < len(frontier) and len(seen) < _LANE_CHANGE_AHEAD_MAX_WAYPOINTS:
+        waypoint, travelled = frontier[index]
+        index += 1
+        key = (waypoint.road_id, waypoint.section_id, waypoint.lane_id, int(waypoint.s))
+        if travelled >= distance or key in seen:
+            continue
+        seen.add(key)
+        for following in waypoint.next(_LANE_CHANGE_AHEAD_STEP_M):
+            keys.add(_lane_key_of(following))
+            frontier.append((following, travelled + _LANE_CHANGE_AHEAD_STEP_M))
+    return keys
 
 
 def _heading_error_deg(yaw: float, reference_yaw: float) -> float:

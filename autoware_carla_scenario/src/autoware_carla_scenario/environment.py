@@ -32,6 +32,13 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
+# Re-exported under the names they had here before environment_pin (#825).
+from .environment_pin import HASH_PREFERENCE as _HASH_PREFERENCE  # noqa: F401
+from .environment_pin import PinSource
+from .environment_pin import fragment as _fragment  # noqa: F401
+from .environment_pin import normalize as _normalize
+from .environment_pin import pin as _pin
+
 __all__ = ["ENVIRONMENT_SUFFIX", "LOCK_SUFFIX", "RunEnvironment", "capture", "write"]
 
 logger = logging.getLogger(__name__)
@@ -54,10 +61,6 @@ KEY_PACKAGES = (
 )
 
 
-def _normalize(name: str) -> str:
-    return name.lower().replace("_", "-").replace(".", "-")
-
-
 def _git(path: Path, *args: str) -> Optional[str]:
     try:
         done = subprocess.run(
@@ -70,11 +73,6 @@ def _git(path: Path, *args: str) -> Optional[str]:
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip()
-
-
-#: Archive hashes in the order a lock prefers them, strongest first; pip and uv
-#: both read any of them from a URL fragment.
-_HASH_PREFERENCE = ("sha512", "sha384", "sha256", "sha224", "sha1", "md5")
 
 
 def _archive_hashes(info: dict[str, Any]) -> dict[str, str]:
@@ -91,108 +89,112 @@ def _archive_hashes(info: dict[str, Any]) -> dict[str, str]:
     return hashes
 
 
-def _source(dist: metadata.Distribution) -> dict[str, Any]:
+def _source(dist: metadata.Distribution) -> PinSource:
     """Where *dist* was installed from (PEP 610's ``direct_url.json``).
 
-    ``{"kind": "index"}`` for a registry release; ``vcs`` with the URL, the
-    commit and the revision that was asked for; ``archive`` with the URL and
-    its hashes; ``editable`` / ``local`` with the directory, and its git commit
-    and uncommitted changes when it is a checkout.  A ``subdirectory`` -- the
+    ``index`` for a registry release; ``vcs`` with the URL, the commit and
+    the revision that was asked for; ``archive`` with the URL and its hashes;
+    ``editable`` / ``local`` with the directory, and its git commit and
+    uncommitted changes when it is a checkout.  A ``subdirectory`` -- the
     project inside a monorepo, as this framework is inside its repository --
     is kept for every kind: without it, the URL names the repository root.
+    :func:`_source_record` is what the environment file writes of it.
     """
     try:
         raw = dist.read_text("direct_url.json")
     except Exception:  # noqa: BLE001 - an odd distribution is reported as from an index
         raw = None
     if not raw:
-        return {"kind": "index"}
+        return PinSource(kind="index")
     try:
         direct = json.loads(raw)
     except ValueError:
-        return {"kind": "index"}
+        return PinSource(kind="index")
     if not isinstance(direct, dict):
-        return {"kind": "index"}
+        return PinSource(kind="index")
     url = str(direct.get("url", ""))
-    subdirectory = direct.get("subdirectory") or None
+    subdirectory = direct.get("subdirectory") or ""
     if "vcs_info" in direct:
         vcs = direct["vcs_info"] or {}
-        source: dict[str, Any] = {
-            "kind": "vcs",
-            "url": url,
-            "vcs": vcs.get("vcs", "git"),
-            "commit": vcs.get("commit_id", ""),
-            "requested": vcs.get("requested_revision"),
-        }
-        if subdirectory:
-            source["subdirectory"] = subdirectory
-        return source
+        return PinSource(
+            kind="vcs",
+            url=url,
+            vcs=vcs.get("vcs", "git"),
+            commit=vcs.get("commit_id", ""),
+            requested=vcs.get("requested_revision"),
+            subdirectory=subdirectory,
+        )
     if "archive_info" in direct:
-        source = {"kind": "archive", "url": url}
-        hashes = _archive_hashes(direct["archive_info"] or {})
-        if hashes:
-            source["hashes"] = hashes
-        if subdirectory:
-            source["subdirectory"] = subdirectory
-        return source
+        return PinSource(
+            kind="archive",
+            url=url,
+            hashes=_archive_hashes(direct["archive_info"] or {}),
+            subdirectory=subdirectory,
+        )
     path = Path(unquote(urlparse(url).path)) if url.startswith("file:") else None
     if path is not None and subdirectory:
         path = path / subdirectory
-    out: dict[str, Any] = {
-        "kind": "editable"
-        if (direct.get("dir_info") or {}).get("editable")
-        else "local",
-        "path": str(path) if path else url,
-    }
-    if path is None and subdirectory:
-        out["subdirectory"] = subdirectory
+    commit = ""
+    dirty = False
     if path is not None and path.is_dir():
-        commit = _git(path, "rev-parse", "HEAD")
+        commit = _git(path, "rev-parse", "HEAD") or ""
         if commit:
-            out["commit"] = commit
             status = _git(path, "status", "--porcelain", "--untracked-files=no")
-            out["dirty"] = bool(status)
-    return out
+            dirty = bool(status)
+    return PinSource(
+        kind="editable" if (direct.get("dir_info") or {}).get("editable") else "local",
+        path=str(path) if path else url,
+        commit=commit,
+        dirty=dirty,
+        # A directory's subdirectory is in its path already.
+        subdirectory=subdirectory if path is None else "",
+    )
 
 
-def _fragment(source: dict[str, Any]) -> str:
-    """The URL fragment pip and uv read a hash and a subdirectory from."""
-    parts: list[str] = []
-    hashes = source.get("hashes") or {}
-    for algorithm in _HASH_PREFERENCE:
-        if hashes.get(algorithm):
-            parts.append(f"{algorithm}={hashes[algorithm]}")
-            break
-    if source.get("subdirectory"):
-        parts.append(f"subdirectory={source['subdirectory']}")
-    return "#" + "&".join(parts) if parts else ""
+def _source_record(source: PinSource) -> dict[str, Any]:
+    """*source* as the environment file writes it: only the keys its kind
+    has (``{"kind": "index"}`` for a registry release)."""
+    record: dict[str, Any] = {"kind": source.kind}
+    if source.kind == "vcs":
+        record.update(
+            url=source.url,
+            vcs=source.vcs,
+            commit=source.commit,
+            requested=source.requested,
+        )
+    elif source.kind == "archive":
+        record["url"] = source.url
+        if source.hashes:
+            record["hashes"] = source.hashes
+    elif source.kind in ("editable", "local"):
+        record["path"] = source.path
+    if source.subdirectory:
+        record["subdirectory"] = source.subdirectory
+    if source.kind in ("editable", "local") and source.commit:
+        record["commit"] = source.commit
+        record["dirty"] = source.dirty
+    return record
 
 
-def _pin(name: str, version: str, source: dict[str, Any]) -> str:
-    """The requirement that installs this distribution again, as far as one can."""
-    kind = source.get("kind")
-    if kind == "vcs":
-        # The commit is what was installed; the requested revision (a branch
-        # or tag, which can move) is only the fallback when none was recorded.
-        revision = source.get("commit") or source.get("requested")
-        if revision:
-            pin = (
-                f"{name} @ {source['vcs']}+{source['url']}@{revision}"
-                f"{_fragment(source)}"
-            )
-            if not source.get("commit"):
-                pin += f"  # requested {revision}, no commit recorded: may move"
-            return pin
-    if kind == "archive":
-        return f"{name} @ {source['url']}{_fragment(source)}"
-    if kind in ("editable", "local"):
-        state = ""
-        if source.get("commit"):
-            state = f", git {source['commit']}" + (
-                " with uncommitted changes" if source.get("dirty") else ""
-            )
-        return f"{name}=={version}  # {kind} from {source.get('path')}{state}"
-    return f"{name}=={version}"
+def _pin_source(record: dict[str, Any]) -> PinSource:
+    """The :class:`PinSource` an environment record (:func:`_source_record`)
+    describes; a key it lacks is a field the source does not have."""
+    return PinSource(
+        kind=record.get("kind"),  # type: ignore[arg-type]
+        url=record.get("url", ""),
+        vcs=record.get("vcs", ""),
+        commit=record.get("commit") or "",
+        requested=record.get("requested"),
+        path=record.get("path"),
+        dirty=bool(record.get("dirty")),
+        subdirectory=record.get("subdirectory") or "",
+        hashes=record.get("hashes") or {},
+    )
+
+
+def _package_pin(package: dict[str, Any]) -> str:
+    """The lock's line for a recorded distribution."""
+    return _pin(package["name"], package["version"], _pin_source(package["source"]))
 
 
 class RunEnvironment:
@@ -208,7 +210,7 @@ class RunEnvironment:
 
     @property
     def pins(self) -> list[str]:
-        return [_pin(p["name"], p["version"], p["source"]) for p in self.packages]
+        return [_package_pin(p) for p in self.packages]
 
     @property
     def id(self) -> str:
@@ -272,13 +274,9 @@ class RunEnvironment:
             f"# python {self.implementation} {self.python} on {self.platform}",
         ]
         if framework is not None:
-            header.append(
-                f"# framework: {_pin(framework['name'], framework['version'], framework['source'])}"
-            )
+            header.append(f"# framework: {_package_pin(framework)}")
         if scenario_pkg is not None and scenario_pkg is not framework:
-            header.append(
-                f"# scenario: {_pin(scenario_pkg['name'], scenario_pkg['version'], scenario_pkg['source'])}"
-            )
+            header.append(f"# scenario: {_package_pin(scenario_pkg)}")
         return "\n".join([*header, *self.pins]) + "\n"
 
 
@@ -293,7 +291,11 @@ def capture() -> RunEnvironment:
         key = _normalize(name)
         if key in packages:  # shadowed on sys.path: the first is the one imported
             continue
-        packages[key] = {"name": key, "version": dist.version, "source": _source(dist)}
+        packages[key] = {
+            "name": key,
+            "version": dist.version,
+            "source": _source_record(_source(dist)),
+        }
     return RunEnvironment(sorted(packages.values(), key=lambda p: p["name"]))
 
 
