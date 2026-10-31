@@ -4,6 +4,7 @@ controllers (Autoware's pid, and time_indexed)."""
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -831,3 +832,173 @@ def test_command_defaults_are_inert() -> None:
     assert command.brake == 0.0
     assert command.hand_brake is False
     assert command.reverse is False
+
+
+# ---------------------------------------------------------------------------
+# Non-finite plans and measurements (#916)
+# ---------------------------------------------------------------------------
+
+_CONTROLLERS = ("pid", "time_indexed")
+
+
+def _policy_plan(y_m: float = 0.0) -> Trajectory:
+    """A policy's straight plan at 8 m/s, a point every 0.1 s from 0.1 s on, every
+    point *y_m* to the side (NaN or an infinity: a bad inference)."""
+    plan = Trajectory.empty()
+    for index in range(40):
+        plan.append(
+            (index + 1) * _STEP_US,
+            Pose(
+                np.array([0.8 * (index + 1), y_m, 0.0]), np.array([0.0, 0.0, 0.0, 1.0])
+            ),
+        )
+    return plan
+
+
+def _drive(
+    follower: TrajectoryFollower,
+    plans: list[Trajectory],
+    *,
+    velocities: list[list[float] | None] | None = None,
+    accelerations: list[list[float] | None] | None = None,
+) -> list[VehicleCommand]:
+    commands = []
+    for index, plan in enumerate(plans):
+        commands.append(
+            follower.step(
+                plan,
+                Pose.identity(),
+                8.0,
+                _DT_S,
+                yaw_rate_rps=0.0,
+                now_us=0,
+                plan_velocities_mps=None if velocities is None else velocities[index],
+                plan_accelerations_mps2=(
+                    None if accelerations is None else accelerations[index]
+                ),
+            )
+        )
+    return commands
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_plan_is_refused_and_the_last_one_tracked(
+    controller: str, bad: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The issue's repro: one bad plan among good straight ones used to latch NaN in
+    the yaw-rate trim and steer at full lock for the rest of the run.  Refused, it
+    leaves the follower exactly where tracking the last good plan again would."""
+    config = ControlConfig(longitudinal_controller=controller)
+    good = [_policy_plan() for _ in range(61)]
+    with caplog.at_level("WARNING", logger="autoware_carla_scenario.driver.control"):
+        hit = _drive(_follower(config), [good[0], _policy_plan(bad), *good[2:]])
+    reference = _drive(_follower(config), good)
+    assert hit == reference
+    last = hit[-1]
+    assert last.steer == pytest.approx(0.0, abs=1e-9)
+    assert math.isfinite(last.throttle) and last.throttle > 0.0
+    assert [record.getMessage() for record in caplog.records] == [
+        "TrajectoryFollower: refused a non-finite plan (NaN or infinite; "
+        "1 refused so far)"
+    ]
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+def test_a_non_finite_first_plan_holds_the_vehicle(controller: str) -> None:
+    follower = _follower(ControlConfig(longitudinal_controller=controller))
+    (command,) = _drive(follower, [_policy_plan(math.nan)])
+    assert command == VehicleCommand(brake=ControlConfig().stop_brake)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf])
+@pytest.mark.parametrize("field", ["velocities", "accelerations"])
+def test_non_finite_given_speeds_are_refused(bad: float, field: str) -> None:
+    """An Autoware trajectory's NaN speed used to latch in the pid controller's
+    filters and integral: NaN throttle for the rest of the run."""
+    plans = [_policy_plan() for _ in range(40)]
+    good: list[list[float] | None] = [[8.0] * 40 for _ in plans]
+    zeros: list[list[float] | None] = [[0.0] * 40 for _ in plans]
+    bad_given = list(good)
+    bad_zeros = list(zeros)
+    target = bad_given if field == "velocities" else bad_zeros
+    target[1] = [bad] * 40
+    hit = _drive(_follower(), plans, velocities=bad_given, accelerations=bad_zeros)
+    reference = _drive(_follower(), plans, velocities=good, accelerations=zeros)
+    assert hit == reference
+    assert all(math.isfinite(command.throttle) for command in hit)
+    assert hit[-1].throttle > 0.0
+
+
+def test_the_time_indexed_controller_ignores_the_speeds_it_does_not_read() -> None:
+    config = ControlConfig(longitudinal_controller="time_indexed")
+    plans = [_policy_plan() for _ in range(5)]
+    hit = _drive(_follower(config), plans, velocities=[[math.nan] * 40] * 5)
+    assert hit == _drive(_follower(config), plans)
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+@pytest.mark.parametrize("bad", [math.nan, math.inf])
+def test_a_non_finite_yaw_rate_is_not_fed_back(controller: str, bad: float) -> None:
+    follower = _follower(ControlConfig(longitudinal_controller=controller))
+    plan = _arc(60.0, 13.0)
+    follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=0.0)
+    follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=0.1)
+    trim = follower._yaw_rate_trim  # noqa: SLF001
+    command = follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=bad)
+    assert follower._yaw_rate_trim == trim  # noqa: SLF001
+    assert math.isfinite(command.steer) and abs(command.steer) < 0.5
+    command = follower.step(plan, Pose.identity(), 13.0, _DT_S, yaw_rate_rps=0.1)
+    assert math.isfinite(follower._yaw_rate_trim)  # noqa: SLF001
+    assert math.isfinite(command.steer) and abs(command.steer) < 0.5
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+@pytest.mark.parametrize("speed, dt", [(math.nan, _DT_S), (8.0, math.nan)])
+def test_a_non_finite_speed_or_step_brakes_and_keeps_the_state(
+    controller: str, speed: float, dt: float
+) -> None:
+    config = ControlConfig(longitudinal_controller=controller)
+    follower = _follower(config)
+    plan = _policy_plan(0.5)
+    _drive(follower, [plan] * 3)
+    steer = follower._previous_steer  # noqa: SLF001
+    command = follower.step(
+        plan, Pose.identity(), speed, dt, yaw_rate_rps=0.0, now_us=0
+    )
+    assert command == VehicleCommand(steer=steer, brake=config.stop_brake)
+    # Nothing latched: the next good step is the one an unbroken run takes.
+    after = _drive(follower, [plan] * 3)
+    assert after == _drive(_follower(config), [plan] * 6)[3:]
+
+
+@pytest.mark.parametrize("controller", _CONTROLLERS)
+def test_a_non_finite_command_is_replaced_by_the_brake(controller: str) -> None:
+    config = ControlConfig(longitudinal_controller=controller)
+    follower = _follower(config)
+    _drive(follower, [_policy_plan()] * 3)
+    powertrain = follower.powertrain
+    assert powertrain is not None
+    follower.powertrain = SimpleNamespace(  # type: ignore[assignment]
+        pedals=lambda *_: (math.nan, 0.0)
+    )
+    (command,) = _drive(follower, [_policy_plan()])
+    assert command == VehicleCommand(steer=command.steer, brake=config.stop_brake)
+    assert math.isfinite(command.steer)
+
+
+def test_controller_state_is_never_updated_with_a_non_finite_value() -> None:
+    """Defence in depth, below the checks at the entry."""
+    follower = _follower()
+    _drive(follower, [_policy_plan()] * 3)
+    follower._yaw_rate_feedback(8.0, math.nan, 0.0, _DT_S)  # noqa: SLF001
+    follower._yaw_rate_feedback(8.0, 0.0, math.nan, _DT_S)  # noqa: SLF001
+    follower._pid_calculate(math.nan, _DT_S, True)  # noqa: SLF001
+    for name in (
+        "_yaw_rate_trim",
+        "_asked_curvature",
+        "_pid_integral",
+        "_pid_previous_error",
+    ):
+        value = getattr(follower, name)
+        assert value is not None and math.isfinite(value), name

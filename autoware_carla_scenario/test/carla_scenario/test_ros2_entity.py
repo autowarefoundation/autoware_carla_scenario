@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import List
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.ego_plan import PlanMarkers
@@ -398,6 +399,127 @@ def test_the_tracked_trajectory_is_shown_as_the_ego_s_debug_markers() -> None:
     _tick(entity, clock)
     assert entity.active_source == "si"
     assert not entity.debug_markers()
+
+
+# ---------------------------------------------------------------------------
+# Non-finite commands (#916)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ControlCommand(math.nan, 4.0, -3.0),
+        ControlCommand(0.2, math.inf, -3.0),
+        ControlCommand(0.2, 4.0, math.nan),
+        ControlCommand(0.2, 4.0, -3.0, jerk_mps3=math.nan),
+    ],
+)
+def test_a_non_finite_control_command_keeps_the_last_one(
+    bad: ControlCommand, caplog: pytest.LogCaptureFixture
+) -> None:
+    """NaN steering used to reach CARLA's Ackermann controller as is, and a NaN
+    speed was read as 0 m/s (max(0.0, nan) is 0.0)."""
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=2.5))
+    _tick(entity, clock)
+    good = _last_ackermann(actor)
+    with caplog.at_level(
+        "WARNING", logger="autoware_carla_scenario.entity.ros2_entity"
+    ):
+        transport.deliver("si", bad)
+        _tick(entity, clock)
+    control = _last_ackermann(actor)
+    assert (control.steer, control.speed, control.acceleration, control.jerk) == (
+        good.steer,
+        good.speed,
+        good.acceleration,
+        good.jerk,
+    )
+    assert [record.getMessage() for record in caplog.records] == [
+        "Command source 'si' sent a non-finite Ackermann command (NaN or "
+        "infinite); its last good command drives on (1 refused so far)"
+    ]
+    # A good command drives again.
+    transport.deliver("si", ControlCommand(-0.1, 2.0, -1.0))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).steer == pytest.approx(0.1)
+    assert _last_ackermann(actor).speed == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    "bad", [SteerAccelCommand(math.nan, 0.5), SteerAccelCommand(0.1, math.inf)]
+)
+def test_a_first_non_finite_steer_accel_command_brakes(bad: SteerAccelCommand) -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("vp", bad)
+    _tick(entity, clock)
+    assert entity.active_source == "vp"
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    actor.apply_ackermann_control.assert_not_called()
+
+
+def test_a_new_source_does_not_fall_back_on_another_source_s_command() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+    _tick(entity, clock)
+    transport.deliver("si", ControlCommand(math.nan, 4.0, -3.0))
+    _tick(entity, clock)
+    assert entity.active_source == "si"
+    assert _last_control(actor).brake == pytest.approx(1.0)
+
+
+def _straight_command(y_m: float = 2.0, velocity_mps: float = 5.0) -> TrajectoryCommand:
+    return TrajectoryCommand(
+        stamp_us=0,
+        points=tuple(
+            TrajectoryCommandPoint(
+                200_000 * i,
+                Pose(
+                    np.array([8.6 + 1.0 * i, y_m, 0.0]),
+                    np.array([0.0, 0.0, 0.0, 1.0]),
+                ),
+                velocity_mps,
+            )
+            for i in range(30)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        _straight_command(y_m=math.nan),
+        _straight_command(velocity_mps=math.nan),
+        _straight_command(velocity_mps=math.inf),
+        _untimed([math.nan] * 30),
+    ],
+)
+def test_a_non_finite_trajectory_keeps_the_last_one_tracked(
+    bad: TrajectoryCommand,
+) -> None:
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    good = _straight_command()
+    for _ in range(3):
+        transport.deliver("planner", good)
+        _tick(entity, clock)
+    for _ in range(20):
+        transport.deliver("planner", bad)
+        _tick(entity, clock)
+        control = _last_control(actor)
+        assert math.isfinite(control.throttle)
+        assert abs(control.steer) < 0.05
+    planned = entity._planned
+    assert planned is not None and planned[0] is good
+    assert control.brake == pytest.approx(0.0)
+
+
+def test_a_first_non_finite_trajectory_brakes() -> None:
+    entity, transport, actor, clock = _started()
+    transport.deliver("planner", _untimed([math.nan] * 30))
+    _tick(entity, clock)
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    assert entity._planned is None
 
 
 # ---------------------------------------------------------------------------

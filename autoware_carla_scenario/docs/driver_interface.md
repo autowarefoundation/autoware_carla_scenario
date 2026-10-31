@@ -261,6 +261,13 @@ What differs from Autoware, because CARLA or the plan has no counterpart:
   with the plan.
 - A plan of fewer than two points is ignored and the last one tracked on, as
   Autoware's `setTrajectory` does.
+- So is a plan that is not all finite (a NaN or an infinity in a pose, or in a
+  ROS 2 trajectory's speeds or accelerations), with a warning, the first time and
+  then once in a hundred; with no plan before it, the ego is held. A non-finite yaw
+  rate is not fed back, and a non-finite speed or a command that comes out
+  non-finite gives no throttle and the stop brake, the steering held. No
+  controller state is updated with a non-finite value, so one bad inference
+  cannot latch in it.
 - A follower taken over on a moving ego (the warm-up's hand-off, a spawn at
   speed, a new ROS 2 command source) starts in DRIVE rather than STOPPED, which
   would brake for a tick.
