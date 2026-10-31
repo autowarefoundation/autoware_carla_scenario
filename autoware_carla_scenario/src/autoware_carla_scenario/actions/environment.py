@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Optional
 from ..conditions.base import BaseCondition
 from ..utils.vehicles import as_vehicle
 from ..visibility import at_quantile, set_world_visibility
-from ..weather_rules import weather_range
+from ..entity_role import _role_name
+from ..weather_rules import vehicle_range, vehicle_rules_in_use, weather_range
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EnvironmentAction",
     "apply_tire_friction",
+    "apply_weather_grip",
     "follow_tire_friction",
     "rain_weather",
     "tire_friction",
@@ -114,6 +116,13 @@ _TIRE_BASES: dict[int, dict[int, list[float]]] = {}
 #: World (episode) id -> the ids of every actor already looked at, vehicle or
 #: not, so following the world reads only the actors new since.
 _TIRE_SEEN: dict[int, set[int]] = {}
+#: World (episode) id -> the weather the grip was read off and the quantile,
+#: when it was (:func:`apply_weather_grip`): each vehicle's grip is then its
+#: own rules' (:func:`~autoware_carla_scenario.weather_rules.vehicle_range`).
+_TIRE_WEATHER: dict[int, tuple[dict[str, float], float]] = {}
+#: World (episode) id -> the grip share the ego was given, where it differs
+#: by vehicle: what the ODD's ``tire_friction`` probe reads.
+_TIRE_EGO: dict[int, float] = {}
 
 
 def _tire_state(world_id: int) -> tuple[dict[int, list[float]], set[int]]:
@@ -126,6 +135,10 @@ def _tire_state(world_id: int) -> tuple[dict[int, list[float]], set[int]]:
             del _TIRE_SEEN[old]
         if old in _TIRE_FACTORS:
             del _TIRE_FACTORS[old]
+        if old in _TIRE_WEATHER:
+            del _TIRE_WEATHER[old]
+        if old in _TIRE_EGO:
+            del _TIRE_EGO[old]
     return _TIRE_BASES.setdefault(world_id, {}), _TIRE_SEEN.setdefault(world_id, set())
 
 
@@ -149,11 +162,26 @@ def _scale_wheels(
         vehicle.apply_physics_control(physics)
 
 
+def _vehicle_factor(world_id: int, actor: "carla.Actor", factor: float) -> float:
+    """*actor*'s grip share: its own rules' at the world's weather and
+    quantile where the rules differ by vehicle, else the world's *factor*."""
+    if world_id not in _TIRE_WEATHER or not vehicle_rules_in_use():
+        return factor
+    inputs, quantile = _TIRE_WEATHER[world_id]
+    role = _role_name(actor)
+    low, high = vehicle_range(
+        "tire_friction", inputs, str(actor.type_id), "" if role is None else role
+    )
+    return at_quantile(low, high, quantile)
+
+
 def _scale_vehicles(
     world: "carla.World", actors: "carla.ActorList", factor: float
 ) -> int:
-    """Scale the wheels of the vehicles among *actors*; return how many."""
-    bases, seen = _tire_state(world.id)
+    """Scale the wheels of the vehicles among *actors*, each by its own grip
+    share (:func:`_vehicle_factor`); return how many."""
+    world_id = world.id
+    bases, seen = _tire_state(world_id)
     count = 0
     for actor in actors.filter("vehicle.*"):
         # Looked at once: a vehicle gone since the list was read, or one
@@ -161,7 +189,10 @@ def _scale_vehicles(
         seen.add(actor.id)
         # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
         try:
-            _scale_wheels(bases, actor, factor)
+            share = _vehicle_factor(world_id, actor, factor)
+            _scale_wheels(bases, actor, share)
+            if share != factor and _role_name(actor) == "Ego":
+                _TIRE_EGO[world_id] = share
         except RuntimeError:
             continue
         except AttributeError:
@@ -183,27 +214,79 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
     """
     if not factor > 0.0:
         raise ValueError(f"tire friction must be positive, got {factor}")
+    _set_grip(world, factor, None)
+
+
+def apply_weather_grip(
+    world: "carla.World", inputs: dict[str, float], quantile: float
+) -> None:
+    """Give every vehicle in *world* the grip the weather *inputs* leave, at
+    *quantile* (0-1) of its range: the run's rules' range, or, where they
+    differ by vehicle (``environment.rules.vehicles``), each vehicle's own.
+
+    Remembered for the world, as :func:`apply_tire_friction`'s factor is, so
+    :func:`follow_tire_friction` gives a vehicle spawned later its own.
+    """
+    low, high = weather_range("tire_friction", inputs)
+    _set_grip(world, at_quantile(low, high, quantile), (dict(inputs), quantile))
+
+
+def _set_grip(
+    world: "carla.World",
+    factor: float,
+    weather: Optional[tuple[dict[str, float], float]],
+) -> None:
+    """Record the world's grip -- *factor*, and the *weather* each vehicle's
+    is read off, if any -- and scale its vehicles; the same again only
+    reaches the vehicles new since."""
     world_id = world.id
     _tire_state(world_id)
-    if world_id in _TIRE_FACTORS and _TIRE_FACTORS[world_id] == factor:
+    same_weather = (weather is None and world_id not in _TIRE_WEATHER) or (
+        weather is not None
+        and world_id in _TIRE_WEATHER
+        and _TIRE_WEATHER[world_id] == weather
+    )
+    if world_id in _TIRE_FACTORS and _TIRE_FACTORS[world_id] == factor and same_weather:
         follow_tire_friction(world)
         return
     _TIRE_FACTORS[world_id] = factor
+    if world_id in _TIRE_EGO:
+        del _TIRE_EGO[world_id]
+    if weather is None:
+        if world_id in _TIRE_WEATHER:
+            del _TIRE_WEATHER[world_id]
+    else:
+        _TIRE_WEATHER[world_id] = weather
     count = _scale_vehicles(world, world.get_actors(), factor)
-    logger.info(
-        "Tire friction set to %.3f of the dry road's on %d vehicle(s)", factor, count
-    )
+    if weather is not None and vehicle_rules_in_use():
+        logger.info(
+            "Tire friction set by each vehicle's rules on %d vehicle(s) "
+            "(%.3f of the dry road's by the default rules)",
+            count,
+            factor,
+        )
+    else:
+        logger.info(
+            "Tire friction set to %.3f of the dry road's on %d vehicle(s)",
+            factor,
+            count,
+        )
 
 
 def world_tire_friction(world_id: Optional[int]) -> Optional[float]:
-    """The share of the dry road's grip :func:`apply_tire_friction` last gave
-    the vehicles of the world *world_id*, or ``None`` where it gave none.
+    """The share of the dry road's grip :func:`apply_tire_friction` (or
+    :func:`apply_weather_grip`) last gave the vehicles of the world
+    *world_id* -- the ego's, where it differs by vehicle -- or ``None`` where
+    it gave none.
 
     What the ODD's ``tire_friction`` probe reads.  The vehicles' wheels are
     CARLA's physics alone: no traffic backend reads it.
     """
     if world_id is None:
         return None
+    # Where it differs by vehicle, the ego's.
+    if world_id in _TIRE_EGO:
+        return _TIRE_EGO[world_id]
     if world_id in _TIRE_FACTORS:
         return _TIRE_FACTORS[world_id]
     return None
@@ -470,14 +553,6 @@ class EnvironmentAction(BaseAction):
         low, high = weather_range("visibility", _weather_inputs(weather))
         return at_quantile(low, high, 0.5 if quantile is None else quantile)
 
-    def _tire_factor(self, weather: "carla.WeatherParameters") -> float:
-        """The grip share for *weather*, the weather the action leaves."""
-        if self._tire_friction is not None:
-            return self._tire_friction
-        quantile = self._tire_friction_quantile
-        low, high = weather_range("tire_friction", _weather_inputs(weather))
-        return at_quantile(low, high, 0.5 if quantile is None else quantile)
-
     def execute(self, world: "carla.World") -> None:
         """Apply the settings on top of the world's current weather."""
         if (
@@ -504,7 +579,15 @@ class EnvironmentAction(BaseAction):
                 ),
             )
         if self.sets_tire_friction:
-            apply_tire_friction(world, self._tire_factor(weather))
+            if self._tire_friction is not None:
+                apply_tire_friction(world, self._tire_friction)
+            else:
+                quantile = self._tire_friction_quantile
+                apply_weather_grip(
+                    world,
+                    _weather_inputs(weather),
+                    0.5 if quantile is None else quantile,
+                )
         if self.sets_visibility:
             seen = self._visibility(weather)
             set_world_visibility(world.id, seen)

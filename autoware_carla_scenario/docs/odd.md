@@ -1084,11 +1084,13 @@ and otherwise only logs the speed it would hold traffic to.
 
 The ranges of the grip and of the visibility are fuzzy rules, not code:
 `weather_rules.yaml` in the package (`autoware_carla_scenario.weather_rules`),
-inferred with [simpful](https://github.com/aresio/simpful) (Sugeno, zero
-order). A **quantity** (`tire_friction`, `visibility`) is one or more **rule
-bases**; each reads some of the weather's fields, sorts each into fuzzy terms,
-and its rules give the `low` and `high` ends of the range per combination of
-terms:
+the CARLA backend's own rules (`CarlaBackend.rules`), which openodd reads and
+infers in its Rust core (Sugeno, zero order;
+[its rules docs](https://github.com/hakuturu583/openodd_py/blob/main/docs/rules.md)
+have the file format in full). A **quantity** (`tire_friction`, `visibility`)
+is one or more **rule bases**; each reads some of the weather's fields, sorts
+each into fuzzy terms, and its rules give the `low` and `high` ends of the
+range per combination of terms:
 
 ```yaml
 version: 1
@@ -1116,33 +1118,54 @@ quantities:
   fires. Triangles that peak where their neighbours end split every value
   between two terms, so one-term rules read linearly between the peaks: the
   default rules give exactly the tables above.
-- An antecedent is simpful's: clauses `(input IS term)` joined by `AND`,
-  `OR` and `NOT`, so a rule may read more than one input --
+- An antecedent is clauses `(input IS term)` joined by `AND`, `OR` and
+  `NOT`, so a rule may read more than one input --
   `(water IS wet) AND (sun_altitude_angle IS night)`.
 - The inputs a rule base may read are the weather's `cloudiness`,
   `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity`,
   `fog_density`, `fog_distance`, `sun_altitude_angle` and
   `sun_azimuth_angle`, and `water`, the larger of `wetness` and
-  `precipitation_deposits`. A value outside an input's `universe` is clamped
-  to it. An `EnvironmentAction` hands the rules every field of the weather it
-  leaves; `tire_friction_range()` and `visibility_range()` hand only their
-  own arguments, so an input they do not take needs a `default`.
-- Terms are `triangle: [a, b, c]`, `trapezoid: [a, b, c, d]` or
-  `gaussian: [mean, sigma]`.
+  `precipitation_deposits` (`weather_rules.WEATHER_INPUTS`). A value outside
+  an input's `universe` is clamped to it. An `EnvironmentAction` hands the
+  rules every field of the weather it leaves; `tire_friction_range()` and
+  `visibility_range()` hand only their own arguments, so an input they do not
+  take needs a `default`.
 - With more than one rule base, `combine` (`min`, the default, or `max`)
   joins their ranges end by end: the visibility's fog, rain and light are
   three rule bases, and the shortest bound holds.
 
-The file is checked when it is read: every term and rule well formed, every
-input's universe covered by its terms, and some rule firing everywhere on a
-grid over the inputs' universes (`WeatherRulesError` says where).
+A rule file is checked when it is read: every term and rule well formed,
+every input's universe covered by its terms, and some rule firing wherever
+the inputs can be (`openodd.RulesError` says where).
 
-`environment.rules` in a run's config names another file (absolute, or
-relative to the directory the run starts in); its quantities replace the
-default file's, quantity by quantity, so a file that tunes the grip to a real
-vehicle's measurements leaves the visibility alone. A sweep sets it like any
+**A run's rules.** `environment.rules` names a rule file -- a path, absolute
+or relative to the directory the run starts in, or an `https://` URL --
+merged over the default rules: it names only what it changes (a rule base's
+`rules` without its `inputs`, say), and may `extends` other files, by path,
+URL (pinned with `{url, sha256}`) or git source. A sweep sets it like any
 other key (`environment.rules=/data/grip_measured.yaml`); every run sets the
 rules it names, or the default ones, so one run's do not reach the next.
+
+**Rules by vehicle.** Tyres differ by vehicle; the weather does not:
+
+```yaml
+environment:
+  rules:
+    default: weather/measured.yaml          # every vehicle no entry names
+    vehicles:                               # the first entry a vehicle matches
+      ego: weather/ego_measured.yaml        # the ego (role_name "Ego")
+      "vehicle.mini.*": weather/mini.yaml   # a blueprint pattern
+```
+
+Each vehicle's file is read over the run's default rules. An
+`EnvironmentAction` that sets the road's water gives each vehicle the grip of
+its own rules, all at the same `tire_friction_quantile` (a case draws one),
+and a vehicle spawned later its own too; the ODD's `tire_friction` probe
+reads the ego's. `tire_friction`, the grip named outright, is every
+vehicle's. How far drivers see is the default rules'.
+
+`weather_rules.weather_rule_files()` lists every rule file a run follows,
+with the SHA-256 of each.
 
 ### Traffic parameters from the ODD
 

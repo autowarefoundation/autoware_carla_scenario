@@ -1,6 +1,6 @@
-# The rules the weather's effects follow: fuzzy rule bases, inferred with
-# simpful (Sugeno, zero order), that turn the weather into the range of a
-# quantity a run sets (docs/odd.md, "Weather rules").
+# The rules the weather's effects follow: fuzzy rule bases, which openodd
+# reads and infers (Sugeno, zero order), that turn the weather into the range
+# of a quantity a run sets (docs/odd.md, "Weather rules").
 #
 # Each quantity is one or more rule bases; each rule base reads some of the
 # weather's fields (its `inputs`), sorts each into fuzzy terms, and its rules
@@ -21,8 +21,9 @@
 # split each value between two terms, so a rule base whose rules each name one
 # term reads its ranges linearly between the peaks: a table, written as rules.
 #
-# A run reads another file with `environment.rules` in its config; its
-# quantities replace these, quantity by quantity.
+# A run reads another file with `environment.rules` in its config, merged
+# over these: it names only what it changes, may `extends` other files (by
+# path, https:// URL or git source), and may differ by vehicle.
 version: 1
 quantities:
   # The grip a tyre keeps on the road, as a share of CARLA's dry road's, by

@@ -2909,8 +2909,8 @@ stands in for it in the check's workspace:
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
   for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
   returns; `weather_rules.codon`, for `visibility` and
-  `actions.environment`, the `weather_range()` they read the weather rules
-  through). A module with no
+  `actions.environment`, the `weather_range()`, `vehicle_range()` and
+  `vehicle_rules_in_use()` they read the weather rules through). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
 

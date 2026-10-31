@@ -1,7 +1,18 @@
 # Model of autoware_carla_scenario.weather_rules (docs/typecheck.md), which
-# imports simpful and yaml: what the checked visibility and
-# actions.environment use of it, with the signature of the Python module.
+# imports openodd (a Rust extension) and reads rule files: what the checked
+# visibility and actions.environment use of it, with the signature of the
+# Python module.
 
 
 def weather_range(quantity: str, inputs: Dict[str, float]) -> Tuple[float, float]:
+    raise NotImplementedError()
+
+
+def vehicle_range(
+    quantity: str, inputs: Dict[str, float], type_id: str, role: str
+) -> Tuple[float, float]:
+    raise NotImplementedError()
+
+
+def vehicle_rules_in_use() -> bool:
     raise NotImplementedError()

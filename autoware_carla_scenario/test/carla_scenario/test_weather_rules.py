@@ -1,23 +1,32 @@
-"""The weather rules: the fuzzy rule bases the grip and the visibility follow."""
+"""The weather rules: the CARLA backend's fuzzy rules for the grip and the
+visibility, a run's over them, and rules that differ by vehicle."""
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
-import yaml
 from omegaconf import OmegaConf
 
-from autoware_carla_scenario.actions.environment import tire_friction_range
+from autoware_carla_scenario.actions.environment import (
+    EnvironmentAction,
+    apply_weather_grip,
+    tire_friction_range,
+    world_tire_friction,
+)
+from autoware_carla_scenario.odd.backend import CARLA_BACKEND
 from autoware_carla_scenario.visibility import visibility_range
 from autoware_carla_scenario.weather_rules import (
     DEFAULT_RULES,
-    WeatherRulesError,
-    active_weather_rules,
-    load_weather_rules,
+    RulesError,
     use_weather_rules,
+    vehicle_range,
+    vehicle_rules_in_use,
     weather_range,
+    weather_rule_files,
 )
 
 
@@ -60,36 +69,17 @@ _LIGHT = (
 )
 
 
-def _write(path: Path, quantities: dict) -> Path:
-    path.write_text(yaml.safe_dump({"version": 1, "quantities": quantities}))
+def _grip_file(path: Path, flooded: tuple[float, float], extends: str = "") -> Path:
+    """A rule file naming only the grip's rules: its inputs are the default's."""
+    path.write_text(
+        "version: 1\n"
+        + (f"extends: {extends}\n" if extends else "")
+        + "quantities:\n  tire_friction:\n    rule_bases:\n      water:\n        rules:\n"
+        "          - {if: (water IS dry), then: {low: 0.90, high: 1.10}}\n"
+        "          - {if: (water IS wet), then: {low: 0.65, high: 0.85}}\n"
+        f"          - {{if: (water IS flooded), then: {{low: {flooded[0]}, high: {flooded[1]}}}}}\n"
+    )
     return path
-
-
-def _grip_rules(rules: list[dict], **water: object) -> dict:
-    """A ``tire_friction`` of one rule base on ``water``: dry and wet."""
-    return {
-        "rule_bases": {
-            "water": {
-                "inputs": {
-                    "water": {
-                        "universe": [0, 100],
-                        "terms": {
-                            "dry": {"trapezoid": [0, 0, 0, 100]},
-                            "wet": {"trapezoid": [0, 100, 100, 100]},
-                        },
-                        **water,
-                    }
-                },
-                "rules": rules,
-            }
-        }
-    }
-
-
-_DRY_WET = [
-    {"if": "(water IS dry)", "then": {"low": 0.9, "high": 1.1}},
-    {"if": "(water IS wet)", "then": {"low": 0.5, "high": 0.7}},
-]
 
 
 class TestDefaultRules:
@@ -115,265 +105,252 @@ class TestDefaultRules:
         expected = (min(b[0] for b in bounds), min(b[1] for b in bounds))
         assert visibility_range(fog, rain, sun) == pytest.approx(expected)
 
-    def test_water_is_derived_from_the_wetness_and_the_standing_water(self) -> None:
+    def test_they_are_the_carla_backends_and_water_is_derived(self) -> None:
+        assert CARLA_BACKEND.rules is not None
+        assert CARLA_BACKEND.rules.files[0][0] == str(DEFAULT_RULES)
         assert weather_range(
             "tire_friction", {"wetness": 10.0, "precipitation_deposits": 50.0}
-        ) == (pytest.approx(weather_range("tire_friction", {"water": 50.0})))
-
-    def test_the_rules_say_where_they_come_from(self) -> None:
-        rules = active_weather_rules()
-        assert rules.path is None
-        assert rules.source("visibility") == DEFAULT_RULES
+        ) == pytest.approx(weather_range("tire_friction", {"water": 50.0}))
 
     def test_an_unknown_quantity_is_refused(self) -> None:
-        with pytest.raises(WeatherRulesError, match="unknown quantity 'grip'"):
+        with pytest.raises(RulesError, match="unknown quantity 'grip'"):
             weather_range("grip", {})
 
-    def test_an_input_not_given_is_refused(self) -> None:
-        with pytest.raises(WeatherRulesError, match="reads fog_density"):
-            weather_range(
-                "visibility", {"precipitation": 0.0, "sun_altitude_angle": 0.0}
-            )
 
-
-class TestOtherRules:
-    def test_a_file_replaces_the_quantities_it_names(self, tmp_path) -> None:
-        path = _write(tmp_path / "rules.yaml", {"tire_friction": _grip_rules(_DRY_WET)})
-        use_weather_rules(path)
-
-        assert tire_friction_range(100.0) == pytest.approx((0.5, 0.7))
-        assert tire_friction_range(50.0) == pytest.approx((0.7, 0.9))
-        assert active_weather_rules().source("tire_friction") == path.resolve()
+class TestARunsRules:
+    def test_a_file_naming_only_its_change_is_read_over_the_default(
+        self, tmp_path
+    ) -> None:
+        path = _grip_file(tmp_path / "measured.yaml", (0.30, 0.50))
+        use_weather_rules(str(path))
+        assert tire_friction_range(100.0) == pytest.approx((0.30, 0.50))
         # The visibility keeps the default rules.
         assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
-
+        assert [Path(p).name for p, _ in weather_rule_files()] == [
+            "weather_rules.yaml",
+            "measured.yaml",
+        ]
         use_weather_rules(None)
         assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
 
-    def test_a_rule_may_read_more_than_one_input(self, tmp_path) -> None:
-        quantity = _grip_rules(
-            [
-                {"if": "(water IS dry)", "then": {"low": 0.9, "high": 1.1}},
-                {
-                    "if": "(water IS wet) AND (NOT (cloudiness IS overcast))",
-                    "then": {"low": 0.6, "high": 0.8},
+    def test_a_url_is_fetched(self, monkeypatch, tmp_path) -> None:
+        import openodd.rules
+
+        text = _grip_file(tmp_path / "x.yaml", (0.20, 0.40)).read_text()
+        asked: list[str] = []
+
+        def fetch(url: str) -> str:
+            asked.append(url)
+            return text
+
+        monkeypatch.setattr(openodd.rules, "fetch_url", fetch)
+        use_weather_rules("https://example.com/rules/measured.yaml")
+        assert asked == ["https://example.com/rules/measured.yaml"]
+        assert tire_friction_range(100.0) == pytest.approx((0.20, 0.40))
+
+    def test_a_file_reading_an_input_carla_has_not_is_refused(self, tmp_path) -> None:
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            "version: 1\nquantities:\n  tire_friction:\n    rule_bases:\n      t:\n"
+            "        inputs:\n          temperature:\n            universe: [-20, 40]\n"
+            "            terms: {any: {trapezoid: [-20, -20, 40, 40]}}\n"
+            "        rules:\n          - {if: (temperature IS any), then: {low: 1, high: 1}}\n"
+        )
+        with pytest.raises(RulesError, match="unknown input 'temperature'"):
+            use_weather_rules(str(path))
+
+
+class TestRulesByVehicle:
+    def test_each_vehicle_reads_the_first_entry_it_matches(self, tmp_path) -> None:
+        use_weather_rules(
+            {
+                "default": str(_grip_file(tmp_path / "default.yaml", (0.40, 0.60))),
+                "vehicles": {
+                    "ego": str(_grip_file(tmp_path / "ego.yaml", (0.30, 0.50))),
+                    "vehicle.mini.*": str(
+                        _grip_file(tmp_path / "mini.yaml", (0.20, 0.40))
+                    ),
                 },
-                {
-                    "if": "(water IS wet) AND (cloudiness IS overcast)",
-                    "then": {"low": 0.4, "high": 0.6},
-                },
+            }
+        )
+        assert vehicle_rules_in_use()
+        flooded = {"wetness": 100.0}
+        assert vehicle_range(
+            "tire_friction", flooded, "vehicle.mini.cooper", "Ego"
+        ) == pytest.approx((0.30, 0.50))
+        assert vehicle_range(
+            "tire_friction", flooded, "vehicle.mini.cooper", "npc1"
+        ) == pytest.approx((0.20, 0.40))
+        assert vehicle_range(
+            "tire_friction", flooded, "vehicle.tesla.model3", ""
+        ) == pytest.approx((0.40, 0.60))
+        # The visibility is the default rules'.
+        assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
+
+    def test_a_vehicles_file_extends_and_is_read_over_the_runs_default(
+        self, tmp_path
+    ) -> None:
+        _grip_file(tmp_path / "shared.yaml", (0.35, 0.55))
+        mini = tmp_path / "vehicles" / "mini.yaml"
+        mini.parent.mkdir()
+        mini.write_text("version: 1\nextends: ../shared.yaml\nquantities: {}\n")
+        use_weather_rules({"vehicles": {"vehicle.mini.*": str(mini)}})
+        assert vehicle_range(
+            "tire_friction", {"wetness": 100.0}, "vehicle.mini.cooper", ""
+        ) == pytest.approx((0.35, 0.55))
+
+    def test_malformed_settings_are_refused(self, tmp_path) -> None:
+        with pytest.raises(RulesError, match=r"unknown fields \['vehicle'\]"):
+            use_weather_rules({"vehicle": {}})
+        with pytest.raises(RulesError, match="expected pattern -> file"):
+            use_weather_rules({"vehicles": ["a.yaml"]})
+        with pytest.raises(RulesError, match="expected a file or"):
+            use_weather_rules(42)  # type: ignore[arg-type]
+
+    def test_without_vehicles_every_vehicle_reads_the_default(self) -> None:
+        assert not vehicle_rules_in_use()
+        assert vehicle_range(
+            "tire_friction", {"wetness": 100.0}, "vehicle.mini.cooper", "Ego"
+        ) == pytest.approx((0.45, 0.65))
+
+
+class _Vehicle:
+    """A vehicle of a blueprint and a role, whose physics control is a copy
+    each read, as CARLA's is."""
+
+    def __init__(self, actor_id: int, type_id: str, role: str = "") -> None:
+        self.id = actor_id
+        self.type_id = type_id
+        self.attributes = {"role_name": role} if role else {}
+        self.frictions = [3.5] * 4
+
+    def get_physics_control(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            wheels=[
+                SimpleNamespace(friction_force_multiplier=f) for f in self.frictions
             ]
         )
-        quantity["rule_bases"]["water"]["inputs"]["cloudiness"] = {
-            "universe": [0, 100],
-            "default": 0,
-            "terms": {
-                "clear": {"trapezoid": [0, 0, 0, 100]},
-                "overcast": {"trapezoid": [0, 100, 100, 100]},
-            },
-        }
-        use_weather_rules(_write(tmp_path / "rules.yaml", {"tire_friction": quantity}))
 
-        assert weather_range("tire_friction", {"water": 100.0, "cloudiness": 0.0}) == (
-            pytest.approx((0.6, 0.8))
-        )
-        assert weather_range(
-            "tire_friction", {"water": 100.0, "cloudiness": 100.0}
-        ) == (pytest.approx((0.4, 0.6)))
-        # tire_friction_range() names no cloudiness: its default holds.
-        assert tire_friction_range(100.0) == pytest.approx((0.6, 0.8))
-
-    def test_combine_max_takes_the_longer_bound(self, tmp_path) -> None:
-        def base(low: float) -> dict:
-            return {
-                "inputs": {
-                    "fog_density": {
-                        "universe": [0, 100],
-                        "terms": {"any": {"trapezoid": [0, 0, 100, 100]}},
-                    }
-                },
-                "rules": [
-                    {"if": "(fog_density IS any)", "then": {"low": low, "high": 400}}
-                ],
-            }
-
-        quantity = {
-            "combine": "max",
-            "rule_bases": {"a": base(100.0), "b": base(200.0)},
-        }
-        use_weather_rules(_write(tmp_path / "rules.yaml", {"visibility": quantity}))
-        assert visibility_range() == pytest.approx((200.0, 400.0))
-
-    def test_a_file_is_read_again_once_it_changes(self, tmp_path) -> None:
-        path = _write(tmp_path / "rules.yaml", {"tire_friction": _grip_rules(_DRY_WET)})
-        first = load_weather_rules(path)
-        assert load_weather_rules(path) is first
-
-        rules = [dict(r) for r in _DRY_WET]
-        rules[1] = {"if": "(water IS wet)", "then": {"low": 0.3, "high": 0.5}}
-        _write(path, {"tire_friction": _grip_rules(rules)})
-        import os
-
-        stat = path.stat()
-        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
-        assert load_weather_rules(path) is not first
-        assert load_weather_rules(path).range("tire_friction", {"water": 100.0}) == (
-            pytest.approx((0.3, 0.5))
-        )
+    def apply_physics_control(self, physics: SimpleNamespace) -> None:
+        self.frictions = [w.friction_force_multiplier for w in physics.wheels]
 
 
-class TestRefusedRules:
-    @pytest.mark.parametrize(
-        ("quantities", "match"),
-        [
-            ({"grip": {}}, "unknown quantities"),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [{"if": "(water IS soaked)", "then": {"low": 0, "high": 1}}]
-                    )
-                },
-                "water has no term 'soaked'",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [
-                            {
-                                "if": "(fog_density IS dense)",
-                                "then": {"low": 0, "high": 1},
-                            }
-                        ]
-                    )
-                },
-                "'fog_density' is no input of this rule base",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [{"if": "water IS dry", "then": {"low": 0, "high": 1}}]
-                    )
-                },
-                r"expected clauses such as \(water IS wet\)",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [{"if": "(water IS dry)", "then": {"low": 1, "high": 0}}]
-                    )
-                },
-                "low must not be above high",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [{"if": "(water IS dry)", "then": {"low": 1}}]
-                    )
-                },
-                "expected low and high",
-            ),
-            # Only dry has a rule: no rule fires on a soaked road.
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        [{"if": "(water IS dry)", "then": {"low": 0.9, "high": 1.1}}],
-                        terms={
-                            "dry": {"trapezoid": [0, 0, 0, 60]},
-                            "wet": {"trapezoid": [40, 100, 100, 100]},
-                        },
-                    )
-                },
-                "no rule fires",
-            ),
-            # Nothing covers 40-60.
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        _DRY_WET,
-                        terms={
-                            "dry": {"triangle": [0, 0, 40]},
-                            "wet": {"triangle": [60, 100, 100]},
-                        },
-                    )
-                },
-                "no term covers water",
-            ),
-            (
-                {"tire_friction": _grip_rules(_DRY_WET, universe=[100, 0])},
-                "low must be below high",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        _DRY_WET, terms={"dry": {"triangle": [50, 0, 100]}}
-                    )
-                },
-                "the points must not decrease",
-            ),
-            (
-                {
-                    "tire_friction": _grip_rules(
-                        _DRY_WET, terms={"dry": {"bell": [0, 1]}}
-                    )
-                },
-                "unknown term shape 'bell'",
-            ),
-            (
-                {
-                    "tire_friction": {
-                        "combine": "mean",
-                        **_grip_rules(_DRY_WET),
-                    }
-                },
-                "expected min or max",
-            ),
-        ],
+_world_ids = itertools.count(5000)
+
+
+def _world(*vehicles: _Vehicle) -> MagicMock:
+    world = MagicMock()
+    world.id = next(_world_ids)
+    weather = SimpleNamespace(
+        cloudiness=0.0,
+        precipitation=0.0,
+        precipitation_deposits=0.0,
+        wetness=0.0,
+        wind_intensity=0.0,
+        fog_density=0.0,
+        fog_distance=0.0,
+        sun_altitude_angle=45.0,
+        sun_azimuth_angle=0.0,
     )
-    def test_a_malformed_file_is_refused(self, tmp_path, quantities, match) -> None:
-        path = _write(tmp_path / "rules.yaml", quantities)
-        with pytest.raises(WeatherRulesError, match=match):
-            load_weather_rules(path)
+    world.get_weather.return_value = weather
+    fleet = list(vehicles)
+    world.fleet = fleet
 
-    def test_an_unknown_input_is_refused(self, tmp_path) -> None:
-        quantity = _grip_rules(_DRY_WET)
-        inputs = quantity["rule_bases"]["water"]["inputs"]
-        inputs["temperature"] = inputs.pop("water")
-        with pytest.raises(WeatherRulesError, match="unknown input 'temperature'"):
-            load_weather_rules(
-                _write(tmp_path / "rules.yaml", {"tire_friction": quantity})
-            )
+    def actors(ids: "list[int] | None" = None) -> MagicMock:
+        chosen = [v for v in fleet if ids is None or v.id in ids]
+        listed = MagicMock()
+        listed.filter.side_effect = lambda pattern: list(chosen)
+        return listed
 
-    def test_another_version_is_refused(self, tmp_path) -> None:
-        path = tmp_path / "rules.yaml"
-        path.write_text(yaml.safe_dump({"version": 2, "quantities": {}}))
-        with pytest.raises(WeatherRulesError, match="version must be 1"):
-            load_weather_rules(path)
+    world.get_actors.side_effect = actors
+    world.get_snapshot.side_effect = lambda: [SimpleNamespace(id=v.id) for v in fleet]
+    return world
 
-    def test_a_missing_file_is_refused(self, tmp_path) -> None:
-        with pytest.raises(WeatherRulesError, match="cannot read weather rules"):
-            load_weather_rules(tmp_path / "nowhere.yaml")
+
+class TestGripByVehicle:
+    def test_each_vehicle_gets_its_own_grip_at_the_cases_quantile(
+        self, tmp_path
+    ) -> None:
+        use_weather_rules(
+            {
+                "vehicles": {
+                    "ego": str(_grip_file(tmp_path / "ego.yaml", (0.30, 0.50))),
+                    "vehicle.mini.*": str(
+                        _grip_file(tmp_path / "mini.yaml", (0.20, 0.40))
+                    ),
+                }
+            }
+        )
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        mini = _Vehicle(2, "vehicle.mini.cooper", "npc1")
+        other = _Vehicle(3, "vehicle.tesla.model3", "npc2")
+        world = _world(ego, mini, other)
+        EnvironmentAction(wetness=100.0, tire_friction_quantile=0.0).execute(world)
+
+        assert ego.frictions == pytest.approx([3.5 * 0.30] * 4)
+        assert mini.frictions == pytest.approx([3.5 * 0.20] * 4)
+        assert other.frictions == pytest.approx([3.5 * 0.45] * 4)
+        # The ODD's probe reads the ego's.
+        assert world_tire_friction(world.id) == pytest.approx(0.30)
+
+        # A vehicle spawned later gets its own too.
+        late = _Vehicle(4, "vehicle.mini.cooper_s")
+        world.fleet.append(late)
+        from autoware_carla_scenario.actions.environment import follow_tire_friction
+
+        follow_tire_friction(world)
+        assert late.frictions == pytest.approx([3.5 * 0.20] * 4)
+
+    def test_a_fixed_grip_is_every_vehicles(self, tmp_path) -> None:
+        use_weather_rules(
+            {"vehicles": {"ego": str(_grip_file(tmp_path / "e.yaml", (0.3, 0.5)))}}
+        )
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        EnvironmentAction(wetness=100.0, tire_friction=0.7).execute(world)
+        assert ego.frictions == pytest.approx([3.5 * 0.7] * 4)
+        assert world_tire_friction(world.id) == pytest.approx(0.7)
+
+    def test_without_vehicle_rules_the_world_has_one_grip(self) -> None:
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        apply_weather_grip(world, {"wetness": 100.0}, 1.0)
+        assert ego.frictions == pytest.approx([3.5 * 0.65] * 4)
+        assert world_tire_friction(world.id) == pytest.approx(0.65)
 
 
 def test_the_run_config_names_the_rules_and_a_run_without_resets_them(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
     from autoware_carla_scenario.examples.run import add_environment
 
-    path = _write(tmp_path / "rules.yaml", {"tire_friction": _grip_rules(_DRY_WET)})
+    monkeypatch.chdir(tmp_path)
+    _grip_file(tmp_path / "measured.yaml", (0.30, 0.50))
+    _grip_file(tmp_path / "mini.yaml", (0.20, 0.40))
     registered: list = []
     scenario = SimpleNamespace(register_init=registered.append)
 
+    # Relative to where the run starts.
     add_environment(
-        OmegaConf.create({"environment": {"rules": str(path), "wetness": 100}}),
+        OmegaConf.create({"environment": {"rules": "measured.yaml", "wetness": 100}}),
         scenario,  # type: ignore[arg-type]
     )
     (action,) = registered
     # The rules are no weather setting.
     assert action.settings == {"wetness": 100.0}
-    assert tire_friction_range(100.0) == pytest.approx((0.5, 0.7))
+    assert tire_friction_range(100.0) == pytest.approx((0.30, 0.50))
 
     registered.clear()
+    add_environment(
+        OmegaConf.create(
+            {"environment": {"rules": {"vehicles": {"vehicle.mini.*": "mini.yaml"}}}}
+        ),
+        scenario,  # type: ignore[arg-type]
+    )
+    assert vehicle_rules_in_use()
+    assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
+
     add_environment(OmegaConf.create({"environment": {"rules": None}}), scenario)  # type: ignore[arg-type]
     assert registered == []
-    assert active_weather_rules().path is None
-    assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
+    assert not vehicle_rules_in_use()
+    assert CARLA_BACKEND.active_rules is CARLA_BACKEND.rules

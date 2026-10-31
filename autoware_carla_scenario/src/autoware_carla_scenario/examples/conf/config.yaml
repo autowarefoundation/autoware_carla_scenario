@@ -267,8 +267,11 @@ controls: {}
 # true, and only logs it otherwise.
 # The ranges of the grip and of the visibility are fuzzy rules
 # (autoware_carla_scenario/weather_rules.yaml, docs/odd.md "Weather rules"):
-# `rules` names a YAML file of others (relative to where the run starts),
-# whose quantities replace the default ones.
+# `rules` names a rule file -- a path (relative to where the run starts) or
+# an https:// URL -- merged over the default rules (it names only what it
+# changes, and may `extends` others), or rules that differ by vehicle:
+#   rules: {default: weather/measured.yaml,
+#           vehicles: {ego: weather/ego.yaml, "vehicle.mini.*": weather/mini.yaml}}
 environment:
   rules: null
   rain: null

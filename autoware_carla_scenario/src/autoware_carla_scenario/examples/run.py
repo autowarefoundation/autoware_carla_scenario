@@ -1525,11 +1525,13 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     sets the weather itself has the last word.  Nothing is registered when
     every field is ``null`` (the default).
 
-    ``environment.rules`` names the weather rules the run follows (a YAML
-    file, relative to the directory the run was started in): the grip and the
-    visibility its weather leaves (:mod:`autoware_carla_scenario.weather_rules`).
-    The default rules when ``null``; set for every run, so one run's do not
-    reach the next.
+    ``environment.rules`` names the weather rules the run follows: the grip
+    and the visibility its weather leaves
+    (:mod:`autoware_carla_scenario.weather_rules`) -- a file (a path, relative
+    to the directory the run was started in, or an ``https://`` URL) merged
+    over the default rules, or ``{default, vehicles}`` for rules that differ
+    by vehicle.  The default rules when ``null``; set for every run, so one
+    run's do not reach the next.
     """
     from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
         use_weather_rules,
@@ -1537,14 +1539,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
 
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
-    rules_path = raw.pop("rules", None)
-    if rules_path is None:
-        use_weather_rules(None)
-    else:
-        from hydra.utils import to_absolute_path  # noqa: PLC0415
-
-        rules = use_weather_rules(to_absolute_path(str(rules_path)))
-        logger.info("Following the weather rules of %s", rules.path)
+    use_weather_rules(_rules_locations(raw.pop("rules", None)))
     settings: dict[str, Any] = {
         str(key): float(value) for key, value in raw.items() if value is not None
     }
@@ -1553,6 +1548,29 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 
     scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
+
+
+def _rules_locations(spec: Any) -> Any:
+    """``environment.rules`` with every path made absolute against the
+    directory the run was started in (a URL as it is): a file, or
+    ``{default, vehicles}`` (anything else is left to refuse)."""
+    from hydra.utils import to_absolute_path  # noqa: PLC0415
+
+    def where(location: Any) -> Any:
+        if not isinstance(location, str) or location.startswith(
+            ("https://", "http://")
+        ):
+            return location
+        return to_absolute_path(location)
+
+    if isinstance(spec, dict):
+        out = dict(spec)
+        if "default" in out:
+            out["default"] = where(out["default"])
+        if isinstance(out.get("vehicles"), dict):
+            out["vehicles"] = {k: where(v) for k, v in out["vehicles"].items()}
+        return out
+    return where(spec)
 
 
 def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
