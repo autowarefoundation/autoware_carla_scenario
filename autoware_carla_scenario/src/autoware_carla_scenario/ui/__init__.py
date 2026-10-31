@@ -86,7 +86,14 @@ def main(argv: list[str] | None = None) -> None:
     # mistyped option exit without serving.
     import uvicorn  # noqa: PLC0415
 
+    from ..registry import load_scenario_plugins  # noqa: PLC0415
     from .app import app  # noqa: PLC0415, F811
+
+    # External scenario packages (the ``autoware_carla_scenario.scenarios``
+    # entry point) register their scenarios and conf dirs, which the scenario
+    # list, its globs and the sweep resolution read, as the ``scenario`` CLI
+    # loads them; once per process (the scanner and the resolver ask again).
+    load_scenario_plugins()
 
     if args.base_path is not None:
         from . import app as app_module  # noqa: PLC0415

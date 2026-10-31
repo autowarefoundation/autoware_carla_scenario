@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 
+from autoware_carla_scenario.registry import load_scenario_plugins
+
 if TYPE_CHECKING:
     from autoware_carla_scenario.odd.sampler import OddDraws
 
@@ -67,6 +69,10 @@ def resolve_sweep(
         expand_config,
     )
 
+    # A scenario package's configs are on Hydra's search path only once the
+    # package has registered its conf dir (hydra_plugins'
+    # autoware_scenario_searchpath); loading is a no-op after the first call.
+    load_scenario_plugins()
     try:
         GlobalHydra.instance().clear()
         with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
