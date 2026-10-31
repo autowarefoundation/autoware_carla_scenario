@@ -136,6 +136,11 @@ class RouteProgressCondition(BaseCondition):
         self._target: Optional[float] = None
 
     @property
+    def entity_name(self) -> str:
+        """``role_name`` of the entity measured."""
+        return self._entity_name
+
+    @property
     def progress(self) -> Optional[float]:
         """The entity's route s when last checked, or ``None``."""
         return self._last

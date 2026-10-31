@@ -58,15 +58,16 @@ class _Never(BaseCondition):
 class _Progress(RouteProgressCondition):
     """A rising route_progress whose entity's progress the test sets."""
 
-    def __init__(self, target: float) -> None:
-        super().__init__(value=target, label="progress")
+    def __init__(self, target: float, entity: Optional[str] = None) -> None:
+        super().__init__(entity, value=target, label="progress")
         self.now = 0.0
+        self.hidden = False  # out of the world: no progress
         self._threshold = target
 
     def check(self, world: Any, elapsed: float) -> Optional[ScenarioResult]:
-        self._last = self.now
+        self._last = None if self.hidden else self.now
         self._target = self._threshold
-        if self.now < self._threshold:
+        if self.hidden or self.now < self._threshold:
             return None
         return ScenarioResult(passed=True, message="", elapsed_seconds=elapsed)
 
@@ -124,6 +125,73 @@ class TestPacer:
             speed = pacer.speed(_WORLD, 0.0, t, cruise=8.0, limit=15.0)
         # The ego needs (50 - 14.75) / 5 = 7.05 s more; 40 m over that is 5.7 m/s.
         assert speed == pytest.approx(40.0 / ((50.0 - 5.0 * 2.95) / 5.0), rel=0.15)
+
+    @staticmethod
+    def _two_gates(
+        first: str, second: str, second_from: float
+    ) -> tuple[RoutePacer, _Progress, _Progress, float]:
+        """A pacer whose first waypoint is gated on *first* and second on
+        *second*, both entities going 10 m/s, run until the first opens."""
+        gate1 = _Progress(target=50.0, entity=first)
+        gate2 = _Progress(target=400.0, entity=second)
+        marks = [PaceMark(1, 30.0, gate=gate1), PaceMark(2, 80.0, gate=gate2)]
+        pacer = RoutePacer("npc2", "driver", marks, 1.0, 1.0)
+        gate1.now, gate2.now = 20.0, second_from
+        t = 0.0
+        for _ in range(60):
+            t += 0.05
+            gate1.now += 0.5
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 0.0, t, cruise=1.4, limit=3.0)
+        assert pacer.marks[0].opened_at == pytest.approx(t)  # the first opens
+        assert pacer._rate == pytest.approx(10.0, rel=0.01)
+        pacer.observe(30.0, t)  # and the entity reaches it
+        return pacer, gate1, gate2, t
+
+    @pytest.mark.parametrize("second_from", [100.0, 5.0], ids=["ahead", "behind"])
+    def test_a_gate_on_another_entity_starts_its_own_rate(
+        self, second_from: float
+    ) -> None:
+        pacer, _, gate2, t = self._two_gates("Ego", "npc1", second_from)
+        for _ in range(10):
+            t += 0.05
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 30.0, t, cruise=1.4, limit=3.0)
+            # Never the gap between the two entities over a tick.
+            assert 0.0 <= pacer._rate <= 10.0 + 1e-6
+        assert pacer._rate == pytest.approx(10.0)
+        eta = pacer._eta(gate2, t)
+        assert eta is not None
+        assert eta == pytest.approx(t + (400.0 - gate2.now) / 10.0, rel=0.01)
+
+    def test_gates_on_the_same_entity_go_on_with_its_rate(self) -> None:
+        pacer, gate1, gate2, t = self._two_gates("Ego", "Ego", 20.0)
+        gate2.now = gate1.now  # both measure the one entity
+        # The estimate goes on: no tick without a rate, no jump.
+        for _ in range(3):
+            t += 0.05
+            gate2.now += 0.5
+            pacer.speed(_WORLD, 30.0, t, cruise=1.4, limit=3.0)
+            assert pacer._rate == pytest.approx(10.0, rel=0.01)
+
+    def test_an_entity_back_in_the_world_starts_a_new_rate(self) -> None:
+        gate = _Progress(target=900.0)
+        pacer = RoutePacer("npc2", "driver", [PaceMark(1, 80.0, gate=gate)], 1.0)
+        t, now = 0.0, 20.0
+        for _ in range(20):
+            t, now = t + 0.05, now + 0.5
+            gate.now = now
+            pacer.speed(_WORLD, 0.0, t, cruise=1.4, limit=3.0)
+        gate.hidden = True  # under the map
+        t += 0.05
+        pacer.speed(_WORLD, 0.0, t, cruise=1.4, limit=3.0)
+        gate.hidden = False
+        now = 500.0  # and brought back further on
+        for _ in range(5):
+            t, now = t + 0.05, now + 0.5
+            gate.now = now
+            pacer.speed(_WORLD, 0.0, t, cruise=1.4, limit=3.0)
+            assert 0.0 <= pacer._rate <= 10.0 + 1e-6
 
     def test_arrivals_are_logged_with_their_targets(self) -> None:
         gate = _Progress(target=10.0)
@@ -460,6 +528,36 @@ def test_a_hold_in_the_measured_entitys_way_is_let_go(
             t += 0.05
     assert mark.opened_at is not None
     assert sum("stops holding" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_hold_let_go_for_one_entity_is_not_let_go_for_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Let go at a waypoint gated on the standing ego, the entity is held
+    at the next one, gated on another entity that stands at about the same
+    route s: that one is waited for afresh."""
+    import autoware_carla_scenario.actions._route_pacing as pacing
+
+    monkeypatch.setattr(
+        pacing, "route_s_of_carla_point", lambda x, y, near=None: (x, 0.5)
+    )
+    gate1 = _Progress(target=50.0)
+    gate1.now = 10.0  # the ego, standing at route s 10
+    gate2 = _Progress(target=50.0, entity="npc3")
+    gate2.now = 10.2  # npc3, standing abreast of it
+    marks = [PaceMark(1, 1.0, gate=gate1), PaceMark(2, 3.0, gate=gate2)]
+    pacer = RoutePacer("npc1", "driver", marks, 0.5, 0.0)
+    pacer.observe(1.0, 0.0)
+    t = 0.0
+    while marks[0].opened_at is None:
+        pacer.speed(_WORLD, 1.0, t, 8.0, 15.0, position=(18.0, 0.0))
+        t += 0.05
+    pacer.observe(3.0, t)
+    stop = t + pacing.BLOCK_WAIT_S - 0.5
+    while t < stop:
+        pacer.speed(_WORLD, 3.0, t, 8.0, 15.0, position=(18.0, 0.0))
+        t += 0.05
+    assert marks[1].opened_at is None
 
 
 def test_a_hold_out_of_the_measured_entitys_way_is_kept(
