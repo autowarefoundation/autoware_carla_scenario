@@ -182,3 +182,120 @@ def test_a_place_clear_condition_sees_a_car_s_front_on_its_place() -> None:
     world = _parked_car()
     assert place_module._occupant(world, 3.3, 0.0, 0.0, 0.5, 0.5, 0.0) == 1  # type: ignore[arg-type]
     assert place_module._occupant(world, -2.0, 0.0, 0.0, 0.5, 0.5, 0.0) == -1  # type: ignore[arg-type]
+
+
+def test_first_in_way_finds_a_car_by_its_box_and_reports_its_centre() -> None:
+    """Each actor is a circle (radius 2.6) round its box's centre (1.3), so
+    from -1.3 to 3.9 along x, not round its origin (-2.6 to 2.6)."""
+    world = _parked_car()
+    # Looking back (-x) 1 m from 4.5: its circle's edge at 3.9 is 0.6 m on.
+    found = clearance.first_in_way(world, 99, 4.5, 0.0, 180.0, "vehicle", 1.0, 0.3)
+    assert found is not None and found.id == 1
+    assert (found.x, found.y) == pytest.approx((1.3, 0.0))
+    assert found.ahead == pytest.approx(3.2)
+    # Looking on (+x) 2.5 m from -4.5: its circle's edge at -1.3 is 3.2 m on.
+    assert (
+        clearance.first_in_way(world, 99, -4.5, 0.0, 0.0, "vehicle", 2.5, 0.3) is None
+    )
+
+
+class _Driven:
+    """A vehicle the framework drives, origin at (0, 0) facing +x, its box
+    1.3 m ahead of its origin (4.8 m long: its front at 3.7)."""
+
+    def __init__(self, world: _World) -> None:
+        self.id = 2
+        self._world = world
+        self.bounding_box = SimpleNamespace(
+            extent=SimpleNamespace(x=2.4, y=1.0, z=0.8),
+            location=SimpleNamespace(x=1.3, y=0.0, z=0.8),
+        )
+
+    def get_world(self) -> _World:
+        return self._world
+
+    def get_transform(self) -> Any:
+        return SimpleNamespace(
+            location=SimpleNamespace(x=0.0, y=0.0, z=0.0),
+            rotation=SimpleNamespace(yaw=0.0),
+        )
+
+
+def test_a_driven_vehicle_looks_for_a_walker_from_its_box_s_centre() -> None:
+    """Standing, it keeps 4 m from its box's centre (1.3) clear of walkers:
+    a walker at 5.0 is within that, though not within 4 m of its origin."""
+    from autoware_carla_scenario.actions import _trajectory_run as run
+
+    walker = ("walker.pedestrian.0001", 5.0, 0.0, 0.0, (0.3, 0.3), (0.0, 0.0))
+    world = _World(
+        {1: walker, 2: ("vehicle.driven", 0.0, 0.0, 0.0, (2.4, 1.0), (1.3, 0.0))}
+    )
+    actor = _Driven(world)
+    assert run._walker_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
+    world = _World(
+        {
+            1: ("walker.pedestrian.0001", 6.0, 0.0, 0.0, (0.3, 0.3), (0.0, 0.0)),
+            2: ("vehicle.driven", 0.0, 0.0, 0.0, (2.4, 1.0), (1.3, 0.0)),
+        }
+    )
+    actor = _Driven(world)
+    assert not run._walker_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
+
+
+def test_a_driven_vehicle_looks_for_a_vehicle_from_its_box_s_centre() -> None:
+    """Standing, it looks 4.4 m on from its box's centre (1.3): a car (a
+    circle of radius 2.6 round its origin, its box on it) at 8.0 is in its
+    way, at 8.6 not -- looked for from its origin, it would be at 7.0."""
+    from autoware_carla_scenario.actions import _trajectory_run as run
+
+    def world_with_car_at(x: float) -> _World:
+        return _World(
+            {
+                1: ("vehicle.ahead", x, 0.0, 0.0, (2.4, 1.0), (0.0, 0.0)),
+                2: ("vehicle.driven", 0.0, 0.0, 0.0, (2.4, 1.0), (1.3, 0.0)),
+            }
+        )
+
+    actor = _Driven(world_with_car_at(8.0))
+    assert run._vehicle_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
+    actor = _Driven(world_with_car_at(8.6))
+    assert not run._vehicle_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
+
+
+def test_a_vehicle_led_out_looks_on_from_its_box_s_centre(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its reach is measured from its box's centre, 1.3 m ahead of the
+    origin its place on the path is: 2 m on from it looks to 3.3."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.final_approach import FinalApproach
+
+    from .test_routing_trajectory_action import _Actor as _Vehicle
+
+    looked: list[float] = []
+
+    def first_box_in_way(
+        world: Any,
+        self_id: int,
+        x: float,
+        y: float,
+        heading_deg: float,
+        kind: str,
+        distance: float,
+        half_width: float,
+    ) -> None:
+        looked.append(x + distance)
+        return None
+
+    monkeypatch.setattr(clearance, "first_box_in_way", first_box_in_way)
+    vehicle = _Vehicle(speed=0.0)  # at the origin, facing +x
+    vehicle.bounding_box = SimpleNamespace(
+        extent=SimpleNamespace(x=2.4, y=1.0, z=0.9),
+        location=SimpleNamespace(x=1.3, y=0.0, z=0.7),
+    )
+    vehicle.get_world = lambda: None  # type: ignore[attr-defined]
+    path = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20)]
+    approach = FinalApproach(vehicle, carla.Location(0.0, 0.0, 0.0), path, stop=False)  # type: ignore[arg-type]
+    assert not approach._in_way("walker", 2.0, 1.5)
+    assert max(looked) == pytest.approx(3.3)

@@ -1164,17 +1164,20 @@ def _walker_in_way(
     """Whether a walker stands in *actor*'s way within its stopping distance
     (braking at 4 m/s², and 4 m more), across its width and
     :data:`~._road_threat.PASSING_CLEARANCE_M` to each side (a bicycle passed
-    0.5 m off its side toppled)."""
-    from ..utils.clearance import first_in_way  # noqa: PLC0415
+    0.5 m off its side toppled), looked along from its bounding box's
+    centre."""
+    from ..utils.clearance import actor_box_centre, first_in_way  # noqa: PLC0415
     from ._road_threat import PASSING_CLEARANCE_M  # noqa: PLC0415
 
     try:
         half_width = float(actor.bounding_box.extent.y) + PASSING_CLEARANCE_M
+        # From its box's centre, as _vehicle_in_way looks (#884).
+        x, y = actor_box_centre(actor, transform)
         found = first_in_way(
             actor.get_world(),
             int(actor.id),
-            transform.location.x,
-            transform.location.y,
+            x,
+            y,
             transform.rotation.yaw,
             "walker",
             speed * speed / 8.0 + 4.0,
