@@ -1256,8 +1256,12 @@ class TrafficManagerBackend(TrafficBackend):
         if location.distance(mark) > _LANE_CHANGE_AHEAD_M:
             return
         kept.lane_changes = kept.lane_changes[1:]
-        # CARLA's force_lane_change: True to the left.
-        tm.force_lane_change(_vehicle(kept.actor), not to_the_right)
+        # CARLA's force_lane_change takes True for the right: the one
+        # convention, LaneChangeDirection.to_carla_bool's.
+        direction = (
+            LaneChangeDirection.RIGHT if to_the_right else LaneChangeDirection.LEFT
+        )
+        tm.force_lane_change(_vehicle(kept.actor), direction.to_carla_bool())
         logger.info(
             "%s: changes lanes to the %s where its path crosses",
             _actor_name(kept.actor),
