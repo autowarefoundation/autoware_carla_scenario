@@ -2298,11 +2298,23 @@
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Run integration tests too (requires a running CARLA server, or one to launch: `scenario-setup` or CARLA_EXECUTABLE)</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>-v<span class="w"> </span>autoware_carla_scenario/test/
 </code></pre></div>
-<p>The repository defines a single custom pytest marker in the workspace
-<code>pyproject.toml</code>:</p>
+<p>The workspace <code>pyproject.toml</code> defines these custom pytest markers:</p>
 <ul>
-<li><code>integration</code> — tests that need a live CARLA server. The CI <code>test</code> job
-  runs with <code>-m "not integration"</code>.</li>
+<li><code>integration</code> — tests that need a live CARLA server; they skip themselves
+  without one.</li>
+<li><code>slow</code> — tests that export a package and build a wheelhouse over the
+  network. CI runs them in jobs of their own (<code>-m slow</code>).</li>
+<li><code>codon</code> — tests that compile with Codon, some 1,240 of them. A pull
+  request runs them in one leg per architecture, split into two shards
+  (<code>AUTOWARE_CARLA_SCENARIO_TEST_SHARD=K/N</code> runs the K-th of N shards of a
+  selection; the conftest hashes each test's node id into one).</li>
+<li><code>codon_selftest</code> — the <code>codon</code> tests of the checker itself, on code of
+  their own. A pull request runs them only when it changes something they
+  read (the checker, the locked dependencies, the tests, CI; the list is in
+  <code>.github/actions/codon-selftests/action.yml</code>); the nightly run and every
+  other event run them. The compile checks of the package's own code (the
+  library check, the built-in scenarios, the template) run on every pull
+  request.</li>
 </ul>
 <p>Local verification is the same command CI runs — no container involved:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Full pytest suite (matches CI's `test` job)</span>
@@ -2331,8 +2343,8 @@ at the repository root and runs the following hooks:</p>
 <li><code>mypy</code> (local hook over <code>src/</code> and <code>test/</code>, run when a commit touches
   Python or the project configuration)</li>
 </ul>
-<p>pre-commit runs no tests: the fast suite compiles some 260 scenarios with
-Codon, which took minutes on every commit. Run <code>uv run pytest</code> yourself; CI
+<p>pre-commit runs no tests: the fast suite runs some 1,240 Codon compiles,
+which took minutes on every commit. Run <code>uv run pytest</code> yourself; CI
 runs it on every pull request.</p>
 <h2 id="building-documentation-locally">Building Documentation Locally<a class="headerlink" href="#building-documentation-locally" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Serve documentation locally</span>
@@ -2383,7 +2395,7 @@ runs it on every pull request.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 00:32:52 UTC"><span class="timeago" datetime="2026-10-22T00:32:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 00:32:52 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 13:32:33 UTC"><span class="timeago" datetime="2026-10-31T13:32:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 13:32:33 UTC">2026-10-31</span>
   </span>
 
     
