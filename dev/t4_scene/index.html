@@ -2291,7 +2291,8 @@ the current one last, its states unrounded (the log keeps millimetres). A run
 younger than <code>t4_scene_history_s</code> sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of <code>base_link</code>, the acceleration an estimate), body
-angular velocity, front tyres' angle and odometry times; the first LiDAR's
+angular velocity (on a row the policy was not told, the log's), front tyres'
+angle and odometry times; the first LiDAR's
 current sweep on the current row (<code>[N, 5]</code> in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
 the policy is sent (<code>driver.route_horizon_m</code>) walked along the map's lanelets
@@ -2362,7 +2363,7 @@ machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p
 </tr>
 <tr>
 <td><code>ego</code></td>
-<td>The actor whose role is <code>ego</code> or <code>hero</code>: <code>poses</code> and <code>poses_3d</code> at its <code>base_link</code>, <code>velocities</code>, <code>longitudinal_speeds</code>, <code>available</code>, <code>turn_indicators</code> (the log's <code>turn_indicators</code> records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its <code>shape</code></td>
+<td>The actor whose role is <code>ego</code> or <code>hero</code>: <code>poses</code> and <code>poses_3d</code> at its <code>base_link</code>, <code>velocities</code> and <code>longitudinal_speeds</code> of its <code>base_link</code> (below), <code>angular_velocities</code> (body axes, rad/s, from the ticks' <code>angular_velocity</code>), <code>available</code>, <code>turn_indicators</code> (the log's <code>turn_indicators</code> records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its <code>shape</code></td>
 </tr>
 <tr>
 <td><code>annotations</code></td>
@@ -2383,8 +2384,9 @@ machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p
 <li><strong>A row the log has no tick for</strong> -- a tick without road users is not
   logged -- has its ego, objects and lights unavailable; rows are never
   interpolated.</li>
-<li><strong>The ego</strong> has no accelerations, angular velocity or steering, and its
-  <code>shape</code> no <code>wheel_base</code>; nor turn indicators in a log without
+<li><strong>The ego</strong> has no accelerations or steering, and its
+  <code>shape</code> no <code>wheel_base</code>; nor angular velocity in a log without the ticks'
+  <code>angular_velocity</code> (one written before it was recorded); nor turn indicators in a log without
   <code>turn_indicators</code> records (one written before they were recorded).</li>
 <li><strong>Other road users' turn indicators</strong> are in the log but not in the scene:
   the contract has them for the ego only.</li>
@@ -2410,6 +2412,14 @@ machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p
   the run takes it on CARLA UE5 (no wheel positions).
   <code>shape.base_link_to_front</code> is from there to its box's front, and
   <code>base_link_to_rear_axle</code> is 0.</li>
+<li>The ego's velocity is its <code>base_link</code>'s too. The log records its actor
+  origin's, so the rigid-body lever arm is added: <code>v = v_origin + w x r</code>,
+  <code>w</code> the tick's <code>angular_velocity</code> and <code>r</code> the rotated
+  <code>(rear_axle_offset, 0, 0)</code>, in the map frame -- as the driver observations
+  do (<code>ego_observation</code>). The forward speed is the same either way; a turning
+  ego's sideways velocity is not (<code>yaw_rate * rear_axle_offset</code> of slip at
+  the origin). A log written before ticks carried <code>angular_velocity</code> keeps
+  the origin's velocity.</li>
 <li>A light shows a traffic-light regulatory element when it switches an
   OpenDRIVE signal (its <code>opendrive_id</code>) of the controller named after the
   element (<code>Controller_TL_{id}</code>, the Lanelet2-to-OpenDRIVE convention, as
@@ -2477,7 +2487,7 @@ copy the file again and regenerate.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 20:48:27 UTC"><span class="timeago" datetime="2026-10-30T20:48:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 20:48:27 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 15:02:41 UTC"><span class="timeago" datetime="2026-10-31T15:02:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 15:02:41 UTC">2026-10-31</span>
   </span>
 
     
