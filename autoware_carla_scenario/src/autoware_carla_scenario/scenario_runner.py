@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
+from .actions._trajectory_run import forget_walkers
 from .actions.environment import forget_tire_friction
 from .actions.spawn import clear_props
 from .entity.ego import EgoVehicle
@@ -1821,6 +1822,9 @@ class ScenarioRunner:
             set_measured_scenario(None)
             set_importance_sampling_weight(None)
             reset_ego_motion()
+            # The walkers the trajectory runs and the vehicles led out of their
+            # junctions measured were this run's.
+            forget_walkers()
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
             _clear_entry_speeds()
