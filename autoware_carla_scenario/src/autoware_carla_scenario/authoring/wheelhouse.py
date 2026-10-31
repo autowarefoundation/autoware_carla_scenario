@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +64,16 @@ from jinja2 import TemplateError
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 from ..templating import code_environment
+
+# The requirements pinning is plain string work and lives in requirements_pin,
+# which the library check compiles (docs/typecheck.md); its names stay
+# importable from here under the names they had.
+from .requirements_pin import DIRECT_SCHEMES as _DIRECT_SCHEMES  # noqa: F401
+from .requirements_pin import canonical_name as _canonical  # noqa: F401
+from .requirements_pin import pin_direct_references as _pin_direct_references
+from .requirements_pin import (  # noqa: F401
+    referenced_distribution as _referenced_distribution,
+)
 from .uv_tool import UvUnavailable, run_uv
 
 # tomllib landed in 3.11, and 3.10 is still the floor of the supported range.
@@ -487,81 +496,6 @@ def build_wheelhouse(
         ) from exc
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-
-
-def _canonical(name: str) -> str:
-    """Return *name* in PEP 503 normalised form, for comparing distributions."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
-#: What a requirement line looks like when uv writes the source instead of a
-#: version. A git source comes through as ``name @ <url>``; a path source comes
-#: through as the bare URL, with no name on it at all.
-_DIRECT_SCHEMES = ("file:", "git+", "http:", "https:", "./", "../", "/")
-
-
-def _referenced_distribution(reference: str) -> str:
-    """Return the distribution a bare direct reference names.
-
-    There is no name in the line to read, so it comes from the location: the
-    subdirectory when the reference has one, otherwise the last path segment.
-    That is a guess, and the caller only acts on it when it matches a wheel it
-    actually built.
-    """
-    head = reference.split(";", 1)[0].strip()
-    head, _, fragment = head.partition("#")
-    subdirectory = re.search(r"subdirectory=([^&]+)", fragment)
-    if subdirectory:
-        return subdirectory.group(1).rstrip("/").split("/")[-1]
-    if head.startswith("git+"):
-        head = re.sub(r"@[^/@]+$", "", head)
-    return head.rstrip("/").split("/")[-1].removesuffix(".git")
-
-
-def _pin_direct_references(requirements: str, wheels: tuple[str, ...]) -> str:
-    """Rewrite requirements that name a source to the version built for them.
-
-    ``uv export`` keeps a git or path source as a *direct reference*, and pip
-    honours a direct reference however many ``--find-links`` it was given: it
-    clones the repository, or reads a directory on the exporting machine.  Both
-    are exactly what a wheelhouse exists to avoid, and neither is there on the
-    target.  The wheel is already in the directory, so naming it by version is
-    what makes ``-r requirements.txt`` an offline install.
-
-    Two shapes, because uv writes two: ``name @ <url>`` for a git source, and
-    the bare URL for a path one.  A requirement whose wheel is not in the
-    directory is left alone rather than guessed at.
-    """
-    versions = {}
-    for wheel in wheels:
-        name, version = wheel.split("-")[:2]
-        versions[_canonical(name)] = version
-
-    lines = []
-    for line in requirements.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or not stripped:
-            lines.append(line)
-            continue
-
-        if " @ " in stripped:
-            name, _, rest = stripped.partition(" @ ")
-        elif stripped.startswith(_DIRECT_SCHEMES):
-            # Nothing in the line is a name, so write the canonical one rather
-            # than the directory spelling the location happened to use.
-            name, rest = _canonical(_referenced_distribution(stripped)), stripped
-        else:
-            lines.append(line)
-            continue
-
-        pinned = versions.get(_canonical(name.split("[")[0]))
-        if pinned is None:
-            lines.append(line)
-            continue
-        # Markers travel with the requirement; the source does not.
-        marker = f" ;{rest.split(';', 1)[1]}" if ";" in rest else ""
-        lines.append(f"{name}=={pinned}{marker}")
-    return "\n".join(lines)
 
 
 def _write_install_files(
