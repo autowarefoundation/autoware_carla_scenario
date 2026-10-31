@@ -288,6 +288,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.ui.comparison",
     "autoware_carla_scenario.ui.drive_metrics",
     "autoware_carla_scenario.ui.runner",
+    "autoware_carla_scenario.ui.slurm_case_state",
     "autoware_carla_scenario.ui.slurm_options",
     "autoware_carla_scenario.utils",
     "autoware_carla_scenario.utils.clearance",
@@ -588,7 +589,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.results": "imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (`Any`); the comparison of sessions is the checked ui.comparison's, fed the buckets and key read here",
     "autoware_carla_scenario.ui.recordings": "imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (`Any`)",
     "autoware_carla_scenario.ui.scanner": "imports yaml, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (`Any`)",
-    "autoware_carla_scenario.ui.slurm_launch": "imports more of shlex than its shim declares (`shlex.split()`, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (`Any`); the options' checks, their overrides and the command line are the checked ui.slurm_options'",
+    "autoware_carla_scenario.ui.slurm_launch": "imports more of shlex than its shim declares (`shlex.split()`, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (`Any`); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's",
     "autoware_carla_scenario.ui.sweep_resolver": "imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
 }

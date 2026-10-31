@@ -33,6 +33,7 @@ from typing import Any
 from ..slurm.manifest import BatchLayout
 from ..slurm.submit import ACTIVE_STATES, squeue_states
 from . import slurm_options as _options
+from .slurm_case_state import case_state
 
 # Checked by the library check, and re-exported: what each field may hold, the
 # overrides the options become and how the command line is put together.
@@ -286,6 +287,9 @@ def start_submit(command: list[str], base: Path) -> Submission:
 
 # ── Following a batch ──────────────────────────────────────────────────────
 
+#: ACTIVE_STATES as the typed tuple ui.slurm_case_state takes.
+_ACTIVE_STATES: tuple[str, ...] = tuple(sorted(ACTIVE_STATES))
+
 
 def _case_states(
     layout: BatchLayout,
@@ -310,40 +314,50 @@ def _case_states(
             "stem": case.get("stem"),
             "overrides": case.get("case_overrides") or [],
         }
+        result: dict[str, Any] = {}
+        errored = passed = False
         if record is not None:
             result = record.get("result") or {}
+            errored = bool(record.get("errored"))
+            passed = not errored and bool(result.get("passed"))
+        queued: str | None = None
+        squeue_known = at_case = False
+        task, job_id, task_state, task_error = 0, "", "", None
+        if record is None and index in given:
+            sub_index, task, sub = given[index]
+            states = squeue.get(sub_index)
+            squeue_known = states is not None
+            queued = None if states is None else states.get(task)
+            status = layout.read_task(sub_index, task) or {}
+            at_case = bool(status.get("current") == index)
+            job_id = f"{sub.get('job_id')}"
+            task_state = f"{status.get('state', 'never started')}"
+            if status.get("error"):
+                task_error = f"{status['error']}"
+        state, message = case_state(
+            record is not None,
+            errored,
+            passed,
+            index in given,
+            queued,
+            squeue_known,
+            at_case,
+            task,
+            job_id,
+            task_state,
+            task_error,
+            _ACTIVE_STATES,
+        )
+        if record is not None:
             entry.update(
-                state="errored"
-                if record.get("errored")
-                else ("passed" if result.get("passed") else "failed"),
+                state=state,
                 message=result.get("message", ""),
                 elapsed_seconds=result.get("elapsed_seconds"),
                 host=record.get("host"),
                 job_id=record.get("job_id"),
             )
-        elif index not in given:
-            entry.update(state="missing", message="never submitted")
         else:
-            sub_index, task, sub = given[index]
-            states = squeue.get(sub_index)
-            queued = None if states is None else states.get(task)
-            status = layout.read_task(sub_index, task) or {}
-            if queued in ACTIVE_STATES:
-                running = queued == "RUNNING" and status.get("current") == index
-                entry.update(
-                    state="running" if running else "pending",
-                    message=f"task {task} of job {sub.get('job_id')}: {queued.lower()}",
-                )
-            elif states is None:
-                entry.update(state="unknown", message="squeue could not be asked")
-            else:
-                why = status.get("state", "never started")
-                if status.get("error"):
-                    why += f": {status['error']}"
-                entry.update(
-                    state="missing",
-                    message=f"no result: task {task} of job {sub.get('job_id')} {why}",
-                )
+            entry.update(state=state, message=message)
         out.append(entry)
     return out
 
