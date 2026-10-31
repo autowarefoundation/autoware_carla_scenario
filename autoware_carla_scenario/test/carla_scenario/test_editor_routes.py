@@ -34,6 +34,12 @@ from autoware_carla_scenario.editor.service import EditorError, EditorService
 
 T = TypeVar("T")
 
+#: How long a test waits on another thread before it calls that a hang. It
+#: bounds a hang and nothing else: on a loaded machine (a full ``-n auto`` run
+#: beside a Codon build) the thread it waits for can take tens of seconds to be
+#: scheduled, which must not fail the test.
+_HANG_S = 120.0
+
 
 def _present(value: T | None, what: str) -> T:
     """Return *value*, failing the test when the editor dropped it."""
@@ -2607,7 +2613,7 @@ class TestDraftsDoNotShareAnExport:
             archive.parent.mkdir(parents=True, exist_ok=True)
             archive.write_bytes(b"PK-half-written")
             zipping.set()
-            assert release.wait(10)
+            assert release.wait(_HANG_S)
             real_zip(source, archive)
 
         monkeypatch.setattr(service_module, "_zip_directory", _slow_zip)
@@ -2618,11 +2624,12 @@ class TestDraftsDoNotShareAnExport:
         )
         exporter.start()
         try:
-            assert zipping.wait(10)
+            assert zipping.wait(_HANG_S)
             during = client.get(f"/draft/{draft_id}/wheelhouse.zip")
         finally:
             release.set()
-            exporter.join(10)
+            exporter.join(_HANG_S)
+        assert not exporter.is_alive(), "the export never finished"
         assert during.status_code == 200
         assert during.content == first
         after = client.get(f"/draft/{draft_id}/wheelhouse.zip").content
@@ -2648,7 +2655,7 @@ class TestMapActionsKeepConcurrentEdits:
 
         def _fetch(document: ScenarioDocument, *, refresh: bool = False) -> str:
             started.set()
-            assert release.wait(10)
+            assert release.wait(_HANG_S)
             document.map.name = name
             return f"{name} cached."
 
@@ -2674,7 +2681,7 @@ class TestMapActionsKeepConcurrentEdits:
             lambda: client.post(f"/draft/{draft_id}/map/fetch", data={})
         )
         try:
-            assert started.wait(10)
+            assert started.wait(_HANG_S)
             saved = client.post(
                 f"/draft/{draft_id}/save", data={"title": "Edited meanwhile"}
             )
@@ -2682,7 +2689,8 @@ class TestMapActionsKeepConcurrentEdits:
             client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
         finally:
             release.set()
-            thread.join(10)
+            thread.join(_HANG_S)
+        assert not thread.is_alive(), "the map fetch never finished"
 
         assert results and results[0].status_code == 200
         assert "FetchedTown cached." in results[0].text
@@ -2708,11 +2716,12 @@ class TestMapActionsKeepConcurrentEdits:
             lambda: client.post(f"/draft/{draft_id}/map/fetch", data={})
         )
         try:
-            assert started.wait(10)
+            assert started.wait(_HANG_S)
             client.post(f"/draft/{draft_id}/scenario", data={"map_name": "UserTown"})
         finally:
             release.set()
-            thread.join(10)
+            thread.join(_HANG_S)
+        assert not thread.is_alive(), "the map fetch never finished"
 
         assert results and "changed while" in results[0].text
         assert _document(store, draft_id).map.name == "UserTown"
