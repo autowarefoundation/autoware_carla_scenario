@@ -35,7 +35,8 @@ driver:
   # 0 falls back to CARLA's trigger volumes, which only report a light on arrival.
   traffic_light_sight_distance_m: 60.0
   actor_horizon_m: 150.0
-  random_seed: 0
+  # The policy's session seed; null hands it the run's seed (`seed`).
+  random_seed: null
   cameras:
     - logical_id: camera_front_wide_120fov
       image_width: 960

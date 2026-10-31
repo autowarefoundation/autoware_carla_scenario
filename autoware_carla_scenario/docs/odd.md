@@ -753,7 +753,7 @@ or in the scenario's YAML:
 sweep:
   odd_sample:
     count: 20              # cases; one per lanelet case when left out
-    seed: 0                # same seed, ODD, knobs and coverage: same cases
+    seed: null             # the run's (`seed`) when null; same seed, ODD, knobs and coverage: same cases
     strategy: coverage     # uniform | coverage | weighted (weighted when `weights` is given)
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     weights: null          # module -> share of the cases, or a YAML file of them; see "Sampling by shares of the ODD"

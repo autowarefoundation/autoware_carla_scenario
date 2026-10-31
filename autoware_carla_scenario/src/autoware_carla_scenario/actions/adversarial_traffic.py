@@ -36,6 +36,7 @@ from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
+from ..seed import resolve_seed
 from ..traffic.base import TrafficBackend
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
@@ -66,7 +67,8 @@ class AdversarialTrafficAction(BaseAction):
         condition: When it starts; at once by default.
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
-        seed: Seeds the sampling and the triggers' draws.
+        seed: Seeds the sampling and the triggers' draws; ``None``
+            (default) takes the run's seed (:mod:`~autoware_carla_scenario.seed`).
         settings: NADE's numbers; TeraSim's by default.
         thresholds: The triggers' numbers; TeraSim's by default.
         following_mode: How a sampled adversity is driven: ``FOLLOW`` (the
@@ -98,7 +100,7 @@ class AdversarialTrafficAction(BaseAction):
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "adversarial_traffic",
-        seed: int = 0,
+        seed: Optional[int] = None,
         settings: NadeSettings = DEFAULT_NADE,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
@@ -119,7 +121,7 @@ class AdversarialTrafficAction(BaseAction):
             until=forever,
         )
         self._adversities = list(adversities)
-        self._sampler = ImportanceSampler(seed, settings, thresholds)
+        self._sampler = ImportanceSampler(resolve_seed(seed), settings, thresholds)
         self._following_mode = following_mode
         self._executions = []
         self._choices = []
