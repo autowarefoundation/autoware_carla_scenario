@@ -1140,6 +1140,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#one-seed-for-the-whole-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Seed for the Whole Run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#hydra-configuration-system" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2825,6 +2836,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#one-seed-for-the-whole-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One Seed for the Whole Run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#hydra-configuration-system" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3851,36 +3873,94 @@ in a <code>--multirun</code> batch it counts the expanded cases:</p>
 <a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="c1"># Change Traffic Manager port</span>
 <a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>traffic_manager.port<span class="o">=</span><span class="m">8200</span>
 </code></pre></div>
+<h3 id="one-seed-for-the-whole-run">One Seed for the Whole Run<a class="headerlink" href="#one-seed-for-the-whole-run" title="Permanent link">&para;</a></h3>
+<p><code>seed</code> (top level, <code>0</code> by default) is the one number every random draw of a run
+follows, so the same seed runs the same scenario again:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="nv">seed</span><span class="o">=</span><span class="m">42</span>
+</code></pre></div>
+<p>It is the seed of:</p>
+<table>
+<thead>
+<tr>
+<th>What draws</th>
+<th>Its own seed, which wins when set</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The cases a sweep draws from the ODD (<code>sweep.odd_sample</code>), and the grip and visibility drawn for each</td>
+<td><code>sweep.odd_sample.seed</code></td>
+</tr>
+<tr>
+<td>The scenario: <code>BaseScenario.random_seed</code></td>
+<td>--</td>
+</tr>
+<tr>
+<td>The traffic backend: CARLA's TrafficManager (<code>set_random_device_seed</code>, each vehicle's parameter draws), SUMO (<code>--seed</code>, <code>netconvert --seed</code>, its own draws)</td>
+<td>-- (the scenario's)</td>
+</tr>
+<tr>
+<td>CARLA's pedestrian navigation (<code>World.set_pedestrians_seed</code>)</td>
+<td>-- (the scenario's)</td>
+</tr>
+<tr>
+<td>Background traffic</td>
+<td><code>background_traffic.seed</code></td>
+</tr>
+<tr>
+<td>The adversarial actions, <code>AdversarialTrafficAction</code>, <code>AdversityFeasibleCondition</code>, <code>TrafficSourceAction</code></td>
+<td>their <code>seed</code> argument (<code>Seed</code> in the editor)</td>
+</tr>
+<tr>
+<td>The driver policy's session (<code>DriveSessionRequest.random_seed</code>)</td>
+<td><code>driver.random_seed</code></td>
+</tr>
+<tr>
+<td>A LiDAR's weather noise</td>
+<td><code>driver.lidars[].noise_seed</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every one of those seeds is <code>null</code> (<code>None</code> in Python) by default, and a null seed
+is the run's. In Python the run's seed lives in <code>autoware_carla_scenario.seed</code>:
+the runner sets it from the scenario's <code>random_seed</code> before <code>setup()</code> (and
+<code>scenario</code> sets it from the config before it builds the scenario), and a
+component built with <code>seed=None</code> takes it when it is built. A scenario that
+draws for itself seeds its own generator from <code>self.random_seed</code>.</p>
+<p>A route search's <code>seed</code> (<code>sweep.route.seed</code>) is not one of them: unset, the
+matches are not shuffled at all. A config with no <code>seed</code> key (a scenario
+package's own <code>config.yaml</code> written before it existed) leaves the scenario the
+<code>random_seed</code> it was built with.</p>
 <h3 id="hydra-configuration-system">Hydra Configuration System<a class="headerlink" href="#hydra-configuration-system" title="Permanent link">&para;</a></h3>
 <p>Configuration files are located in <code>src/autoware_carla_scenario/examples/conf/</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>conf/
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>├── config.yaml              # Root config (defines defaults and top-level overrides)
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>├── server/
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>│   └── localhost.yaml       # Server connection settings
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>├── ego/
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>│   └── default.yaml         # Ego vehicle settings
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>├── entity/
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>│   └── default.yaml         # Entity spawn and ground projection settings
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>├── traffic_manager/
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>│   └── default.yaml         # CARLA Traffic Manager settings
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>├── map/
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
-<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>└── scenario/
-<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>    ├── intersection_passing/
-<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>    │   ├── straight.yaml
-<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    │   ├── left_turn.yaml
-<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    │   ├── right_turn.yaml
-<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    │   └── straight_3npc.yaml
-<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>    ├── lane_change/
-<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>    │   ├── left.yaml
-<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>    │   └── right.yaml
-<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>    ├── lane_change_fail/
-<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>    │   ├── left.yaml
-<a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>    │   └── right.yaml
-<a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>    ├── temporary_stop/
-<a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>    │   └── temporary_stop.yaml
-<a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>    └── traffic_light_compliance/
-<a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>        └── traffic_light_compliance.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>conf/
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>├── config.yaml              # Root config (defines defaults and top-level overrides)
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>├── server/
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>│   └── localhost.yaml       # Server connection settings
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>├── ego/
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>│   └── default.yaml         # Ego vehicle settings
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>├── entity/
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>│   └── default.yaml         # Entity spawn and ground projection settings
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>├── traffic_manager/
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>│   └── default.yaml         # CARLA Traffic Manager settings
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>├── map/
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>└── scenario/
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    ├── intersection_passing/
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    │   ├── straight.yaml
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    │   ├── left_turn.yaml
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>    │   ├── right_turn.yaml
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>    │   └── straight_3npc.yaml
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>    ├── lane_change/
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>    │   ├── left.yaml
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>    │   └── right.yaml
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>    ├── lane_change_fail/
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>    │   ├── left.yaml
+<a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>    │   └── right.yaml
+<a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>    ├── temporary_stop/
+<a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>    │   └── temporary_stop.yaml
+<a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a>    └── traffic_light_compliance/
+<a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>        └── traffic_light_compliance.yaml
 </code></pre></div>
 <h4 id="root-configuration-configyaml">Root Configuration (<code>config.yaml</code>)<a class="headerlink" href="#root-configuration-configyaml" title="Permanent link">&para;</a></h4>
 <p>Defines the default config group composition:</p>
@@ -4082,12 +4162,12 @@ markers), each condition's state and the verdict (<a href="../trajectory_log/">T
 To see it, make it a <a href="https://rerun.io">Rerun</a> recording, <code>{ScenarioName}.rrd</code>
 beside the log, and open that in the Rerun viewer. The conversion is the
 <code>autoware-carla-scenario-rerun</code> package, installed with the <code>rerun</code> extra:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># The converter (rerun), and the Rerun viewer its recordings are made for (viewer):</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun,viewer]'</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># A recording of every run, made as each run ends:</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span>--multirun<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>rerun<span class="w"> </span>outputs/2026-10-18/08-48-12/CutInScenario-3.rrd<span class="w">     </span><span class="c1"># the Rerun viewer</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># The converter (rerun), and the Rerun viewer its recordings are made for (viewer):</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun,viewer]'</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c1"># A recording of every run, made as each run ends:</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span>--multirun<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>rerun<span class="w"> </span>outputs/2026-10-18/08-48-12/CutInScenario-3.rrd<span class="w">     </span><span class="c1"># the Rerun viewer</span>
 </code></pre></div>
 <table>
 <thead>
@@ -4179,9 +4259,9 @@ the scene tier4/e2e-devkit decodes, scores and draws (<a href="../t4_scene/">T4 
 <p>They are written during the run into <code>{ScenarioName}.sensors.rrd</code>; once the log
 is converted they are merged into <code>{ScenarioName}.rrd</code> (<code>rerun rrd merge</code>) and
 that file is removed. It needs the Rerun SDK of the converter's version:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun-lidar]'</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>...<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span>rerun.lidar<span class="o">=</span><span class="nb">true</span><span class="w"> </span>rerun.cameras<span class="o">=</span><span class="nb">true</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun-lidar]'</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>...<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span>rerun.lidar<span class="o">=</span><span class="nb">true</span><span class="w"> </span>rerun.cameras<span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <p>Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
 a camera frame is its JPEG (<code>driver.image_quality</code>). A merge that fails keeps
@@ -4190,9 +4270,9 @@ conversion). The two cannot be opened together instead: the viewer registers a
 file by its recording id, and the second replaces the first.</p>
 <p>A run made without it (or by a version before it) can be converted afterwards,
 the same way:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Every run of a session (a sweep's directory works the same), or one log:</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Every run of a session (a sweep's directory works the same), or one log:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>python<span class="w"> </span>-m<span class="w"> </span>autoware_carla_scenario.rerun<span class="w"> </span>outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
 </code></pre></div>
 <p>or from Python, <code>autoware_carla_scenario.rerun.convert_outputs(path)</code>. The
 converter reads nothing but the log and the map files the log names, so it
@@ -4252,7 +4332,7 @@ one warns that it is ignored and says the above.</p>
 </tbody>
 </table>
 <p>Map paths can use environment variables with Hydra's OmegaConf resolver:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}</span>
 </code></pre></div>
 <h3 id="supported-scenarios">Supported Scenarios<a class="headerlink" href="#supported-scenarios" title="Permanent link">&para;</a></h3>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
@@ -4362,11 +4442,11 @@ one warns that it is ignored and says the above.</p>
 </tbody>
 </table>
 <p><strong>NPC vehicle configuration:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">npc_vehicles</span><span class="p">:</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.mini.cooper</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">npc_vehicles</span><span class="p">:</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.mini.cooper</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
 </code></pre></div>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
@@ -4610,15 +4690,15 @@ overridden). Its attributes are sampled on every tick and written, with the
 scenario's own cover items, to <code>{ScenarioName}_coverage.json</code>.
 <code>scenario-coverage outputs/</code> merges those files into a report. See
 <a href="../odd/">ODD</a> and <a href="../coverage/">Coverage</a>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.yaml
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>path/to/urban.yaml
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-coverage<span class="w"> </span>outputs/<span class="w"> </span>--markdown<span class="w"> </span>coverage.md
 </code></pre></div>
 <p>Before running, <code>scenario-odd route</code> plans each scenario's ego route on the
 Lanelet2 map (no CARLA server) and reports which parts of it are outside the
 ODD, which are undecided until run time, the metres it is expected to cover
 in each bucket, and the buckets no route reaches
 (<a href="../odd/#checking-a-planned-route">Checking a planned route</a>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-odd<span class="w"> </span>route<span class="w"> </span>path/to/urban.yaml<span class="w"> </span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>lane_change/left
 </code></pre></div>
 <h3 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h3>
 <p>Each scenario run generates output in <code>outputs/YYYY-MM-DD/HH-MM-SS/</code>:</p>
@@ -4678,16 +4758,16 @@ an <code>AndCondition</code> of two <code>StickyCondition</code>s, which joins i
 messages with <code>AND</code> -- or <code>Scenario completed successfully</code> when
 <code>is_done()</code> ended the run. When a fail condition ends the run, it is that
 condition's message.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="p">{</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s"</span><span class="p">,</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 5 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">},</span>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 12 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s"</span><span class="p">,</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 5 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">},</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 12 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Why a run failed:</strong></p>
 <p>A failed run's result has a <code>failure</code>: the fail condition that ended it, and a
@@ -4695,14 +4775,14 @@ condition's message.</p>
 the condition's label is the scenario author's. A batch, a sweep or two
 versions of a driver can then be compared by what went wrong
 (<code>batch_results.json</code> carries it for every case, and the summary prints it).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">"failure"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"condition"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail[1](scenario_timeout)"</span><span class="p">,</span>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"progress"</span><span class="p">,</span>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.0</span><span class="p">,</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Timeout after 25.00s (limit: 25.0s)"</span><span class="p">,</span>
-<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">  </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"stalled"</span><span class="p">,</span>
-<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">  </span><span class="nt">"also_triggered"</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
-<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">"failure"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">"condition"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail[1](scenario_timeout)"</span><span class="p">,</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"progress"</span><span class="p">,</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">  </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mf">25.0</span><span class="p">,</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Timeout after 25.00s (limit: 25.0s)"</span><span class="p">,</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">  </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"stalled"</span><span class="p">,</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">  </span><span class="nt">"also_triggered"</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="p">}</span>
 </code></pre></div>
 <table>
 <thead>
@@ -4755,12 +4835,12 @@ versions of a driver can then be compared by what went wrong
 </tbody>
 </table>
 <p>A scenario gives a fail condition its category when it registers it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.failure</span><span class="w"> </span><span class="kn">import</span> <span class="n">FailureCategory</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    <span class="n">PersistentCondition</span><span class="p">(</span><span class="n">AndCondition</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"no_left_indicator"</span><span class="p">),</span>
-<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">category</span><span class="o">=</span><span class="n">FailureCategory</span><span class="o">.</span><span class="n">SIGNALLING</span><span class="p">,</span>
-<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.failure</span><span class="w"> </span><span class="kn">import</span> <span class="n">FailureCategory</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">PersistentCondition</span><span class="p">(</span><span class="n">AndCondition</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"no_left_indicator"</span><span class="p">),</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">category</span><span class="o">=</span><span class="n">FailureCategory</span><span class="o">.</span><span class="n">SIGNALLING</span><span class="p">,</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="p">)</span>
 </code></pre></div>
 <p>Without one, the condition says (<code>BaseCondition.failure_category()</code>): a
 collision condition is <code>collision</code>, a timeout <code>progress</code>, a time-to-collision
@@ -4828,11 +4908,11 @@ exit 0 always means something ran and passed. The exceptions:</p>
 <p>By default CARLA's TrafficManager drives the ego. To hand it to an external driving
 policy over the <code>egodriver</code> gRPC contract instead, start the policy server and select
 the <code>carla_driver</code> entity:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># 1. Start the policy (in its own environment)</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="c1"># 2. Run any scenario against it</span>
-<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># 1. Start the policy (in its own environment)</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>carla-driver-interface<span class="w"> </span>serve<span class="w"> </span>--policy<span class="w"> </span>route_follower<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="c1"># 2. Run any scenario against it</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.address<span class="o">=</span>localhost:50051
 </code></pre></div>
 <p><code>ego.entity</code> accepts:</p>
 <table>
@@ -4866,15 +4946,15 @@ the <code>carla_driver</code> entity:</p>
 </tbody>
 </table>
 <p>Common overrides:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># Query the policy every simulation tick instead of every other one</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy_timestep_s<span class="o">=</span><span class="m">0</span>.05
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="c1"># Pin the rig origin offset when the derived value looks wrong (CARLA 0.9.x)</span>
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.rear_axle_offset_m<span class="o">=</span>-1.4
-<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>
-<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="c1"># Send a smaller, cheaper camera frame</span>
-<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">    </span>driver.cameras.0.image_width<span class="o">=</span><span class="m">480</span><span class="w"> </span>driver.cameras.0.image_height<span class="o">=</span><span class="m">302</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Query the policy every simulation tick instead of every other one</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy_timestep_s<span class="o">=</span><span class="m">0</span>.05
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="c1"># Pin the rig origin offset when the derived value looks wrong (CARLA 0.9.x)</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.rear_axle_offset_m<span class="o">=</span>-1.4
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="c1"># Send a smaller, cheaper camera frame</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="w">    </span>driver.cameras.0.image_width<span class="o">=</span><span class="m">480</span><span class="w"> </span>driver.cameras.0.image_height<span class="o">=</span><span class="m">302</span>
 </code></pre></div>
 <p>See <a href="../driver_interface/">External Driver Interface</a> for the full reference.</p>
 <h3 id="rendering-sensors-with-carla_canvas">Rendering sensors with carla_canvas<a class="headerlink" href="#rendering-sensors-with-carla_canvas" title="Permanent link">&para;</a></h3>
@@ -4886,9 +4966,9 @@ types it renders, and typesafe_carla's sensor plugin hands those sensors'
 measurements over from the service. <code>canvas.config</code> points a run at such a
 file; nothing else about the run changes -- the scenario, the driver and the
 measurements they read are the same:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'carla-canvas[client]&gt;=0.2'</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span>canvas.config<span class="o">=</span>path/to/lidarverse.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'carla-canvas[client]&gt;=0.2'</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">    </span>canvas.config<span class="o">=</span>path/to/lidarverse.yaml
 </code></pre></div>
 <table>
 <thead>
@@ -4924,8 +5004,8 @@ under test their sensors' and buses' traffic (CAN, GNSS, LiDAR packets, camera
 frames) through hilspy, initializes and finalizes them around each scenario,
 and hands their commands back to a run with <code>ego.entity=hils</code>; configured by
 one YAML file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>uvx<span class="w"> </span>--from<span class="w"> </span><span class="s1">'autoware-carla-scenario[hils]'</span><span class="w"> </span>scenario-hils<span class="w"> </span>--example<span class="w"> </span>&gt;<span class="w"> </span>hils.yaml
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>uvx<span class="w"> </span>--from<span class="w"> </span><span class="s1">'autoware-carla-scenario[hils]'</span><span class="w"> </span>scenario-hils<span class="w"> </span>hils.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>uvx<span class="w"> </span>--from<span class="w"> </span><span class="s1">'autoware-carla-scenario[hils]'</span><span class="w"> </span>scenario-hils<span class="w"> </span>--example<span class="w"> </span>&gt;<span class="w"> </span>hils.yaml
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uvx<span class="w"> </span>--from<span class="w"> </span><span class="s1">'autoware-carla-scenario[hils]'</span><span class="w"> </span>scenario-hils<span class="w"> </span>hils.yaml
 </code></pre></div>
 <p>See <a href="../hils/">HILS Bridge</a>.</p>
 <hr />
@@ -4941,20 +5021,20 @@ one YAML file:</p>
 </ol>
 <p>The IDs go into <code>no_3d_model_lanelet_ids</code> in the YAML's <code>map:</code> section when it has one, and at the top level otherwise (the same place <code>name</code>, <code>xodr_path</code> and <code>lanelet2_path</code> are read from). An existing value is replaced whatever its style (a block list, a flow list such as <code>[1, 2]</code>, an empty value, <code>null</code>); a missing key is added after the section's last entry. The file is edited as text, so comments, <code>${...}</code> interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. <code>map: {name: X}</code> -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.</p>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Basic detection using map config YAML</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="c1"># Connect to a remote CARLA server</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--host<span class="w"> </span><span class="m">192</span>.168.1.100<span class="w"> </span>--port<span class="w"> </span><span class="m">3000</span>
-<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># Increase ray search range for hilly terrain</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--ray-upper<span class="w"> </span><span class="m">10</span>.0<span class="w"> </span>--ray-lower<span class="w"> </span><span class="m">10</span>.0
-<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>
-<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="c1"># Longer timeout for slow connections</span>
-<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span>.0
-<a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a>
-<a id="__codelineno-25-13" name="__codelineno-25-13" href="#__codelineno-25-13"></a><span class="c1"># Debug logging</span>
-<a id="__codelineno-25-14" name="__codelineno-25-14" href="#__codelineno-25-14"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>-v
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Basic detection using map config YAML</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="c1"># Connect to a remote CARLA server</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--host<span class="w"> </span><span class="m">192</span>.168.1.100<span class="w"> </span>--port<span class="w"> </span><span class="m">3000</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="c1"># Increase ray search range for hilly terrain</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--ray-upper<span class="w"> </span><span class="m">10</span>.0<span class="w"> </span>--ray-lower<span class="w"> </span><span class="m">10</span>.0
+<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a>
+<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="c1"># Longer timeout for slow connections</span>
+<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span>.0
+<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a>
+<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="c1"># Debug logging</span>
+<a id="__codelineno-26-14" name="__codelineno-26-14" href="#__codelineno-26-14"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml<span class="w"> </span>-v
 </code></pre></div>
 <h3 id="command-line-options">Command-Line Options<a class="headerlink" href="#command-line-options" title="Permanent link">&para;</a></h3>
 <table>
@@ -5021,9 +5101,9 @@ one YAML file:</p>
 </table>
 <h3 id="input-yaml-requirements">Input YAML Requirements<a class="headerlink" href="#input-yaml-requirements" title="Permanent link">&para;</a></h3>
 <p>The YAML file must contain at minimum:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NishishinjukuMap</span><span class="w">        </span><span class="c1"># CARLA map name</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">  </span><span class="c1"># Path to OpenDRIVE file</span>
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NishishinjukuMap</span><span class="w">        </span><span class="c1"># CARLA map name</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">  </span><span class="c1"># Path to OpenDRIVE file</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
 </code></pre></div>
 <p>These keys may also sit under a <code>map:</code> section (as in <code>conf/map/nishishinjuku.yaml</code>, a <code># @package _global_</code> config); <code>no_3d_model_lanelet_ids</code> is then written there too.</p>
 <h3 id="integration-with-scenario-runner">Integration with Scenario Runner<a class="headerlink" href="#integration-with-scenario-runner" title="Permanent link">&para;</a></h3>
@@ -5038,17 +5118,17 @@ one YAML file:</p>
 <li>Provides an API for triggering scenario runs and monitoring progress in real time</li>
 </ol>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1"># Start with default settings (127.0.0.1:9000, current directory)</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="c1"># Custom host and port</span>
-<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
-<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>
-<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="c1"># Scan another project: the directory containing outputs/ and multirun/</span>
-<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--base-path<span class="w"> </span>/path/to/project
-<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>
-<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a><span class="c1"># All options</span>
-<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--help
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="c1"># Start with default settings (127.0.0.1:9000, current directory)</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="c1"># Custom host and port</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="c1"># Scan another project: the directory containing outputs/ and multirun/</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--base-path<span class="w"> </span>/path/to/project
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a>
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a><span class="c1"># All options</span>
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--help
 </code></pre></div>
 <p>Then open <code>http://localhost:9000</code> (or the configured host/port) in a browser.</p>
 <table>
@@ -5102,7 +5182,7 @@ shown as it is; otherwise the viewer makes it the first time the page is
 opened (in a worker thread, some tens of milliseconds for a case) and keeps it
 beside the log, or, where the session's directory cannot be written, in its
 cache directory. Making one needs the converter in the viewer's environment:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun]'</span><span class="w">    </span><span class="c1"># or: pip install autoware-carla-scenario-rerun</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun]'</span><span class="w">    </span><span class="c1"># or: pip install autoware-carla-scenario-rerun</span>
 </code></pre></div>
 <p>Without it the page says so, and still shows a recording already made.
 The page's <em>Download .rrd</em> link is the recording itself, for the native
@@ -5112,8 +5192,8 @@ converter writes recordings with (<code>RERUN_VERSION</code>, 0.38.1 for convert
 a recording opens only in a viewer of its minor version). By default the page
 loads it from the unpkg CDN, pinned to that version. For a machine without
 the network, keep a copy that the viewer serves itself:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w">                 </span><span class="c1"># from the npm registry, checked against its integrity hash</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w"> </span>--from<span class="w"> </span>web-viewer-0.38.1.tgz<span class="w">   </span><span class="c1"># from the package's tarball, copied in</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w">                 </span><span class="c1"># from the npm registry, checked against its integrity hash</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w"> </span>--from<span class="w"> </span>web-viewer-0.38.1.tgz<span class="w">   </span><span class="c1"># from the package's tarball, copied in</span>
 </code></pre></div>
 <p>The copy goes to <code>~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/&lt;version&gt;/</code>
 (<code>VIEWER_CACHE_DIR</code> moves the cache) and is used from then on.
@@ -5338,12 +5418,12 @@ sync the environment).</p>
 </tbody>
 </table>
 <p><strong>Run request body format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="p">{</span>
-<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
-<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
-<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="w">  </span><span class="nt">"launcher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"local"</span>
-<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="p">{</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="w">  </span><span class="nt">"launcher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"local"</span>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>With <code>"launcher": "slurm"</code>, <code>"slurm"</code> holds the <code>launcher.*</code> keys:
 <code>{"partition": "main", "array_parallelism": 2, "cases_per_task": null,
@@ -5354,12 +5434,12 @@ per line, without <code>${...}</code> or a backslash continuing it; <code>env</c
 lines, or a mapping, each value exported as written, so without <code>${...}</code> either
 -- an OmegaConf interpolation in the override the viewer passes on).</p>
 <p><strong>Progress SSE event format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="p">{</span>
-<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
-<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
-<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="p">{</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Where <code>status</code> is one of: <code>"running"</code>, <code>"idle"</code>, or <code>"done"</code>.</p>
 <hr />
@@ -5473,40 +5553,40 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
 <hr />
 <h2 id="common-use-cases">Common Use Cases<a class="headerlink" href="#common-use-cases" title="Permanent link">&para;</a></h2>
 <h3 id="use-case-1-run-a-single-scenario">Use Case 1: Run a Single Scenario<a class="headerlink" href="#use-case-1-run-a-single-scenario" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="c1"># Start CARLA server first, then:</span>
-<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="c1"># Start CARLA server first, then:</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
 </code></pre></div>
 <h3 id="use-case-2-run-all-scenarios-for-a-map">Use Case 2: Run All Scenarios for a Map<a class="headerlink" href="#use-case-2-run-all-scenarios-for-a-map" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-3-test-on-a-remote-carla-server">Use Case 3: Test on a Remote CARLA Server<a class="headerlink" href="#use-case-3-test-on-a-remote-carla-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
 </code></pre></div>
 <h3 id="use-case-4-detect-missing-3d-models-before-running-scenarios">Use Case 4: Detect Missing 3D Models Before Running Scenarios<a class="headerlink" href="#use-case-4-detect-missing-3d-models-before-running-scenarios" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
-<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
-<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>
-<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
-<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
-<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
+<a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-5-browse-results-in-the-web-ui">Use Case 5: Browse Results in the Web UI<a class="headerlink" href="#use-case-5-browse-results-in-the-web-ui" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="c1"># 1. Run scenarios</span>
-<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
-<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>
-<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="c1"># 2. Launch the viewer from the project directory: it scans outputs/ and</span>
-<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="c1">#    multirun/ there (from elsewhere: --base-path &lt;dir containing outputs/&gt;)</span>
-<a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-36-7" name="__codelineno-36-7" href="#__codelineno-36-7"></a>
-<a id="__codelineno-36-8" name="__codelineno-36-8" href="#__codelineno-36-8"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="c1"># 1. Run scenarios</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="c1"># 2. Launch the viewer from the project directory: it scans outputs/ and</span>
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="c1">#    multirun/ there (from elsewhere: --base-path &lt;dir containing outputs/&gt;)</span>
+<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a>
+<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
 </code></pre></div>
 <h3 id="use-case-6-resume-a-failed-batch">Use Case 6: Resume a Failed Batch<a class="headerlink" href="#use-case-6-resume-a-failed-batch" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
-<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
-<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>
-<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="c1"># Resume from the 4th scenario</span>
-<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">4</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="c1"># Resume from the 4th scenario</span>
+<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">4</span>
 </code></pre></div>
 <hr />
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -5567,7 +5647,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 30, 2026 19:59:52 UTC"><span class="timeago" datetime="2026-10-30T19:59:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 30, 2026 19:59:52 UTC">2026-10-30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 02:41:58 UTC"><span class="timeago" datetime="2026-10-31T02:41:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 02:41:58 UTC">2026-10-31</span>
   </span>
 
     

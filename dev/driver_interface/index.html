@@ -2566,7 +2566,7 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">  </span><span class="nt">send_actor_ground_truth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">  </span><span class="nt">traffic_light_sight_distance_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60.0</span>
 <a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">  </span><span class="nt">actor_horizon_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">150.0</span>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">  </span><span class="nt">random_seed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">  </span><span class="nt">random_seed</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">           </span><span class="c1"># null: the run's seed (`seed`)</span>
 <a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">  </span><span class="nt">cameras</span><span class="p">:</span>
 <a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">camera_front_wide_120fov</span>
 <a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">      </span><span class="nt">image_width</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">960</span>
@@ -2929,8 +2929,8 @@ sweep is taken -- the ODD's <code>rain</code> and <code>fog</code> knobs (<code>
 </tr>
 <tr>
 <td><code>noise_seed</code></td>
-<td><code>0</code></td>
-<td>Seed of the noise; with the sweep's frame, it repeats a run's sweeps</td>
+<td><code>null</code></td>
+<td>Seed of the noise (the run's <code>seed</code> when null); with the sweep's frame, it repeats a run's sweeps</td>
 </tr>
 <tr>
 <td><code>fog_density_scale</code></td>
@@ -3157,7 +3157,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 02:41:58 UTC"><span class="timeago" datetime="2026-10-31T02:41:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 02:41:58 UTC">2026-10-31</span>
   </span>
 
     
