@@ -57,7 +57,8 @@ the current one last, its states unrounded (the log keeps millimetres). A run
 younger than `t4_scene_history_s` sends the rows it has. On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
 observations carry them (of `base_link`, the acceleration an estimate), body
-angular velocity, front tyres' angle and odometry times; the first LiDAR's
+angular velocity (on a row the policy was not told, the log's), front tyres'
+angle and odometry times; the first LiDAR's
 current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
 the policy is sent (`driver.route_horizon_m`) walked along the map's lanelets

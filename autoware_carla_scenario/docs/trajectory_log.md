@@ -35,8 +35,8 @@ The records marked (2) in the table below that are not in that list
 know one skips it. So did the `tick`'s optional `angular_velocity` field: a
 file written before it has none.
 Every change keeps the records there are: a new version adds records (and
-optional fields), so a reader that skips the `type`s it does not know reads
-any later file.
+optional fields), so a reader that skips the `type`s and ignores the fields
+it does not know reads any later file.
 
 ## Records
 

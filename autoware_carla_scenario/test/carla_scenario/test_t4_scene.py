@@ -179,10 +179,17 @@ def _bicycle_turn(
     each tick's base_link velocity in the map frame."""
     ticks: list[dict] = []
     truths: list[np.ndarray] = []
-    rear = np.array([0.0, 0.0])
     for k in range(frames):
         yaw = 0.3 + yaw_rate * 0.05 * k
         heading = np.array([math.cos(yaw), math.sin(yaw)])
+        # The rear axle on its arc (radius _SPEED / yaw_rate), exactly.
+        if yaw_rate:
+            radius = _SPEED / yaw_rate
+            rear = radius * np.array(
+                [math.sin(yaw) - math.sin(0.3), math.cos(0.3) - math.cos(yaw)]
+            )
+        else:
+            rear = _SPEED * 0.05 * k * heading
         left = np.array([-math.sin(yaw), math.cos(yaw)])
         origin = rear + _AXLE_TO_ORIGIN * heading
         # v_origin = v_rear + w x (d * heading) = v_rear + w * d * left.
@@ -202,7 +209,6 @@ def _bicycle_turn(
             tick["angular_velocity"] = {"1": [0.0, 0.0, -math.degrees(yaw_rate)]}
         ticks.append(tick)
         truths.append(_SPEED * heading)
-        rear = rear + _SPEED * heading * 0.05
     return ticks, truths
 
 
@@ -237,6 +243,16 @@ def test_a_turning_egos_velocity_is_its_rear_axles(tmp_path: Path) -> None:
         np.tile([0.0, 0.0, _YAW_RATE], (6, 1)),
         atol=1e-12,
     )
+
+
+def test_the_turns_origin_velocity_is_its_positions_rate() -> None:
+    # The setup is a rigid body, not the converter's formula restated: the
+    # origin velocity the ticks carry is what its positions do between them.
+    ticks, _ = _bicycle_turn(5)
+    positions = np.array([t["actors"][0][1:3] for t in ticks])
+    for k in range(1, len(ticks) - 1):
+        rate = (positions[k + 1] - positions[k - 1]) / 0.1
+        np.testing.assert_allclose(ticks[k]["actors"][0][7:9], rate, atol=1e-3)
 
 
 def test_a_straight_egos_velocity_is_unchanged(tmp_path: Path) -> None:

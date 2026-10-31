@@ -342,7 +342,8 @@ class LiveT4Scene:
 
     def _fill_ego_extras(self, scene: pb.T4Scene, frames: Sequence[int]) -> None:
         """The ego's acceleration, angular velocity, tyre angle and odometry
-        times, on the rows they were told; masked on the others."""
+        times, on the rows they were told; masked on the others, but for the
+        angular velocity the log has (the converter's)."""
         ego = scene.ego
         rows = len(frames)
         poses = np.frombuffer(ego.poses.data, dtype="<f8").reshape(rows, 3)
