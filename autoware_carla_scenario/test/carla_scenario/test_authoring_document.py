@@ -84,6 +84,35 @@ class TestRoundTrip:
         with pytest.raises(ValueError):
             store.path_for("../../etc/passwd")
 
+    @pytest.mark.parametrize("draft_id", ["abc\n", "abc\r", "\nabc", "abc\n\n"])
+    def test_draft_ids_with_a_newline_are_refused(self, tmp_path, draft_id) -> None:
+        store = DraftStore(tmp_path)
+        with pytest.raises(ValueError, match="Invalid draft id"):
+            store.path_for(draft_id)
+
+    @pytest.mark.parametrize(
+        "text", ["just some text\n", "- a\n- b\n", "42\n", "true\n"]
+    )
+    def test_non_mapping_yaml_is_not_a_draft(self, tmp_path, text) -> None:
+        (tmp_path / "notes.yaml").write_text(text, encoding="utf-8")
+        store = DraftStore(tmp_path)
+        with pytest.raises(ValueError, match="not a draft"):
+            store.get("notes")
+
+    def test_malformed_yaml_is_not_a_draft(self, tmp_path) -> None:
+        (tmp_path / "broken.yaml").write_text("a: [\n", encoding="utf-8")
+        store = DraftStore(tmp_path)
+        with pytest.raises(ValueError, match="not a draft"):
+            store.get("broken")
+        assert store.list() == []
+
+    def test_list_skips_non_mapping_yaml(self, tmp_path) -> None:
+        store = DraftStore(tmp_path)
+        draft = store.create(new_document())
+        (tmp_path / "notes.yaml").write_text("just some text\n", encoding="utf-8")
+        (tmp_path / "items.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        assert [d.id for d in store.list()] == [draft.id]
+
 
 class TestLayoutIsPresentationOnly:
     def test_dropping_the_ui_block_does_not_change_compilation(self) -> None:
