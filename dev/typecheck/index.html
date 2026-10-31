@@ -4656,9 +4656,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-250 of the package's 361
+251 of the package's 362
 modules (69%; about 72,300 of
-125,300 lines) are <code>CHECKED</code>: the kinematics, the
+125,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4670,7 +4670,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 250 CHECKED modules</summary>
+<summary>The 251 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5410,6 +5410,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>scenario_config</code></td>
 <td>Public, reusable configuration dataclasses for scenario packages.</td>
+</tr>
+<tr>
+<td><code>scenario_glob</code></td>
+<td>Expand a scenario pattern to the config names it matches.</td>
 </tr>
 <tr>
 <td><code>scenario_queue</code></td>
