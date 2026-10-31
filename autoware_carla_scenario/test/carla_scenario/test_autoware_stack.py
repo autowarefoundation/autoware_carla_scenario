@@ -200,8 +200,12 @@ def test_process_group_stop_takes_the_children_too(tmp_path: Path) -> None:
     _wait_for(lambda: not _alive(child))
 
 
+#: How long the test waits for the background run before it calls that a
+#: hang: a bound on a hang only, far past what a loaded machine takes.
+_HANG_S = 300.0
+
 _BACKGROUND_PARENT = """\
-import json, signal, sys, time
+import json, os, signal, sys, time
 from pathlib import Path
 from autoware_carla_scenario.autoware_stack import ProcessGroup
 
@@ -223,10 +227,13 @@ with open(f"/proc/{group.pid}/stat") as stat:
 pid_tmp = out.with_suffix(".pid.tmp")
 pid_tmp.write_text(f"{group.pid} {started}")
 pid_tmp.replace(out.with_suffix(".pid"))
-deadline = time.monotonic() + 60.0
-while not child_out.exists():
-    if time.monotonic() > deadline:
-        break
+# For as long as the child runs: however slowly a loaded machine starts it,
+# it is stopped only once it reported, or the result would be about a child
+# stopped before it could (the test's own wait bounds a hang).  waitid with
+# WNOWAIT leaves an exited child unreaped, for stop() to find as it is.
+while not child_out.exists() and (
+    os.waitid(os.P_PID, group.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+):
     time.sleep(0.05)
 code = group.stop()
 json.dump(
@@ -264,9 +271,10 @@ def test_process_group_child_hears_sigint_from_a_background_run(
         start_new_session=True,
     )
     try:
-        # Generous: the parent only exits this late if SIGINT went unheeded
-        # and the stop fell through to SIGTERM after stop_timeout_s (60 s).
-        parent.wait(timeout=120)
+        # Bounds a hang only: the parent waits for the child to start however
+        # long that takes, then 60 s (stop_timeout_s) more if SIGINT went
+        # unheeded, which the exit code below then reports.
+        parent.wait(timeout=_HANG_S)
     finally:
         # Neither group is signalled once its leader is gone and its id may
         # belong to another test's process (#812).
