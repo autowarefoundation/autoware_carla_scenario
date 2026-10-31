@@ -36,6 +36,7 @@ import random
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
+from ..seed import resolve_seed
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -203,7 +204,9 @@ class TrafficSourceAction(_BackendAction):
             hold it below that (a queue, a bend, a red light).
         min_gap_m: The least distance from a new vehicle to any other one.
         blueprint: CARLA blueprint, or ``None`` for the backend's own.
-        seed: Seeds the choice of lanelet and position, for a reproducible run.
+        seed: Seeds the choice of lanelet and position, for a reproducible run;
+            ``None`` (default) takes the run's seed
+            (:mod:`~autoware_carla_scenario.seed`).
         label, condition, timing, once, until, reissue: as for
             :class:`~autoware_carla_scenario.actions.base.BaseAction`, except
             that with no *until* it runs until the scenario ends.  It reissues
@@ -233,7 +236,7 @@ class TrafficSourceAction(_BackendAction):
         speed_kmh: float = 30.0,
         min_gap_m: float = 15.0,
         blueprint: Optional[str] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         label: str = "traffic_source",
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
@@ -260,7 +263,7 @@ class TrafficSourceAction(_BackendAction):
         self._speed_kmh = speed_kmh
         self._min_gap = min_gap_m
         self._blueprint = blueprint
-        self._rng = random.Random(seed)
+        self._rng = random.Random(resolve_seed(seed))
         self._handles: set[str] = set()
         self._started = False
         self._last_time: Optional[float] = None

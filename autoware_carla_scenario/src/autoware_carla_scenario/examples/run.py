@@ -80,6 +80,7 @@ from autoware_carla_scenario.rerun import (
     RerunUnavailableError,
 )
 from autoware_carla_scenario.rerun import report as rerun_report
+from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
 from autoware_carla_scenario.t4_scene import T4SceneExporter
@@ -1465,6 +1466,20 @@ def run_batch(
     sys.exit(0 if all_passed else 1)
 
 
+def config_seed(cfg: DictConfig) -> int | None:
+    """The run's seed, the config's top-level ``seed``; ``None`` when it has none.
+
+    One number for every random draw of the run (:mod:`autoware_carla_scenario.seed`):
+    the scenario's :attr:`~autoware_carla_scenario.BaseScenario.random_seed`, and
+    through it the traffic backend's and CARLA's pedestrians'; the scenario's
+    actions, ``background_traffic`` and the driver policy that name no seed of
+    their own; and the cases a sweep draws from the ODD.  A config that predates
+    the key (an exported scenario package's) leaves the scenario its own seed.
+    """
+    value = cfg.get("seed")
+    return None if value is None else int(value)
+
+
 def build_scenario(
     cfg: DictConfig,
     *,
@@ -1481,8 +1496,14 @@ def build_scenario(
         lookup.  When provided, it is called as ``build_scenario_fn(cfg)``
         and its return value is forwarded to the caller.
     """
+    # Before anything is built: an action built with no seed of its own takes
+    # the run's when it is constructed.
+    seed = config_seed(cfg)
+    set_run_seed(DEFAULT_SEED if seed is None else seed)
     if build_scenario_fn is not None:
         ego, scenario = build_scenario_fn(cfg)
+        if seed is not None:
+            scenario.random_seed = seed
         _apply_ego_config(cfg, scenario)
         add_background_traffic(cfg, scenario)
         add_environment(cfg, scenario)
@@ -1506,6 +1527,8 @@ def build_scenario(
 
     ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
+    if seed is not None:
+        scenario.random_seed = seed
     # Built once: an Autoware ego holds a bridge server, and two of those cannot
     # hold the same address.
     ego_entity = build_ego_entity(cfg)
@@ -1564,7 +1587,9 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     settings = _to_dict(background)
     source = settings.get("source") or {}
     sink = settings.get("sink") or {}
-    seed = int(settings.get("seed", 0))
+    # null (the default) follows the run's seed, the scenario's.
+    seed_value = settings.get("seed")
+    seed = scenario.random_seed if seed_value is None else int(seed_value)
 
     def until(seconds: object, label: str) -> ElapsedTimeCondition | None:
         if seconds is None:

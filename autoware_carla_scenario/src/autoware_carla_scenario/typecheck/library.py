@@ -233,6 +233,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.scenario_config",
     "autoware_carla_scenario.scenario_queue",
     "autoware_carla_scenario.scenario_runner",
+    "autoware_carla_scenario.seed",
     "autoware_carla_scenario.sensor",
     "autoware_carla_scenario.sensor.base",
     "autoware_carla_scenario.sensor.carla_camera",

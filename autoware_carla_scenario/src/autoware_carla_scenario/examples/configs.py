@@ -371,6 +371,9 @@ class ScenarioRunConfig:
         | CutInConfig
     ) = field(default_factory=IntersectionPassingConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
+    #: The run's seed, which every random draw of the run follows
+    #: (:mod:`autoware_carla_scenario.seed`).
+    seed: int = 0
     #: Static check before the run: ``auto``, ``required`` or ``off``
     #: (:mod:`autoware_carla_scenario.typecheck.mode`).
     typecheck: str = "auto"
