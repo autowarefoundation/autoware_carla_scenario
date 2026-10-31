@@ -163,12 +163,14 @@ class TestTrafficSignalActionNone:
 # TrafficSignalAction — execute with specific Lanelet2 IDs
 # ---------------------------------------------------------------------------
 
+# The action resolves its lights through the coordinate module's resolver,
+# which the condition and the signal controllers share (#901).
 _PATCH_CONTROLLER_ID = (
-    "autoware_carla_scenario.actions.traffic_signal"
+    "autoware_carla_scenario.coordinate.traffic_light"
     ".lanelet2_traffic_light_id_to_opendrive_controller_id"
 )
 _PATCH_SIGNAL_IDS = (
-    "autoware_carla_scenario.actions.traffic_signal.get_signal_ids_for_controller"
+    "autoware_carla_scenario.coordinate.traffic_light.get_signal_ids_for_controller"
 )
 
 
@@ -339,7 +341,7 @@ class TestTrafficSignalActionTick:
 # TrafficSignalAction -- a Lanelet2 light no controller is named after
 # ---------------------------------------------------------------------------
 
-_PATCH_STOP_LINE = "autoware_carla_scenario.actions.traffic_signal.stop_line_in_carla"
+_PATCH_STOP_LINE = "autoware_carla_scenario.coordinate.traffic_light.stop_line_in_carla"
 
 
 @dataclass
