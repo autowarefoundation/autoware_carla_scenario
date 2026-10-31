@@ -953,7 +953,10 @@ class TrajectoryRun(BaseAction):
         self._held_at = None
         last = timeline.count - 1
         for _ in range(timeline.count + 2):
-            if elapsed < timeline.end_arrival:
+            # Within the tolerance of _absent: the scenario clock is a running
+            # sum of the tick, so an arrival on a whole number of ticks comes
+            # out a hair short of it, and it would end one tick late.
+            if elapsed < timeline.end_arrival - 1e-9:
                 break
             index = timeline.index(timeline.end_vertex)
             if timeline.end_kind == "end":
