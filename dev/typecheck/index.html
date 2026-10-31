@@ -4609,8 +4609,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-239 of the package's 345
-modules (69%; about 70,100 of
+240 of the package's 346
+modules (69%; about 70,200 of
 120,200 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4623,7 +4623,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 239 CHECKED modules</summary>
+<summary>The 240 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5413,6 +5413,10 @@ first paragraph of its docstring:</p>
 <td>Binding resolution for auto-deriving parameter values per lanelet.</td>
 </tr>
 <tr>
+<td><code>sweeper.case_choice</code></td>
+<td>Which base case of a sweep each case drawn from the ODD is put on.</td>
+</tr>
+<tr>
 <td><code>sweeper.constraints</code></td>
 <td>Constraint engine for filtering lanelets by declarative conditions.</td>
 </tr>
@@ -5836,7 +5840,7 @@ the first:</p>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
 <li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
-<li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>ODD_CASE_KEY</code>, <code>encode_case()</code>, <code>search_from_config()</code> and <code>with_tire_friction()</code> from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express</li>
+<li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>ODD_CASE_KEY</code>, <code>encode_case()</code>, <code>search_from_config()</code> and <code>with_tire_friction()</code> from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm; its cases are forked, stopped and waited for by the checked sweeper.isolation</li>
 <li><code>t4</code>: hands the world and the sensors to the T4 writer, a Rust extension imported at run time with importlib and held as a module (<code>Any</code>), and keeps NumPy arrays, datetime and threading.Condition waits Codon has no model of; t4.codon models what scenario_runner and scenario_queue use of it</li>
 <li><code>t4_scene</code>: re-exports t4_scene.convert, t4_scene.exporter and t4_scene.map_resource, which are not checked; t4_scene.codon models what scenario_runner and scenario_queue use of it</li>
