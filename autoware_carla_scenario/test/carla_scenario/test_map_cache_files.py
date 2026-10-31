@@ -68,7 +68,7 @@ def test_recording_the_checked_out_directory_writes_what_the_merge_wrote(
     fetched_at = json.loads((entry / "meta.json").read_text())["fetched_at"]
 
     GitMapCache._write_entry_meta(
-        entry, replace(GitMapCache._read_meta(entry), materialised="a")
+        entry, replace(GitMapCache._read_meta(entry), materialised=("b", "a"))
     )
 
     assert (entry / "meta.json").read_text(encoding="utf-8") == _old_meta_text(
@@ -76,7 +76,7 @@ def test_recording_the_checked_out_directory_writes_what_the_merge_wrote(
         ref="main",
         commit=_COMMIT,
         fetched_at=fetched_at,
-        materialised="a",
+        materialised=["a", "b"],
     )
 
 
@@ -86,11 +86,11 @@ def test_a_meta_json_with_only_the_checked_out_directory_is_what_the_merge_wrote
     # The entry's meta.json was missing: the old merge started from {}.
     entry = _entry(cache)
     GitMapCache._write_entry_meta(
-        entry, replace(GitMapCache._read_meta(entry), materialised="a")
+        entry, replace(GitMapCache._read_meta(entry), materialised=("a",))
     )
 
     assert (entry / "meta.json").read_text(encoding="utf-8") == _old_meta_text(
-        materialised="a"
+        materialised=["a"]
     )
 
 
@@ -118,12 +118,14 @@ def test_strings_are_escaped_as_json_dumps_escapes_them(
 ) -> None:
     entry = _entry(cache)
     GitMapCache._write_entry_meta(
-        entry, _EntryMeta(repo_url=value, ref=value, commit=value, materialised=value)
+        entry,
+        _EntryMeta(repo_url=value, ref=value, commit=value, materialised=(value,)),
     )
 
     assert (entry / "meta.json").read_text(encoding="utf-8") == _old_meta_text(
-        repo_url=value, ref=value, commit=value, materialised=value
+        repo_url=value, ref=value, commit=value, materialised=[value]
     )
+    assert GitMapCache._read_meta(entry).materialised == (value,)
 
 
 def test_an_object_without_fields_is_what_json_dumps_wrote() -> None:
@@ -153,12 +155,13 @@ def test_a_meta_json_the_dict_module_wrote_is_read(cache: GitMapCache) -> None:
         ref="main",
         commit=_COMMIT,
         fetched_at=1700000000.5,
-        materialised="a",
+        # A single directory, as an entry recorded before the checkout grew.
+        materialised=("a",),
     )
     peeked = cache.peek(_SOURCE)
     assert peeked is not None
     assert peeked.commit == _COMMIT
-    assert peeked.materialised == "a"
+    assert peeked.materialised == ("a",)
 
 
 def test_a_meta_json_that_was_never_checked_out_reads_as_not_materialised(
@@ -171,7 +174,7 @@ def test_a_meta_json_that_was_never_checked_out_reads_as_not_materialised(
 
     meta = GitMapCache._read_meta(entry)
     assert meta.commit == "abc"
-    assert meta.materialised is None
+    assert meta.materialised == ()
     assert meta.repo_url is None
 
 
@@ -200,7 +203,7 @@ def test_what_is_written_is_read_back(cache: GitMapCache) -> None:
         "main",
         _COMMIT,
     )
-    assert meta.materialised is None
+    assert meta.materialised == ()
     assert isinstance(meta.fetched_at, float)
 
     cache.remember_tip(_SOURCE, _COMMIT)
@@ -295,4 +298,4 @@ def test_no_include_pattern_checks_the_directory_out_without_lfs(
     assert (repo.worktree / "map" / "lanelet2_map.osm").read_text() == "<osm/>"
     peeked = cache.peek(source)
     assert peeked is not None
-    assert peeked.materialised == "map"
+    assert peeked.materialised == ("map",)

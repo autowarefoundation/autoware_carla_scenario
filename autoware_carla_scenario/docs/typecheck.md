@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 231 of
-the package's 337 modules (69%; about 68,800 of 118,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 234 of
+the package's 340 modules (69%; about 69,100 of 119,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2375,7 +2375,11 @@ map (`sweeper.map_loader`), with the projection and origin both read a map
 with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
 whose YAML values are of any type, nor how it moves a `Local` map's points to
 their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
-world coordinates (`trajectory.resolve`),
+world coordinates (`trajectory.resolve`), what a scenario document's
+trajectory does with the editor's text and with parsed rows (the rows and
+numbers of the text, a route vertex's `kind key=value` pairs, the vertex count
+rule and the inspector's summaries: `trajectory.vertex_text`, #774; not the
+document values of any type, which `trajectory.authoring` keeps),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`), how the Hydra sweeper runs each
 case in a forked child of its own process group, stops it and waits for the
@@ -2428,7 +2432,10 @@ launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
 container with Docker (`autoware_stack.docker`, over a model of
-`autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
+`autoware_stack.devcontainer`, which reads JSON and YAML; its text
+parsers -- JSONC's comments and trailing commas, Compose's `${VAR}`
+interpolation and a `workspaceMount`'s target -- are checked:
+`autoware_stack.devcontainer_text`, #763), the Autoware
 bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
 (`adversity`, NADE and its avoidance included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
 unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
@@ -2442,7 +2449,9 @@ and categories and the OpenCV model fitted to an F-theta camera,
 `scenario` command reads off its command line and environment
 (`--resume-from`, the `scenario=` override and whether it is a glob, the
 summary's case labels and whether the malloc arenas are already capped:
-`examples.argv`, #752), the camera
+`examples.argv`, #752), the escaping of a scenario's free-form title and
+description for the generated `pyproject.toml` and `__init__.py` docstring
+(`text_escape`, #773; the Jinja filters `templating` registers wrap it), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over

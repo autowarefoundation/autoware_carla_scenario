@@ -25,6 +25,13 @@ role downloads map datasets to, unpacked at their repository-relative paths.
 That is not a coincidence to be tidied away: a machine that has run the Autoware
 setup already has the map, and :meth:`GitMapCache.provisioned` finds it there.
 A map this cache cloned itself lands under ``.repos/`` in the same root.
+
+One entry -- one repository at one commit -- serves every directory in it, and
+the sparse checkout only ever **grows**: a directory, once checked out, stays on
+disk for the life of the entry, so a :class:`CachedRepo` handed out for one map
+of a repository keeps pointing at real files while another map of the same
+repository is resolved.  The repository root (``path == ""``) is the pattern
+``/*``, which checks the whole tree out.
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -80,6 +88,25 @@ DERIVED_SUBDIR = ".derived"
 #: while the remote was unreachable clones under the branch's own name and
 #: replaces that directory wholesale.
 TIP_SUFFIX = ".tip.json"
+
+#: How many times a sparse checkout is attempted while another git process
+#: holds the entry's index or sparse-checkout file (``*.lock``), and the pause
+#: before the first retry (doubled each time).
+_LOCKED_ATTEMPTS = 5
+_LOCKED_BACKOFF_SECONDS = 0.2
+
+#: One lock per cache entry (by its path), held while that entry's sparse
+#: checkout is changed, so that two threads of one process (the editor serves
+#: requests on several) neither race git's lock files nor drop each other's
+#: directory from ``meta.json``.  Per entry, so that a long LFS pull of one
+#: repository does not hold up a resolve from another.  Another process is
+#: kept apart by git's own lock files, and :meth:`GitMapCache._materialise`
+#: retries while one is held.
+_ENTRY_LOCKS: dict[str, threading.Lock] = {}
+_ENTRY_LOCKS_GUARD = threading.Lock()
+
+#: The sparse-checkout pattern of the repository root: every path.
+_WHOLE_TREE = "/*"
 
 #: How long a git call may take before it is abandoned.  A clone of a map
 #: repository is seconds; anything approaching this is a hung transport.
@@ -142,14 +169,17 @@ class _EntryMeta:
 
     The file is a JSON object of these five keys, which is all this module ever
     wrote to it: ``repo_url``, ``ref`` and ``commit`` strings, ``fetched_at`` a
-    Unix time, and ``materialised`` the checked-out directory or ``null``.
+    Unix time, and ``materialised`` the list of checked-out directories (``""``
+    for the whole repository), or ``null`` when there are none.  An entry
+    written before the checkout grew records a single directory as a string,
+    which reads as a list of that one.
     """
 
     repo_url: Optional[str] = None
     ref: Optional[str] = None
     commit: Optional[str] = None
     fetched_at: Optional[float] = None
-    materialised: Optional[str] = None
+    materialised: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,15 +192,17 @@ class CachedRepo:
         root: The cache entry holding the checkout.
         worktree: The sparse checkout itself.
         commit: The commit the checkout is at, or ``""`` when not recorded.
-        materialised: The repository-relative directory currently checked out,
-            or ``None`` when nothing has been.
+        materialised: Every repository-relative directory checked out in the
+            entry, sorted; ``""`` stands for the whole repository, and the
+            tuple is empty when nothing has been.  The checkout only grows, so
+            each of them stays on disk.
     """
 
     source: MapSource
     root: Path
     worktree: Path
     commit: str = ""
-    materialised: Optional[str] = None
+    materialised: tuple[str, ...] = ()
 
 
 class GitMapCache:
@@ -365,7 +397,7 @@ class GitMapCache:
             cached = self.peek(source) or cached
 
         if materialise:
-            self._materialise(cached, include=include, refresh=refresh)
+            cached = self._materialise(cached, include=include, refresh=refresh)
         return cached
 
     # -- git ------------------------------------------------------------
@@ -440,6 +472,9 @@ class GitMapCache:
 
         A pinned source has no tip to move to, so refreshing one re-checks that
         the checkout is the commit it claims rather than fetching again.
+
+        The sparse checkout carries over to the new commit, so the directories
+        it holds are still recorded as checked out.
         """
         source = cached.source
         if source.pinned and cached.commit == source.ref:
@@ -449,38 +484,107 @@ class GitMapCache:
         self._git(cached.worktree, "checkout", "--detach", "FETCH_HEAD")
         commit = self._git(cached.worktree, "rev-parse", "HEAD", capture=True).strip()
         self._write_meta(cached.root, source, commit)
+        if cached.materialised:
+            self._write_entry_meta(
+                cached.root,
+                replace(self._read_meta(cached.root), materialised=cached.materialised),
+            )
         logger.info("Refreshed %s@%s to %s", source.repo_url, ref, commit[:10])
 
     def _materialise(
         self, cached: CachedRepo, *, include: Optional[Sequence[str]], refresh: bool
-    ) -> None:
+    ) -> CachedRepo:
         """Check out *source*'s directory and pull the LFS content asked for.
 
-        Nothing runs when the checkout is already the one being asked for and
-        its content is real rather than pointers.  That matters because this is
-        on the path of every resolve -- every Download click, every sweep, every
-        run -- and ``git checkout`` re-stats the whole index each time it is
+        The sparse checkout only grows: the first directory is ``set``, every
+        later one ``add``-ed, and the root (``""``) is the pattern ``/*``, which
+        checks the whole tree out.  A directory checked out for one map
+        therefore stays on disk while another map of the same repository is
+        resolved, and the entry's ``meta.json`` records all of them.
+
+        Whether to ``set`` or ``add`` is read from git, not from ``meta.json``:
+        sparse checkout is never turned off again once on, so ``set`` -- the
+        one command that drops directories -- runs only on a checkout no
+        directory has been checked out in yet, even when another process's
+        record of one was lost.  The record only decides whether anything has
+        to run at all.
+
+        Nothing runs when the directory is already checked out and its content
+        is real rather than pointers.  That matters because this is on the
+        path of every resolve -- every Download click, every sweep, every run
+        -- and ``git checkout`` re-stats the whole index each time it is
         called, for a working tree that has not moved.
+
+        Returns:
+            *cached*, with what is now checked out.
         """
         source = cached.source
+        path = source.path
         worktree = cached.worktree
         wanted: list[str] = []
         if include is not None:
             wanted = [pattern for pattern in include if pattern]
 
-        if not refresh and cached.materialised == source.path:
-            if not wanted or self._content_present(worktree, wanted):
+        with _entry_lock(cached.root):
+            # Re-read rather than trust *cached*: another thread may have
+            # checked a directory out since it was peeked.
+            done = self._read_meta(cached.root).materialised
+            whole = "" in done
+            present = (whole or path in done) and (worktree / path).exists()
+            if not refresh and present:
+                if not wanted or self._content_present(worktree, wanted):
+                    return replace(cached, materialised=done)
+
+            pattern = path or _WHOLE_TREE
+            if self._is_sparse(worktree):
+                self._git_waiting(worktree, "sparse-checkout", "add", pattern)
+            else:
+                self._git_waiting(
+                    worktree, "sparse-checkout", "set", "--no-cone", pattern
+                )
+            self._git_waiting(worktree, "checkout")
+
+            if wanted and (refresh or not self._content_present(worktree, wanted)):
+                self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
+            # Re-read again: what was recorded is still checked out, whoever
+            # recorded it, since nothing here takes a directory away.
+            recorded = self._read_meta(cached.root)
+            materialised = _sorted_paths(list(recorded.materialised) + [path])
+            self._write_entry_meta(
+                cached.root, replace(recorded, materialised=materialised)
+            )
+        return replace(cached, materialised=materialised)
+
+    def _is_sparse(self, worktree: Path) -> bool:
+        """Whether the checkout at *worktree* has sparse checkout turned on."""
+        try:
+            value = self._git(
+                worktree, "config", "--bool", "core.sparseCheckout", capture=True
+            )
+        except MapCacheError:
+            # `git config` exits 1 for a key that is not set.
+            return False
+        return value.strip() == "true"
+
+    def _git_waiting(self, worktree: Path, *args: str) -> None:
+        """Run one git command in *worktree*, waiting out another git process.
+
+        A second process resolving a map of the same entry holds its index or
+        sparse-checkout file while it runs, and git refuses to touch either
+        then; the checkout it makes only grows, so going after it is safe.
+        """
+        delay = _LOCKED_BACKOFF_SECONDS
+        for attempt in range(_LOCKED_ATTEMPTS):
+            try:
+                self._git(worktree, *args)
                 return
-
-        if source.path:
-            self._git(worktree, "sparse-checkout", "set", "--no-cone", source.path)
-        self._git(worktree, "checkout")
-
-        if wanted and (refresh or not self._content_present(worktree, wanted)):
-            self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
-        self._write_entry_meta(
-            cached.root, replace(self._read_meta(cached.root), materialised=source.path)
-        )
+            except MapCacheError as exc:
+                if attempt + 1 >= _LOCKED_ATTEMPTS or not _git_locked(
+                    worktree, str(exc)
+                ):
+                    raise
+            time.sleep(delay)
+            delay *= 2
 
     @staticmethod
     def _content_present(worktree: Path, wanted: Sequence[str]) -> bool:
@@ -540,7 +644,7 @@ class GitMapCache:
             ref=_json_field(raw, "ref"),
             commit=_json_field(raw, "commit"),
             fetched_at=_json_number(raw, "fetched_at"),
-            materialised=_json_field(raw, "materialised"),
+            materialised=_json_paths(raw, "materialised"),
         )
 
     @classmethod
@@ -553,7 +657,7 @@ class GitMapCache:
                 ref=source.ref,
                 commit=commit,
                 fetched_at=time.time(),
-                materialised=None,
+                materialised=(),
             ),
         )
 
@@ -563,7 +667,8 @@ class GitMapCache:
 
         A field that was never recorded is left out, as it was when the file
         was a dict that only held the keys it had been given;
-        ``materialised`` is always written, ``null`` when nothing is checked out.
+        ``materialised`` is always written, a list of the checked-out
+        directories or ``null`` when nothing is checked out.
         """
         fields: list[tuple[str, str]] = []
         if meta.repo_url is not None:
@@ -574,12 +679,16 @@ class GitMapCache:
             fields.append(("commit", json.dumps(meta.commit)))
         if meta.fetched_at is not None:
             fields.append(("fetched_at", json.dumps(meta.fetched_at)))
-        fields.append(
-            (
-                "materialised",
-                "null" if meta.materialised is None else json.dumps(meta.materialised),
+        materialised = "null"
+        if meta.materialised:
+            # Laid out as `json.dumps(..., indent=2)` lays out a list nested
+            # one level down, so the whole file still reads as that.
+            items = ",\n".join(
+                f"    {json.dumps(path)}"
+                for path in _sorted_paths(list(meta.materialised))
             )
-        )
+            materialised = "[\n" + items + "\n  ]"
+        fields.append(("materialised", materialised))
         (entry / "meta.json").write_text(_json_object(fields), encoding="utf-8")
 
 
@@ -597,6 +706,60 @@ def _json_field(raw: str, key: str) -> Optional[str]:
     except (TypeError, ValueError):
         pass
     return None
+
+
+def _json_paths(raw: str, key: str) -> tuple[str, ...]:
+    """Return the directories listed at *key* in the JSON object *raw*, sorted.
+
+    A list of strings is what this module writes; a single string is what it
+    wrote before an entry could hold more than one directory, and reads as a
+    list of that one.  Anything else -- ``null``, a missing key, a file that
+    is not JSON -- reads as no directory at all, so the next resolve checks
+    its directory out again rather than trusting a record it cannot read.
+    """
+    found: list[str] = []
+    try:
+        document = json.loads(raw)
+        if key in document and document[key] is not None:
+            value = document[key]
+            if isinstance(value, str):
+                found.append(str(value))
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        found.append(str(item))
+    except (TypeError, ValueError):
+        pass
+    return _sorted_paths(found)
+
+
+def _sorted_paths(paths: list[str]) -> tuple[str, ...]:
+    """Return *paths* without repeats, sorted."""
+    return tuple(sorted(set(paths)))
+
+
+def _entry_lock(entry: Path) -> threading.Lock:
+    """Return the lock that serialises changes to *entry*'s sparse checkout."""
+    key = str(entry)
+    with _ENTRY_LOCKS_GUARD:
+        if key not in _ENTRY_LOCKS:
+            _ENTRY_LOCKS[key] = threading.Lock()
+        return _ENTRY_LOCKS[key]
+
+
+def _git_locked(worktree: Path, message: str) -> bool:
+    """Whether a git command failed because another held a lock in *worktree*.
+
+    Read from git's message (``Unable to create '.../index.lock': File
+    exists``, whose last line is ``remove the file manually to continue``) or,
+    when the message says neither, from a lock file still being there.
+    """
+    if ".lock" in message or "remove the file manually" in message:
+        return True
+    git_dir = worktree / ".git"
+    return (git_dir / "index.lock").exists() or (
+        git_dir / "info" / "sparse-checkout.lock"
+    ).exists()
 
 
 def _json_number(raw: str, key: str) -> Optional[float]:

@@ -85,6 +85,15 @@ Only the files this framework reads are pulled out of git-lfs — the `.osm`, th
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
 from costing 22 MB.
 
+A repository can carry symlinks, so each file is checked for where it really
+is. The `.osm`, the `.xodr` and `map_projector_info.yaml` are used only when
+they resolve to a regular file inside the map directory: a link within the
+directory is followed, but one that leads out of it, dangles, or names a
+directory is ignored, as if the file were absent. An OpenDRIVE read back from
+CARLA is held to the same rule inside its derived directory. A `#path` that is
+itself a link out of the checkout, or that contains `..`, is refused. Local
+directories (`map.directory`) go through the same file checks.
+
 ### How a map is read
 
 `map_projector_info.yaml` names the projection the map's lat/lon is read
@@ -123,6 +132,14 @@ root, so the two never collide and the copy Autoware provisioned always wins.
 
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
+
+One entry under `.repos/` holds one repository at one commit, and every map
+in that repository shares it. Its sparse checkout only grows: resolving
+`#autoware_maps/TownB` after `#autoware_maps/TownA` adds TownB beside TownA
+rather than replacing it, so a map resolved earlier -- held by the editor, a
+running case or a sweep over both -- keeps its files. The repository root (a
+source with no `#path`) checks the whole tree out. The entry's `meta.json`
+lists every directory checked out in it under `materialised`.
 
 One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single `git ls-remote` resolves it to the commit it
@@ -280,4 +297,6 @@ elsewhere has to be added there to be previewed.
 | `git is not installed` | The cache clones with `git`; install it. |
 | A map resolves but the `.osm` is a few hundred bytes | git-lfs did not pull it. Install `git-lfs`, then **Refresh**. |
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
+| `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
+| A map's `.xodr` or `map_projector_info.yaml` is ignored | It is a symlink to a file outside the map directory, a dangling link, or a link to a directory. |
 | A pinned source re-clones on a machine that has the map | Expected: a pinned source never trusts an unpacked directory, because it records no revision. |

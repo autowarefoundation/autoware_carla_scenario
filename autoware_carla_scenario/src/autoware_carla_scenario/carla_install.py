@@ -342,20 +342,50 @@ def _check_room(directory: Path, packed: int) -> None:
         )
 
 
+def _strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
+    """A tar extraction filter: drop *member*'s top directory, then the data filter.
+
+    A hard link names its target by the target's archive path, so that path
+    loses the top directory too; otherwise extraction looks for the target
+    under the dropped directory and, not finding it, re-reads the archive for
+    it, which a stream (``r|gz``) cannot do. A hard link to anything outside
+    the link's own top directory (or to that directory itself) has no place
+    in the stripped tree and is refused, as the data filter refuses a link
+    escaping the destination.
+
+    A symbolic link's target is relative to the link's own directory, which
+    moves with it, so it is left alone; the data filter refuses one that is
+    absolute or reaches outside the destination.
+    """
+    parts = PurePosixPath(member.name).parts
+    if len(parts) < 2:
+        return None
+    linkname = member.linkname
+    if member.islnk():
+        link_parts = PurePosixPath(linkname).parts
+        if len(link_parts) < 2 or link_parts[0] != parts[0]:
+            raise tarfile.LinkOutsideDestinationError(member, linkname)
+        linkname = str(PurePosixPath(*link_parts[1:]))
+    stripped = member.replace(
+        name=str(PurePosixPath(*parts[1:])), linkname=linkname, deep=False
+    )
+    # The data filter refuses absolute paths, escapes and device files.
+    return tarfile.data_filter(stripped, path)
+
+
 def _unpack(stream: IO[bytes], destination: Path) -> None:
     """Unpack a gzipped tar *stream* into *destination*, dropping its top directory."""
-
-    def strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
-        inner = PurePosixPath(*PurePosixPath(member.name).parts[1:])
-        if not inner.parts:
-            return None
-        # The data filter refuses absolute paths, escapes and device files.
-        return tarfile.data_filter(member.replace(name=str(inner), deep=False), path)
-
     destination.mkdir(parents=True)
     # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
     with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
-        archive.extractall(destination, filter=strip_top)
+        try:
+            archive.extractall(destination, filter=_strip_top)
+        except KeyError as exc:
+            # tarfile's own report of a hard link whose target is not (yet) on
+            # disk nor in the archive; a TarError, so main() reports it cleanly.
+            raise tarfile.ExtractError(
+                f"a hard link's target is not in the archive: {exc}"
+            ) from exc
 
 
 def main(argv: Optional[list[str]] = None) -> int:

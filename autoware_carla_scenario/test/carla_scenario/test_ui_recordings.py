@@ -301,14 +301,17 @@ def test_without_the_converter_the_web_viewer_is_the_default_version(
     assert recordings.web_viewer().version == recordings.DEFAULT_WEB_VIEWER_VERSION
 
 
-def _package_tarball(path: Path, version: str) -> Path:
+def _package_tarball(
+    path: Path, version: str, wasm: bytes = b"\0asm", omit: str | None = None
+) -> Path:
     files = {
         "package/package.json": json.dumps({"version": version}).encode(),
         "package/index.js": b"export class WebViewer {}",
         "package/re_viewer.js": b"export default null;",
-        "package/re_viewer_bg.wasm": b"\0asm",
+        "package/re_viewer_bg.wasm": wasm,
         "package/README.md": b"readme",
     }
+    files.pop(f"package/{omit}", None)
     with tarfile.open(path, "w:gz") as archive:
         for name, data in files.items():
             info = tarfile.TarInfo(name)
@@ -338,12 +341,94 @@ def test_a_fetched_copy_is_served_by_the_app(
     assert client.get("/rerun-web-viewer/0.38.0/index.js").status_code == 404
 
 
+def _cache_listing(cache: Path) -> dict[str, bytes]:
+    root = cache / "rerun-web-viewer"
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
 def test_a_tarball_of_another_version_is_refused(
-    tmp_path: Path, converter: _FakeConverter
+    tmp_path: Path, converter: _FakeConverter, _cache: Path
 ) -> None:
+    good = recordings.fetch_web_viewer(
+        tarball=_package_tarball(tmp_path / "good.tgz", "0.38.1")
+    )
+    before = _cache_listing(_cache)
     tarball = _package_tarball(tmp_path / "web-viewer.tgz", "0.37.0")
     with pytest.raises(recordings.RecordingError, match="0.37.0, not 0.38.1"):
         recordings.fetch_web_viewer(tarball=tarball)
+    # The good copy is untouched and still served.
+    assert _cache_listing(_cache) == before
+    viewer = recordings.web_viewer()
+    assert (viewer.version, viewer.source, viewer.directory) == (
+        "0.38.1",
+        "local",
+        good,
+    )
+
+
+@pytest.mark.parametrize("bad", ["version", "missing", "corrupt"])
+def test_a_refused_tarball_leaves_nothing_behind(
+    tmp_path: Path, converter: _FakeConverter, _cache: Path, bad: str
+) -> None:
+    if bad == "version":
+        tarball = _package_tarball(tmp_path / "bad.tgz", "0.37.0")
+    elif bad == "missing":
+        tarball = _package_tarball(tmp_path / "bad.tgz", "0.38.1", omit="index.js")
+    else:
+        tarball = tmp_path / "bad.tgz"
+        tarball.write_bytes(b"not a tarball")
+    with pytest.raises(recordings.RecordingError):
+        recordings.fetch_web_viewer(tarball=tarball)
+    root = _cache / "rerun-web-viewer"
+    assert not root.exists() or list(root.iterdir()) == []
+
+
+def test_a_fetch_replaces_the_old_copy(
+    tmp_path: Path, converter: _FakeConverter, _cache: Path
+) -> None:
+    old = _package_tarball(tmp_path / "old.tgz", "0.38.1", wasm=b"\0asm old")
+    recordings.fetch_web_viewer(tarball=old)
+    target = _cache / "rerun-web-viewer" / "0.38.1"
+    (target / "stale.txt").write_text("left over")
+    new = _package_tarball(tmp_path / "new.tgz", "0.38.1", wasm=b"\0asm new")
+    assert recordings.fetch_web_viewer(tarball=new) == target
+    assert (target / "re_viewer_bg.wasm").read_bytes() == b"\0asm new"
+    assert not (target / "stale.txt").exists()
+    assert sorted(p.name for p in target.parent.iterdir()) == ["0.38.1"]
+
+
+@pytest.mark.parametrize("failing", ["aside", "into place"])
+def test_a_failed_swap_keeps_the_old_copy(
+    tmp_path: Path,
+    converter: _FakeConverter,
+    _cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing: str,
+) -> None:
+    recordings.fetch_web_viewer(
+        tarball=_package_tarball(tmp_path / "old.tgz", "0.38.1", wasm=b"\0asm old")
+    )
+    before = _cache_listing(_cache)
+    replace = os.replace
+    calls = []
+
+    def flaky(src: Path, dst: Path) -> None:
+        calls.append(src)
+        if len(calls) == (1 if failing == "aside" else 2):
+            raise OSError("no room")
+        replace(src, dst)
+
+    monkeypatch.setattr(recordings.os, "replace", flaky)
+    new = _package_tarball(tmp_path / "new.tgz", "0.38.1", wasm=b"\0asm new")
+    with pytest.raises(OSError, match="no room"):
+        recordings.fetch_web_viewer(tarball=new)
+    # The old copy is back in place, and nothing else is left in the cache.
+    assert _cache_listing(_cache) == before
+    assert sorted(p.name for p in (_cache / "rerun-web-viewer").iterdir()) == ["0.38.1"]
 
 
 @pytest.mark.parametrize(
