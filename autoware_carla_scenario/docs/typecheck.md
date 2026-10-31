@@ -2363,8 +2363,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 234 of
-the package's 340 modules (69%; about 69,100 of 119,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 235 of
+the package's 341 modules (69%; about 69,100 of 119,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2449,7 +2449,9 @@ and categories and the OpenCV model fitted to an F-theta camera,
 `scenario` command reads off its command line and environment
 (`--resume-from`, the `scenario=` override and whether it is a glob, the
 summary's case labels and whether the malloc arenas are already capped:
-`examples.argv`, #752), the camera
+`examples.argv`, #752), the escaping of a scenario's free-form title and
+description for the generated `pyproject.toml` and `__init__.py` docstring
+(`text_escape`, #773; the Jinja filters `templating` registers wrap it), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
