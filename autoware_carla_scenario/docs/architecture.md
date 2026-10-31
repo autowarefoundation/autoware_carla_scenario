@@ -537,6 +537,7 @@ classDiagram
     class EnvironmentAction
     class TurnAction
     class WalkStraightAction
+    class PlayMotionAction
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
@@ -546,6 +547,7 @@ classDiagram
     BaseAction <|-- EnvironmentAction
     BaseAction <|-- TurnAction
     BaseAction <|-- WalkStraightAction
+    BaseAction <|-- PlayMotionAction
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction

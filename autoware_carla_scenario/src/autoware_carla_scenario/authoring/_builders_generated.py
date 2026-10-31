@@ -83,6 +83,7 @@ __all__ = [
     "build_environment_action",
     "build_traffic_sink_action",
     "build_traffic_source_action",
+    "build_play_motion_action",
     "build_walk_straight_action",
     "build_traffic_parameters_action",
     "build_communication_loss_action",
@@ -1344,6 +1345,31 @@ def build_traffic_source_action(
         condition=condition,
         timing=timing,
         once=compiled.node.once,
+    )
+
+
+def build_play_motion_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PlayMotionAction`."""
+    from ..actions import PlayMotionAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return PlayMotionAction(
+        entity_name=compiled.actor_role,
+        motion_path=str(params["motion_path"]),
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        fps=params["fps"],
+        loop=params["loop"],
+        duration_s=params["duration_s"],
+        upper_body_only=params["upper_body_only"],
     )
 
 
