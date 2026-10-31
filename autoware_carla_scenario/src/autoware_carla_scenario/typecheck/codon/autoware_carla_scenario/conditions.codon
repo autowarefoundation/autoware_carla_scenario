@@ -782,6 +782,10 @@ class RouteProgressCondition(BaseCondition):
         super().__init__(_required_str(label, "RouteProgressCondition(): label"))
 
     @property
+    def entity_name(self) -> str:
+        raise NotImplementedError()
+
+    @property
     def progress(self) -> Optional[float]:
         raise NotImplementedError()
 

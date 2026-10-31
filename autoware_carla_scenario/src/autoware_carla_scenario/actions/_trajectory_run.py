@@ -26,6 +26,8 @@ from ..entity.pedestrian_entity import (
 )
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
+from ..kinematics.vector import Vector3
+from ..kinematics.walker_motion import WalkerVelocities, is_walker, simulated_seconds
 from ..trajectory.model import (
     ReferenceContext,
     ResolvedTrajectory,
@@ -1220,6 +1222,37 @@ def _walker_in_way(
 #: it, is leaving the way.
 _LEAVING_MPS = 0.3
 
+#: The walkers' velocities this module decides on (:func:`_in_way_ahead`,
+#: :func:`_vehicle_before_walker`), each measured from where the walker stood
+#: when last read: a walker on CARLA's controller is placed, and its
+#: ``get_velocity()`` reads 0.  One for every reader, so two reading a walker
+#: on the same tick read the same; cleared when a run ends
+#: (:func:`forget_walkers`).
+_WALKERS = WalkerVelocities()
+
+
+def forget_walkers() -> None:
+    """Forget every walker measured (a run ended)."""
+    _WALKERS.clear()
+
+
+def _measured_velocity(
+    world: "carla.World",
+    actor: "carla.Actor",
+    location: Optional["carla.Location"] = None,
+) -> Vector3:
+    """*actor*'s velocity: a walker's measured where it stands (*location*,
+    where already read, else asked), on *world*'s simulated clock
+    (:data:`_WALKERS`), any other actor's what CARLA reports (one that does
+    not say what it is, too: a test double)."""
+    try:
+        walking = is_walker(actor)
+    except AttributeError:
+        walking = False
+    if walking:
+        return _WALKERS.walker(actor, simulated_seconds(world), location)
+    return Vector3.from_carla_vector3d(actor.get_velocity())
+
 
 def _in_way_ahead(
     world: "carla.World",
@@ -1260,7 +1293,9 @@ def _in_way_ahead(
         try:
             other = world.get_actor(int(found.id))
             if other is not None:
-                velocity = other.get_velocity()
+                # Measured, not reported: a walker on its controller reports
+                # standing while it walks off the way (#929).
+                velocity = _measured_velocity(world, other)
                 across = -float(velocity.x) * math.sin(math.radians(heading)) + float(
                     velocity.y
                 ) * math.cos(math.radians(heading))
@@ -1274,16 +1309,18 @@ def _in_way_ahead(
 def _vehicle_before_walker(walker: "carla.Actor") -> bool:
     """Whether a vehicle's outline stands within 1.5 m (and a second's walk)
     ahead of *walker*, the way it faces, across its width and 0.2 m: one it
-    would walk (or ride) into."""
+    would walk (or ride) into.  Its speed is measured, not reported
+    (:func:`_measured_velocity`): on its controller it reports standing."""
     from ..utils.clearance import first_box_in_way  # noqa: PLC0415
 
     try:
+        world = walker.get_world()
         transform = walker.get_transform()
-        velocity = walker.get_velocity()
+        velocity = _measured_velocity(world, walker, transform.location)
         extent = walker.bounding_box.extent
         reach = 1.5 + math.hypot(float(velocity.x), float(velocity.y)) + float(extent.x)
         found = first_box_in_way(
-            walker.get_world(),
+            world,
             int(walker.id),
             transform.location.x,
             transform.location.y,

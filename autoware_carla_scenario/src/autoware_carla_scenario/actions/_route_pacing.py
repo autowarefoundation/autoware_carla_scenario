@@ -63,7 +63,8 @@ _SMOOTHING: float = 0.3
 #: Below this progress rate (m/s) a measured entity is not moving forward,
 #: and when it will have come far enough cannot be told.
 _PREDICTABLE_RATE_MPS: float = 0.5
-#: How much of a new progress rate reading the estimate takes each tick.
+#: How much of a new progress rate reading the estimate takes each tick (the
+#: first reading of an estimate it takes whole).
 _RATE_SMOOTHING: float = 0.1
 #: The shortest time to go (s) a target speed is worked out over: a waypoint
 #: due now or past is caught up with at the limit.
@@ -136,8 +137,11 @@ class RoutePacer:
     _reached: int
     _arrivals: list[WaypointArrival]
     _rate: float
+    _rate_entity: Optional[str]
+    _rate_readings: int
     _rate_progress: Optional[float]
     _rate_time: float
+    _still_entity: Optional[str]
     _still_at: Optional[float]
     _still_since: float
     _let_go: bool
@@ -158,8 +162,11 @@ class RoutePacer:
         self._reached = 0
         self._arrivals = []
         self._rate = 0.0
+        self._rate_entity = None
+        self._rate_readings = 0
         self._rate_progress = None
         self._rate_time = 0.0
+        self._still_entity = None
         self._still_at = None
         self._still_since = 0.0
         self._let_go = False
@@ -326,8 +333,12 @@ class RoutePacer:
         if progress is None:
             return False
         measured: float = progress
+        entity = progress_gate.entity_name
         still = self._still_at
-        if still is None or abs(measured - still) > 0.5:
+        if still is None or entity != self._still_entity or abs(measured - still) > 0.5:
+            # Another entity's route s says nothing of how long this one
+            # has stood.
+            self._still_entity = entity
             self._still_at = measured
             self._still_since = elapsed
             self._let_go = False
@@ -358,20 +369,40 @@ class RoutePacer:
 
     def _eta(self, condition: BaseCondition, elapsed: float) -> Optional[float]:
         """When a rising ``route_progress`` *condition* will hold, from the
-        measured entity's progress rate; ``None`` when it cannot be told."""
+        measured entity's progress rate; ``None`` when it cannot be told.
+
+        The rate is the measured entity's: consecutive waypoints gated on the
+        same entity go on with its estimate, and one gated on another entity
+        starts a new estimate -- the difference between two entities' route s
+        is no progress of either.  So does an entity that comes back into the
+        world."""
         gate = _progress_gate(condition)
         if gate is None:
             return None
         progress_gate: RouteProgressCondition = gate
         progress = progress_gate.progress
         threshold = progress_gate.target
-        if progress is None or threshold is None:
+        if progress is None:
+            # Out of the world: where it comes back is no progress either.
+            self._rate_entity = None
+            return None
+        if threshold is None:
             return None
         now: float = progress
+        entity = progress_gate.entity_name
+        if entity != self._rate_entity:
+            self._rate_entity = entity
+            self._rate = 0.0
+            self._rate_readings = 0
+            self._rate_progress = None
         if self._rate_progress is not None and elapsed > self._rate_time:
             before: float = self._rate_progress
             reading = (now - before) / (elapsed - self._rate_time)
-            self._rate += _RATE_SMOOTHING * (reading - self._rate)
+            if self._rate_readings == 0:
+                self._rate = reading
+            else:
+                self._rate += _RATE_SMOOTHING * (reading - self._rate)
+            self._rate_readings += 1
         self._rate_progress = now
         self._rate_time = elapsed
         if self._rate < _PREDICTABLE_RATE_MPS:
