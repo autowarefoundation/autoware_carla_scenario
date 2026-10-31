@@ -78,7 +78,10 @@ class TrajectoryTimeCondition(BaseCondition):
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Satisfied once *elapsed* has reached :attr:`time` (see the class doc)."""
-        if elapsed < self._time:
+        # elapsed is a running sum of the tick, so a time that is a whole
+        # number of ticks can come out a hair short of it; without the
+        # tolerance the condition would hold one tick late.
+        if elapsed < self._time - 1e-9:
             return None
         return ScenarioResult(
             passed=True,

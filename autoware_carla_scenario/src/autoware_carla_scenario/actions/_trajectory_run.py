@@ -599,11 +599,17 @@ class TrajectoryRun(BaseAction):
     def _absent(self) -> bool:
         """Whether the trajectory's clock is outside its vertices' times."""
         assert self._resolved is not None
+        # The scenario clock is a running sum of the tick, so a time that is
+        # a whole number of ticks can come out a hair short of it; without
+        # the tolerance the entity would appear (and go) one tick late.
         if self._timeline is not None:
             # Before the first departure (on its time), and once ended.
-            return self._finished or self._elapsed < self._timeline.times[0]
+            return self._finished or self._elapsed < self._timeline.times[0] - 1e-9
         now = self._trajectory_time()
-        return now < self._resolved.start_time or now >= self._resolved.end_time
+        return (
+            now < self._resolved.start_time - 1e-9
+            or now >= self._resolved.end_time - 1e-9
+        )
 
     def _hide(self, actor: "carla.Actor", sample: TrajectorySample) -> None:
         """Park *actor* under where *sample* is, out of the simulation."""
@@ -641,7 +647,8 @@ class TrajectoryRun(BaseAction):
             return self._timeline_sample(world)
         if self._time_reference is not None:
             now = self._trajectory_time()
-            if now >= resolved.end_time:
+            # Within the tolerance of _absent: it ends on the tick it goes.
+            if now >= resolved.end_time - 1e-9:
                 self._finished = True
                 if not self._stop_at_end:
                     # At the end, but with the last segment's velocity rather
