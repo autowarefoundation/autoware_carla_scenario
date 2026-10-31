@@ -142,6 +142,65 @@ class TestDurationsOnTheSummedClock:
         condition = TrajectoryTimeCondition(0.5)
         assert condition.check(MagicMock(), elapsed=_summed_elapsed(0, 9)) is None
 
+    def test_elapsed_time_passes_on_the_timeout_tick(self) -> None:
+        # Sixty summed ticks come out a hair short of 3.0 (#836).
+        elapsed = _summed_elapsed(0, 60)
+        assert elapsed < 3.0
+        result = ElapsedTimeCondition(3.0, label="e").check(MagicMock(), elapsed)
+        assert result is not None
+        assert result.passed is True
+        assert TimeoutCondition(3.0, label="t").check(MagicMock(), elapsed)
+
+    def test_elapsed_time_still_waits_a_whole_tick_short(self) -> None:
+        condition = ElapsedTimeCondition(3.0, label="e")
+        assert condition.check(MagicMock(), elapsed=_summed_elapsed(0, 59)) is None
+
+    @pytest.mark.parametrize("duration", [0.3, 0.7, 1.0, 2.0, 3.0, 5.0, 10.0])
+    def test_elapsed_time_agrees_with_timeout_on_every_start(
+        self, duration: float
+    ) -> None:
+        ticks = round(duration / 0.05)
+        for start in range(200):
+            elapsed = ElapsedTimeCondition(duration, label="e")
+            timeout = TimeoutCondition(duration, label="t")
+            for n in (ticks - 1, ticks, ticks + 1):
+                now = _summed_elapsed(start, n)
+                fired = elapsed.check(MagicMock(), now) is not None
+                timed_out = timeout.check(MagicMock(), now) is not None
+                assert fired == timed_out == (n >= ticks), (start, n)
+
+    @pytest.mark.parametrize(
+        ("rule", "short", "on", "after"),
+        [
+            # The tick that reaches the duration counts as reaching it.
+            (ComparisonRule.GREATER_THAN_OR_EQUAL, False, True, True),
+            (ComparisonRule.LESS_THAN, True, False, False),
+            # Strictly past it only from the next tick.
+            (ComparisonRule.GREATER_THAN, False, False, True),
+            (ComparisonRule.LESS_THAN_OR_EQUAL, True, True, False),
+        ],
+    )
+    def test_ordering_rules_switch_on_their_tick(
+        self, rule: ComparisonRule, short: bool, on: bool, after: bool
+    ) -> None:
+        condition = ElapsedTimeCondition(3.0, rule=rule, label="e")
+        for start in (0, 7, 13):
+            for n, expected in ((59, short), (60, on), (61, after)):
+                now = _summed_elapsed(start, n)
+                assert (condition.check(MagicMock(), now) is not None) == expected, (
+                    start,
+                    n,
+                )
+
+    def test_equal_to_with_zero_tolerance_matches_its_tick(self) -> None:
+        condition = ElapsedTimeCondition(
+            3.0, rule=ComparisonRule.EQUAL_TO, tolerance=0.0, label="e"
+        )
+        for start in (0, 7, 13):
+            assert condition.check(MagicMock(), _summed_elapsed(start, 60)) is not None
+            assert condition.check(MagicMock(), _summed_elapsed(start, 59)) is None
+            assert condition.check(MagicMock(), _summed_elapsed(start, 61)) is None
+
 
 # ---------------------------------------------------------------------------
 # ElapsedTimeCondition – unit tests (no CARLA required)
