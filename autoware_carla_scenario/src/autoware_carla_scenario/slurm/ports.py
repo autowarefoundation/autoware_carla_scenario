@@ -23,6 +23,9 @@ the node sees: not ``/tmp`` where a cluster gives each job a private one, so
 ``/dev/shm/acs-slurm-ports-<uid>`` by default (:func:`default_lock_dir`), or
 ``launcher.port_lock_dir``.  The default 20000-29999 stays below Linux's ephemeral
 range (32768-60999), so an outgoing connection never takes a slot's port.
+
+The arithmetic of the slots is in :mod:`.port_slots`, which the library check
+compiles (docs/typecheck.md); this module takes the slots and re-exports it.
 """
 
 from __future__ import annotations
@@ -38,6 +41,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from .port_slots import (
+    PORT_SLOT_WIDTH,
+    SlotPorts,
+    first_slot,
+    lock_name,
+    slot_order,
+    watchdog_argv,
+)
+
 __all__ = [
     "KILL_WAIT_S",
     "PORT_SLOT_WIDTH",
@@ -49,9 +61,6 @@ __all__ = [
     "first_slot",
     "kill_carla_on_port",
 ]
-
-#: Ports per slot; the first six are used, the rest are spare.
-PORT_SLOT_WIDTH = 10
 
 #: Where the slot locks are when no node-wide directory can be made.
 LOCK_DIR = Path("/tmp")
@@ -74,50 +83,10 @@ def default_lock_dir(shm: Path = Path("/dev/shm")) -> Path:
 
 
 @dataclass
-class PortSlot:
+class PortSlot(SlotPorts):
     """A slot of ports this process holds until :meth:`release`."""
 
-    index: int
-    base: int
     _lock: IO[bytes] | None = None
-
-    @property
-    def rpc(self) -> int:
-        return self.base
-
-    @property
-    def streaming(self) -> int:
-        return self.base + 1
-
-    @property
-    def secondary(self) -> int:
-        return self.base + 2
-
-    @property
-    def traffic_manager(self) -> int:
-        return self.base + 3
-
-    @property
-    def autoware_bridge(self) -> int:
-        return self.base + 4
-
-    @property
-    def driver_bridge(self) -> int:
-        return self.base + 5
-
-    def ports(self) -> tuple[int, ...]:
-        return tuple(self.base + k for k in range(6))
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "slot": self.index,
-            "rpc": self.rpc,
-            "streaming": self.streaming,
-            "secondary": self.secondary,
-            "traffic_manager": self.traffic_manager,
-            "autoware_bridge": self.autoware_bridge,
-            "driver_bridge": self.driver_bridge,
-        }
 
     def release(self, *, keep_lock: bool = False) -> None:
         """Let the slot go.  With *keep_lock*, only this process's descriptor
@@ -130,17 +99,6 @@ class PortSlot:
             finally:
                 self._lock.close()
                 self._lock = None
-
-
-def first_slot(environ: dict[str, str] | os._Environ[str], slots: int) -> int:
-    """The slot a task tries first: its array job id plus its task id."""
-    job = environ.get("SLURM_ARRAY_JOB_ID") or environ.get("SLURM_JOB_ID") or ""
-    task = environ.get("SLURM_ARRAY_TASK_ID") or "0"
-    try:
-        start = int(job) + int(task)
-    except ValueError:
-        start = os.getpid()
-    return start % slots
 
 
 def _port_free(port: int) -> bool:
@@ -178,10 +136,8 @@ def acquire_slot(
     """
     lock_dir = default_lock_dir() if lock_dir is None else lock_dir
     lock_dir.mkdir(parents=True, exist_ok=True)
-    for offset in range(slots):
-        index = (start + offset) % slots
-        slot_base = base + index * PORT_SLOT_WIDTH
-        path = lock_dir / f"autoware_carla_scenario-port-{slot_base}.lock"
+    for index, slot_base in slot_order(base, slots, start):
+        path = lock_dir / lock_name(slot_base)
         try:
             fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
         except OSError:
@@ -292,14 +248,12 @@ class CarlaWatchdog:
     def __init__(self, slot: PortSlot, port_file: Path | None = None) -> None:
         pass_fds = [] if slot._lock is None else [slot._lock.fileno()]
         self._process: subprocess.Popen[bytes] | None = subprocess.Popen(
-            [
+            watchdog_argv(
                 sys.executable,
-                "-m",
                 __name__,
-                "--watch",
-                str(slot.rpc),
-                *([str(port_file)] if port_file is not None else []),
-            ],
+                slot.rpc,
+                str(port_file) if port_file is not None else None,
+            ),
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
