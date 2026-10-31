@@ -71,6 +71,7 @@ from .t4_settings import (
     dataset_path,
     opencv_of_ftheta,
 )
+from .utils.clearance import _HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -576,7 +577,16 @@ class T4Recording:
 
     def _annotate(self, world: "carla.World", snapshot: Any) -> None:
         """Hand the writer the vehicles' and pedestrians' states: one array,
-        which it turns into boxes in the map frame."""
+        which it turns into boxes in the map frame.
+
+        An actor parked out of the world (a hidden spawn, a trajectory entity
+        before its start: ``_HIDDEN_BELOW_M`` or more below the ground) is
+        not on the scene and gets no box, whatever ``t4.max_distance_m``
+        (#908).  It is registered all the same: the writer keys its instance
+        by the actor id and writes only instances with boxes, so one revealed
+        later is one instance from the frame it appears, and one hidden again
+        has no box while it is away, as one out of range.
+        """
         seen = self._seen
         new = [s.id for s in snapshot if s.id not in seen]
         if new:
@@ -589,8 +599,11 @@ class T4Recording:
         for s in snapshot:
             if not seen.get(s.id):
                 continue
-            tf, v = s.get_transform(), s.get_velocity()
+            tf = s.get_transform()
             loc, rot = tf.location, tf.rotation
+            if loc.z < _HIDDEN_BELOW_M:
+                continue
+            v = s.get_velocity()
             ids.append(s.id)
             rows.append(
                 (loc.x, loc.y, loc.z, rot.roll, rot.pitch, rot.yaw, v.x, v.y, v.z)
