@@ -12,7 +12,7 @@ from ...kinematics import Vector3
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
-from .distance_measure import half_extent_along
+from .distance_measure import _box_centre, half_extent_along
 from ...failure import FailureCategory
 
 if TYPE_CHECKING:
@@ -44,10 +44,16 @@ class TimeToCollisionCondition(CompositionCondition):
     source's own speed along the line of sight -- the same expression with the
     target's velocity zero, rather than a second code path.
 
-    *edge_to_edge* measures from the source's bounding box rather than from its
-    centre.  It matters more here than anywhere else: TTC is compared against a
-    handful of seconds, so a vehicle length in the numerator is a large
-    fraction of the answer.
+    By default the range runs between the two actors' locations (their
+    origins), as :func:`~.distance_measure.separation` measures centre to
+    centre.  *edge_to_edge* measures between the bounding boxes instead: the
+    range and its direction are taken between the box centres -- a CARLA box
+    sits at an offset from its actor's origin, a vehicle's about a metre
+    forward -- and each box's reach along that line is subtracted, exactly as
+    :func:`~.distance_measure.separation` does.  A place has no box, so only
+    the source's offset and reach apply to it.  It matters more here than
+    anywhere else: TTC is compared against a handful of seconds, so a vehicle
+    length in the numerator is a large fraction of the answer.
 
     It reads as ``source -> target | TTC | <rule> <value> s``.
 
@@ -59,8 +65,8 @@ class TimeToCollisionCondition(CompositionCondition):
             CARLA world pose.  Resolved once, in this constructor.
         value: Threshold time in seconds.
         rule: Comparison operator applied to ``ttc`` vs *value*.
-        edge_to_edge: Measure from the bounding boxes rather than from the
-            centres.  This is OpenSCENARIO's ``freespace``, and it is not
+        edge_to_edge: Measure between the bounding boxes, from their centres,
+            rather than between the actors' locations.  This is OpenSCENARIO's ``freespace``, and it is not
             available in the lane frame.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
         coordinate_system: :attr:`~DistanceCoordinateSystem.ENTITY` (default)
@@ -196,7 +202,17 @@ class TimeToCollisionCondition(CompositionCondition):
             )
             return self._lane_ttc(src_loc, tgt, src_vel, tgt_vel)
 
-        offset = Vector3(tgt.x - src_loc.x, tgt.y - src_loc.y, 0.0)
+        # Edge to edge runs between the box centres, not the origins: a box
+        # sits at an offset from its actor's origin, and subtracting its reach
+        # from the origin would put the box in the wrong place by that offset
+        # (#888).  The same points `separation` measures between.
+        src = Vector3(src_loc.x, src_loc.y, src_loc.z)
+        if self._edge_to_edge:
+            src = _box_centre(source)
+            if target is not None:
+                tgt = _box_centre(target)
+
+        offset = Vector3(tgt.x - src.x, tgt.y - src.y, 0.0)
         distance = offset.magnitude()
         if distance < _CLOSING_SPEED_EPSILON:
             return None
