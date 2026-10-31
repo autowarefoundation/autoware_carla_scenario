@@ -4576,12 +4576,9 @@ the two, which the test suite checks, so <strong>a new module needs an entry</st
 <p><code>UNCALLED</code> names the few functions and methods of a checked module the
 check leaves out (<code>module.Class.method</code>, or <code>module._helper</code> for a protected
 one), each with its reason: one whose job Codon cannot express, in a module
-that otherwise compiles. Today that is
-what builds a condition's details (<code>get_details()</code>, <code>to_summary_dict()</code>,
-<code>to_dict()</code>: a <code>dict[str, Any]</code> of mixed value types) and what serialises
-them (<code>ScenarioResult.to_json()</code>, which forwards <code>**kwargs: Any</code>), and what reads the
-authoring package's pydantic specs, typed <code>Any</code>
-(<code>signals.build_controllers()</code>). Codon compiles a function
+that otherwise compiles, such as what builds a condition's details (a
+<code>dict[str, Any]</code> of mixed value types) or reads a config node of any type
+(<em>What is checked of the framework</em> below lists every entry). Codon compiles a function
 only when something calls it, so neither its body nor an import made inside
 it is compiled: a module that needs a package or a standard module Codon
 lacks for one function imports it inside that function (<code>import yaml</code> in
@@ -4591,207 +4588,1266 @@ reads opaquely; what keeps <code>to_json()</code> out is the mixed-type dict it 
 method of a checked module.</p>
 <p>To check one more module:</p>
 <ol>
-<li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>.</li>
+<li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>. <code>CHECKED</code> holds one module a
+   line, sorted (a test keeps it so), so the move is one line removed and one
+   added, each where no other pull request's lines are.</li>
 <li>Run <code>uv run scenario-check --library</code> and fix what it reports, in the
    module. Only annotations and Codon-friendly rewrites: the module must
-   behave exactly as it did.</li>
+   behave exactly as it did. A function that cannot compile gets an
+   <code>UNCALLED</code> entry, one line, with its reason.</li>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
+<p>This page needs no edit: the counts and the lists of <em>What is checked of the
+framework</em> are generated from <code>typecheck/library.py</code> when the docs are built
+(<code>mkdocs_hooks/typecheck_library.py</code>, #789). A checked module is listed with
+the first paragraph of its docstring, so give it one that says what the
+module is.</p>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 235 of
-the package's 341 modules (69%; about 69,100 of 119,300 lines) are <code>CHECKED</code>:
-the kinematics, the coordinate frames and poses, the conversions between
-Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
-lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
-and the lane arithmetic of a relative lane pose (<code>trajectory.relative_lane</code>),
-the map manager that loads the Lanelet2 map and the OpenDRIVE road network
-(<code>coordinate.map_manager</code>) and the sweeper's lighter loader of the Lanelet2
-map (<code>sweeper.map_loader</code>), with the projection and origin both read a map
-with (<code>coordinate.projection</code>; not how it reads <code>map_projector_info.yaml</code>,
-whose YAML values are of any type, nor how it moves a <code>Local</code> map's points to
-their <code>local_x</code>/<code>local_y</code> tags), what places a trajectory's vertices in CARLA
-world coordinates (<code>trajectory.resolve</code>), what a scenario document's
-trajectory does with the editor's text and with parsed rows (the rows and
-numbers of the text, a route vertex's <code>kind key=value</code> pairs, the vertex count
-rule and the inspector's summaries: <code>trajectory.vertex_text</code>, #774; not the
-document values of any type, which <code>trajectory.authoring</code> keeps),
-the sweeper's lanelet constraints and parameter bindings
-(<code>sweeper.constraints</code>, <code>sweeper.bindings</code>), how the Hydra sweeper runs each
-case in a forked child of its own process group, stops it and waits for the
-CARLA server it left (<code>sweeper.isolation</code>, #719), the SLURM launcher's
-settings and the job scripts and <code>sbatch</code> command lines it submits a batch
-with (<code>slurm</code>, <code>slurm.settings</code>, <code>slurm.scripts</code>, #732), and the route's map questions,
-frame, poses and search (<code>route.geometry</code>, <code>route.frame</code>, <code>route.positions</code>,
-<code>route.search</code>), all against the lanelet2 model, the condition base and
-every condition, the action base with the environment, follow-trajectory,
-traffic-signal, signal-controller, lane-change, routing, set-speed, traffic-parameters, turn and
-walk-straight actions, the routing action's matching of a track to the lanes
-(<code>traffic.route_match</code>), the test of what stands on a place or in a road
-user's way (<code>utils.clearance</code>), which the spawn action, the place-clear
-condition, the trajectory run and the final approach call, the stalled object (<code>actions.stalled_object</code>) and the background-traffic source and sink
-(<code>actions.background_traffic</code>), the communication loss on a HILS ego
-(<code>actions.communication_loss</code>, over a model of the HILS ego entity) with the
-socket-free half of the HILS bridge's protocol (<code>hils.wire</code>), the logical scenario's route search and matches (<code>route.model</code>) and
-the scenario's route (<code>route.active</code>),
-the <code>signals</code> package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
-controller included, <code>entity._walker_ai</code>), the base of the externally driven egos
-(<code>entity.externally_driven</code>), the vehicle blueprint nearest a size that
-plays an entity of <code>vehicle_type: auto</code> (<code>entity.fit</code>, #728), the ego that takes its mission over the bridge
-(<code>entity.bridged_ego</code>) and the Autoware ego on it (<code>entity.autoware_entity</code>), the ego driven by ROS 2 nodes over DDS
-(<code>entity.ros2_entity</code>) with its configs, commands, arbitration and transport
-interface (<code>ros2</code>, <code>ros2.config</code>, <code>ros2.commands</code>, <code>ros2.transport</code>), the entity registry and the policy
-warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
-runner's run loop and the queue that runs scenarios one after another
-(<code>scenario_runner</code>, <code>scenario_queue</code>), the UI's runner, which runs them in
-a subprocess on a thread (<code>ui.runner</code>, over a model of the pydantic
-<code>ui.models</code>), the viewer's guard on every path it builds from a request and
-the stems of a session's cases (<code>ui.case_paths</code>, #741), the box gaps and
-metrics it reads off a trajectory log's ticks (<code>ui.drive_metrics</code>), what
-the viewer's SLURM run panel may set, the Hydra overrides it becomes and the
-<code>scenario</code> command line that submits the batch (<code>ui.slurm_options</code>, #742;
-not how it reads the panel's fields, values of any type, nor how it splits
-<code>VIEWER_SCENARIO_COMMAND</code>, which <code>ui.slurm_launch</code> keeps),
-the traffic backend interface and its run context with the TrafficManager
-backend and the SUMO backend's options, the map source URIs and what
-resolves them to files on disk (<code>maps.resolver</code>, with the repository listing
-of <code>maps.catalogue</code>, the <code>map</code> config's paths of <code>maps.config</code>, the clone
-cache of map repositories, <code>maps.cache</code>, and the
-OpenDRIVE taken from CARLA by <code>maps.opendrive</code>), what an exported scenario
-package pins the framework to and how it runs <code>uv</code> (<code>authoring.framework_pin</code>,
-<code>authoring.uv_tool</code>), the CARLA server manager (<code>server</code>), the summary a batch prints and
-writes to <code>batch_results.json</code> (<code>batch_report</code>), the markers an ego
-entity hands the runner for the trajectory log (<code>debug_markers</code>), the log of
-the other road users' collisions and falls (<code>npc_collisions</code>), the Autoware
-launcher that runs a stack as a process group (<code>autoware_stack.launcher</code>),
-the <code>scenario_bridge</code> node's command and Python root beside it
-(<code>autoware_stack.bridge_node</code>) and the one that runs a workspace in its dev
-container with Docker (<code>autoware_stack.docker</code>, over a model of
-<code>autoware_stack.devcontainer</code>, which reads JSON and YAML; its text
-parsers -- JSONC's comments and trailing commas, Compose's <code>${VAR}</code>
-interpolation and a <code>workspaceMount</code>'s target -- are checked:
-<code>autoware_stack.devcontainer_text</code>, #763), the Autoware
-bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
-(<code>adversity</code>, NADE and its avoidance included, the actions' <code>_adversarial_execution</code>, <code>adversarial</code> and <code>adversarial_traffic</code>, <code>conditions.adversity_feasible</code>), the measures and the metrics, the ODD
-unit names (<code>odd.unit_names</code>), the ODD's probes, which read its attributes off
-the world and, for those the Lanelet2 map decides, off a lanelet
-(<code>odd.probes</code>), the placement of a road user so a scenario
-measure reads a given value (<code>placement</code>), the planning of a scenario's route on the
-Lanelet2 map that the ODD's route check starts from (<code>odd.route_plan</code>), the CARLA-only helpers, the traffic-light
-lookups included, what a run's T4 dataset holds (its settings, channels
-and categories and the OpenCV model fitted to an F-theta camera,
-<code>t4_settings</code>, #731), and the scenario configs (<code>scenario_config</code>, <code>examples.configs</code>), what the
-<code>scenario</code> command reads off its command line and environment
-(<code>--resume-from</code>, the <code>scenario=</code> override and whether it is a glob, the
-summary's case labels and whether the malloc arenas are already capped:
-<code>examples.argv</code>, #752), the escaping of a scenario's free-form title and
-description for the generated <code>pyproject.toml</code> and <code>__init__.py</code> docstring
-(<code>text_escape</code>, #773; the Jinja filters <code>templating</code> registers wrap it), the camera
-and LiDAR sensors (<code>sensor</code>), the six example scenarios, and the external
-driver's configs and client interface, trajectory follower and observations
-(<code>driver.base</code>, <code>driver.control</code>, <code>driver.observation</code>, over
-<code>driver.geometry</code>) with which traffic light governs the ego and where it
-stops for it (<code>driver.stop_lines</code>, #751; not the light's state as the
-protobuf enum, the payload, nor the <code>is_at_traffic_light()</code> fallback, which
-<code>driver.renderer</code> keeps), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
-<code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
-through models of it (see <em>A class a checked package only re-exports</em>
-below). 117
-functions and methods of those modules are <code>UNCALLED</code> (28 of them
-protected helpers, see <em>What is compiled</em> below): most of them a
-condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
-backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
-match, a constraint or a binding from YAML values of any type
-(<code>Range.parse()</code>, <code>parse_route_search()</code>, <code>RouteMatch.from_config()</code>,
-<code>parse_constraint()</code>, <code>parse_binding()</code>), the <code>[tool.uv.sources]</code> entry of a
-framework pin, a dict of str and bool values (<code>Pin.uv_source()</code>), the T4
-dataset's settings from the driver config and the <code>t4</code> config section
-(<code>T4Settings.from_driver()</code>, a <code>Mapping[str, Any]</code>), what reads
-the SLURM launcher's settings off a config (<code>launcher_type()</code>,
-<code>SlurmSettings.from_mapping()</code>: a <code>Mapping[str, Any]</code>, with its helpers
-<code>_optional_str()</code> and <code>_optional_int()</code>, which take a value of any type) and
-what gives them back as the manifest's <code>dict[str, Any]</code>
-(<code>SlurmSettings.to_dict()</code>, <code>replace()</code>), the two members of
-<code>BaseScenario</code> built on the ego's class (<code>create_ego()</code>, which instantiates
-<code>ego_type</code>, a <code>type[EgoVehicle]</code>) or on cover expressions of any value (<code>register_cover()</code>),
-the run-time wrapper of <code>TrajectoryVertex.__init__</code>
-(<code>_refusing_vertex_times</code>), the road-marking pattern of the stop lines, which returns a <code>refers</code>
-parameter (any of lanelet2's primitives) as a line string
-(<code>utils.stop_line._road_marking_stop_lines()</code>),
-<code>signals.build_controllers()</code>, which reads
-the authoring package's pydantic specs, what builds the <code>scenario_bridge</code>
-node's command from its ROS parameters (<code>bridge_ros_args()</code>,
-<code>bridge_command()</code>: a <code>Mapping[str, Any]</code> of bool, int, float and str
-values; Codon 0.19 fails on a <code>Union</code> in a parameter annotation, <code>union
-already sealed</code>, so the checker drops one and the check has nothing to call
-with), what the runner does with values of mixed types or a condition's
-details (merging the traffic and environment records into the result
-document, <code>_write_result()</code>; collecting the condition
-statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
-(<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
-which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
-ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>),
-<code>encode_frame_jpeg()</code> (cv2), and protected helpers of the same kinds: what
-reads a <code>map</code> setting, a route search's segment, a signal group or phase, or
-a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</code>), walks or
-binds a sweeper constraint of any kind, builds a condition's status (its
-details), or takes the list a plain tick callback goes into
-(<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of), the line a HILS message goes out as,
-which takes a message of any shape (<code>hils.wire.encode()</code>, a
-<code>Mapping[str, Any]</code>), and three of <code>sweeper.isolation</code>: its
-<code>SIGTERM</code> handler (<code>_raise_interrupted()</code>, whose frame is <code>Any</code>), the
-<code>prctl(PR_SET_PDEATHSIG)</code> call through ctypes (<code>_request_pdeathsig()</code>) and
-what runs a case in the forked child (<code>_run_in_child()</code>, which takes the
-signal mask, a <code>set[int | signal.Signals]</code>); the first and the last are
-compiled through their callers. The 106 <code>EXCLUDED</code> modules fall in
-three groups. Many fit more than one (about 82 import what Codon cannot
-compile, 31 build on an excluded module and 19 hold values Codon has no type
-for), so each is counted once, in the first group that fits it:</p>
+<!-- The library.* placeholders in this section are filled in from
+typecheck/library.py when the docs are built
+(mkdocs_hooks/typecheck_library.py, #789): do not write counts or module
+lists here. -->
+
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
+235 of the package's 341
+modules (69%; about 69,400 of
+119,700 lines) are <code>CHECKED</code>: the kinematics, the
+coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
+and CARLA world poses, the map manager and the map sources, the route search,
+the trajectories, the conditions, the actions and the entities, the scenario
+base, its runner and its queue, the traffic backends' interface, the signal
+controllers, the adversity math, the measures, the metrics and the ODD's
+probes, the example scenarios and their configs, and the parts of the tooling
+around a run that need nothing Codon lacks. A checked package's <code>__init__</code>
+re-exports what is not checked through models of it (see <em>A class a checked
+package only re-exports</em> below). Each checked module is listed here with the
+first paragraph of its docstring:</p>
+<details class="note">
+<summary>The 235 CHECKED modules</summary>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>action_state</code></td>
+<td>The lifecycle state of a scenario action.</td>
+</tr>
+<tr>
+<td><code>actions</code></td>
+<td>Actions that execute side effects in response to conditions during scenarios.</td>
+</tr>
+<tr>
+<td><code>actions._adversarial_execution</code></td>
+<td>Drive a planned adversarial command, then hand the vehicle back (#391).</td>
+</tr>
+<tr>
+<td><code>actions._departures</code></td>
+<td>When an entity following a trajectory is where: the departures it knows of.</td>
+</tr>
+<tr>
+<td><code>actions._road_threat</code></td>
+<td>When a pedestrian on (or at the edge of) a road has a vehicle too close.</td>
+</tr>
+<tr>
+<td><code>actions._route_pacing</code></td>
+<td>Pace an entity's own driver to its waypoints' times, and log the arrivals.</td>
+</tr>
+<tr>
+<td><code>actions._trajectory_run</code></td>
+<td>Move an entity along a trajectory: the engine behind <code>RoutingAction</code>.</td>
+</tr>
+<tr>
+<td><code>actions.adversarial</code></td>
+<td>TeraSim's adversities as actions (#393, #398, #399, #400).</td>
+</tr>
+<tr>
+<td><code>actions.adversarial_traffic</code></td>
+<td>NADE as an action: adversarial traffic around the ego, importance sampled (#395).</td>
+</tr>
+<tr>
+<td><code>actions.background_traffic</code></td>
+<td>Background traffic: vehicles that come and go without a scenario entity behind them.</td>
+</tr>
+<tr>
+<td><code>actions.base</code></td>
+<td>Base class for conditional actions executed during scenario tick loops.</td>
+</tr>
+<tr>
+<td><code>actions.communication_loss</code></td>
+<td>Communication loss action: stop data between the HILS bridge and its ECUs.</td>
+</tr>
+<tr>
+<td><code>actions.construction_zone</code></td>
+<td>TeraSim's construction zone as an action: cones, barriers and signs on a lane (#402).</td>
+</tr>
+<tr>
+<td><code>actions.despawn</code></td>
+<td>Take a road user out of the world for good.</td>
+</tr>
+<tr>
+<td><code>actions.environment</code></td>
+<td>Environment action: set the world's weather and sun position, the road's grip and how far drivers see.</td>
+</tr>
+<tr>
+<td><code>actions.lane_change</code></td>
+<td>Lane-change action: force a lane change via TrafficManager.</td>
+</tr>
+<tr>
+<td><code>actions.routing</code></td>
+<td>Send an entity along a route: through its waypoints, on time, to a goal.</td>
+</tr>
+<tr>
+<td><code>actions.set_speed</code></td>
+<td>Set-speed action: command a vehicle's target speed during a run.</td>
+</tr>
+<tr>
+<td><code>actions.spawn</code></td>
+<td>Put something into the scene mid-run -- the counterpart of <code>despawn</code>.</td>
+</tr>
+<tr>
+<td><code>actions.stalled_object</code></td>
+<td>TeraSim's static adversities: a stalled object and collision objects (#401).</td>
+</tr>
+<tr>
+<td><code>actions.traffic_parameters</code></td>
+<td>Change the traffic's parameters during a run.</td>
+</tr>
+<tr>
+<td><code>actions.traffic_signal</code></td>
+<td>Traffic signal action: control traffic lights via Lanelet2 regulatory element IDs.</td>
+</tr>
+<tr>
+<td><code>actions.traffic_signal_controller</code></td>
+<td>Traffic signal controller action: put a junction into a named phase.</td>
+</tr>
+<tr>
+<td><code>actions.turn</code></td>
+<td>Turn action: analyse OpenDRIVE junctions ahead and set a turn route via TrafficManager.</td>
+</tr>
+<tr>
+<td><code>actions.turn_indicator</code></td>
+<td>Turn indicator action: light a vehicle's turn indicators.</td>
+</tr>
+<tr>
+<td><code>actions.walk_straight</code></td>
+<td>Walk-straight action: send a pedestrian forward with no destination.</td>
+</tr>
+<tr>
+<td><code>adversity</code></td>
+<td>TeraSim's adversarial behaviour generation, ported (#385).</td>
+</tr>
+<tr>
+<td><code>adversity.avoidance</code></td>
+<td>Who an adversity challenges, whether they can avoid it, and how they respond (#396).</td>
+</tr>
+<tr>
+<td><code>adversity.collision</code></td>
+<td>Conflicts between two predicted trajectories (TeraSim's <code>collision_check_cy</code>).</td>
+</tr>
+<tr>
+<td><code>adversity.command</code></td>
+<td>Adversarial commands and the paths they drive (TeraSim's <code>NDECommand</code>).</td>
+</tr>
+<tr>
+<td><code>adversity.construction</code></td>
+<td>Where a construction zone's cones, barriers and signs go (#402).</td>
+</tr>
+<tr>
+<td><code>adversity.geometry</code></td>
+<td>Footprints and predicted states (TeraSim's <code>geometry_utils_cy</code>).</td>
+</tr>
+<tr>
+<td><code>adversity.idm</code></td>
+<td>The car-following model the triggers compare accelerations with.</td>
+</tr>
+<tr>
+<td><code>adversity.location</code></td>
+<td>Where an agent is, for an adversity's location gate (TeraSim's <code>get_location</code>).</td>
+</tr>
+<tr>
+<td><code>adversity.nade</code></td>
+<td>TeraSim's NADE: which adversity to sample, with an unbiased weight (#395).</td>
+</tr>
+<tr>
+<td><code>adversity.observation</code></td>
+<td>What an agent sees, for the adversity triggers (TeraSim's <code>NDEEgoSensor</code>).</td>
+</tr>
+<tr>
+<td><code>adversity.prediction</code></td>
+<td>Kinematic prediction (TeraSim's <code>trajectory_predictor</code> and trajectory utils).</td>
+</tr>
+<tr>
+<td><code>adversity.snapshot</code></td>
+<td>Read the agents and the signals of a CARLA world for a <code>observation.Scene</code>.</td>
+</tr>
+<tr>
+<td><code>adversity.triggers</code></td>
+<td>When each phase-1 adversity fires, and what it does then (#392).</td>
+</tr>
+<tr>
+<td><code>adversity_event</code></td>
+<td>What an action reports for the run's log, beside its lifecycle (#397).</td>
+</tr>
+<tr>
+<td><code>authoring.framework_pin</code></td>
+<td>Work out how an exported scenario package should depend on this framework.</td>
+</tr>
+<tr>
+<td><code>authoring.uv_tool</code></td>
+<td>Running <code>uv</code> on behalf of an export.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge</code></td>
+<td>minimal readiness contract with <code>autoware_carla_interface</code>.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge._proto</code></td>
+<td>Generated protobuf modules for the <code>AutowareBridge</code> contract.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge.base</code></td>
+<td>Minimal contract for delegating Autoware startup to <code>autoware_carla_interface</code>.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge.fake</code></td>
+<td>In-memory fake <code>AutowareBridge</code> for unit tests.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge.ros_bridge</code></td>
+<td>The <code>scenario_bridge</code> ROS 2 node: Autoware's end of the <code>AutowareBridge</code>.</td>
+</tr>
+<tr>
+<td><code>autoware_bridge.ros_bridge.ad_api</code></td>
+<td>Autoware AD API names and the readiness aggregation logic.</td>
+</tr>
+<tr>
+<td><code>autoware_stack</code></td>
+<td>start a fresh Autoware for every scenario, and remove it after.</td>
+</tr>
+<tr>
+<td><code>autoware_stack.bridge_node</code></td>
+<td>How a launcher runs the <code>scenario_bridge</code> node next to the stack it starts.</td>
+</tr>
+<tr>
+<td><code>autoware_stack.devcontainer_text</code></td>
+<td>The text a dev container's configuration is written in.</td>
+</tr>
+<tr>
+<td><code>autoware_stack.docker</code></td>
+<td>Run a local Autoware workspace in its dev container, one container per scenario.</td>
+</tr>
+<tr>
+<td><code>autoware_stack.launcher</code></td>
+<td>Bring an Autoware stack up for one scenario and tear it down after it.</td>
+</tr>
+<tr>
+<td><code>batch_report</code></td>
+<td>A batch's summary: the table it prints, and <code>batch_results.json</code>.</td>
+</tr>
+<tr>
+<td><code>canvas</code></td>
+<td>Sensors rendered by carla_canvas instead of the CARLA server (<code>canvas.config</code>).</td>
+</tr>
+<tr>
+<td><code>conditions</code></td>
+<td>Scenario pass/fail conditions for CARLA scenario testing.</td>
+</tr>
+<tr>
+<td><code>conditions.action_state</code></td>
+<td>Condition on the lifecycle state of a named action.</td>
+</tr>
+<tr>
+<td><code>conditions.adversity_feasible</code></td>
+<td>Whether an entity may carry out an adversity now (#392).</td>
+</tr>
+<tr>
+<td><code>conditions.always_true</code></td>
+<td>Condition that is always satisfied.</td>
+</tr>
+<tr>
+<td><code>conditions.and_condition</code></td>
+<td>AND composite condition that requires all child conditions to pass.</td>
+</tr>
+<tr>
+<td><code>conditions.base</code></td>
+<td>Base classes and helpers for scenario pass/fail conditions.</td>
+</tr>
+<tr>
+<td><code>conditions.collision</code></td>
+<td>Collision-based scenario fail condition using CARLA sensor.other.collision.</td>
+</tr>
+<tr>
+<td><code>conditions.comparison</code></td>
+<td>Shared comparison rule for condition evaluation.</td>
+</tr>
+<tr>
+<td><code>conditions.composition</code></td>
+<td>Composition conditions built from multiple base conditions.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.acceleration</code></td>
+<td>Acceleration condition for scenario evaluation.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.base</code></td>
+<td>Base class for composition conditions.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.distance_measure</code></td>
+<td>How far apart two actors are, and what "apart" is being asked about.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.entity_distance</code></td>
+<td>Relative-distance condition between two entities.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.entity_lane_position</code></td>
+<td>Entity-lane-position scenario pass condition.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.entity_position_distance</code></td>
+<td>Distance from an entity to a fixed place on the map.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.relative_speed</code></td>
+<td>Relative speed condition for scenario evaluation.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.speed</code></td>
+<td>Speed condition for scenario evaluation.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.standstill</code></td>
+<td>Standstill condition composed from PersistentCondition + SpeedCondition.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.temporary_stop</code></td>
+<td>Temporary stop condition for detecting standstill at specified positions.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.time_headway</code></td>
+<td>Time-headway condition between two entities.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.time_to_collision</code></td>
+<td>Time-to-collision (TTC) condition between two entities.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.turn_indicator</code></td>
+<td>Turn indicator condition: which of a vehicle's turn indicators are lit.</td>
+</tr>
+<tr>
+<td><code>conditions.composition.waypoint</code></td>
+<td>Waypoint condition for scenario evaluation.</td>
+</tr>
+<tr>
+<td><code>conditions.elapsed_time</code></td>
+<td>Elapsed-time-based scenario pass condition.</td>
+</tr>
+<tr>
+<td><code>conditions.entity_existence</code></td>
+<td>Fail condition that triggers when a named actor does not exist.</td>
+</tr>
+<tr>
+<td><code>conditions.lane_change_settled</code></td>
+<td>Condition satisfied once a commanded lane change has settled.</td>
+</tr>
+<tr>
+<td><code>conditions.metric</code></td>
+<td>A condition on a metric: how the ego drives, read off the world.</td>
+</tr>
+<tr>
+<td><code>conditions.not_condition</code></td>
+<td>NOT condition that inverts the satisfied result of a child condition.</td>
+</tr>
+<tr>
+<td><code>conditions.off_road_fraction</code></td>
+<td>Fail condition on the fraction of an entity's box that is off the driving lanes.</td>
+</tr>
+<tr>
+<td><code>conditions.or_condition</code></td>
+<td>OR composite condition that requires any child condition to pass.</td>
+</tr>
+<tr>
+<td><code>conditions.persistent</code></td>
+<td>Persistent condition that requires a child to remain True for a duration.</td>
+</tr>
+<tr>
+<td><code>conditions.place_clear</code></td>
+<td>Pass condition that holds while a place on the map is clear of road users.</td>
+</tr>
+<tr>
+<td><code>conditions.route_progress</code></td>
+<td>How far an entity has come along the scenario's route.</td>
+</tr>
+<tr>
+<td><code>conditions.sticky</code></td>
+<td>Sticky condition that latches after the first passing result.</td>
+</tr>
+<tr>
+<td><code>conditions.timeout</code></td>
+<td>Timeout-based scenario fail condition.</td>
+</tr>
+<tr>
+<td><code>conditions.traffic_signal</code></td>
+<td>Traffic signal condition: verify traffic light state by Lanelet2 regulatory element ID.</td>
+</tr>
+<tr>
+<td><code>conditions.traffic_signal_controller</code></td>
+<td>Traffic signal controller condition: is a junction showing a named phase?</td>
+</tr>
+<tr>
+<td><code>conditions.trajectory_time</code></td>
+<td>The time on a trajectory's clock: the condition a vertex time stands for.</td>
+</tr>
+<tr>
+<td><code>constants</code></td>
+<td>Package-wide constants for autoware_carla_scenario.</td>
+</tr>
+<tr>
+<td><code>coordinate</code></td>
+<td>mutual conversion between Lanelet2, OpenDRIVE, and CARLA world poses.</td>
+</tr>
+<tr>
+<td><code>coordinate.frames</code></td>
+<td>Coordinate frame definitions shared across coordinate and kinematics modules.</td>
+</tr>
+<tr>
+<td><code>coordinate.lane_distance</code></td>
+<td>Distance measured along the road, rather than across the map.</td>
+</tr>
+<tr>
+<td><code>coordinate.map_manager</code></td>
+<td>Singleton MapManager for holding map data used by coordinate transforms.</td>
+</tr>
+<tr>
+<td><code>coordinate.poses</code></td>
+<td>Pose dataclasses for coordinate transformation between map systems.</td>
+</tr>
+<tr>
+<td><code>coordinate.projection</code></td>
+<td>Which projection a Lanelet2 map wants, and the projector that reads it.</td>
+</tr>
+<tr>
+<td><code>coordinate.snap</code></td>
+<td>Snap a pose onto the actual CARLA road surface.</td>
+</tr>
+<tr>
+<td><code>coordinate.stop_line</code></td>
+<td>Stop line pose computation from Lanelet2 map data.</td>
+</tr>
+<tr>
+<td><code>coordinate.traffic_light</code></td>
+<td>Traffic lights, placed and looked up in the ambient run.</td>
+</tr>
+<tr>
+<td><code>coordinate.transform</code></td>
+<td>6-direction mutual conversion between Lanelet2, OpenDRIVE, and CARLA world coordinates.</td>
+</tr>
+<tr>
+<td><code>coordinate.walk_graph</code></td>
+<td>Where a pedestrian can walk on the Lanelet2 map, and the shortest way there.</td>
+</tr>
+<tr>
+<td><code>coverage</code></td>
+<td>ODD and scenario coverage, after <code>cover()</code> in ASAM OpenSCENARIO DSL.</td>
+</tr>
+<tr>
+<td><code>debug_markers</code></td>
+<td>Debug markers: what an ego entity knows that the world does not show.</td>
+</tr>
+<tr>
+<td><code>driver</code></td>
+<td>connect the ego vehicle to an external driving policy.</td>
+</tr>
+<tr>
+<td><code>driver.base</code></td>
+<td>Configuration and the abstract client for an external ego driver.</td>
+</tr>
+<tr>
+<td><code>driver.control</code></td>
+<td>Turn a planned trajectory into CARLA vehicle controls.</td>
+</tr>
+<tr>
+<td><code>driver.geometry</code></td>
+<td>Rigid-body primitives for the <code>egodriver</code> contract.</td>
+</tr>
+<tr>
+<td><code>driver.observation</code></td>
+<td>Build driver observations from CARLA state.</td>
+</tr>
+<tr>
+<td><code>driver.stop_lines</code></td>
+<td>Which traffic light governs the ego, and where it stops for it.</td>
+</tr>
+<tr>
+<td><code>ego_base_link</code></td>
+<td>Where the running scenario's ego has its <code>base_link</code>, as the run uses it.</td>
+</tr>
+<tr>
+<td><code>ego_plan</code></td>
+<td>A driver's plan as the run records it: the trajectory, timed.</td>
+</tr>
+<tr>
+<td><code>entity</code></td>
+<td>vehicle entity types for CARLA scenarios.</td>
+</tr>
+<tr>
+<td><code>entity._policy_warmup</code></td>
+<td>A run-up that fills a driver policy's history before the scenario starts.</td>
+</tr>
+<tr>
+<td><code>entity._spawn</code></td>
+<td>Shared spawn helpers for vehicle entities.</td>
+</tr>
+<tr>
+<td><code>entity._walker_ai</code></td>
+<td>Walk a routed pedestrian with CARLA's own walker controller (#521).</td>
+</tr>
+<tr>
+<td><code>entity.autoware_entity</code></td>
+<td>The Autoware ego vehicle.</td>
+</tr>
+<tr>
+<td><code>entity.bridged_ego</code></td>
+<td>Egos whose driving stack reaches the scenario over the <code>AutowareBridge</code>.</td>
+</tr>
+<tr>
+<td><code>entity.ego</code></td>
+<td>Ego vehicle spawning.</td>
+</tr>
+<tr>
+<td><code>entity.externally_driven</code></td>
+<td>The base of every ego that something other than the TrafficManager drives.</td>
+</tr>
+<tr>
+<td><code>entity.fit</code></td>
+<td>The vehicle blueprint nearest a size, chosen on the server the run is on.</td>
+</tr>
+<tr>
+<td><code>entity.pedestrian_entity</code></td>
+<td>Pedestrian entity for CARLA scenarios.</td>
+</tr>
+<tr>
+<td><code>entity.registry</code></td>
+<td>The live entities of a run, addressable by role name.</td>
+</tr>
+<tr>
+<td><code>entity.ros2_entity</code></td>
+<td>Ego vehicle driven by ROS 2 nodes, over DDS, with the framework in the loop.</td>
+</tr>
+<tr>
+<td><code>entity.vehicle_entity</code></td>
+<td>NPC vehicle entity for CARLA scenarios.</td>
+</tr>
+<tr>
+<td><code>entity_role</code></td>
+<td>Validated entity role names for CARLA actors.</td>
+</tr>
+<tr>
+<td><code>examples.argv</code></td>
+<td>What the <code>scenario</code> command reads off its command line and environment.</td>
+</tr>
+<tr>
+<td><code>examples.conf</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>examples.configs</code></td>
+<td>Hydra-compatible dataclass definitions for scenario parameters.</td>
+</tr>
+<tr>
+<td><code>examples.cut_in</code></td>
+<td>Example scenario: a vehicle in the next lane cuts in just ahead of the ego.</td>
+</tr>
+<tr>
+<td><code>examples.intersection_passing</code></td>
+<td>Example scenario: Ego vehicle passes through an intersection on expected roads.</td>
+</tr>
+<tr>
+<td><code>examples.lane_change</code></td>
+<td>Example scenario: Ego vehicle performs a lane change on a straight road.</td>
+</tr>
+<tr>
+<td><code>examples.pedestrian_dart_out</code></td>
+<td>Example scenario: a pedestrian darts out into the road in front of the ego.</td>
+</tr>
+<tr>
+<td><code>examples.temporary_stop</code></td>
+<td>Example scenario: Ego vehicle performs a temporary stop at a designated position.</td>
+</tr>
+<tr>
+<td><code>examples.traffic_light_compliance</code></td>
+<td>Example scenario: Ego vehicle stops at a red traffic light and proceeds when green.</td>
+</tr>
+<tr>
+<td><code>failure</code></td>
+<td>Why a run failed: the category of the fail condition that ended it.</td>
+</tr>
+<tr>
+<td><code>hils.signals</code></td>
+<td>The ego's state as named signals, the values a device's message fields are filled from.</td>
+</tr>
+<tr>
+<td><code>hils.wire</code></td>
+<td>The socket-free half of <code>protocol</code>: its constants and message lines.</td>
+</tr>
+<tr>
+<td><code>kinematics</code></td>
+<td>velocity and acceleration types with coordinate-frame safety.</td>
+</tr>
+<tr>
+<td><code>kinematics.acceleration</code></td>
+<td>Acceleration types with coordinate-frame safety and affine-space semantics.</td>
+</tr>
+<tr>
+<td><code>kinematics.angle</code></td>
+<td>Angle wrapping shared by anything that compares two headings.</td>
+</tr>
+<tr>
+<td><code>kinematics.frames</code></td>
+<td>Coordinate frame definitions for kinematic quantities.</td>
+</tr>
+<tr>
+<td><code>kinematics.vector</code></td>
+<td>Immutable 3-D vector with full arithmetic support.</td>
+</tr>
+<tr>
+<td><code>kinematics.velocity</code></td>
+<td>Velocity types with coordinate-frame safety and affine-space semantics.</td>
+</tr>
+<tr>
+<td><code>maps</code></td>
+<td>HD maps that live in a git repository rather than beside the scenario.</td>
+</tr>
+<tr>
+<td><code>maps.cache</code></td>
+<td>A local cache of HD map repositories, filled by <code>git</code>.</td>
+</tr>
+<tr>
+<td><code>maps.catalogue</code></td>
+<td>What maps a repository offers.</td>
+</tr>
+<tr>
+<td><code>maps.config</code></td>
+<td>Turn a <code>map</code> config into the paths the rest of the framework reads.</td>
+</tr>
+<tr>
+<td><code>maps.opendrive</code></td>
+<td>Where the OpenDRIVE for a remote Lanelet2 map comes from: CARLA.</td>
+</tr>
+<tr>
+<td><code>maps.resolver</code></td>
+<td>From a map source to the files on disk a scenario actually reads.</td>
+</tr>
+<tr>
+<td><code>maps.source</code></td>
+<td>Where an HD map comes from, written as one string.</td>
+</tr>
+<tr>
+<td><code>maps.z_offset_cache</code></td>
+<td>Remember a map's Lanelet2-to-CARLA vertical offset across runs.</td>
+</tr>
+<tr>
+<td><code>measures</code></td>
+<td>Scenario measures: what a run sets up, read off the world under fixed keys.</td>
+</tr>
+<tr>
+<td><code>metrics</code></td>
+<td>Metrics: how the ego drove, read off the world per frame.</td>
+</tr>
+<tr>
+<td><code>npc_collisions</code></td>
+<td>Log the collisions of the road users other than the ego, and walkers that fall.</td>
+</tr>
+<tr>
+<td><code>odd.probes</code></td>
+<td>Probes: functions that read one ODD attribute from the world.</td>
+</tr>
+<tr>
+<td><code>odd.route_plan</code></td>
+<td>Plan a scenario's route on the Lanelet2 map before it runs.</td>
+</tr>
+<tr>
+<td><code>odd.scenario_measure</code></td>
+<td>Map an ODD attribute onto a scenario measure.</td>
+</tr>
+<tr>
+<td><code>odd.unit_names</code></td>
+<td>How units are spelled: the canonical spelling of an alias (<code>kph</code> -&gt; <code>km/h</code>).</td>
+</tr>
+<tr>
+<td><code>placement</code></td>
+<td>Place a road user so a scenario measure reads a given value at the start.</td>
+</tr>
+<tr>
+<td><code>ros2</code></td>
+<td>drive the ego from ROS 2 nodes, over DDS, with no bridge in between.</td>
+</tr>
+<tr>
+<td><code>ros2.commands</code></td>
+<td>What crosses between the ego entity and its DDS transport, and who drives.</td>
+</tr>
+<tr>
+<td><code>ros2.config</code></td>
+<td>Settings for the ego entity that talks to ROS 2 nodes over DDS.</td>
+</tr>
+<tr>
+<td><code>ros2.transport</code></td>
+<td>The DDS transport the ROS 2 ego entity talks through.</td>
+</tr>
+<tr>
+<td><code>route</code></td>
+<td>Logical scenarios: a drive described as a pattern of road, found on any map.</td>
+</tr>
+<tr>
+<td><code>route.active</code></td>
+<td>The route the running scenario is about.</td>
+</tr>
+<tr>
+<td><code>route.frame</code></td>
+<td>A route match laid on its map: route s to lanelet poses and back.</td>
+</tr>
+<tr>
+<td><code>route.geometry</code></td>
+<td>What a route search asks of a Lanelet2 map: lanes, junctions, crosswalks.</td>
+</tr>
+<tr>
+<td><code>route.model</code></td>
+<td>A route search and its matches, as data: no map, no lanelet2, no CARLA.</td>
+</tr>
+<tr>
+<td><code>route.positions</code></td>
+<td>Place a route pose (<code>RouteLanePose</code> and its kin) on the map.</td>
+</tr>
+<tr>
+<td><code>route.search</code></td>
+<td>Find the routes of a map that match a route search.</td>
+</tr>
+<tr>
+<td><code>scenario_base</code></td>
+<td>Base class for CARLA scenarios.</td>
+</tr>
+<tr>
+<td><code>scenario_config</code></td>
+<td>Public, reusable configuration dataclasses for scenario packages.</td>
+</tr>
+<tr>
+<td><code>scenario_queue</code></td>
+<td>Scenario queue bound to a CarlaServerManager.</td>
+</tr>
+<tr>
+<td><code>scenario_runner</code></td>
+<td>Top-level scenario runner integrating all sub-components.</td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td>The run's seed: the one number every random draw of a run follows.</td>
+</tr>
+<tr>
+<td><code>sensor</code></td>
+<td>Sensor abstractions for CARLA scenario testing.</td>
+</tr>
+<tr>
+<td><code>sensor.base</code></td>
+<td>Abstract base class and configuration dataclass for camera sensors.</td>
+</tr>
+<tr>
+<td><code>sensor.carla_camera</code></td>
+<td>Concrete CARLA RGB camera sensor implementation.</td>
+</tr>
+<tr>
+<td><code>sensor.carla_lidar</code></td>
+<td>CARLA ray-cast LiDAR: one full revolution per sweep, a sweep every so many ticks.</td>
+</tr>
+<tr>
+<td><code>sensor.lidar_weather</code></td>
+<td>What rain and fog do to a LiDAR sweep: CARLA's ray-cast LiDAR ignores the weather.</td>
+</tr>
+<tr>
+<td><code>server</code></td>
+<td>CARLA UE5 server lifecycle management.</td>
+</tr>
+<tr>
+<td><code>signals</code></td>
+<td>Traffic signal controllers: a junction's cycle, declared and run.</td>
+</tr>
+<tr>
+<td><code>signals.controller</code></td>
+<td>A traffic signal controller: the thing that cycles a junction's phases.</td>
+</tr>
+<tr>
+<td><code>signals.registry</code></td>
+<td>Where a running scenario's signal controllers can be found by name.</td>
+</tr>
+<tr>
+<td><code>slurm</code></td>
+<td>Running a batch's cases as SLURM array jobs: <code>launcher=slurm</code> (docs/slurm.md).</td>
+</tr>
+<tr>
+<td><code>slurm.scripts</code></td>
+<td>The text a SLURM batch hands to SLURM, and reads back from it (docs/slurm.md).</td>
+</tr>
+<tr>
+<td><code>slurm.settings</code></td>
+<td>The <code>launcher</code> config: who runs a batch's cases (docs/slurm.md).</td>
+</tr>
+<tr>
+<td><code>sweeper.bindings</code></td>
+<td>Binding resolution for auto-deriving parameter values per lanelet.</td>
+</tr>
+<tr>
+<td><code>sweeper.constraints</code></td>
+<td>Constraint engine for filtering lanelets by declarative conditions.</td>
+</tr>
+<tr>
+<td><code>sweeper.isolation</code></td>
+<td>How the lanelet sweeper runs each case: in a forked child of its own.</td>
+</tr>
+<tr>
+<td><code>sweeper.map_loader</code></td>
+<td>Lightweight Lanelet2 map loader for pre-simulation use.</td>
+</tr>
+<tr>
+<td><code>t4_scene._proto</code></td>
+<td>Generated protobuf modules for the T4Scene exchange contract (tier4/e2e-devkit).</td>
+</tr>
+<tr>
+<td><code>t4_settings</code></td>
+<td>What a run's T4 dataset holds: its settings, names and categories, and the OpenCV model of an F-theta camera.</td>
+</tr>
+<tr>
+<td><code>text_escape</code></td>
+<td>Escape free-form text for the TOML and Python files the generators write.</td>
+</tr>
+<tr>
+<td><code>tools</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>traffic</code></td>
+<td>what drives the vehicles a scenario did not author.</td>
+</tr>
+<tr>
+<td><code>traffic.authoring</code></td>
+<td>Traffic parameters out of a scenario document's flat fields.</td>
+</tr>
+<tr>
+<td><code>traffic.base</code></td>
+<td>What drives the traffic of a run, and the vocabulary it answers.</td>
+</tr>
+<tr>
+<td><code>traffic.config</code></td>
+<td>Configuration for traffic backends.</td>
+</tr>
+<tr>
+<td><code>traffic.context</code></td>
+<td>The run a traffic backend joins: <code>TrafficContext</code>.</td>
+</tr>
+<tr>
+<td><code>traffic.driven</code></td>
+<td>The vehicle side of the traffic seam.</td>
+</tr>
+<tr>
+<td><code>traffic.fidelity</code></td>
+<td>Which vehicles a traffic backend simulates mesoscopically, and when.</td>
+</tr>
+<tr>
+<td><code>traffic.final_approach</code></td>
+<td>Drive the last metres of a given path where the TrafficManager would not.</td>
+</tr>
+<tr>
+<td><code>traffic.mesoscopic</code></td>
+<td>A mesoscopic traffic model a backend can run its far traffic on.</td>
+</tr>
+<tr>
+<td><code>traffic.parameters</code></td>
+<td>How a run's traffic behaves, in words every traffic backend reads.</td>
+</tr>
+<tr>
+<td><code>traffic.route_match</code></td>
+<td>Match a recorded track to the lanes it was driven on (#521).</td>
+</tr>
+<tr>
+<td><code>traffic.sumo</code></td>
+<td>SUMO as a traffic backend (<code>traffic.backend=sumo</code>).</td>
+</tr>
+<tr>
+<td><code>traffic.sumo.config</code></td>
+<td>Options of the SUMO traffic backend.</td>
+</tr>
+<tr>
+<td><code>traffic.sumo.geometry</code></td>
+<td>Poses between SUMO's network frame and CARLA's world frame.</td>
+</tr>
+<tr>
+<td><code>traffic.sumo.physics_control</code></td>
+<td>Driving a CARLA vehicle along its SUMO vehicle's trajectory, with physics.</td>
+</tr>
+<tr>
+<td><code>traffic.traffic_manager</code></td>
+<td>CARLA's TrafficManager as a traffic backend.</td>
+</tr>
+<tr>
+<td><code>trajectory</code></td>
+<td>Trajectories for entities to follow: the waypoints of a <code>RoutingAction</code>.</td>
+</tr>
+<tr>
+<td><code>trajectory.model</code></td>
+<td>The trajectory an entity is told to follow, after OpenSCENARIO's.</td>
+</tr>
+<tr>
+<td><code>trajectory.relative_lane</code></td>
+<td>Resolve a <code>RelativeLanePose</code> to an absolute lanelet pose.</td>
+</tr>
+<tr>
+<td><code>trajectory.resolve</code></td>
+<td>Place a <code>Trajectory</code> in CARLA world coordinates.</td>
+</tr>
+<tr>
+<td><code>trajectory.vertex_text</code></td>
+<td>The editor's text of a trajectory's vertices, and what is read off typed rows.</td>
+</tr>
+<tr>
+<td><code>ui.case_paths</code></td>
+<td>Where a session's cases are on disk: the viewer's path guard and case stems.</td>
+</tr>
+<tr>
+<td><code>ui.drive_metrics</code></td>
+<td>How the ego drove: the gaps between road users' boxes, and the metrics the viewer reads off a trajectory log, fed one tick at a time.</td>
+</tr>
+<tr>
+<td><code>ui.runner</code></td>
+<td>Scenario execution bridge using subprocess + progress tracking.</td>
+</tr>
+<tr>
+<td><code>ui.slurm_options</code></td>
+<td>The <code>launcher.*</code> keys the viewer sets on a SLURM batch (docs/slurm.md): what each may hold, the Hydra overrides they become, and the <code>scenario</code> command line that submits the batch with them.</td>
+</tr>
+<tr>
+<td><code>utils</code></td>
+<td>Pure helpers, imported by module path.</td>
+</tr>
+<tr>
+<td><code>utils.clearance</code></td>
+<td>What stands in a road user's way: walkers ahead of a vehicle, vehicles ahead of a walker (#521).</td>
+</tr>
+<tr>
+<td><code>utils.opendrive</code></td>
+<td>CARLA's OpenDRIVE, made acceptable to roadgen.</td>
+</tr>
+<tr>
+<td><code>utils.powertrain</code></td>
+<td>The longitudinal response of a CARLA 0.10 vehicle, worked out from its physics control.</td>
+</tr>
+<tr>
+<td><code>utils.stop_line</code></td>
+<td>Stop line linestring extraction from Lanelet2 regulatory elements.</td>
+</tr>
+<tr>
+<td><code>utils.traffic_light</code></td>
+<td>Traffic light lookups in an OpenDRIVE road network.</td>
+</tr>
+<tr>
+<td><code>utils.turn_indicator</code></td>
+<td>A vehicle's turn indicators, as the blinker bits of its CARLA light state.</td>
+</tr>
+<tr>
+<td><code>utils.vehicles</code></td>
+<td>Vehicle-wide helpers that read nothing but the world they are handed.</td>
+</tr>
+<tr>
+<td><code>visibility</code></td>
+<td>How far a driver sees: the visibility that night, rain and fog leave.</td>
+</tr>
+<tr>
+<td><code>waypoint_arrival</code></td>
+<td>When an entity reached a waypoint, against when it was meant to (#521).</td>
+</tr>
+<tr>
+<td><code>world_reset</code></td>
+<td>Reset the CARLA world between scenarios.</td>
+</tr>
+</tbody>
+</table>
+</details>
+<p>117 functions and methods of those modules are <code>UNCALLED</code>
+(28 of them protected helpers, see <em>What is
+compiled</em> below). Most of them build or read values of mixed or unknown
+types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
+<code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
+document (<code>Mapping[str, Any]</code>, <code>Any</code>), what writes a manifest or a result
+document of mixed values, and protected helpers of the same kinds. The rest
+need what Codon has nothing for (ctypes, cv2, a signal handler's frame), hold
+a class or a list of callbacks the check has no value of, or take a parameter
+Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a parameter
+annotation, <code>union already sealed</code>, so the checker drops one). Some are
+compiled through their callers all the same. Each is listed with its reason:</p>
+<details class="note">
+<summary>The 117 UNCALLED functions and methods, and why</summary>
 <ul>
-<li><strong>82 import what Codon cannot compile</strong>:
-  pydantic, pickle, grpc, protobuf, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
-  cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
-  transport and its message types), or
-  a standard module Codon lacks (<code>socket</code>, <code>inspect</code>, <code>concurrent.futures</code>,
-  <code>importlib</code>
-  beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shlex</code>, <code>shutil</code>,
-  <code>signal</code>, <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>, <code>importlib.metadata</code>
-  or <code>urllib.parse</code> than their shims declare), at module level or inside a function the check calls. This is
-  the tooling around a run (the editor, the UI and the command line they
-  share (<code>serve_cli</code>), authoring, the sweeper's
-  expansion and Hydra sweeper, the patch that lets Hydra's command-line
-  parser build on Python 3.14 (<code>hydra_compat</code>), the pyxodr road network cache, the Autoware
-  stack's dev container, the
-  record of a run's environment, the SLURM launcher's submitting side,
-  its worker and its manifest, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the T4Scene
-  export of its log (<code>t4_scene</code>), and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
-  openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
-  only where the module uses more of it than the shim declares, and the
-  other shimmed modules likewise; <code>test_typecheck_library.py</code> holds every
-  reason to that.</li>
-<li><strong>21 build on an excluded module</strong>, and import nothing Codon lacks
-  themselves: they import a module that is neither checked nor modelled, or
-  names that its package's model does not declare. Among them are the
-  packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>, <code>t4_scene</code>,
-  <code>examples</code>, <code>scaffold</code>, <code>hils</code>), <code>slurm.collect</code>, the
-  authoring compiler, builders and validator, <code>odd.route</code>, the coverage
-  half of the route check (names of <code>odd.model</code> and <code>coverage.items</code> that
-  the odd and coverage models do not declare, such as <code>OddDefinition.evaluate()</code>
-  and <code>value_label()</code>; it also holds each lanelet's attribute values,
-  <code>dict[str, Any]</code>, which it hands to openodd, and finds a probe's
-  <code>on_lanelet</code> reader on any callable) and
-  <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
-  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 21
-  also hold values Codon has no type for.</li>
-<li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
-  <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
-  field defaults), or a class as a value
-  (<code>utils.config</code>, which <code>traffic.config</code>,
-  <code>traffic.fidelity</code> and <code>traffic.sumo.config</code> import only in their uncalled
-  <code>from_mapping()</code>).</li>
+<li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.TrafficSourceAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.constraints_from_text</code>: reads YAML (yaml, imported inside it) into a list of <code>dict[str, Any]</code> constraint mappings of mixed value types, which Codon cannot express</li>
+<li><code>authoring.framework_pin.Pin.uv_source</code>: builds the <code>[tool.uv.sources]</code> entry, a dict[str, Any] of str and bool values (<code>{"path": ..., "editable": True}</code>), which Codon cannot express</li>
+<li><code>autoware_stack.bridge_node.bridge_command</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; CommandAutowareLauncher.start() and DockerAutowareLauncher.start() call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>autoware_stack.bridge_node.bridge_ros_args</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
+<li><code>conditions.and_condition.AndCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.base.BaseCondition.__init_subclass__</code>: wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for</li>
+<li><code>conditions.base.BaseCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.base.BaseCondition.to_summary_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.base.ConditionStatus.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.base.ScenarioResult.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.base.ScenarioResult.to_json</code>: serialises to_dict(), a <code>dict[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), and forwards <code>**kwargs: Any</code>, which Codon cannot express</li>
+<li><code>conditions.collision.CollisionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.comparison.ScalarComparisonRule.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.acceleration.AccelerationCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.base.CompositionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.entity_distance.EntityDistanceCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.entity_lane_position.EntityLaneOfCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.entity_lane_position.EntityLanePositionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.entity_position_distance.EntityPositionDistanceCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.relative_speed.RelativeSpeedCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.speed.SpeedCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.standstill.StandstillCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.time_headway.TimeHeadwayCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.time_to_collision.TimeToCollisionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.turn_indicator.TurnIndicatorCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.waypoint.WaypointCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.elapsed_time.ElapsedTimeCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.metric.MetricCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.not_condition.NotCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.off_road_fraction.OffRoadFractionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.or_condition.OrCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.persistent.PersistentCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.place_clear.PlaceClearCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.route_progress.RouteProgressCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.sticky.StickyCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.traffic_signal.TrafficSignalCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>coordinate.projection._projector_info</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (map_projector_info.yaml, with yaml, imported inside it, which Codon does not have); only read_map_origin and read_projector_type call it</li>
+<li><code>coordinate.projection.read_map_origin</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (map_projector_info.yaml); map_origin calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>coordinate.projection.read_projector_type</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (map_projector_info.yaml); resolve_projector calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>driver.base.DriverCameraConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>driver.base.DriverCameraLens.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>driver.base.DriverClientConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>driver.base.DriverLidarConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>driver.control.ControlConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the config with <code>**</code> of a dict</li>
+<li><code>driver.observation.encode_frame_jpeg</code>: encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled</li>
+<li><code>entity.registry.find_entity_by_role_name</code>: returns the entity of any kind registered under a role (<code>Optional[Any]</code>), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups</li>
+<li><code>entity.registry.register_entity</code>: takes an entity of any kind (<code>Any</code>: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls</li>
+<li><code>failure.Failure.from_dict</code>: reads the dict to_dict() wrote, a <code>Mapping[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
+<li><code>failure.Failure.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
+<li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it</li>
+<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it</li>
+<li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express</li>
+<li><code>ros2.config.CommandSourceConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>ros2.config.Ros2CameraConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>ros2.config.Ros2EgoConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
+<li><code>route.model.Range.parse</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>route.model.RouteMatch.from_config</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>route.model.RouteMatch.to_config</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>route.model._parse_paths</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a junction segment's paths); only _parse_segment, itself uncalled, calls it</li>
+<li><code>route.model._parse_segment</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (one segment of a route search); only parse_route_search, itself uncalled, calls it</li>
+<li><code>route.model._tristate</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a segment's opposite_lane, stop_line, ... flags); only _parse_segment, itself uncalled, calls it</li>
+<li><code>route.model.parse_route_search</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>scenario_base.BaseScenario._register_tick</code>: takes the list a plain callback goes into (<code>List[Callable[[carla.World], None]]</code>), and the check has no value of a list of callables to call with; register_init(), register_pre_tick() and register_post_tick() call it with BaseScenario's own lists, so its body is compiled through them</li>
+<li><code>scenario_base.BaseScenario.create_ego</code>: instantiates the ego's class held in <code>ego_type</code>, which Codon cannot hold as a value</li>
+<li><code>scenario_base.BaseScenario.register_cover</code>: builds a CoverItem of values of any type (<code>expression: Callable[[carla.World], Any]</code>, <code>values: Iterable[Any]</code>, <code>ignore: Callable[[Any], bool]</code>, <code>event: SamplingEvent | BaseCondition</code>), which Codon cannot express; coverage.items is not checked</li>
+<li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
+<li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
+<li><code>scenario_runner._collect_condition_statuses</code>: builds ConditionStatus values, which hold a condition's details (<code>dict[str, Any]</code>), which Codon cannot express; _condition_statuses calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._traffic_record</code>: reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._write_result</code>: merges the traffic record (<code>Any</code>) and environment.write()'s record (environment is EXCLUDED: platform, importlib.metadata) into the result document, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>signals.controller._group_members</code>: reads the authoring package's pydantic signal groups (<code>list[Any]</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
+<li><code>signals.controller._phase_states</code>: reads one of the authoring package's pydantic phases (<code>Any</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
+<li><code>signals.controller.build_controllers</code>: reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed <code>list[Any]</code> so the runtime does not import authoring, with getattr defaults for fields older documents lack</li>
+<li><code>slurm.settings.SlurmSettings.from_mapping</code>: takes the <code>launcher</code> config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the settings with <code>**</code> of a <code>dict[str, Any]</code></li>
+<li><code>slurm.settings.SlurmSettings.replace</code>: takes <code>**changes: Any</code> and reads them, merged into to_dict()'s <code>dict[str, Any]</code>, back with from_mapping, which Codon cannot express</li>
+<li><code>slurm.settings.SlurmSettings.to_dict</code>: returns the settings as the manifest stores them (<code>dataclasses.asdict()</code>), a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
+<li><code>slurm.settings._optional_int</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it</li>
+<li><code>slurm.settings._optional_str</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it</li>
+<li><code>slurm.settings.launcher_type</code>: takes the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express</li>
+<li><code>sweeper.bindings.parse_binding</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>sweeper.constraints._bind_children</code>: reads the children of a constraint of any kind with hasattr (<code>constraint: Any</code>), which Codon cannot express; the constraints' _bind_set_level() call it with themselves, so its body is compiled through them</li>
+<li><code>sweeper.constraints._bind_set_level_constraints</code>: walks a constraint tree of any node (<code>constraint: Any</code>: a Constraint, or any object with <code>constraints</code> or <code>constraint</code>), which Codon cannot express; find_matching_lanelets calls it with each Constraint, so its body is compiled through it</li>
+<li><code>sweeper.constraints._cache_ids</code>: sets <code>_cached_ids</code> on a frozen constraint of any kind with <code>object.__setattr__</code> (<code>constraint: Any</code>), which Codon cannot express; the set-level constraints' _bind_set_level() call it with themselves, so its body is compiled through them</li>
+<li><code>sweeper.constraints.parse_constraint</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>sweeper.isolation._raise_interrupted</code>: a signal handler, whose frame is CPython's frame object (<code>_frame: Any</code>), which Codon has no type for; _run_in_child installs it with signal.signal(), whose shim calls it as CPython calls a handler, so its body is compiled through that</li>
+<li><code>sweeper.isolation._request_pdeathsig</code>: calls Linux's prctl through ctypes (imported inside it), which Codon has nothing for; _die_with_parent calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>sweeper.isolation._run_in_child</code>: takes the signal mask signal.pthread_sigmask() returns, a <code>set[int | signal.Signals]</code>, which Codon cannot express (a set of a union); _launch_isolated calls it with the mask it holds, so its body is compiled through it</li>
+<li><code>t4_settings.T4Settings.from_driver</code>: takes the <code>t4</code> config section (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with <code>**</code> of a <code>dict[str, Any]</code></li>
+<li><code>traffic.base.TrafficBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.build_none</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
+<li><code>traffic.build_sumo</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
+<li><code>traffic.build_traffic_manager</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
+<li><code>traffic.config.TrafficConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.config.TrafficManagerBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.fidelity.MesoscopicConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.parameters.BicycleParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.parameters.BicycleParameters.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.parameters.PedestrianParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.parameters.PedestrianParameters.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.parameters.VehicleParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.parameters.VehicleParameters.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.parameters._described</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.parameters._spread_of</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.parameters._spreads_from</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.sumo.config.AmbientTrafficConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.sumo.config.BicycleConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.sumo.config.PedestrianConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.sumo.config.SumoBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.traffic_manager.TrafficManagerBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>trajectory.model._refusing_vertex_times</code>: the run-time wrapper of TrajectoryVertex.__init__ that refuses the calls written for a vertex with a time (<code>*args: Any, **kwargs: Any</code>, functools.wraps, an inspect.Signature); the check drops the decorator and compiles __init__ as written</li>
+<li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
+<li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
+<li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
+</details>
+<p>The 106 <code>EXCLUDED</code> modules fall in three groups. Many fit
+more than one, so each belongs to the first group that fits it; most are in
+the first:</p>
+<ul>
+<li><strong>Those that import what Codon cannot compile</strong>: a package (pydantic,
+  pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
+  cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
+  Codon lacks (<code>socket</code>, <code>inspect</code>, <code>concurrent.futures</code>, <code>importlib</code> beyond
+  <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shlex</code>, <code>shutil</code>,
+  <code>signal</code>, <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>,
+  <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims declare), at module
+  level or inside a function the check calls. This is most of the tooling
+  around a run (the editor, the UI, authoring, the sweeper's expansion and
+  Hydra sweeper, the SLURM launcher's submitting side, the recordings and
+  exports of a run, the HILS bridge), the ODD and coverage modules that wrap
+  openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code> only
+  where the module uses more of it than the shim declares, and the other
+  shimmed modules likewise; <code>test_typecheck_library.py</code> holds every reason to
+  that.</li>
+<li><strong>Those that build on an excluded module</strong>, and import nothing Codon lacks
+  themselves: they import a module that is neither checked nor modelled, or
+  names that its package's model does not declare. Among them are packages
+  that only re-export such a module. Some of them also hold values Codon has
+  no type for.</li>
+<li><strong>Those that hold values Codon has no type for</strong>, and nothing else keeps
+  them out: <code>Any</code>, or a class as a value.</li>
+</ul>
+<p>Each is listed with its reason:</p>
+<details class="note">
+<summary>The 106 EXCLUDED modules, and why</summary>
+<ul>
+<li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
+<li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)</li>
+<li><code>authoring._builders_generated</code>: its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models</li>
+<li><code>authoring.builders</code>: dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked</li>
+<li><code>authoring.codegen</code>: imports argparse, importlib, inspect, difflib, and templating (jinja2) and authoring.registry (<code>Any</code> field defaults), which are not checked</li>
+<li><code>authoring.compiler</code>: reaches pydantic models through authoring.models</li>
+<li><code>authoring.hydra_config</code>: reaches pydantic models through authoring.models; imports authoring.persistence (yaml)</li>
+<li><code>authoring.models</code>: imports pydantic, uuid</li>
+<li><code>authoring.package_export</code>: imports platform and more of importlib.metadata than its shim declares (<code>metadata()</code>), annotates a field and a parameter <code>dict[str, Any]</code>, which Codon cannot express, and, at module level, authoring.models (pydantic), authoring.persistence (yaml), authoring.hydra_config and authoring.validator (pydantic, through authoring.models), templating (jinja2) and authoring.wheelhouse (jinja2, packaging), which are not checked and have no model</li>
+<li><code>authoring.persistence</code>: imports yaml, and authoring.models (pydantic), which is not checked and has no model</li>
+<li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes</li>
+<li><code>authoring.starter</code>: reaches pydantic models through authoring.models</li>
+<li><code>authoring.validator</code>: reaches pydantic models through authoring.models</li>
+<li><code>authoring.wheelhouse</code>: imports jinja2, packaging, tomllib, tomli, platform</li>
+<li><code>autoware_bridge._proto.autoware_bridge_pb2</code>: imports google.protobuf</li>
+<li><code>autoware_bridge._proto.autoware_bridge_pb2_grpc</code>: imports grpc</li>
+<li><code>autoware_bridge.grpc_server</code>: imports grpc, concurrent.futures</li>
+<li><code>autoware_bridge.ros_bridge.__main__</code>: runs the scenario_bridge node: imports autoware_bridge.ros_bridge.node (rclpy), which is neither checked nor modelled</li>
+<li><code>autoware_bridge.ros_bridge.client</code>: imports grpc</li>
+<li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc</li>
+<li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
+<li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>)</li>
+<li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
+<li><code>coverage.collector</code>: derives openodd's collector (a Rust extension)</li>
+<li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
+<li><code>coverage.report</code>: re-exports openodd's coverage merge and report (a Rust extension)</li>
+<li><code>declarative</code>: imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model</li>
+<li><code>driver.egodriver_client</code>: imports grpc, google.protobuf, numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, importlib, and carla_driver_interface's contract, policies, server, service, driver, inprocess and protocol, which its model (geometry only) does not declare</li>
+<li><code>driver.hdmap_export</code>: imports roadgen, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>)</li>
+<li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare, and numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; reads CARLA's traffic lights and their stop waypoints typed <code>Any</code>; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
+<li><code>editor</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
+<li><code>editor.app</code>: imports fastapi</li>
+<li><code>editor.forms</code>: imports authoring.registry, which is not checked and has no model; parses form values typed Any</li>
+<li><code>editor.map_preview</code>: imports authoring.models (pydantic), which is not checked and has no model</li>
+<li><code>editor.routes</code>: imports fastapi, starlette, anyio</li>
+<li><code>editor.scenario_map</code>: reaches pydantic models through authoring.models; imports editor.map_preview, which is not checked</li>
+<li><code>editor.service</code>: imports yaml, zipfile, <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
+<li><code>entity.hils_entity</code>: imports socket, and hils.protocol (socket), which is neither checked nor modelled</li>
+<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>, <code>unquote()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express</li>
+<li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
+<li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it</li>
+<li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib) and, inside a function, sweeper.expand (omegaconf), which are neither checked nor modelled; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code>, <code>AutowareEgoEntity</code>, <code>GrpcAutowareBridgeServer</code> and <code>CarlaDriverEntity</code>) from the package, and <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code> and <code>decode_case()</code> from odd.route and odd.sampler, which the package and odd models do not declare; what it reads off the command line and the environment is the checked examples.argv's</li>
+<li><code>hils</code>: re-exports hils.config (yaml), which is neither checked nor modelled</li>
+<li><code>hils.bridge</code>: imports hilspy (a Rust extension), and typesafe_carla's CPython package inside HilsBridge; holds hilspy channels and CARLA measurements typed <code>Any</code>, and builds on canvas (carla_canvas) and hils.config (yaml), which are neither checked nor modelled</li>
+<li><code>hils.cli</code>: imports argparse and importlib.resources, and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled</li>
+<li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), which Codon cannot express</li>
+<li><code>hils.link</code>: imports socket, and builds on hils.protocol (socket), which is neither checked nor modelled</li>
+<li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express</li>
+<li><code>hils.protocol</code>: imports socket (LineReader reads the bridge's socket); what needs none is hils.wire, which it re-exports</li>
+<li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
+<li><code>maps.road_network_cache</code>: imports pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
+<li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
+<li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
+<li><code>odd.cli</code>: imports argparse, and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
+<li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express</li>
+<li><code>odd.model</code>: re-exports openodd's model (a Rust extension)</li>
+<li><code>odd.openodd</code>: re-exports openodd's reader (a Rust extension)</li>
+<li><code>odd.registry</code>: wraps openodd's registry (a Rust extension) and imports odd.model (openodd's model) at module level</li>
+<li><code>odd.route</code>: the route-coverage half of checking a planned route against an ODD (it imports the planning, <code>PlannedRoute</code>, <code>RouteError</code> and <code>plan_route()</code>, from odd.route_plan, which is checked, and re-exports it), built on openodd's model: each lanelet's attribute values are a <code>dict[str, Any]</code> (whatever a probe reads, a bool, int, float or str, <code>None</code>, or the <code>UNDECIDED</code> sentinel, compared by identity) that it hands to openodd's <code>OddDefinition.complete()</code> and <code>evaluate()</code> (a Rust extension, with no model) and to a cover item's <code>bucket_of()</code>, so a typed record of them would be converted back to that mapping at the boundary, which the check cannot see past; a probe's <code>on_lanelet</code> reader is an attribute of any callable (<code>getattr</code> with a default), which Codon has no attributes of on a function; the <code>describe()</code> reports are <code>dict[str, Any]</code> of mixed values; and it names what the odd and coverage models do not declare (<code>coverage.items.value_label()</code>, and the probe, cover item and derivation of <code>OddAttribute</code> and the attributes, <code>complete()</code>, <code>evaluate()</code>, <code>situations()</code> and <code>outside_buckets()</code> of <code>OddDefinition</code>)</li>
+<li><code>odd.sampler</code>: wraps openodd's sampler (a Rust extension), imports base64, and reads <code>Mapping[str, Any]</code> config nodes (<code>sampler_from_config()</code>), which Codon cannot express</li>
+<li><code>odd.sources</code>: re-exports openodd's git sources (a Rust extension)</li>
+<li><code>odd.traffic_probes</code>: builds openodd's OddKnob (a Rust extension) for each probe, and each probe reads a traffic parameter by name (<code>getattr</code> on the recorded parameters) and is a callable object keyed in a <code>dict[Callable[..., Any], OddKnob]</code>, which Codon cannot express</li>
+<li><code>odd.units</code>: re-exports openodd's units (a Rust extension)</li>
+<li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
+<li><code>registry</code>: imports omegaconf (<code>DictConfig</code>, under <code>TYPE_CHECKING</code>) and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold</li>
+<li><code>rerun</code>: imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner and scenario_queue use of it</li>
+<li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; entity.carla_driver_entity (itself excluded) and rerun use it</li>
+<li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
+<li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
+<li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
+<li><code>scaffold.generator</code>: imports argparse, ast, functools, keyword, templating (jinja2) and, inside a function, authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked</li>
+<li><code>serve_cli</code>: imports argparse and ipaddress</li>
+<li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
+<li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (<code>dict[str, Any]</code>)</li>
+<li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths</li>
+<li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); first_slot() takes <code>dict[str, str] | os._Environ[str]</code>, which Codon cannot express</li>
+<li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
+<li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>)</li>
+<li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
+<li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>ODD_CASE_KEY</code>, <code>encode_case()</code>, <code>search_from_config()</code> and <code>with_tire_friction()</code> from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express</li>
+<li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm; its cases are forked, stopped and waited for by the checked sweeper.isolation</li>
+<li><code>t4</code>: hands the world and the sensors to the T4 writer, a Rust extension imported at run time with importlib and held as a module (<code>Any</code>), and keeps NumPy arrays, datetime and threading.Condition waits Codon has no model of; t4.codon models what scenario_runner and scenario_queue use of it</li>
+<li><code>t4_scene</code>: re-exports t4_scene.convert, t4_scene.exporter and t4_scene.map_resource, which are not checked; t4_scene.codon models what scenario_runner and scenario_queue use of it</li>
+<li><code>t4_scene.__main__</code>: the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked</li>
+<li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
+<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); an offline converter no checked module imports</li>
+<li><code>t4_scene.exporter</code>: hands each log to t4_scene.convert, which is not checked; t4_scene.codon models the T4SceneExporter scenario_runner and scenario_queue hold</li>
+<li><code>t4_scene.map_resource</code>: imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and builds protobuf messages (t4_scene._proto)</li>
+<li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
+<li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse</li>
+<li><code>traffic.registry</code>: holds backend factories behind the alias <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> (registry.py:44, "expected type expression") and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package</li>
+<li><code>traffic.sumo.backend</code>: imports traci, sumolib, libsumo</li>
+<li><code>traffic.sumo.network</code>: imports roadgen, sumo</li>
+<li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's</li>
+<li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
+<li><code>ui</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn and ui.app (fastapi) inside main(), and ui.recordings (tarfile) inside a function</li>
+<li><code>ui.app</code>: imports fastapi, asyncio</li>
+<li><code>ui.cases</code>: reads JSON documents of any type (<code>Any</code>)</li>
+<li><code>ui.models</code>: imports pydantic</li>
+<li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>)</li>
+<li><code>ui.results</code>: imports yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>)</li>
+<li><code>ui.scanner</code>: imports yaml</li>
+<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options'</li>
+<li><code>ui.sweep_resolver</code>: imports hydra, and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
+<li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), which Codon cannot express</li>
+</ul>
+</details>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model. The model does not declare the whole public API: what
 <code>test_typecheck_model.py</code> guarantees is that every public name of a modelled
@@ -6608,7 +7664,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 02:41:58 UTC"><span class="timeago" datetime="2026-10-31T02:41:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 02:41:58 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 02:58:29 UTC"><span class="timeago" datetime="2026-10-31T02:58:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 02:58:29 UTC">2026-10-31</span>
   </span>
 
     
