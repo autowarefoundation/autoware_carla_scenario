@@ -78,7 +78,11 @@ def test_the_solver_passes_over_a_jump_to_the_real_crossing() -> None:
 
 def test_a_jump_alone_is_no_answer() -> None:
     # Only the jump straddles 20 on [0, 15]: nothing there reads it.
-    with pytest.raises(ValueError, match=r"cannot read 20: .* reads 5\.00 to 50\.00"):
+    with pytest.raises(
+        ValueError,
+        match=r"cannot read 20: .* reads 5\.00 to 50\.00, passing 20 only where "
+        r"it jumps or reads nothing \(first between s = 9\.50 and 10\.00\)",
+    ):
         solve_along(_step, 20.0, 0.0, 15.0)
 
 

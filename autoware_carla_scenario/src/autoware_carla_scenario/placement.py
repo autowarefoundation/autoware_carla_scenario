@@ -152,6 +152,12 @@ def solve_along(
     previous: Optional[float] = None
     lowest = float("inf")
     highest = float("-inf")
+    # The first pair of reads that straddle the target with no crossing
+    # between them, for the error: "reads 5 to 50" alone does not say why 20
+    # was not found.
+    jumped = False
+    jump_low = 0.0
+    jump_high = 0.0
     count = int((high - low) / step)
     for i in range(count + 2):
         s = min(low + i * step, high)
@@ -167,15 +173,23 @@ def solve_along(
                 found = _narrow(read_at, target, previous_s, previous, s, tolerance)
                 if found is not None:
                     return found
+                if not jumped:
+                    jumped, jump_low, jump_high = True, previous_s, s
         previous_s, previous = s, value
     if lowest > highest:
         raise ValueError(
             f"{what} cannot read {target:g}: it reads nothing for s in "
             f"[{low:g}, {high:g}]"
         )
+    passes = ""
+    if jumped:
+        passes = (
+            f", passing {target:g} only where it jumps or reads nothing "
+            f"(first between s = {jump_low:.2f} and {jump_high:.2f})"
+        )
     raise ValueError(
         f"{what} cannot read {target:g}: for s in [{low:g}, {high:g}] it reads "
-        f"{lowest:.2f} to {highest:.2f}"
+        f"{lowest:.2f} to {highest:.2f}{passes}"
     )
 
 
