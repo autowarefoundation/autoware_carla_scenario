@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -120,6 +120,78 @@ def test_the_position_is_the_centre_of_the_bounding_box() -> None:
     assert (agent.x, agent.y) == pytest.approx(
         (110.0 + 1.5 * math.cos(yaw), 195.0 + 1.5 * math.sin(yaw))
     )
+
+
+def _parked_or_not(z: float) -> SimpleNamespace:
+    """A world of the ego at (-55, 1.75) driving east at 10 m/s on the
+    crossroads' W approach, and ``npc1`` 15 m ahead of it at height *z*."""
+
+    def car(role: str, x: float, actor_id: int) -> SimpleNamespace:
+        actor = _actor(
+            "vehicle.tesla.model3",
+            x,
+            1.75,
+            0.0,
+            velocity=_vector(10.0, 0.0),
+            acceleration=_vector(0.0, 0.0),
+            extent=_vector(2.5, 1.0, 0.8),
+        )
+        height = 0.3 if role == "ego" else z
+        actor.get_transform().location.z = height
+        actor.id = actor_id
+        actor.attributes = {"role_name": role}
+        return actor
+
+    actors = [car("ego", -55.0, 1), car("npc1", -40.0, 2)]
+    return SimpleNamespace(
+        get_actors=lambda: SimpleNamespace(
+            filter=lambda pattern: actors if pattern == "vehicle.*" else []
+        )
+    )
+
+
+@pytest.fixture
+def plain_map() -> Iterator[None]:
+    saved = MapManager._instance
+    MapManager.reset()
+    manager = MapManager.get_instance()
+    manager._mgrs_offset = (0.0, 0.0)
+    manager._z_offset = 0.0
+    yield
+    MapManager._instance = saved
+
+
+@pytest.mark.usefixtures("plain_map")
+@pytest.mark.parametrize(("z", "challenger"), [(0.3, "npc1"), (-499.7, None)])
+def test_an_entity_parked_under_the_map_is_not_in_the_scene(
+    z: float, challenger: Optional[str]
+) -> None:
+    # #853: NADE took the parked npc1 for a car on the road ahead of the ego,
+    # brake-checked with it and moved the run's importance-sampling weight.
+    from autoware_carla_scenario.adversity import AdversityKind, AdversityLocation
+    from autoware_carla_scenario.adversity.nade import (
+        ImportanceSampler,
+        NadeAdversity,
+        NadeSettings,
+    )
+    from autoware_carla_scenario.adversity.observation import Scene
+
+    world = _parked_or_not(z)
+    agents = snapshot.snapshot_world(world)
+    assert [agent.name for agent in agents] == (
+        ["ego", "npc1"] if challenger else ["ego"]
+    )
+    lanelet_map = rm.crossroads()
+    scene = Scene(MapFeatures(lanelet_map, rm.routing_graph(lanelet_map)), agents, {})
+    sampler = ImportanceSampler(settings=NadeSettings(fixed_is_probability=1.0))
+    brake = NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01)
+    choice = sampler.step(scene, "ego", "", {"npc1"}, [brake], 0.0)
+    if challenger is None:
+        assert choice is None
+        assert sampler.weight == 1.0
+    else:
+        assert choice is not None and choice.name == challenger
+        assert sampler.weight == pytest.approx(0.01)
 
 
 def test_the_maps_traffic_lights() -> None:

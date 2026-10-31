@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
 from ..seed import resolve_seed
+from ..utils.clearance import _HIDDEN_BELOW_M
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -421,6 +422,9 @@ def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
         try:
             location = actor.get_location()
         except Exception:  # noqa: BLE001
+            continue
+        # One parked under the map until its spawn takes no room (#853).
+        if location.z < _HIDDEN_BELOW_M:
             continue
         out.append((location.x, location.y))
     return out

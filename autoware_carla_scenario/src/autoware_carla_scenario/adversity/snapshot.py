@@ -18,6 +18,7 @@ from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 from ..coordinate.transform import _carla_to_lanelet2_frame
 from ..entity_role import _role_name
 from ..route.geometry import MapFeatures
+from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from .geometry import AgentFootprint
 from .observation import AgentSnapshot, Scene, SignalState
@@ -120,10 +121,15 @@ class SignalReader:
 
 def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
     """Every vehicle and walker of *world*, each named by its ``role_name``
-    (or, with none, its actor id)."""
+    (or, with none, its actor id).
+
+    One parked under the map (``z`` below ``_HIDDEN_BELOW_M``), as an entity
+    is until its spawn, is left out: it is not in the scene (#853)."""
     agents: list[AgentSnapshot] = []
     for pattern in ("vehicle.*", "walker.*"):
         for actor in world.get_actors().filter(pattern):
+            if float(actor.get_transform().location.z) < _HIDDEN_BELOW_M:
+                continue
             role = _role_name(actor)
             name = str(actor.id) if role is None else str(role)
             agents.append(snapshot_actor(actor, name))
