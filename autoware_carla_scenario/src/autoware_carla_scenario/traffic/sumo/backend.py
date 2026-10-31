@@ -98,6 +98,7 @@ from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
+from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
 from ...visibility import sight_speed, world_visibility
 from ...world_reset import episode_of
@@ -125,6 +126,7 @@ from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import (
     Pose2D,
+    box_centre_to_origin,
     carla_to_sumo,
     carla_xy_to_sumo,
     sumo_to_carla,
@@ -510,6 +512,13 @@ class SumoTrafficBackend(TrafficBackend):
         self._commands: list[Any] = []
         #: Actor id -> the constant velocity (m/s) teleport mode last gave it.
         self._constant_speed: dict[int, float] = {}
+        #: Actor id -> its bounding box's offset from its origin, forward and
+        #: to the right (m): what turns the box centre SUMO's front bumper
+        #: gives into the origin CARLA puts the actor at (#887).
+        self._box_offsets: dict[int, tuple[float, float]] = {}
+        #: Blueprint id -> the box offset the last actor spawned from it had:
+        #: the guess the next one is spawned with (:meth:`_spawn_at_centre`).
+        self._blueprint_offsets: dict[str, tuple[float, float]] = {}
         #: How often a SUMO vehicle was moved to its car (physics feedback).
         self._feedback_count = 0
         #: With mesoscopic.enabled: the queue model far traffic runs in.
@@ -1262,6 +1271,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._physics = {}
         self._commands = []
         self._constant_speed = {}
+        self._box_offsets = {}
         self._feedback_count = 0
         self._visibility = None
         self._max_speeds = {}
@@ -2074,12 +2084,36 @@ class SumoTrafficBackend(TrafficBackend):
         return max(2.0 * float(actor.bounding_box.extent.x), 1.0)
 
     def _carla_pose_to_sumo(self, actor: Any) -> Pose2D:
+        """Where *actor* is in SUMO's frame: its front bumper, half its
+        length ahead of its bounding box's centre -- not of its origin."""
         tf = actor.get_transform()
+        x, y = actor_box_centre(actor, tf)
         return carla_to_sumo(
-            Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
+            Pose2D(x, y, tf.location.z, tf.rotation.yaw),
             self._length(actor),
             self._offset,
         )
+
+    def _box_offset(self, actor: Any) -> tuple[float, float]:
+        """*actor*'s bounding box offset from its origin, forward and to the
+        right (m, CARLA's ``bounding_box.location``), read once per actor;
+        ``(0, 0)`` where it has none."""
+        offset = self._box_offsets.get(actor.id)
+        if offset is None:
+            box = getattr(actor, "bounding_box", None)
+            location = getattr(box, "location", None)
+            offset = (
+                (0.0, 0.0)
+                if location is None
+                else (float(location.x), float(location.y))
+            )
+            self._box_offsets[actor.id] = offset
+        return offset
+
+    def _carla_origin(self, actor: Any, centre: Pose2D) -> Pose2D:
+        """Where to put *actor*'s origin for its bounding box to be centred
+        at the CARLA *centre* (what :func:`sumo_to_carla` gives)."""
+        return box_centre_to_origin(centre, self._box_offset(actor))
 
     def _road_position(
         self, pose: Pose2D, sumo_id: str, vclass: str = "passenger"
@@ -2292,17 +2326,35 @@ class SumoTrafficBackend(TrafficBackend):
             now = self._now()
             for sumo_id in self._background:
                 if sumo_id in self._meso:
-                    pose = self._meso_carla_pose(sumo_id, now)
+                    pose = self._background_origin(
+                        sumo_id, self._meso_carla_pose(sumo_id, now)
+                    )
                     out[sumo_id] = (pose.x, pose.y)
         for sumo_id in self._background & present:
             x, y, z = vehicle.getPosition3D(sumo_id)
-            pose = sumo_to_carla(
-                Pose2D(x, y, z, vehicle.getAngle(sumo_id)),
-                vehicle.getLength(sumo_id),
-                self._offset,
+            pose = self._background_origin(
+                sumo_id,
+                sumo_to_carla(
+                    Pose2D(x, y, z, vehicle.getAngle(sumo_id)),
+                    vehicle.getLength(sumo_id),
+                    self._offset,
+                ),
             )
             out[sumo_id] = (pose.x, pose.y)
         return out
+
+    def _background_origin(self, sumo_id: str, centre: Pose2D) -> Pose2D:
+        """The CARLA origin of background vehicle *sumo_id*, its box centred
+        at *centre*: an actor's location, as the TrafficManager backend's
+        background vehicles give theirs.  By its mirror's box when it has
+        one, else by the box its blueprint's last actor had."""
+        actor = self._ambient.get(sumo_id)
+        if actor is not None:
+            return self._carla_origin(actor, centre)
+        blueprint = self._blueprints.get(sumo_id, self._config.blueprint)
+        return box_centre_to_origin(
+            centre, self._blueprint_offsets.get(blueprint, (0.0, 0.0))
+        )
 
     def remove_background(self, world: Any, handle: str) -> None:
         """Take a background vehicle out of SUMO; its CARLA mirror goes with it."""
@@ -2756,7 +2808,11 @@ class SumoTrafficBackend(TrafficBackend):
         target_speed = float(tc.vehicle.getSpeed(sumo_id))
         x, y, z = tc.vehicle.getPosition3D(sumo_id)
         angle = tc.vehicle.getAngle(sumo_id)
-        target = sumo_to_carla(Pose2D(x, y, z, angle), length, self._offset)
+        # Origin to origin: SUMO's pose gives the box centre, the transform
+        # the origin; the target is the origin that puts the box there.
+        target = self._carla_origin(
+            actor, sumo_to_carla(Pose2D(x, y, z, angle), length, self._offset)
+        )
         ahead = lookahead_distance(target_speed)
         look = self._lookahead(sumo_id, ahead)
         if look is None:
@@ -2821,7 +2877,7 @@ class SumoTrafficBackend(TrafficBackend):
             return
         feedback = self._config.feedback_distance_m
         if feedback > 0 and math.hypot(long_error, side_error) > feedback:
-            self._move_sumo_to_car(sumo_id, tf, speed, length)
+            self._move_sumo_to_car(sumo_id, actor, tf, speed, length)
         curvature = pursuit_curvature(
             x=tf.location.x,
             y=tf.location.y,
@@ -3056,7 +3112,7 @@ class SumoTrafficBackend(TrafficBackend):
             logger.debug("SUMO could not let %s go: %s", sumo_id, exc)
 
     def _move_sumo_to_car(
-        self, sumo_id: str, tf: Any, speed: float, length: float
+        self, sumo_id: str, actor: Any, tf: Any, speed: float, length: float
     ) -> None:
         """Move a SUMO vehicle to where its car really is, keeping its speed.
 
@@ -3067,10 +3123,10 @@ class SumoTrafficBackend(TrafficBackend):
         come apart.
         """
         tc = self._traci
+        # From its box centre, as SUMO's front bumper is half a length ahead.
+        x, y = actor_box_centre(actor, tf)
         pose = carla_to_sumo(
-            Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
-            length,
-            self._offset,
+            Pose2D(x, y, tf.location.z, tf.rotation.yaw), length, self._offset
         )
         try:
             # On a lane of its own class: a bicycle's may be a sidewalk's.
@@ -3103,8 +3159,11 @@ class SumoTrafficBackend(TrafficBackend):
         tc = self._traci
         speed = float(tc.vehicle.getSpeed(sumo_id))
         x, y, z = tc.vehicle.getPosition3D(sumo_id)
-        pose = sumo_to_carla(
-            Pose2D(x, y, z, tc.vehicle.getAngle(sumo_id)), length, self._offset
+        pose = self._carla_origin(
+            actor,
+            sumo_to_carla(
+                Pose2D(x, y, z, tc.vehicle.getAngle(sumo_id)), length, self._offset
+            ),
         )
         dt = self._context.fixed_delta_seconds if self._context is not None else 0.05
         yaw = math.radians(pose.heading_deg)
@@ -3251,6 +3310,7 @@ class SumoTrafficBackend(TrafficBackend):
             gone = self._ambient.pop(sumo_id)
             self._physics.pop(gone.id, None)
             self._constant_speed.pop(gone.id, None)
+            self._box_offsets.pop(gone.id, None)
             try:
                 gone.destroy()
             except RuntimeError:
@@ -3275,15 +3335,8 @@ class SumoTrafficBackend(TrafficBackend):
                 blueprint = library.find(blueprint_id)
                 if blueprint.has_attribute("role_name"):
                     blueprint.set_attribute("role_name", f"{_MIRROR_PREFIX}{sumo_id}")
-                # A little above the road: at road height the wheels touch the
-                # kerb and the spawn is refused.  Retried next tick if refused.
-                actor = world.try_spawn_actor(
-                    blueprint,
-                    carla.Transform(
-                        carla.Location(pose.x, pose.y, pose.z + 0.5),
-                        carla.Rotation(yaw=pose.heading_deg),
-                    ),
-                )
+                # Retried next tick if refused.
+                actor = self._spawn_at_centre(world, blueprint, blueprint_id, pose)
                 if actor is None:
                     continue
                 self._ambient[sumo_id] = actor
@@ -3633,7 +3686,8 @@ class SumoTrafficBackend(TrafficBackend):
         return Pose2D(float(x), float(y), 0.0, (90.0 - math.degrees(rotation)) % 360.0)
 
     def _meso_carla_pose(self, sumo_id: str, now: float) -> Pose2D:
-        """Where the queue model has *sumo_id*, in CARLA's frame (box centre)."""
+        """Where the queue model has *sumo_id*, in CARLA's frame: its box
+        centre (:meth:`_spawn_at_centre` puts an actor's there)."""
         assert self._meso is not None
         return sumo_to_carla(
             self._meso_pose(sumo_id, now),
@@ -3644,21 +3698,47 @@ class SumoTrafficBackend(TrafficBackend):
     def _spawn_actor(
         self, world: Any, blueprint_id: str, role_name: str, pose: Pose2D
     ) -> Any:
-        """Spawn *blueprint_id* as *role_name* at the CARLA *pose*; ``None`` if
-        the spot is taken."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
+        """Spawn *blueprint_id* as *role_name* with its box centred at the
+        CARLA *pose*; ``None`` if the spot is taken."""
         blueprint = world.get_blueprint_library().find(blueprint_id)
         if blueprint.has_attribute("role_name"):
             blueprint.set_attribute("role_name", role_name)
-        # A little above the road, as for SUMO's own traffic.
-        return world.try_spawn_actor(
-            blueprint,
-            carla.Transform(
-                carla.Location(pose.x, pose.y, pose.z + 0.5),
-                carla.Rotation(yaw=pose.heading_deg),
-            ),
-        )
+        return self._spawn_at_centre(world, blueprint, blueprint_id, pose)
+
+    def _spawn_at_centre(
+        self, world: Any, blueprint: Any, blueprint_id: str, centre: Pose2D
+    ) -> Any:
+        """Spawn *blueprint* with its bounding box centred at the CARLA
+        *centre* (what :func:`sumo_to_carla` gives); ``None`` if the spot is
+        taken.
+
+        A blueprint carries no bounding box -- CARLA knows an actor's box only
+        once it stands in the world -- so the origin it is spawned at is a
+        guess: the box offset the last actor of the same blueprint had, none
+        for the first.  Where the actor's own offset differs, it is put where
+        its box is centred at once (``set_transform``), before the first tick
+        it is followed on.  A little above the road, as at road height the
+        wheels touch the kerb and the spawn is refused.
+        """
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        guess = self._blueprint_offsets.get(blueprint_id, (0.0, 0.0))
+
+        def at(offset: tuple[float, float]) -> Any:
+            origin = box_centre_to_origin(centre, offset)
+            return carla.Transform(
+                carla.Location(origin.x, origin.y, centre.z + 0.5),
+                carla.Rotation(yaw=centre.heading_deg),
+            )
+
+        actor = world.try_spawn_actor(blueprint, at(guess))
+        if actor is None:
+            return None
+        offset = self._box_offset(actor)
+        self._blueprint_offsets[blueprint_id] = offset
+        if offset != guess:
+            actor.set_transform(at(offset))
+        return actor
 
     def _forget_actor(self, actor: Any) -> None:
         """Destroy *actor* and what the followers kept for it."""
@@ -3666,6 +3746,7 @@ class SumoTrafficBackend(TrafficBackend):
             return
         self._physics.pop(actor.id, None)
         self._constant_speed.pop(actor.id, None)
+        self._box_offsets.pop(actor.id, None)
         try:
             actor.destroy()
         except RuntimeError:

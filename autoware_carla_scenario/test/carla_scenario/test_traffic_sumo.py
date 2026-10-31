@@ -37,8 +37,12 @@ from autoware_carla_scenario.traffic.sumo.config import (
 )
 from autoware_carla_scenario.traffic.sumo.geometry import (
     Pose2D,
+    box_centre_to_origin,
     carla_to_sumo,
+    carla_xy_to_sumo,
+    origin_to_box_centre,
     sumo_to_carla,
+    sumo_xy_to_carla,
 )
 from autoware_carla_scenario.traffic.sumo.network import sanitize_opendrive
 
@@ -188,6 +192,28 @@ def test_the_two_conversions_undo_each_other(yaw: float) -> None:
     assert math.cos(math.radians(back.heading_deg - yaw)) == pytest.approx(1.0)
 
 
+def test_a_carla_box_centre_is_its_origin_moved_by_the_turned_offset() -> None:
+    # Facing CARLA +y: forward is +y, and the right (CARLA's +y of the actor's
+    # own frame, left-handed) is -x.
+    centre = origin_to_box_centre(Pose2D(10.0, 20.0, 0.5, 90.0), (1.3, 0.2))
+    assert (centre.x, centre.y, centre.z) == pytest.approx((9.8, 21.3, 0.5))
+    assert centre.heading_deg == 90.0
+    # No offset, no move.
+    pose = Pose2D(1.0, 2.0, 3.0, 45.0)
+    assert origin_to_box_centre(pose, (0.0, 0.0)) == pose
+
+
+@pytest.mark.parametrize("yaw", [-170.0, -45.0, 0.0, 33.0, 120.0])
+def test_a_box_centre_and_its_origin_undo_each_other(yaw: float) -> None:
+    pose = Pose2D(-12.5, 40.25, 0.3, yaw)
+    back = origin_to_box_centre(box_centre_to_origin(pose, (1.3, -0.4)), (1.3, -0.4))
+    assert (back.x, back.y, back.z) == pytest.approx((pose.x, pose.y, pose.z))
+    assert math.hypot(
+        box_centre_to_origin(pose, (1.3, -0.4)).x - pose.x,
+        box_centre_to_origin(pose, (1.3, -0.4)).y - pose.y,
+    ) == pytest.approx(math.hypot(1.3, 0.4))
+
+
 def test_sanitize_fixes_what_roadgen_refuses_in_carla_maps() -> None:
     text = (
         '<road><userData code="x"><vectorRoad/></userData><userData/>'
@@ -213,21 +239,29 @@ class _Extent:
 
 
 class _Box:
-    def __init__(self) -> None:
+    def __init__(self, location: Any = None) -> None:
         self.extent = _Extent(2.3, 1.0)
+        if location is not None:
+            # Where CARLA centres the box in the actor's own frame; a box
+            # without one reads as centred on the origin.
+            self.location = SimpleNamespace(x=location[0], y=location[1], z=location[2])
 
 
 class _FakeActor:
     _next_id = 100
 
     def __init__(
-        self, transform: Any, role_name: str = "", type_id: str = "vehicle.fake"
+        self,
+        transform: Any,
+        role_name: str = "",
+        type_id: str = "vehicle.fake",
+        box_location: Any = None,
     ) -> None:
         _FakeActor._next_id += 1
         self.id = _FakeActor._next_id
         self.type_id = type_id
         self.attributes = {"role_name": role_name}
-        self.bounding_box = _Box()
+        self.bounding_box = _Box(box_location)
         self.transform = transform
         self.constant_velocity: Any = None
         self.autopilot = False
@@ -328,6 +362,10 @@ class _FakeWorld:
         self.spawn_attempts = 0
         #: Blueprints the world does not have.
         self.missing: set[str] = set()
+        #: The ``bounding_box.location`` every actor spawned here has.
+        self.box_location: Any = None
+        #: Where each actor was spawned, in spawn order.
+        self.spawned_at: list[Any] = []
 
     def get_snapshot(self) -> _Snapshot:
         self.frame += 1
@@ -346,8 +384,14 @@ class _FakeWorld:
 
     def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> _FakeActor:
         self.spawn_attempts += 1
-        actor = _FakeActor(transform, getattr(blueprint, "role_name", ""), blueprint.id)
+        actor = _FakeActor(
+            transform,
+            getattr(blueprint, "role_name", ""),
+            blueprint.id,
+            box_location=self.box_location,
+        )
         self.spawned.append(actor)
+        self.spawned_at.append(transform)
         return actor
 
 
@@ -465,6 +509,7 @@ def _prepared(
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
     vehicles = options.pop("vehicles", None)
+    box_location = options.pop("box_location", None)
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -486,9 +531,16 @@ def _prepared(
             output_dir=tmp_path / "out",
         )
     )
-    npc = _FakeActor(_carla_transform(-80.0, 5.25, 0.0), "npc")
-    ego = _FakeActor(_carla_transform(-110.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    npc = _FakeActor(
+        _carla_transform(-80.0, 5.25, 0.0), "npc", box_location=box_location
+    )
+    ego = _FakeActor(
+        _carla_transform(-110.0, 1.75, 0.0),
+        str(EGO_ROLE_NAME),
+        box_location=box_location,
+    )
     world = _FakeWorld([npc, ego])
+    world.box_location = box_location
     backend.adopt(_Entity(npc, "npc"))
     backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
     backend.start(world, skip_actor_ids={ego.id})
@@ -1508,6 +1560,240 @@ def test_feedback_moves_the_sumo_vehicle_to_where_its_car_really_is(
         lane_pos = backend._traci.vehicle.getLanePosition(sumo_id)
         assert -120.0 + lane_pos == pytest.approx(sx - 4.0, abs=0.5)
         assert backend._feedback_count == 1
+    finally:
+        backend.close()
+
+
+# ---------------------------------------------------------------------------
+# A CARLA actor's origin is not its box centre (#887)
+# ---------------------------------------------------------------------------
+
+#: A car's ``bounding_box.location``: its box sits ahead of its origin,
+#: between the axles, and up off the road.
+_BOX_LOCATION = (1.3, 0.0, 0.8)
+
+
+def _box_front(actor: _FakeActor, transform: Any = None) -> tuple[float, float]:
+    """The CARLA middle of *actor*'s box front, its origin at *transform*
+    (where it stands, by default)."""
+    tf = transform if transform is not None else actor.get_transform()
+    location = getattr(actor.bounding_box, "location", None)
+    forward = float(actor.bounding_box.extent.x) + (location.x if location else 0.0)
+    right = location.y if location else 0.0
+    yaw = math.radians(tf.rotation.yaw)
+    return (
+        tf.location.x + forward * math.cos(yaw) - right * math.sin(yaw),
+        tf.location.y + forward * math.sin(yaw) + right * math.cos(yaw),
+    )
+
+
+def _sumo_bumper(backend: Any, sumo_id: str) -> tuple[float, float]:
+    """Where SUMO has *sumo_id*'s front bumper, in CARLA's frame."""
+    x, y = backend._traci.vehicle.getPosition(sumo_id)
+    return sumo_xy_to_carla(x, y, backend._offset)
+
+
+def _carla_yaw(backend: Any, sumo_id: str) -> float:
+    return float(backend._traci.vehicle.getAngle(sumo_id)) - 90.0
+
+
+@needs_sumo
+@pytest.mark.parametrize("box_location", [None, _BOX_LOCATION])
+def test_teleport_puts_the_box_front_at_sumos_front_bumper(
+    crossroads: Path, tmp_path: Path, box_location: Any
+) -> None:
+    """The car's box -- not its origin -- is where SUMO's vehicle is, and the
+    ego is in SUMO where its box front is; an actor whose box is centred on
+    its origin is placed as before."""
+    backend, world, npc, ego = _prepared(
+        crossroads, tmp_path, box_location=box_location
+    )
+    sumo_id = next(iter(backend._driven))
+    ego_id = next(iter(backend._external))
+    tc = backend._traci
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        speed = float(tc.vehicle.getSpeed(sumo_id))
+        assert speed > 1.0
+        # Put a tick's travel behind, which its constant velocity covers.
+        fx, fy = _box_front(npc)
+        yaw = math.radians(npc.transform.rotation.yaw)
+        fx, fy = fx + math.cos(yaw) * speed * 0.05, fy + math.sin(yaw) * speed * 0.05
+        assert (fx, fy) == pytest.approx(_sumo_bumper(backend, sumo_id), abs=0.02)
+        # The ego, published, is in SUMO with its bumper at its box front.
+        assert tc.vehicle.getPosition(ego_id) == pytest.approx(
+            carla_xy_to_sumo(*_box_front(ego), backend._offset), abs=0.1
+        )
+    finally:
+        backend.close()
+
+
+@needs_sumo
+@pytest.mark.parametrize("box_location", [None, _BOX_LOCATION])
+def test_physics_mode_steers_origin_to_origin(
+    crossroads: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    box_location: Any,
+) -> None:
+    """A car whose box front is at SUMO's front bumper is where it should be
+    (no error to correct), and one put back on its SUMO vehicle is put with
+    its box front there."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+
+    errors: list[float] = []
+    longitudinal = backend_module.longitudinal
+
+    def record(**kwargs: Any) -> Any:
+        errors.append(kwargs["longitudinal_error"])
+        return longitudinal(**kwargs)
+
+    moves: list[SimpleNamespace] = []
+
+    def apply_transform(actor_id: int, transform: Any) -> SimpleNamespace:
+        moves.append(SimpleNamespace(actor_id=actor_id, transform=transform))
+        return moves[-1]
+
+    monkeypatch.setattr(backend_module, "longitudinal", record)
+    monkeypatch.setattr(carla.command, "ApplyTransform", apply_transform)
+    client = _BatchClient()
+    _CLIENT["client"] = client
+    try:
+        backend, world, npc, _ego = _prepared(
+            crossroads, tmp_path, vehicle_control="physics", box_location=box_location
+        )
+    finally:
+        _CLIENT.clear()
+    sumo_id = next(iter(backend._driven))
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+        bx, by = _sumo_bumper(backend, sumo_id)
+        yaw = _carla_yaw(backend, sumo_id)
+        # Its origin where its box front lands on the bumper.
+        reach = 2.3 + (box_location[0] if box_location else 0.0)
+        heading = math.radians(yaw)
+        ox, oy = bx - math.cos(heading) * reach, by - math.sin(heading) * reach
+        npc.transform = _carla_transform(ox, oy, yaw)
+        errors.clear()
+        backend._drive(npc, sumo_id, backend._length(npc))
+        assert errors and errors[-1] == pytest.approx(0.0, abs=1e-4)
+
+        # Fallen 20 m behind: put back with its box front on the bumper.
+        npc.transform = _carla_transform(
+            ox - math.cos(heading) * 20.0, oy - math.sin(heading) * 20.0, yaw
+        )
+        moves.clear()
+        backend._drive(npc, sumo_id, backend._length(npc))
+        placed = [m.transform for m in moves if m.actor_id == npc.id]
+        assert placed
+        assert _box_front(npc, placed[-1]) == pytest.approx((bx, by), abs=1e-4)
+    finally:
+        backend._commands = []
+        backend.close()
+
+
+@needs_sumo
+def test_a_mirror_is_spawned_with_its_box_where_sumos_vehicle_is(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """The first mirror of a blueprint is spawned at a guess and put right at
+    once; the next ones are spawned where they belong."""
+    backend, world, _npc, _ego = _prepared(
+        crossroads,
+        tmp_path,
+        period_s=1.0,
+        max_vehicles=3,
+        vehicle_control="physics",
+        box_location=_BOX_LOCATION,
+    )
+    tc = backend._traci
+    checked: set[int] = set()
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+            for sumo_id, mirror in backend._ambient.items():
+                if mirror.id in checked:
+                    continue
+                # The tick it was spawned on: not steered yet.
+                checked.add(mirror.id)
+                bx, by = _sumo_bumper(backend, sumo_id)
+                yaw = math.radians(_carla_yaw(backend, sumo_id))
+                half = float(tc.vehicle.getLength(sumo_id)) / 2.0
+                cx, cy = (
+                    mirror.transform.location.x + 1.3 * math.cos(yaw),
+                    mirror.transform.location.y + 1.3 * math.sin(yaw),
+                )
+                assert (cx + half * math.cos(yaw), cy + half * math.sin(yaw)) == (
+                    pytest.approx((bx, by), abs=1e-4)
+                )
+        assert len(checked) >= 2
+        # Spawned where it stands but for the first: its box was a guess.
+        spawned = [(a.transform, at) for a, at in zip(world.spawned, world.spawned_at)]
+        assert spawned[0][0].location.x != pytest.approx(spawned[0][1].location.x)
+        for now, at in spawned[1:]:
+            assert (now.location.x, now.location.y) == pytest.approx(
+                (at.location.x, at.location.y)
+            )
+    finally:
+        backend.close()
+
+
+def test_a_spawn_puts_the_box_at_the_centre_it_is_given() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    world = _FakeWorld([])
+    world.box_location = _BOX_LOCATION
+    centre = Pose2D(10.0, 20.0, 0.0, 90.0)
+    for _ in range(2):
+        actor = backend._spawn_at_centre(world, _Blueprint(), "vehicle.fake", centre)
+        tf = actor.get_transform()
+        assert (tf.location.x, tf.location.y) == pytest.approx((10.0, 18.7))
+        assert tf.location.z == pytest.approx(0.5)  # a little above the road
+    # The first at the centre, as its blueprint has no box to read; the
+    # second where it belongs straight away.
+    assert world.spawned_at[0].location.y == pytest.approx(20.0)
+    assert world.spawned_at[1].location.y == pytest.approx(18.7)
+    # No offset: spawned at the centre, as before.
+    plain = backend._spawn_at_centre(
+        _FakeWorld([]), _Blueprint("vehicle.b"), "vehicle.b", centre
+    )
+    assert (plain.transform.location.x, plain.transform.location.y) == pytest.approx(
+        (10.0, 20.0)
+    )
+
+
+@needs_sumo
+@pytest.mark.parametrize("box_location", [None, _BOX_LOCATION])
+def test_background_vehicles_are_where_their_mirrors_origins_are(
+    crossroads: Path, tmp_path: Path, box_location: Any
+) -> None:
+    """At their CARLA origin, as the TrafficManager backend's: the box it
+    turns into ends at SUMO's front bumper."""
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, box_location=box_location
+    )
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert handle is not None
+        for i in range(5):
+            backend.tick(world, i * 0.05)
+        assert handle in backend._ambient
+        x, y = backend.background_vehicles(world)[handle]
+        yaw = math.radians(_carla_yaw(backend, handle))
+        reach = float(tc.vehicle.getLength(handle)) / 2.0 + (
+            box_location[0] if box_location else 0.0
+        )
+        assert (x + reach * math.cos(yaw), y + reach * math.sin(yaw)) == (
+            pytest.approx(_sumo_bumper(backend, handle), abs=1e-4)
+        )
     finally:
         backend.close()
 
