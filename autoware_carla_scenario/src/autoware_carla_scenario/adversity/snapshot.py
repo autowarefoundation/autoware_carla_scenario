@@ -54,9 +54,11 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
     """*actor*'s state now, as *name*, in the Lanelet2 map frame.
 
     The position is the centre of its bounding box, which a vehicle's origin
-    is often behind; the speed is the horizontal one; the acceleration is
-    along its heading; a vehicle's speed limit is CARLA's for it.  A ``vehicle.*`` blueprint is a vehicle, anything else
-    (a ``walker.*``) is approximated by one circle.
+    is often behind; the offset is kept (``box_ahead``, ``box_left``) so a
+    path planned for the centre can put the origin back on it (#889).  The
+    speed is the horizontal one; the acceleration is along its heading; a
+    vehicle's speed limit is CARLA's for it.  A ``vehicle.*`` blueprint is a
+    vehicle, anything else (a ``walker.*``) is approximated by one circle.
     """
     return _snapshot(actor, actor.get_transform(), name)
 
@@ -67,7 +69,10 @@ def _snapshot(
     """:func:`snapshot_actor`, with *actor*'s transform already read."""
     x, y, yaw = _carla_to_lanelet2_frame(CarlaWorldPose.from_carla_transform(transform))
     box = actor.bounding_box
+    # The box's offset from the origin, in the actor's own axes: CARLA's y is
+    # to the right, the map frame's to the left.
     ahead = float(box.location.x)
+    left = -float(box.location.y)
     velocity = actor.get_velocity()
     acceleration = actor.get_acceleration()
     forward = transform.get_forward_vector()
@@ -80,8 +85,8 @@ def _snapshot(
     is_vehicle = str(actor.type_id).startswith("vehicle.")
     return AgentSnapshot(
         name,
-        x + ahead * math.cos(yaw),
-        y + ahead * math.sin(yaw),
+        x + ahead * math.cos(yaw) - left * math.sin(yaw),
+        y + ahead * math.sin(yaw) + left * math.cos(yaw),
         yaw,
         math.hypot(float(velocity.x), float(velocity.y)),
         along,
@@ -89,6 +94,8 @@ def _snapshot(
             2.0 * float(box.extent.x), 2.0 * float(box.extent.y), is_vehicle
         ),
         _speed_limit(actor) if is_vehicle else None,
+        ahead,
+        left,
     )
 
 
