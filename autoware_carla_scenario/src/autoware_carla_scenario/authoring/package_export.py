@@ -38,7 +38,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from ..templating import code_environment, toml_string
+from ..templating import code_environment
+from ..text_escape import toml_string
 from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
 from .hydra_config import dump_scenario_config
 from .models import ScenarioDocument
@@ -201,7 +202,7 @@ def _render_source_entry(pin: Pin) -> str:
         if isinstance(value, bool):
             parts.append(f"{key} = {str(value).lower()}")
         else:
-            parts.append(f"{key} = {toml_string(value)}")
+            parts.append(f"{key} = {toml_string(str(value))}")
     return ", ".join(parts)
 
 
