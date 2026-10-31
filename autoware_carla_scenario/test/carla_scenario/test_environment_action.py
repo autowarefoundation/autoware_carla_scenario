@@ -320,6 +320,30 @@ class TestTheGripReadBack:
         assert world_tire_friction(world.id) == 0.55
         assert world_tire_friction(None) is None
 
+    def test_forgetting_the_grip_leaves_none_for_the_next_run(self) -> None:
+        """A soft world reset keeps the episode: the runner forgets the grip
+        the last run set, as it forgets the visibility (#795)."""
+        from autoware_carla_scenario.actions.environment import (
+            forget_tire_friction,
+            world_tire_friction,
+        )
+
+        world = _world_with(_Vehicle(1))
+        apply_tire_friction(world, 0.55)
+        forget_tire_friction()
+        assert world_tire_friction(world.id) is None
+        # A vehicle the next run spawns keeps the grip it was spawned with.
+        world.fleet.append(_Vehicle(2))
+        follow_tire_friction(world)
+        assert world.fleet[1].frictions == pytest.approx([3.5] * 4)
+        # A grip the next run sets scales what the wheels have then, and
+        # reaches every vehicle again rather than only the unseen ones.
+        world.fleet[0].frictions = [3.0] * 4
+        apply_tire_friction(world, 0.55)
+        assert world_tire_friction(world.id) == 0.55
+        assert world.fleet[0].frictions == pytest.approx([3.0 * 0.55] * 4)
+        assert world.fleet[1].frictions == pytest.approx([3.5 * 0.55] * 4)
+
 
 class TestFollowingTheGrip:
     """A scenario with an action that sets the grip follows it after every tick."""

@@ -1202,3 +1202,45 @@ class TestRunScenarioRegistersTheDefaultTimeout:
         self._run(tmp_path, scenario, 12.0)
         self._run(tmp_path, scenario, 12.0)
         assert self._labels(scenario).count("default_timeout") == 1
+
+
+class TestRunScenarioForgetsTheLastRunsWeather:
+    """A soft world reset keeps the episode, so every run starts by forgetting
+    the visibility and the tire friction the last run left (#795)."""
+
+    def test_the_tire_friction_the_last_run_set_is_forgotten(self, tmp_path):
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.actions.environment import (
+            apply_tire_friction,
+            world_tire_friction,
+        )
+        from autoware_carla_scenario.visibility import (
+            set_world_visibility,
+            world_visibility,
+        )
+
+        class _Actors(list):
+            def filter(self, _pattern):
+                return []
+
+        last_run = SimpleNamespace(
+            id=795, get_actors=lambda ids=None: _Actors(), get_snapshot=lambda: []
+        )
+        apply_tire_friction(last_run, 0.55)  # type: ignore[arg-type]
+        set_world_visibility(795, 80.0)
+
+        runner = _make_runner(None)
+        runner.output_dir = tmp_path
+        runner._world = MagicMock()
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 0
+        scenario.setup.side_effect = _Stop
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, reset_world=False)
+
+        assert world_visibility(795) is None
+        assert world_tire_friction(795) is None

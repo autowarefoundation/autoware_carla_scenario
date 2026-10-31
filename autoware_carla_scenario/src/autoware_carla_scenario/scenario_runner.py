@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
+from .actions.environment import forget_tire_friction
 from .actions.spawn import clear_props
 from .entity.ego import EgoVehicle
 from .entity.registry import (
@@ -1354,9 +1355,11 @@ class ScenarioRunner:
             # autopilot call), and where a backend that cannot run at all -- a
             # simulator that is not installed -- refuses.  Inside the try, so a
             # refusal still gets the cleanup every other failure gets.
-            # How far drivers see is what this run's weather leaves, not what
-            # the last run's left in the same episode.
+            # How far drivers see, and the grip the road leaves the tires, are
+            # what this run's weather leaves, not what the last run's left in
+            # the same episode (a soft world reset keeps it).
             forget_visibility()
+            forget_tire_friction()
             # CARLA's pedestrian navigation (the AI walker controllers' choice
             # of where to go) from the run's seed, before any walker is spawned.
             world.set_pedestrians_seed(seed)

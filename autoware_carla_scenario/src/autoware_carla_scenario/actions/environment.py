@@ -37,6 +37,7 @@ __all__ = [
     "TIRE_FRICTION_RANGES",
     "apply_tire_friction",
     "follow_tire_friction",
+    "forget_tire_friction",
     "rain_weather",
     "tire_friction",
     "tire_friction_range",
@@ -217,6 +218,19 @@ def world_tire_friction(world_id: Optional[int]) -> Optional[float]:
     if world_id in _TIRE_FACTORS:
         return _TIRE_FACTORS[world_id]
     return None
+
+
+def forget_tire_friction() -> None:
+    """Forget every world's tire friction; the runner calls this for every run.
+
+    A soft world reset keeps the episode, so without this a run that sets no
+    grip would read (:func:`world_tire_friction`) and give the vehicles it
+    spawns (:func:`follow_tire_friction`) the grip the last run set.  The
+    vehicles that grip was applied to went with that run.
+    """
+    _TIRE_FACTORS.clear()
+    _TIRE_BASES.clear()
+    _TIRE_SEEN.clear()
 
 
 def follow_tire_friction(world: "carla.World") -> None:
