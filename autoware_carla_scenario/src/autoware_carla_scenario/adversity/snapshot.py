@@ -5,6 +5,11 @@ The only CARLA-facing part of the observation layer: an actor becomes an
 and the yaw flipped, the map's offset added), a traffic light's state a
 :class:`.observation.SignalState` by the Lanelet2 regulatory element that
 names it.  Requires :class:`~..coordinate.map_manager.MapManager`.
+
+A walker's speed is measured from where it stood when last read
+(:class:`~..kinematics.walker_motion.WalkerVelocities`): one walked by
+CARLA's controller (``controller.ai.walker``) is placed, not driven, and
+reports a velocity of 0 while it walks (#923).
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 from ..coordinate.transform import _carla_to_lanelet2_frame
 from ..entity_role import _role_name
+from ..kinematics.vector import Vector3
+from ..kinematics.walker_motion import WalkerVelocities, is_walker, simulated_seconds
 from ..route.geometry import MapFeatures
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
@@ -59,21 +66,78 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
     speed is the horizontal one; the acceleration is along its heading; a
     vehicle's speed limit is CARLA's for it.  A ``vehicle.*`` blueprint is a
     vehicle, anything else (a ``walker.*``) is approximated by one circle.
+
+    A walker's velocity is measured from where it stood when last read, on
+    its world's clock (:func:`_velocity`); with no world to ask, it is what
+    CARLA reports.  The world is only asked the time: ``get_world()`` makes
+    a new wrapper on every call, which is no other world (unlike the one
+    :func:`snapshot_world` is handed), so the walkers measured are kept.
     """
-    return _snapshot(actor, actor.get_transform(), name)
+    transform = actor.get_transform()
+    elapsed: Optional[float] = None
+    if is_walker(actor):
+        try:
+            elapsed = simulated_seconds(actor.get_world())
+        except (AttributeError, RuntimeError):
+            elapsed = None  # no world to ask (a test double)
+    return _snapshot(
+        actor, transform, name, _velocity(actor, elapsed, transform.location)
+    )
+
+
+#: The walkers' velocities, measured from where they stood when last read;
+#: cleared when the world changes (:func:`_walker_clock`).
+_WALKERS = WalkerVelocities()
+
+
+class _Walked:
+    """The world :data:`_WALKERS` measures walkers in."""
+
+    world: Optional[carla.World] = None
+
+
+_WALKED = _Walked()
+
+
+def _walker_clock(world: carla.World) -> Optional[float]:
+    """*world*'s simulated time (s), the clock walkers are measured on, or
+    ``None`` where it does not say; a world other than the last one asked
+    about forgets every walker measured on that one."""
+    held = _WALKED.world
+    if held is None or held is not world:
+        _WALKED.world = world
+        _WALKERS.clear()
+    return simulated_seconds(world)
+
+
+def _velocity(
+    actor: carla.Actor, elapsed: Optional[float], location: carla.Location
+) -> Vector3:
+    """*actor*'s velocity: a walker's measured from where it stood when last
+    read to *location*, *elapsed* the time now
+    (:meth:`~..kinematics.walker_motion.WalkerVelocities.walker`), any other
+    actor's what CARLA reports."""
+    if is_walker(actor):
+        return _WALKERS.walker(actor, elapsed, location)
+    return Vector3.from_carla_vector3d(actor.get_velocity())
 
 
 def _snapshot(
-    actor: carla.Actor, transform: carla.Transform, name: str
+    actor: carla.Actor, transform: carla.Transform, name: str, velocity: Vector3
 ) -> AgentSnapshot:
-    """:func:`snapshot_actor`, with *actor*'s transform already read."""
+    """:func:`snapshot_actor`, with *actor*'s transform and velocity already
+    read.
+
+    The acceleration is what CARLA reports, a walker's too: a walker's
+    measured one would be the difference of two speeds each measured from a
+    tick's move, and so its noise divided by the tick twice.
+    """
     x, y, yaw = _carla_to_lanelet2_frame(CarlaWorldPose.from_carla_transform(transform))
     box = actor.bounding_box
     # The box's offset from the origin, in the actor's own axes: CARLA's y is
     # to the right, the map frame's to the left.
     ahead = float(box.location.x)
     left = -float(box.location.y)
-    velocity = actor.get_velocity()
     acceleration = actor.get_acceleration()
     forward = transform.get_forward_vector()
     # The dot product of two CARLA-frame vectors is the same in any frame.
@@ -88,7 +152,7 @@ def _snapshot(
         x + ahead * math.cos(yaw) - left * math.sin(yaw),
         y + ahead * math.sin(yaw) + left * math.cos(yaw),
         yaw,
-        math.hypot(float(velocity.x), float(velocity.y)),
+        math.hypot(velocity.x, velocity.y),
         along,
         AgentFootprint(
             2.0 * float(box.extent.x), 2.0 * float(box.extent.y), is_vehicle
@@ -137,17 +201,25 @@ def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
     (or, with none, its actor id).
 
     One parked under the map (``z`` below ``_HIDDEN_BELOW_M``), as an entity
-    is until its spawn, is left out: it is not in the scene (#853)."""
+    is until its spawn, is left out: it is not in the scene (#853).  A walker's speed is
+    measured from where it stood when last read (:func:`snapshot_actor`);
+    one parked is forgotten, so where it is brought in is not read as a
+    walk from where it was before."""
     agents: list[AgentSnapshot] = []
+    elapsed = _walker_clock(world)
     for pattern in ("vehicle.*", "walker.*"):
         for actor in world.get_actors().filter(pattern):
             # One RPC for the transform, shared with the snapshot itself.
             transform = actor.get_transform()
-            if float(transform.location.z) < _HIDDEN_BELOW_M:
+            location = transform.location
+            if float(location.z) < _HIDDEN_BELOW_M:
+                if is_walker(actor):
+                    _WALKERS.forget(int(actor.id))
                 continue
             role = _role_name(actor)
             name = str(actor.id) if role is None else str(role)
-            agents.append(_snapshot(actor, transform, name))
+            velocity = _velocity(actor, elapsed, location)
+            agents.append(_snapshot(actor, transform, name, velocity))
     return agents
 
 
