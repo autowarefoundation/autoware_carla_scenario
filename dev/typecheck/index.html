@@ -4656,9 +4656,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-251 of the package's 362
-modules (69%; about 72,500 of
-125,400 lines) are <code>CHECKED</code>: the kinematics, the
+252 of the package's 363
+modules (69%; about 72,800 of
+125,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4670,7 +4670,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 251 CHECKED modules</summary>
+<summary>The 252 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5166,6 +5166,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>entity._walker_ai</code></td>
 <td>Walk a routed pedestrian with CARLA's own walker controller (#521).</td>
+</tr>
+<tr>
+<td><code>entity._walker_retarget</code></td>
+<td>The CARLA half of replaying a SOMA motion: retargeting it onto a walker.</td>
 </tr>
 <tr>
 <td><code>entity.autoware_entity</code></td>
