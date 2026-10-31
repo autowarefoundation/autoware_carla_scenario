@@ -1161,7 +1161,14 @@ register_action_spec(
                 default=15.0,
                 unit="m",
             ),
-            FieldSpec(name="seed", label="Seed", kind="int", default=0),
+            FieldSpec(
+                name="seed",
+                label="Seed",
+                kind="int",
+                default=None,
+                required=False,
+                help="Leave empty to follow the run's seed.",
+            ),
         ),
         description=(
             "Background traffic, as OpenSCENARIO's TrafficSourceAction, placed "
@@ -2164,7 +2171,14 @@ register_action_spec(
                     ),
                 ),
             ),
-            FieldSpec(name="seed", label="Seed", kind="int", default=0),
+            FieldSpec(
+                name="seed",
+                label="Seed",
+                kind="int",
+                default=None,
+                required=False,
+                help="Leave empty to follow the run's seed.",
+            ),
             FieldSpec(
                 name="max_controlled",
                 label="Vehicles considered",

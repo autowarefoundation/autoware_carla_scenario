@@ -316,7 +316,8 @@ class DriverLidarSpec:
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
     weather_noise: float = 1.0
-    noise_seed: int = 0
+    #: ``null`` takes the run's seed.
+    noise_seed: int | None = None
     fog_density_scale: float = 0.001
     position_x: float = 0.0
     position_y: float = 0.0
@@ -492,8 +493,9 @@ class DriverConfig:
     #: Radius within which other vehicles are reported to the policy.
     actor_horizon_m: float = 150.0
 
-    #: Seed handed to the policy in ``start_session``.
-    random_seed: int = 0
+    #: Seed handed to the policy in ``start_session``; ``null`` hands it the
+    #: run's seed (the config's ``seed``).
+    random_seed: int | None = None
 
     #: Cameras streamed to the policy.
     cameras: list[DriverCameraSpec] = field(

@@ -312,12 +312,22 @@ class SlurmSettings:
         for key in ("wait", "headless", "collect_job", "cancel_on_interrupt"):
             if key in data:
                 options[key] = bool(data[key])
-        if "start_stagger_seconds" in data:
-            options["start_stagger_seconds"] = max(
-                0.0, float(data["start_stagger_seconds"] or 0.0)
-            )
-        if "poll_seconds" in data:
-            options["poll_seconds"] = max(0.1, float(data["poll_seconds"]))
+        for key in ("start_stagger_seconds", "poll_seconds"):
+            if key not in data:
+                continue
+            raw = data[key]
+            if raw is None and key == "start_stagger_seconds":
+                raw = 0.0  # null: no stagger
+            seconds = float(raw)
+            # inf would make a task wait (or the poll sleep) forever, NaN
+            # would read as 0; neither is a number of seconds (#784).
+            if not math.isfinite(seconds) or seconds < 0:
+                raise ValueError(
+                    f"launcher.{key} must be a finite number of seconds, "
+                    f"at least 0 (got {raw!r})"
+                )
+            # A poll that never sleeps would spin: at least 0.1 s.
+            options[key] = max(0.1, seconds) if key == "poll_seconds" else seconds
         for key in ("signal_grace_seconds", "port_base", "port_slots"):
             if key in data:
                 options[key] = int(data[key])

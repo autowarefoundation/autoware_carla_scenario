@@ -142,10 +142,10 @@ devices:
 
 | Key | Default | |
 | --- | --- | --- |
-| `carla.host`, `carla.port` | `localhost`, `2000` | the CARLA server the scenario runs on |
-| `carla.timeout` | `10.0` | seconds, for RPCs and for each tick |
+| `carla.host`, `carla.port` | `localhost`, `2000` | the CARLA server the scenario runs on; the port is a whole number from 1 to 65535 |
+| `carla.timeout` | `10.0` | seconds (positive), for RPCs and for each tick |
 | `ego.role_name` | `Ego` | the runner's ego |
-| `ego.wait` | `120.0` | seconds without an ego before a warning (it keeps waiting) |
+| `ego.wait` | `120.0` | seconds (not negative) without an ego before a warning (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
 | `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge; `null`: no run link |
@@ -169,6 +169,14 @@ written `"On": 1`), `signal:` and `field:`, `carla.host`, `ego.role_name`,
 Message, input and step names also take a whole number, as its decimal text
 (RTCM's `name: 1005`). Field *values* and `id` are numbers and stay unquoted
 (`id: 0x7DF`).
+
+The numbers the bridge itself uses are checked as well, naming the key:
+`carla.port` is a whole number from 1 to 65535 (`2000.7` is refused, not
+truncated); every duration -- `carla.timeout`, `ego.wait`, a message's
+`period`, a step's `sleep` and a wait's `timeout` -- is finite (YAML's `.inf`
+and `.nan` are refused), `ego.wait` and `sleep` are not negative and the others
+are positive; and a field's `scale` and `offset`, a sensor's `transform` and
+its `intensity_scale` are finite.
 
 A device is one hilspy channel: `url` (the transport), `codec` (`raw` when
 omitted) and `options` (codec options), exactly what `hilspy.open(url, codec,

@@ -1081,7 +1081,7 @@ class AdversityFeasibleCondition(BaseCondition):
                       "(required: entity_name, kind, location, keyword label)")
 
     def __init__(self, entity_name, kind: AdversityKind, location: AdversityLocation,
-                 *_kw, label = _Required(), seed: int = 0, thresholds = None):
+                 *_kw, label = _Required(), seed: Optional[int] = None, thresholds = None):
         _keyword_only(_kw, "AdversityFeasibleCondition(): label, seed and thresholds")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "AdversityFeasibleCondition(): label"))

@@ -14,6 +14,18 @@ defaults:
   # selects a launcher (launcher=slurm: SLURM array jobs, docs/slurm.md).
   - launcher: null
 
+# The run's seed: the one number every random draw of the run follows
+# (docs/usage.md#one-seed-for-the-whole-run). The cases a sweep draws from the
+# ODD (sweep.odd_sample) and the grip and visibility drawn for each; CARLA's
+# TrafficManager (its random device and each vehicle's parameters) or SUMO
+# (--seed, its own draws); CARLA's pedestrian navigation; the scenario's
+# adversarial actions and background traffic; the driver policy's session seed
+# and its LiDARs' weather noise. Each of those that names a seed of its own
+# keeps it; left null they all follow this one:
+#
+#   uv run scenario ... seed=42
+seed: 0
+
 # The ODD every run is measured against (docs/odd.md): "default", a name
 # registered with register_odd() or an entry point, an OpenODD YAML file
 # (odd=path/to/odd.yaml), or package.module:function.  Its attributes are the
@@ -193,7 +205,8 @@ ego:
 # vocabulary a sweep uses, so the same settings fit any map.
 background_traffic:
   enabled: false
-  seed: 0
+  # null follows the run's seed (`seed` above).
+  seed: null
   source:
     constraints:
       - type: not

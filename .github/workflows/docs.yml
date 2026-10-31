@@ -26,6 +26,8 @@ on:
     paths:
       - "autoware_carla_scenario/docs/**"
       - "autoware_carla_scenario/mkdocs.yml"
+      # Fills in typecheck.md's library-check counts and lists (#789).
+      - "autoware_carla_scenario/mkdocs_hooks/**"
       - "autoware_carla_scenario/overrides/**"
       # mkdocstrings renders the API reference from the sources.
       - "autoware_carla_scenario/src/**"

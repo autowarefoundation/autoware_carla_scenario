@@ -12,6 +12,7 @@ with the ``check_*`` functions here.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -156,11 +157,14 @@ def check_setup_line(line: str) -> None:
 
 
 def check_at_least(key: str, value: float, minimum: int) -> None:
-    """A number field: at least *minimum* (1 for a count, 0 for seconds).
+    """A number field: finite and at least *minimum* (1 for a count, 0 for
+    seconds).
 
     Raises:
-        ValueError: It is less.
+        ValueError: It is not finite (``nan``, ``inf``, ``1e400``) or less.
     """
+    if not math.isfinite(value):
+        raise ValueError(f"{key} must be a finite number")
     if value < minimum:
         raise ValueError(f"{key} must be at least {minimum}")
 

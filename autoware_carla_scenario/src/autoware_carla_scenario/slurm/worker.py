@@ -27,6 +27,7 @@ import errno
 import importlib
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -53,6 +54,13 @@ from .ports import (
     kill_carla_on_port,
 )
 from .settings import SlurmSettings
+from .task_timing import (
+    rss_report,
+    start_delay,
+    status_fields,
+    tree_rss_kb,
+)
+from .task_timing import with_port as _with_port
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -85,21 +93,12 @@ def _process_tree_rss_kb(root: int) -> tuple[int, int]:
         except OSError:
             continue
         pid = int(entry.name)
-        for line in status.splitlines():
-            if line.startswith("PPid:"):
-                parents[pid] = int(line.split()[1])
-            elif line.startswith("VmRSS:"):
-                rss[pid] = int(line.split()[1])
-    children: dict[int, list[int]] = {}
-    for pid, parent in parents.items():
-        children.setdefault(parent, []).append(pid)
-    total = 0
-    stack = list(children.get(root, []))
-    while stack:
-        pid = stack.pop()
-        total += rss.get(pid, 0)
-        stack.extend(children.get(pid, []))
-    return rss.get(root, 0), total
+        ppid, vmrss = status_fields(status)
+        if ppid is not None:
+            parents[pid] = ppid
+        if vmrss is not None:
+            rss[pid] = vmrss
+    return tree_rss_kb(parents, rss, root)
 
 
 class _RssSampler(threading.Thread):
@@ -128,16 +127,9 @@ class _RssSampler(threading.Thread):
         self._stop_event.set()
 
     def to_dict(self) -> dict[str, float]:
-        return {
-            "peak_rss_mb": round(self.peak_total_kb / 1024, 1),
-            "peak_worker_rss_mb": round(self.peak_worker_kb / 1024, 1),
-            "peak_children_rss_mb": round(self.peak_children_kb / 1024, 1),
-        }
-
-
-def _with_port(address: str, port: int) -> str:
-    host, sep, _ = str(address).rpartition(":")
-    return f"{host if sep else address}:{port}"
+        return rss_report(
+            self.peak_worker_kb, self.peak_children_kb, self.peak_total_kb
+        )
 
 
 def worker_overrides(cfg: "DictConfig", slot: PortSlot) -> dict[str, Any]:
@@ -347,19 +339,27 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
     *lock* holds when that was; it is held (``flock``, or an ``O_EXCL`` file
     where the shared file system has no ``flock``) while this waits, so the
     tasks that start together start one after another, *spacing* apart, and
-    so do the ones started later as slots free up.  How long it waited.
+    so do the ones started later as slots free up.  How long it waited: at
+    most *spacing*, however far ahead the clock of the node that wrote *lock*
+    runs; a recorded time that is no finite number counts as no start.
+
+    Raises:
+        ValueError: *spacing* is not a finite number of seconds, at least 0.
     """
+    if not math.isfinite(spacing) or spacing < 0:
+        raise ValueError(
+            "launcher.start_stagger_seconds must be a finite number of seconds, "
+            f"at least 0 (got {spacing!r})"
+        )
     lock.parent.mkdir(parents=True, exist_ok=True)
     with (
         open(lock, "a+", encoding="utf-8") as stream,
         _start_lock(stream, lock, spacing),
     ):
         stream.seek(0)
-        try:
-            last = float(stream.read().strip())
-        except ValueError:
-            last = float("-inf")
-        waited = max(0.0, last + spacing - time.time())
+        # At most *spacing*: a lock written by a node whose clock runs ahead
+        # would otherwise hold this task back by the skew as well (#784).
+        waited = start_delay(stream.read(), spacing, time.time())
         if waited > 0:
             logger.info("Starting in %.0f s (launcher.start_stagger_seconds)", waited)
             time.sleep(waited)

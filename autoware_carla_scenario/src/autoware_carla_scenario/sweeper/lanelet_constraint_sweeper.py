@@ -60,7 +60,12 @@ from tqdm import tqdm
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
-from .expand import check_constraint_keys, expand_sweep, scenario_controls
+from .expand import (
+    _config_seed,
+    check_constraint_keys,
+    expand_sweep,
+    scenario_controls,
+)
 from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     SWEEPER_OWNS_RETRIES_ENV,
     _interrupt_signal,
@@ -114,7 +119,7 @@ def _read_verdict(output_dir: Path) -> bool | None:
         return None
     try:
         data = json.loads(result_files[0].read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (OSError, ValueError):  # ValueError: not JSON, or not UTF-8
         return None
     if not isinstance(data, dict):
         return None
@@ -324,6 +329,7 @@ class LaneletConstraintSweeper(Sweeper):
                 arguments,
                 odd=OmegaConf.select(cfg, "odd"),
                 controls=scenario_controls(cfg),
+                seed=_config_seed(cfg),
             )
         ]
         if not batches:
