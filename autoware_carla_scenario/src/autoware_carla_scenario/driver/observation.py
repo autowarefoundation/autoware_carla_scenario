@@ -278,6 +278,14 @@ def ego_observation(
     The pose is in the local frame; velocities and accelerations are rotated into the
     rig frame, as the contract requires.
 
+    The pose and the linear velocity are both the rig origin's (the rear axle,
+    Autoware's ``base_link``).  CARLA reports the actor origin's velocity, so the
+    rigid-body lever-arm term is added: ``v_rig = v_origin + w x r`` with ``r`` the
+    vector from the actor origin to the rig origin, ``(rear_axle_offset_m, 0, 0)`` in
+    the rig frame.  Without it a turning vehicle's rear axle would report a lateral
+    velocity of ``yaw_rate * rear_axle_offset_m`` it does not have.  The acceleration
+    is the actor origin's as CARLA reports it.
+
     Args:
         actor: The ego vehicle actor.
         timestamp_us: Simulation time of this observation.
@@ -294,13 +302,26 @@ def ego_observation(
     accel_local = to_local_vector(acceleration.x, acceleration.y, acceleration.z)
     angular_local = np.radians(_to_local_axial(angular.x, angular.y, angular.z))
 
+    angular_rig = rotation.T @ angular_local
+    linear_rig = rotation.T @ linear_local
+    if rear_axle_offset_m != 0.0:
+        # w x (d, 0, 0) = (0, w_z * d, -w_y * d), written out for Codon.
+        linear_rig = linear_rig + np.array(
+            [
+                0.0,
+                float(angular_rig[2]) * rear_axle_offset_m,
+                -float(angular_rig[1]) * rear_axle_offset_m,
+            ],
+            dtype=np.float64,
+        )
+
     return EgoObservation(
         timestamp_us=timestamp_us,
         pose=pose,
-        linear_velocity=rotation.T @ linear_local,
-        angular_velocity=rotation.T @ angular_local,
+        linear_velocity=linear_rig,
+        angular_velocity=angular_rig,
         linear_acceleration=rotation.T @ accel_local,
-        speed_mps=float(np.linalg.norm(linear_local)),
+        speed_mps=float(np.linalg.norm(linear_rig)),
     )
 
 

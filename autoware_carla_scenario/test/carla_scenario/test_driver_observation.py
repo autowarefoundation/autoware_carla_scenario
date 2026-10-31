@@ -104,6 +104,85 @@ def test_observation_carries_its_timestamp() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Velocity at the rig origin (base_link), not the actor origin (#878)
+# ---------------------------------------------------------------------------
+
+
+def _bicycle_actor(
+    yaw_deg: float, speed_mps: float, yaw_rate_rps: float, offset_m: float
+) -> MagicMock:
+    """An actor in kinematic-bicycle motion: its rear axle, *offset_m* along its x
+    axis from the actor origin, moves at *speed_mps* straight along the heading,
+    turning at *yaw_rate_rps* (local frame, positive left).  CARLA reports the
+    actor origin's velocity, which is that plus ``w x (r_origin - r_axle)``."""
+    heading = -math.radians(yaw_deg)
+    forward = np.array([math.cos(heading), math.sin(heading)])
+    left = np.array([-math.sin(heading), math.cos(heading)])
+    origin = speed_mps * forward - yaw_rate_rps * offset_m * left
+    return _actor(
+        _transform(yaw=yaw_deg),
+        velocity={"x": origin[0], "y": -origin[1], "z": 0.0},
+        angular_velocity={"x": 0.0, "y": 0.0, "z": -math.degrees(yaw_rate_rps)},
+    )
+
+
+@pytest.mark.parametrize(
+    ("speed_mps", "yaw_rate_rps"),
+    [
+        (5.0, 0.0),  # straight
+        (5.0, 0.33),  # turning left
+        (5.0, -0.33),  # turning right
+        (-2.0, 0.2),  # reversing while turning
+        (-2.0, -0.2),
+    ],
+)
+@pytest.mark.parametrize("yaw_deg", [0.0, 37.0, -120.0])
+def test_base_link_velocity_has_no_lateral_slip(
+    speed_mps: float, yaw_rate_rps: float, yaw_deg: float
+) -> None:
+    """The issue's case: a rear axle 1.4 m behind the actor origin, moving 5 m/s
+    and turning at 0.33 rad/s, reported [5, 0.462, 0] instead of [5, 0, 0]."""
+    actor = _bicycle_actor(yaw_deg, speed_mps, yaw_rate_rps, offset_m=-1.4)
+    observation = ego_observation(actor, timestamp_us=0, rear_axle_offset_m=-1.4)
+    assert np.allclose(observation.linear_velocity, [speed_mps, 0.0, 0.0], atol=1e-9)
+    assert observation.angular_velocity[2] == pytest.approx(yaw_rate_rps)
+    assert observation.speed_mps == pytest.approx(abs(speed_mps))
+
+
+def test_issue_878_reproduction() -> None:
+    actor = _actor(
+        _transform(),
+        velocity={"x": 5.0, "y": -0.33 * 1.4, "z": 0.0},
+        angular_velocity={"x": 0.0, "y": 0.0, "z": -math.degrees(0.33)},
+    )
+    observation = ego_observation(actor, timestamp_us=0, rear_axle_offset_m=-1.4)
+    assert np.allclose(observation.linear_velocity, [5.0, 0.0, 0.0], atol=1e-9)
+    assert observation.speed_mps == pytest.approx(5.0)
+
+
+def test_without_yaw_rate_the_velocity_is_the_actor_origin_s() -> None:
+    velocity = {"x": 3.0, "y": -1.0, "z": 0.5}
+    actor = _actor(_transform(yaw=30.0), velocity=velocity)
+    shifted = ego_observation(actor, timestamp_us=0, rear_axle_offset_m=-1.4)
+    unshifted = ego_observation(actor, timestamp_us=0)
+    assert np.allclose(shifted.linear_velocity, unshifted.linear_velocity)
+    assert shifted.speed_mps == pytest.approx(unshifted.speed_mps)
+    assert shifted.speed_mps == pytest.approx(math.sqrt(9.0 + 1.0 + 0.25))
+
+
+def test_pitch_rate_moves_the_rear_axle_vertically() -> None:
+    """``w x r`` in full: pitching nose-down (local +y rate) about the actor
+    origin lifts the rear axle behind it."""
+    # CARLA's y rate is local -(-y) = +y after the axial flip: positive pitch-down.
+    actor = _actor(
+        _transform(), angular_velocity={"x": 0.0, "y": math.degrees(0.5), "z": 0.0}
+    )
+    observation = ego_observation(actor, timestamp_us=0, rear_axle_offset_m=-2.0)
+    assert observation.angular_velocity[1] == pytest.approx(0.5)
+    assert np.allclose(observation.linear_velocity, [0.0, 0.0, 1.0], atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # Rear-axle offset derivation
 # ---------------------------------------------------------------------------
 
