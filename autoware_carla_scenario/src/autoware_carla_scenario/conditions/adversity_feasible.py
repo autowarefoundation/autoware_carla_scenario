@@ -33,6 +33,7 @@ from ..adversity.triggers import (
     adversity_command,
 )
 from ..entity_role import EntityRole
+from ..seed import resolve_seed
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
@@ -51,7 +52,8 @@ class AdversityFeasibleCondition(BaseCondition):
         location: Where it may fire; :attr:`AdversityLocation.ANY` anywhere.
         label: Human-readable identifier.
         seed: Seeds the random draws a trigger makes (a jaywalker's speed,
-            a stopped crosser's wait).
+            a stopped crosser's wait); ``None`` (default) takes the run's
+            seed (:mod:`~autoware_carla_scenario.seed`).
         thresholds: The triggers' numbers; TeraSim's by default.
     """
 
@@ -70,14 +72,14 @@ class AdversityFeasibleCondition(BaseCondition):
         location: AdversityLocation,
         *,
         label: str,
-        seed: int = 0,
+        seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
     ) -> None:
         super().__init__(label=label)
         self._entity_name = str(entity_name)
         self._kind = kind
         self._location = location
-        self._rng = random.Random(seed)
+        self._rng = random.Random(resolve_seed(seed))
         self._thresholds = thresholds
         self._command = None
         self._scene = None

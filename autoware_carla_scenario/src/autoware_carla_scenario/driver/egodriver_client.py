@@ -62,6 +62,7 @@ from .base import (
     DriverClientConfig,
     EgoObservation,
 )
+from ..seed import resolve_seed
 from .geometry import Trajectory, waypoints_to_proto
 from .observation import camera_extrinsics_to_rig
 
@@ -209,7 +210,7 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
 
         request = egodriver_pb2.DriveSessionRequest(
             session_uuid=session_uuid,
-            random_seed=self._config.random_seed,
+            random_seed=resolve_seed(self._config.random_seed),
             debug_info=egodriver_pb2.DriveSessionRequest.DebugInfo(scene_id=scene_id),
             rollout_spec=egodriver_pb2.DriveSessionRequest.RolloutSpec(
                 vehicle=egodriver_pb2.DriveSessionRequest.RolloutSpec.VehicleDefinition(
