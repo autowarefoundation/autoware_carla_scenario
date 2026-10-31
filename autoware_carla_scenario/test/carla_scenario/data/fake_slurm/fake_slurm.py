@@ -33,6 +33,62 @@ def _job_dir(job: str) -> Path:
     return STATE / "jobs" / str(job)
 
 
+def _stat(pid: int) -> list[str] | None:
+    """The fields of ``/proc/<pid>/stat`` after the command name, or ``None``."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+
+
+def _start_time(pid: int) -> int | None:
+    """When *pid* started (field 22 of stat), or ``None`` once it is gone."""
+    fields = _stat(pid)
+    return int(fields[19]) if fields is not None else None
+
+
+def _members(pgid: int, leader_start: int | None) -> list[list[int]]:
+    """The ``[pid, start time]`` of each process of a task's group.
+
+    Empty once the task's leader is gone: the runner reaps it, and its pid --
+    the group's id -- may then be another test's (#812).  While the leader
+    runs the id is the task's, so every process in that group is too.
+    """
+    if leader_start is None or _start_time(pgid) != leader_start:
+        return []
+    members = []
+    for name in os.listdir("/proc"):
+        if name.isdigit():
+            fields = _stat(int(name))
+            if fields is not None and int(fields[2]) == pgid:
+                members.append([int(name), int(fields[19])])
+    return members
+
+
+def _signal_group(pgid: int, members: list[list[int]], sig: int) -> None:
+    """Signal group *pgid* while one of *members* still runs in it.
+
+    A member still in the group keeps its id from being reused, so the group
+    is still the task's.
+    """
+    for pid, started in members:
+        fields = _stat(pid)
+        if fields is not None and int(fields[19]) == started and int(fields[2]) == pgid:
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                pass
+            return
+
+
+def _kill_later(pgid: str, members: str) -> int:
+    """SIGKILL what is left of a task's group KillWait after its SIGTERM."""
+    time.sleep(KILL_WAIT_S)
+    _signal_group(int(pgid), json.loads(members), signal.SIGKILL)
+    return 0
+
+
 def _write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -183,7 +239,14 @@ def _run(job: str) -> int:
             running[task] = proc
             _write(
                 _job_dir(job) / f"{task}.json",
-                {"state": "RUNNING", "pid": proc.pid, "pgid": proc.pid},
+                {
+                    "state": "RUNNING",
+                    "pid": proc.pid,
+                    "pgid": proc.pid,
+                    # Read before the task can be reaped: with the pid, it
+                    # names the leader even once it is gone (#812).
+                    "start": _start_time(proc.pid),
+                },
             )
         time.sleep(0.1)
     return 0
@@ -217,19 +280,19 @@ def scancel(args: list[str]) -> int:
             if state.get("state") == "RUNNING":
                 state["state"] = "CANCELLED"
                 _write(_job_dir(job) / f"{task}.json", state)
-                try:
-                    os.killpg(state["pgid"], signal.SIGTERM)
-                except ProcessLookupError:
+                # Only the task's own group: once its leader is reaped, its
+                # id may be another test's (#812).
+                members = _members(state["pgid"], state.get("start"))
+                if not members:
                     continue
+                _signal_group(state["pgid"], members, signal.SIGTERM)
                 subprocess.Popen(
                     [
                         sys.executable,
-                        "-c",
-                        "import os,signal,sys,time\n"
-                        f"time.sleep({KILL_WAIT_S})\n"
-                        "try: os.killpg(int(sys.argv[1]), signal.SIGKILL)\n"
-                        "except ProcessLookupError: pass",
+                        __file__,
+                        "_kill_later",
                         str(state["pgid"]),
+                        json.dumps(members),
                     ],
                     start_new_session=True,
                 )
@@ -249,6 +312,8 @@ def main() -> int:
     command, args = sys.argv[1], sys.argv[2:]
     if command == "_run":
         return _run(args[0])
+    if command == "_kill_later":
+        return _kill_later(*args)
     return {
         "sbatch": sbatch,
         "squeue": squeue,
