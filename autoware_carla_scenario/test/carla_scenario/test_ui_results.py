@@ -108,6 +108,90 @@ def test_a_road_user_parked_under_the_map_is_no_gap(tmp_path: Path) -> None:
     assert "min_gap_m" not in metrics
 
 
+def _boxed_log(
+    path: Path,
+    *,
+    ego_center: list[float] | None,
+    ego_yaw: float,
+    walker: tuple[float, float],
+) -> Path:
+    """A one-tick log: an ego 4.8 m by 2 m at the origin, turned by
+    *ego_yaw*, its box *ego_center* off its origin (no ``center`` when
+    ``None``, as older logs), and a walker 0.6 m across at *walker*."""
+    ego: dict[str, object] = {
+        "type": "actor",
+        "id": 1,
+        "role": "Ego",
+        "extent": [2.4, 1.0, 0.75],
+    }
+    if ego_center is not None:
+        ego["center"] = ego_center
+    lines = [
+        json.dumps({"type": "world", "schema_version": 2}),
+        json.dumps(ego),
+        json.dumps(
+            {
+                "type": "actor",
+                "id": 2,
+                "role": "walker",
+                "extent": [0.3, 0.3, 0.9],
+                "center": [0.0, 0.0, 0.9],
+            }
+        ),
+        json.dumps(
+            {
+                "type": "tick",
+                "frame": 0,
+                "t": 0.0,
+                "actors": [
+                    [1, 0.0, 0.0, 0.0, 0.0, 0.0, ego_yaw, 0.0, 0.0, 0.0],
+                    [2, *walker, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ],
+                "control": {"1": [0.0, 0.0, 0.0, 1]},
+            }
+        ),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_box_is_centred_at_its_logged_center(tmp_path: Path) -> None:
+    """The ego's box sits 1.3 m ahead of its origin (#883): its front is at
+    3.7 m, touching a walker standing at 3.0 m, not 0.3 m short of it."""
+    log = _boxed_log(
+        tmp_path / "Case.trajectory.jsonl",
+        ego_center=[1.3, 0.0, 0.75],
+        ego_yaw=0.0,
+        walker=(3.0, 0.0),
+    )
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.0)
+
+
+def test_a_box_s_center_turns_with_its_actor(tmp_path: Path) -> None:
+    """Turned by 90 degrees, the box's offset (1.3, 0.5) puts its centre at
+    (-0.5, 1.3), as ``metrics._box_of`` places it: its side is at x=0.5, 0.5 m
+    from a walker at (1.3, 1.3)."""
+    log = _boxed_log(
+        tmp_path / "Case.trajectory.jsonl",
+        ego_center=[1.3, 0.5, 0.75],
+        ego_yaw=90.0,
+        walker=(1.3, 1.3),
+    )
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.5)
+
+
+def test_a_log_without_center_centres_boxes_at_the_origin(tmp_path: Path) -> None:
+    """An older log records no ``center``: the box is centred at the actor's
+    origin."""
+    log = _boxed_log(
+        tmp_path / "Case.trajectory.jsonl",
+        ego_center=None,
+        ego_yaw=0.0,
+        walker=(3.0, 0.0),
+    )
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.3)
+
+
 def test_records_other_than_ticks_and_actors_are_skipped(tmp_path: Path) -> None:
     """A record that merely names "tick" or "actor" (a label, a role) is not
     read as a tick: a spawn or despawn line, or a collision's role list."""
