@@ -186,6 +186,7 @@ class TestExpandConfig:
         resolve.assert_not_called()
 
 
+@pytest.mark.usefixtures("at_repo_root")
 def test_the_cli_expands_a_packaged_logical_scenario(
     capsys: pytest.CaptureFixture,
 ) -> None:

@@ -72,7 +72,9 @@ def store(tmp_path: Path) -> DraftStore:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> TestClient:
+def client(tmp_path: Path, at_repo_root: Path) -> TestClient:
+    # A new draft names the fixture map relative to the repository root, and
+    # the editor resolves it (and its map roots) against the working directory.
     return TestClient(
         create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
     )
