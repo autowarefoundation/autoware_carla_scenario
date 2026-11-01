@@ -330,7 +330,8 @@ class CutInConfig:
     fail_on_leaving_lane: bool = True
 
     #: How far ahead of the start of the spawn lanelet the lanes ahead reach
-    #: (m), the ones the ego is to stay on and the ones the NPC cuts in on.
+    #: (m), the ones the ego is to stay on and the ones the NPC cuts in on
+    #: (those only up to the first junction).
     #: Further than the ego can drive before the timeout.
     lanes_ahead_m: float = 1000.0
 

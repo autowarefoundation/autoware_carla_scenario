@@ -3,7 +3,7 @@
 An NPC starts in the lane beside the ego, a little ahead, and after a moment
 changes into the ego's lane. The ego must not hit it: the run passes once the
 NPC has been in the ego's lane -- on its spawn lanelet or one that follows it
-(:func:`npc_in_lanes_ahead`) -- for ``hold_seconds`` without a collision. It
+before the next junction (:func:`npc_in_lanes_ahead`) -- for ``hold_seconds`` without a collision. It
 fails on any collision of the ego (``fail_on_any_collision``; off, only on one
 with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
 lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
@@ -69,7 +69,9 @@ from autoware_carla_scenario import (
     to_opendrive,
     vehicle_bumpers,
 )
+from autoware_carla_scenario.coordinate import MapManager
 from autoware_carla_scenario.failure import FailureCategory
+from autoware_carla_scenario.odd import lanelet_in_junction
 
 from .configs import CutInConfig
 
@@ -126,20 +128,60 @@ def left_lanes_ahead(
     )
 
 
+def lanes_ahead_before_junction(lanelet_id: int, distance_m: float) -> list[int]:
+    """*lanelet_id* and the lanelets ahead of it up to the first junction.
+
+    :func:`lanelets_ahead` reaches through junctions and down every branch, and
+    in a junction lanelets overlap: a vehicle crossing straight on in the lane
+    beside is inside the ego lane's left or right turn.  So only the lanelets
+    reached from *lanelet_id* through no junction lanelet are kept -- the lane
+    the ego is on until the next intersection, where a lane change ends.  In
+    the order :func:`lanelets_ahead` gives, *lanelet_id* first.
+    """
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    ahead = lanelets_ahead(lanelet_id, distance_m)
+    kept: list[int] = [lanelet_id]
+    # Until nothing more is added: a lanelet may be listed before the
+    # predecessor that reaches it without a junction.
+    grew = True
+    while grew:
+        grew = False
+        for candidate in ahead:
+            if candidate in kept:
+                continue
+            lanelet = layer[candidate]
+            if lanelet_in_junction(lanelet):
+                continue
+            for previous in graph.previous(lanelet, False):
+                if int(previous.id) in kept:
+                    kept.append(candidate)
+                    grew = True
+                    break
+    ordered: list[int] = []
+    for candidate in ahead:
+        if candidate in kept:
+            ordered.append(candidate)
+    return ordered
+
+
 def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
     """The cut-in NPC is in the ego's lane: on one of the lanes ahead of *lanelet_id*.
 
-    The same lanelets :func:`left_lanes_ahead` keeps the ego on -- *lanelet_id*
-    and those :func:`lanelets_ahead` reaches from it, the lane beside never
-    among them -- so a lane change the NPC finishes on the lanelet after the
-    ego's spawn lanelet counts as a cut-in too.  An
-    ``EntityLanePositionCondition`` per lanelet, under an ``OrCondition`` when
-    there is more than one, latched by a ``StickyCondition``: the NPC has cut
-    in once it has been on any of them.
+    *lanelet_id* and the lanelets that follow it up to the first junction
+    (:func:`lanes_ahead_before_junction`), the lane beside never among them,
+    so a lane change the NPC finishes on the lanelet after the ego's spawn
+    lanelet counts as a cut-in too.  Not the junction lanelets
+    :func:`left_lanes_ahead` also keeps the ego on, nor those past them: they
+    overlap the lane beside's, and the NPC driving straight on in its own lane
+    would count.  An ``EntityLanePositionCondition`` per lanelet, under an
+    ``OrCondition`` when there is more than one, latched by a
+    ``StickyCondition``: the NPC has cut in once it has been on any of them.
     """
     # Appended one by one, and chosen by if/else, as in left_lanes_ahead.
     on_lanes: list[BaseCondition] = []
-    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+    for lanelet in lanes_ahead_before_junction(lanelet_id, distance_m):
         on_lanes.append(
             EntityLanePositionCondition(
                 CUT_IN_ROLE,
@@ -255,8 +297,8 @@ class CutInScenario(BaseScenario):
         )
 
         # Latched once the NPC is on the ego's lane -- its spawn lanelet or one
-        # that follows it, wherever the NPC finishes its lane change; then
-        # held for hold_seconds with no collision.
+        # that follows it before the next junction, wherever the NPC finishes
+        # its lane change; then held for hold_seconds with no collision.
         cut_in = npc_in_lanes_ahead(spawn.lanelet_id, cfg.lanes_ahead_m)
         self.register_pass_condition(
             PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
