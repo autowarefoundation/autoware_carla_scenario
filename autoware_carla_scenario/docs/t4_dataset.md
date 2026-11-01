@@ -26,10 +26,12 @@ Where the data comes from:
   that tick's, with its ego pose and boxes, as with the recorder's own LiDARs.
   A sweep from before the recording started, or older than the ticks the
   recorder keeps, is dropped (logged at debug level). A camera frame carries
-  the tick it was rendered on too (#951), and goes on the key frame of that
-  tick; one rendered on another tick than the key frame's sweep is dropped,
-  as with the recorder's own cameras. Without a LiDAR, the oldest camera
-  frame's tick is the key frame.
+  the tick it was rendered on too (#951). Without a LiDAR, the oldest camera
+  frame's tick is the key frame. With one, a camera frame rendered on another
+  tick than the sweep (a camera faster than the LiDAR, or on the other ticks
+  of its interval) still goes on the step's key frame, at most a policy step
+  off: the dataset stamps a sample's data with the sample's time, and such a
+  camera's frames would otherwise never be written.
 - **Any other ego** (Autoware, the autopilot, ROS 2) gets the same sensors put
   on it by the recorder, at the same rate; the recorder's writer encodes their
   frames.

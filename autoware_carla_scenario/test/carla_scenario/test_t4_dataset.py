@@ -856,14 +856,20 @@ def test_a_fed_camera_frame_from_the_tick_before_is_on_that_ticks_sample(
     assert _jpg_timestamps(root) == samples
 
 
-def test_a_fed_camera_frame_off_the_sweeps_tick_is_dropped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("sweep_age", "camera_age"), [(0, 1), (1, 0)])
+def test_a_fed_camera_frame_off_the_sweeps_tick_goes_on_the_steps_sample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sweep_age: int, camera_age: int
 ) -> None:
-    """A camera frame rendered on another tick than the key frame's sweep would
-    sit on the wrong ego pose and boxes: it is left out, the sweep kept."""
-    root = _fed_camera_run(tmp_path, monkeypatch, sweep_age=0, camera_age=1)
-    assert len(_table(root, "sample")) == 5
-    assert _jpg_timestamps(root) == []
+    """A camera frame rendered on another tick than the key frame's sweep -- a
+    20 fps camera beside a LiDAR sweeping on the tick before the policy step,
+    or a 10 fps one on the other phase -- is still written, on the step's key
+    frame: dropping it would lose every frame of such a camera (#951)."""
+    root = _fed_camera_run(
+        tmp_path, monkeypatch, sweep_age=sweep_age, camera_age=camera_age
+    )
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    assert len(samples) == 5
+    assert _jpg_timestamps(root) == samples
 
 
 def test_the_camera_a_policy_is_told_of_is_the_one_the_dataset_calibrates(
