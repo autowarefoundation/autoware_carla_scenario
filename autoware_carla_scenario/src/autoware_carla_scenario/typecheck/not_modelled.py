@@ -198,6 +198,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.driver.egodriver_client": _each(
         "EGODRIVER_SERVICE_FULL_NAME MAX_MESSAGE_BYTES channel_options", _GRPC
     ),
+    f"{_PACKAGE}.constants": {
+        "tick_multiple": (
+            "checks a tick-quantised setting of the run's config (the driver "
+            "policy's step, a LiDAR's sweep, the T4 and T4Scene steps) when the "
+            "runner builds it, not a scenario; the library check compiles it "
+            "from its source"
+        )
+    },
     f"{_PACKAGE}.entity": {
         **_each("AutowareEgoEntity BridgedEgoEntity ExternallyDrivenEgo", _EGO_STACK),
         **_each(

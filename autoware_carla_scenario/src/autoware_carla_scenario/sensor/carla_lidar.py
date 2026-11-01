@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
 
-from ..constants import FIXED_DELTA_SECONDS
+from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import resolve_seed
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
@@ -137,12 +137,7 @@ class CarlaLidarSensor:
         config: CarlaLidarSensorConfig,
         sweep_interval_s: float = FIXED_DELTA_SECONDS,
     ) -> None:
-        ticks = int(round(sweep_interval_s / FIXED_DELTA_SECONDS))
-        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - sweep_interval_s) > 1e-9:
-            raise ValueError(
-                f"LiDAR sweep_interval_s must be a positive multiple of the "
-                f"{FIXED_DELTA_SECONDS} s tick, got {sweep_interval_s}"
-            )
+        ticks = tick_multiple(sweep_interval_s, "LiDAR sweep_interval_s")
         self._config = config
         self._sensor = None
         self._sweeps = queue.Queue()
