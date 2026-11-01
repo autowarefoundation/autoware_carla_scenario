@@ -674,8 +674,12 @@ Whether that is an error is the newer action's to say, one action at a time.
 An action built with `overrides=True` (in the Scenario Editor, its card's
 *Override a running action*) takes the domain over instead, as OpenSCENARIO has every action do (*Actions
 at runtime*): the action holding it is stopped -- it goes to `completeState`,
-OpenSCENARIO's stop transition -- and gives back every domain it held. The
-default is `False`: actions fighting over an
+OpenSCENARIO's stop transition -- and gives back every domain it held, and any
+entity it took from its driver: a `follow` or `position` `RoutingAction`
+brakes its vehicle (or stands its walker still) and hands the vehicle back to
+its traffic backend, an adversity hands its road user back, a routed walk is
+stopped. A `follow` or `position` run that its `until` condition ends before
+the end of its trajectory gives its entity back the same way. The default is `False`: actions fighting over an
 entity say two things at once, and which one CARLA would end up doing is an
 accident of the tick order.
 

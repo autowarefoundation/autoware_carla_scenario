@@ -183,7 +183,10 @@ class TrajectoryRun(BaseAction):
         overrides: Take over a control domain of the entity another action
             holds (:attr:`~BaseAction.overrides`).
         until: Overrides what ends the run; defaults to reaching the end of
-            the trajectory as above.
+            the trajectory as above.  One that ends a run before the entity
+            reaches the end stops the entity and gives a vehicle back to its
+            traffic backend, as an override does; one that ends it after
+            leaves the entity held at the end.
         control_config: Gains for ``FOLLOW`` mode; ``None`` uses the
             controller's defaults with the ``time_indexed`` longitudinal
             controller, which keeps the vehicle where the trajectory's clock
@@ -393,9 +396,15 @@ class TrajectoryRun(BaseAction):
     # ------------------------------------------------------------------
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
-        """Remember the scenario time, which :meth:`execute` is not given."""
+        """Remember the scenario time, which :meth:`execute` is not given;
+        a run its ``until`` condition ends before the trajectory's end gives
+        its entity back, as an overridden one does (:meth:`_stopped`)."""
         self._elapsed = elapsed
         super().tick(world, elapsed)
+        if self.state is ActionState.END_TRANSITION and not self._finished:
+            # OpenSCENARIO's stop transition, not arrival: an entity that
+            # reached the end is held there instead (stop_at_end).
+            self._stopped(world)
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The entity's movement: it is driven, or placed, along the trajectory."""
@@ -498,6 +507,45 @@ class TrajectoryRun(BaseAction):
             if release is not None:
                 release(world)
         self._released = True
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Overridden mid-run (:meth:`BaseAction._stopped`), or ended before
+        the trajectory's end by ``until``: the entity the run
+        took from its driver is stopped where it is -- a vehicle braked, a
+        walker stood still -- and a vehicle handed back to its traffic backend
+        (:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.resume_traffic`),
+        so that the action taking over commands it from a standstill rather
+        than leave it on the follower's last pedals and steer, out of reach
+        of the backend's speed commands.
+
+        An actor hidden by ``hidden_outside_trajectory`` is left where it is
+        parked, below the ground: showing it would need a pose outside the
+        trajectory's times.
+        """
+        if not self._released or self._hidden:
+            return
+        # Given back: a later run of the action takes it over afresh.
+        self._released = False
+        self._follower = None
+        name = str(self._entity_name)
+        actor = _entity_actor(name)
+        if actor is not None:
+            moving: "carla.Actor" = actor
+            try:
+                _stop(moving, _is_walker(moving))
+            except RuntimeError:
+                pass  # the actor is gone from the world
+        vehicle = find_vehicle_entity(name)
+        if vehicle is None:
+            # A walker: stood still.  A traffic backend has no call that takes
+            # back a pedestrian it released (release_pedestrian).
+            return
+        driven: BackendDriven = vehicle
+        try:
+            driven.resume_traffic(world)
+        except RuntimeError:
+            return  # the actor is gone from the world
+        logger.info("%s: '%s' stopped and handed back to traffic", self.label, name)
 
     def _advance(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Move *actor* one tick along the trajectory of the run begun."""
