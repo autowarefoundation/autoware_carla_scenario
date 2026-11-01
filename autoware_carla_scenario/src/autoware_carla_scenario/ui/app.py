@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .models import RunProgress
+from .models import RunProgress, SessionSummary
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +477,25 @@ def _family(results_: list[results.CaseResult]) -> set[str]:
     return {r.scenario for r in results_}
 
 
+def _scenarios(summary: SessionSummary) -> set[str]:
+    """The scenarios a session ran, named as :func:`_family` names them: a
+    batch's entries name them as its summary does; a multirun or single
+    session's are its ``scenario=`` override, which its summary (the result
+    file's stem) does not give, so they are read as :func:`results.load_results`
+    reads them."""
+    if summary.session_type == "batch":
+        return {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
+    return _family(
+        results.load_results(
+            _base_path(),
+            summary.session_type,
+            summary.date,
+            summary.time,
+            metrics=False,
+        )
+    )
+
+
 def _openodd() -> Any:
     import openodd  # noqa: PLC0415 -- a Rust extension, loaded on first use
 
@@ -562,18 +581,18 @@ async def compare_sessions(request: Request) -> HTMLResponse:
     family: set[str] = set()
     for _, found in loaded:
         family |= _family(found)
-    # The sessions offered: those that ran a scenario of the family (all when
-    # none is picked yet).
+    # The sessions offered: those picked, and those that ran a scenario of the
+    # family (all when none is picked yet).
+    selected = {ref for ref, _ in loaded}
     offered = []
     for summary in scanner.scan_sessions(_base_path()):
-        names = {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
-        if not family or names & family:
-            offered.append(
-                (
-                    _session_ref(summary.session_type, summary.date, summary.time),
-                    summary,
-                )
-            )
+        ref = _session_ref(summary.session_type, summary.date, summary.time)
+        if (
+            not family
+            or ref in selected
+            or await asyncio.to_thread(_scenarios, summary) & family
+        ):
+            offered.append((ref, summary))
     comparison = None
     matrices: list[tuple[str, str]] = []
     if len(loaded) >= 2:
