@@ -198,6 +198,12 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.driver.egodriver_client": _each(
         "EGODRIVER_SERVICE_FULL_NAME MAX_MESSAGE_BYTES channel_options", _GRPC
     ),
+    f"{_PACKAGE}.conditions": {
+        "entity_filter_from_fields": (
+            "a scenario document's way to an EntityFilter (its generated "
+            "builder); a scenario builds the EntityFilter itself"
+        ),
+    },
     f"{_PACKAGE}.constants": {
         "tick_multiple": (
             "checks a tick-quantised setting of the run's config (the driver "

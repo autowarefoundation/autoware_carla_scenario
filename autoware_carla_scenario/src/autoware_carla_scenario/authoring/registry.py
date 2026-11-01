@@ -3324,6 +3324,142 @@ register_condition_spec(
     )
 )
 
+
+def _entity_filter_fields() -> tuple[FieldSpec, ...]:
+    """The fields of an :class:`~..conditions.EntityFilter`: which road users
+    a condition looks at, by name, kind, place and relative to a reference."""
+
+    def bound(name: str, label: str, help_text: str) -> FieldSpec:
+        return FieldSpec(
+            name=name,
+            label=label,
+            kind="number",
+            default=None,
+            unit="m",
+            required=False,
+            help=help_text,
+        )
+
+    return (
+        FieldSpec(
+            name="names",
+            label="Names",
+            kind="text",
+            default="",
+            required=False,
+            help=(
+                "Role-name patterns, apart by commas: * any run of characters, "
+                "? any one -- npc*, background* (the TrafficManager's "
+                "background vehicles), sumo:* (SUMO's). Empty: every name."
+            ),
+        ),
+        FieldSpec(
+            name="kind",
+            label="Kind",
+            kind="select",
+            default="ANY",
+            options=(
+                SelectOption("ANY", "Vehicles and pedestrians"),
+                SelectOption("VEHICLE", "Vehicles"),
+                SelectOption("PEDESTRIAN", "Pedestrians"),
+            ),
+            required=False,
+        ),
+        _entity_field("reference", "Relative to", required=False),
+        bound(
+            "min_distance_m", "Distance from", "Between the centres; empty: no bound."
+        ),
+        bound("max_distance_m", "Distance to", "Between the centres; empty: no bound."),
+        bound(
+            "min_ahead_m",
+            "Ahead from",
+            "Along the reference's heading, negative behind it; empty: no bound.",
+        ),
+        bound(
+            "max_ahead_m",
+            "Ahead to",
+            "Along the reference's heading, negative behind it; empty: no bound.",
+        ),
+        bound(
+            "min_left_m",
+            "Left from",
+            "To the reference's left, negative to its right; empty: no bound.",
+        ),
+        bound(
+            "max_left_m",
+            "Left to",
+            "To the reference's left, negative to its right; empty: no bound.",
+        ),
+        FieldSpec(
+            name="lanelet_ids",
+            label="On lanelets",
+            kind="lanelet_list",
+            default=[],
+            required=False,
+            help="One of which it must be on. Empty: anywhere.",
+        ),
+        FieldSpec(
+            name="include_reference",
+            label="Count the reference too",
+            kind="bool",
+            default=False,
+            required=False,
+        ),
+    )
+
+
+#: The filter built from :func:`_entity_filter_fields` for a condition's
+#: ``entities`` keyword.
+_ENTITY_FILTER = BuiltArgument(
+    kwarg="entities",
+    target="..conditions:entity_filter_from_fields",
+    parts=(
+        BuiltPart(
+            args=(
+                ("names", "names"),
+                ("kind", "kind"),
+                ("reference", "reference"),
+                ("min_distance_m", "min_distance_m"),
+                ("max_distance_m", "max_distance_m"),
+                ("min_ahead_m", "min_ahead_m"),
+                ("max_ahead_m", "max_ahead_m"),
+                ("min_left_m", "min_left_m"),
+                ("max_left_m", "max_left_m"),
+                ("lanelet_ids", "lanelet_ids"),
+                ("include_reference", "include_reference"),
+            )
+        ),
+    ),
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="entity_count",
+        title="Road users matching",
+        category="Relative",
+        builder="build_entity_count_condition",
+        target="..conditions:EntityCountCondition",
+        builds=(_ENTITY_FILTER,),
+        visual=ConditionVisual(
+            metric="Road users",
+            subject="reference",
+            rule="rule",
+            value="count",
+            details=("names", "kind", "max_distance_m"),
+        ),
+        fields=(
+            *_entity_filter_fields(),
+            _rule_field("greater_than_or_equal"),
+            FieldSpec(name="count", label="Count", kind="int", default=1),
+        ),
+        description=(
+            "How many road users pass a filter: by name pattern, kind, place, "
+            "and distance and offset from a reference entity (the ego when "
+            "none is named).  At least one, by default."
+        ),
+    )
+)
+
 register_condition_spec(
     ConditionSpec(
         type_id="distance",
