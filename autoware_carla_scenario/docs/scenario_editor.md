@@ -615,7 +615,8 @@ The goal keys are written only when a goal is set, leaving the `ego` group's own
 The **Set Goal** card still exists, for changing a destination mid-run or for a
 vehicle that is not the ego. One owned by the ego and left in the initialization
 phase is warned about: the ego's own goal is already delivered there, so the card
-would send a second destination in the same phase. Only a vehicle that plans its own route reads a
+sends a second destination in the same phase, and its goal (and waypoints)
+replace the ego's own before the run starts. Only a vehicle that plans its own route reads a
 goal at all, so a goal stored on any other entity is a validation error rather
 than something quietly dropped at export.
 

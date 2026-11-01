@@ -713,16 +713,24 @@ class BaseScenario(ABC):
         runner ticks the world once more before it starts the ego, so the ego
         reads a world that shows what the init phase set: a client sees an
         actor's state (a light frozen, an actor moved) only from the next tick.
+
+        Each action is settled as soon as it has fired, before the next one
+        does, so the control domains it took are given back at once: two init
+        actions commanding the same domain of one entity (the ego's goal and an
+        init Set Goal card, two speeds handed to one NPC) both run, and the one
+        registered last is the one that stands.
         """
         for cb in self._init_callbacks:
             cb(world)
         for action in self._init_actions:
             action.tick(world, 0.0)
-        # The phase has no ticks for an action's lifecycle to step through: one
-        # that fired is settled now -- complete, or for one that runs on, under
-        # way -- so what waits on it (the route of an entity a spawn card
-        # brought in) starts with the run rather than never.
-        for action in self._init_actions:
+            # The phase has no ticks for an action's lifecycle to step through:
+            # one that fired is settled now -- complete, or for one that runs
+            # on, under way -- so what waits on it (the route of an entity a
+            # spawn card brought in) starts with the run rather than never.
+            # Settled here rather than after the loop, because settling is what
+            # releases its control: held until every action had fired, it made
+            # the next action on the same domain raise ControlConflictError.
             action._settle_start(world, 0.0)
 
     def register_pre_tick(
