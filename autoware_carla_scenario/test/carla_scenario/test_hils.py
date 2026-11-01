@@ -1566,6 +1566,132 @@ def test_without_a_run_the_ego_appearing_starts_the_scenario(
         ecu.close()
 
 
+def _sensor_bridge(
+    world: _World, dbc: Path, clock: str, ready_timeout: float = 5.0
+) -> tuple[Any, Any, Any]:
+    """A bridge with the CAN device's lifecycle and a camera, its ECU's end of
+    the bus, and the camera's receiver."""
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    can, camera = _mem(), _mem()
+    document = _hils_config(can, dbc, runner={"listen": None}, clock=clock)
+    document["lifecycle"]["scenario_start"][1]["timeout"] = ready_timeout
+    document["devices"]["camera"] = {
+        "url": camera,
+        "sensor": {"blueprint": "sensor.camera.rgb"},
+    }
+    ecu = hilspy.open(can, f"dbc:{dbc}")
+    receiver = hilspy.open(camera)
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    bridge.connect()
+    bridge.open_devices()
+    return bridge, ecu, receiver
+
+
+def _fire_while_the_ecu_wakes(
+    world: _World, ecu: Any, device: Any, frames: int
+) -> tuple[threading.Thread, List[int], List[BaseException]]:
+    """The ECU's side of the scenario_start steps, on a thread: once woken
+    (the bridge then waits for its EcuStatus), every listening sensor fires
+    *frames* times, as CARLA's ticks would; then the ECU answers.  Returns the
+    thread, the device's queue length after each firing, and what failed."""
+    queued: List[int] = []
+    failed: List[BaseException] = []
+
+    def serve() -> None:
+        try:
+            deadline = time.monotonic() + 5.0
+            while True:
+                assert time.monotonic() < deadline, "the bridge sent no Wake(On=1)"
+                message = ecu.recv(0.05)
+                if (
+                    message is not None
+                    and message.name == "Wake"
+                    and message["On"] == 1
+                ):
+                    break
+            for i in range(frames):
+                for sensor in list(world.sensors):
+                    if sensor.callback is not None:
+                        sensor.callback(_frame(b"STALE-FRAME-%04d" % i))
+                queued.append(device._received.qsize())
+            ecu.send("EcuStatus", {"Ready": 1})
+        except BaseException as exc:  # noqa: BLE001 - reported by the test
+            failed.append(exc)
+
+    return _start(serve), queued, failed
+
+
+@pytest.mark.parametrize("clock", ["simulation", "wall"])
+def test_nothing_measured_while_the_scenario_start_steps_wait_is_sent(
+    world: _World, dbc: Path, clock: str
+) -> None:
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, clock)
+    [device] = bridge._sensors
+    try:
+        ecu_side, _, failed = _fire_while_the_ecu_wakes(world, ecu, device, 50)
+        bridge._begin(world.actors[0], "")
+        ecu_side.join(5.0)
+        assert not ecu_side.is_alive() and failed == []
+        # The scenario is live: the sensor measures from now on.
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        sensor.callback(_frame(b"LIVE-FRAME-00001"))
+        world.tick()
+        assert bridge.step()
+        frame = receiver.recv(2.0)
+        assert frame is not None and frame.data == b"LIVE-FRAME-00001"
+        assert _drain(receiver) == []
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_the_scenario_start_steps_waiting_queue_no_measurement(
+    world: _World, dbc: Path
+) -> None:
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation")
+    [device] = bridge._sensors
+    try:
+        ecu_side, queued, failed = _fire_while_the_ecu_wakes(world, ecu, device, 500)
+        bridge._begin(world.actors[0], "")
+        ecu_side.join(5.0)
+        assert not ecu_side.is_alive() and failed == []
+        assert len(queued) == 500
+        assert max(queued) == 0
+        assert device._received.qsize() == 0
+        assert device.attached
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_a_failed_scenario_start_step_still_attaches_the_sensors(
+    world: _World, dbc: Path
+) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsStepError
+
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", 0.05)
+    [device] = bridge._sensors
+    try:
+        # The ECU never answers: the run fails, the scenario runs on.
+        with pytest.raises(HilsStepError):
+            bridge._begin(world.actors[0], "")
+        assert bridge.active and device.attached
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        sensor.callback(_frame(b"LIVE-FRAME-00001"))
+        world.tick()
+        assert bridge.step()
+        assert [m.data for m in _drain(receiver)] == [b"LIVE-FRAME-00001"]
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
 def test_a_failing_startup_step_stops_the_bridge(world: _World, dbc: Path) -> None:
     from autoware_carla_scenario.hils.bridge import HilsBridge, HilsStepError
 

@@ -41,11 +41,13 @@ A scenario's life, with `ego.entity=hils`:
 
 1. The runner spawns the ego and connects to the bridge (`hils.host`,
    `hils.port`): `start`, with the ego's actor id.
-2. The bridge starts the devices' periodic messages, attaches its sensors to
-   the ego and runs the `scenario_start` steps (wake the ECUs, wait until they
-   say they are ready). The runner ticks the world meanwhile, holding every
-   vehicle still, until the bridge answers `ready` -- or fails the run when a
-   step fails or nothing comes within `hils.ready_timeout_s`.
+2. The bridge starts the devices' periodic messages, runs the
+   `scenario_start` steps (wake the ECUs, wait until they say they are ready)
+   and then attaches its sensors to the ego, so the ECUs get no sensor data
+   measured before the scenario is live. The runner ticks the world
+   meanwhile, holding every vehicle still, until the bridge answers `ready`
+   -- or fails the run when a step fails or nothing comes within
+   `hils.ready_timeout_s`.
 3. Every tick the ego's state goes to the ECUs; whenever an ECU sends a
    command message (`inputs`), the bridge forwards the command and the runner
    applies it to the ego.
@@ -360,7 +362,7 @@ The run applies the newest command every tick. One older than `hils.stale_s`
 | Phase | When | If a step fails |
 | --- | --- | --- |
 | `startup` | once, when the bridge starts (devices just opened, before CARLA is reached) | the bridge stops (status 1) |
-| `scenario_start` | a scenario starts (the run's `start`, or the ego appearing); the periodic messages and sensors are already running, and the run waits for the steps | the run fails, with the step's error |
+| `scenario_start` | a scenario starts (the run's `start`, or the ego appearing); the periodic messages are already running, and the run waits for the steps; the sensors are attached after them (even when one fails), so no sensor data measured during the steps is sent | the run fails, with the step's error |
 | `scenario_end` | the scenario ends (the run's `end`, the run going away, or the ego disappearing); then the periodic messages stop and the sensors go | logged; the other steps still run |
 | `shutdown` | once, when the bridge stops (Ctrl-C, SIGTERM) | logged; the other steps still run |
 
