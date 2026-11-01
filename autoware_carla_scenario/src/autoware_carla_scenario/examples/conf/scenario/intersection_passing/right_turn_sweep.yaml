@@ -33,6 +33,18 @@ sweep:
           - type: turn_direction
             value: right
           - type: has_traffic_light_stop_line
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}
+          # Nor one that leads onto such a lanelet: route_through ends the
+          # route on the lane it comes out on, which CARLA must draw too.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: in_set
+                  values: ${map.no_3d_model_lanelet_ids}
   bindings:
     # A junction lanelet's stop line sits at its start, so asking for 25 m
     # before it falls short on that lanelet and the binding walks back to the
