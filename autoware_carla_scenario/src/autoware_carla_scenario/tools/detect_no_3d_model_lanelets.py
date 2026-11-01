@@ -74,7 +74,10 @@ from autoware_carla_scenario.maps import (
     capture_opendrive,
     resolve_map_paths,
 )
-from autoware_carla_scenario.maps.opendrive import map_asset_env_var
+from autoware_carla_scenario.maps.opendrive import (
+    map_asset_env_var,
+    map_asset_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -557,14 +560,14 @@ def _load_world(client: carla.Client, paths: MapPaths) -> carla.World:
     install = paths.install_xodr
     if paths.overwrite_xodr and install is not None:
         env_var = map_asset_env_var(paths.name)
-        dest_str = os.environ.get(env_var)
-        if not dest_str:
+        dest = map_asset_path(paths.name)
+        if dest is None:
             raise MapConfigError(
                 f"map.overwrite_xodr is set but {env_var} is not; set it to the "
                 f"internal .xodr file of {paths.name} inside the CARLA installation"
             )
-        logger.info("Overwriting CARLA XODR: %s -> %s", install, dest_str)
-        shutil.copy2(install, Path(dest_str))
+        logger.info("Overwriting CARLA XODR: %s -> %s", install, dest)
+        shutil.copy2(install, dest)
     logger.info("Loading CARLA map %s ...", paths.name)
     return client.load_world(paths.name)
 

@@ -34,6 +34,7 @@ __all__ = [
     "ensure_xodr",
     "installed_xodr",
     "map_asset_env_var",
+    "map_asset_path",
 ]
 
 #: Default CARLA RPC endpoint, matching
@@ -66,19 +67,29 @@ def map_asset_env_var(map_name: str) -> str:
     return snake.upper() + "_PATH"
 
 
-def installed_xodr(map_name: str) -> Optional[Path]:
-    """Return the CARLA installation's ``.xodr`` for *map_name*, if reachable.
+def map_asset_path(map_name: str) -> Optional[Path]:
+    """Return the path the ``<MAP_NAME>_PATH`` variable names for *map_name*.
 
-    ``None`` when the variable is unset or points at a file that is not there --
-    a workstation with no CARLA installed is the normal case for the editor.
+    Surrounding whitespace is stripped and a leading ``~`` expanded, so every
+    reader of the variable agrees on the file.  ``None`` when the variable is
+    unset or blank; whether the file exists is left to the caller.
     """
     import os  # noqa: PLC0415 -- read at call time, not at import time
 
     configured = os.environ.get(map_asset_env_var(map_name), "").strip()
     if not configured:
         return None
-    path = Path(configured).expanduser()
-    return path if path.is_file() else None
+    return Path(configured).expanduser()
+
+
+def installed_xodr(map_name: str) -> Optional[Path]:
+    """Return the CARLA installation's ``.xodr`` for *map_name*, if reachable.
+
+    ``None`` when the variable is unset or points at a file that is not there --
+    a workstation with no CARLA installed is the normal case for the editor.
+    """
+    path = map_asset_path(map_name)
+    return path if path is not None and path.is_file() else None
 
 
 def _short_map_name(name: str) -> str:
