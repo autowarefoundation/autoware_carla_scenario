@@ -178,6 +178,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._pose_history: Dict[int, Pose] = {}
         #: Each camera's mount, for the run's recording (``rerun.cameras``).
         self._camera_mounts: Dict[str, CameraMount] = {}
+        #: The frame each camera's image last sent to the policy was rendered on.
+        self._submitted_camera: Dict[str, int] = {}
         self._world: Optional["carla.World"] = None
         self._plan: Trajectory = Trajectory.empty()
         #: The plan as debug markers, built once per plan.
@@ -320,6 +322,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._recorded_lidar = {}
         self._pose_history = {}
         self._camera_mounts = {}
+        self._submitted_camera = {}
         self._plan_markers = DebugMarkers()
         if self._handshake is not None:
             # Before anything moves the ego: the mission is checked against
@@ -907,39 +910,51 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         return points, told.position[:2] + offset
 
     def _submit_camera_frames(self) -> None:
-        """Encode and send the latest frame from each camera."""
+        """Encode and send each camera's newest frame, stamped with when it was
+        rendered.
+
+        A camera slower than the policy, or one whose frames fall on the other
+        ticks, renders before the policy step: such a frame carries its own
+        tick's time, goes into the recording under its own frame, and is fed
+        to the dataset as rendered on it.  A frame already sent on an earlier
+        step is not sent again.
+        """
+        if not self._cameras or self._world is None:
+            return
+        frame = int(self._world.get_snapshot().frame)
+        tick_us = int(round(_FIXED_DELTA_S * _US_PER_S))
         for logical_id, camera in self._cameras:
-            image = camera.get_image()
-            if image is None:
+            latest = camera.latest_image(frame)
+            if latest is None:
                 logger.debug("No frame available from camera %s", logical_id)
                 continue
+            rendered, image = latest
+            if self._submitted_camera.get(logical_id) == rendered:
+                continue
+            self._submitted_camera[logical_id] = rendered
             encoded = encode_frame_jpeg(image, self._config.image_quality)
             if encoded is None:
                 continue
+            rendered_us = self._sim_time_us - max(frame - rendered, 0) * tick_us
             self._client.submit_image_observation(
                 logical_id,
-                self._sim_time_us,
-                self._sim_time_us,
+                rendered_us,
+                rendered_us,
                 encoded,
             )
-            self._record_camera(logical_id, encoded)
+            self._record_camera(logical_id, rendered, encoded)
             dataset = active_recording()
-            if dataset is not None and self._world is not None:
-                dataset.feed_camera_jpeg(
-                    int(self._world.get_snapshot().frame), logical_id, encoded
-                )
+            if dataset is not None:
+                dataset.feed_camera_jpeg(frame, logical_id, encoded, taken_on=rendered)
 
-    def _record_camera(self, logical_id: str, encoded: bytes) -> None:
-        """Write a frame the policy got into the run's recording, when it
-        records its cameras (``rerun.cameras``)."""
+    def _record_camera(self, logical_id: str, frame: int, encoded: bytes) -> None:
+        """Write a frame the policy got, rendered on *frame*, into the run's
+        recording, when it records its cameras (``rerun.cameras``)."""
         recorder = active_recorder()
         mount = self._camera_mounts.get(logical_id)
         if recorder is None or not recorder.records_cameras or mount is None:
             return
-        if self._world is None:
-            return
         try:
-            frame = int(self._world.get_snapshot().frame)
             recorder.log_camera_frame(logical_id, frame, encoded, mount)
         except Exception:  # noqa: BLE001 - a lost frame must not stop the run
             logger.exception("recording camera %s's frame failed", logical_id)

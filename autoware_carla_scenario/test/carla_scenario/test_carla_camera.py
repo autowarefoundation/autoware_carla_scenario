@@ -12,6 +12,7 @@ import ast
 import inspect
 import queue
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -117,7 +118,8 @@ def test_attach_leaves_exposure_and_optics_to_the_server() -> None:
         "image_size_x": "1920",
         "image_size_y": "1280",
         "fov": "50.0",
-        "sensor_tick": "0.1",
+        # Just under the 0.1 s interval, so two ticks' float deltas reach it.
+        "sensor_tick": "0.099999",
     }
 
 
@@ -207,3 +209,128 @@ def test_the_listener_drops_the_oldest_frame_instead_of_blocking() -> None:
     assert image is not None
     assert int(image[0, 0, 0]) == 4
     assert sensor._frame_queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# Frame timing (#951)
+# ---------------------------------------------------------------------------
+
+
+def _rendered(frame: int, value: int = 0) -> SimpleNamespace:
+    """A 1x1 frame as a fake carla.Image rendered on simulator frame *frame*."""
+    image = _frame(value)
+    image.frame = frame
+    return image
+
+
+@pytest.mark.parametrize(
+    ("fps", "interval_ticks"), [(5.0, 4), (7.0, 3), (10.0, 2), (20.0, 1), (30.0, 1)]
+)
+def test_sensor_tick_has_the_margin_when_slower_than_a_tick(
+    fps: float, interval_ticks: int
+) -> None:
+    sensor_tick = float(
+        _attach(CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps))[
+            "sensor_tick"
+        ]
+    )
+    if interval_ticks > 1:
+        assert sensor_tick == pytest.approx(1.0 / fps - 1e-6, abs=1e-12)
+        assert sensor_tick < 1.0 / fps
+    else:  # every tick anyway: left as it is
+        assert sensor_tick == pytest.approx(1.0 / fps, abs=1e-12)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps)
+    )
+    assert sensor.frame_interval_ticks == interval_ticks
+
+
+@pytest.mark.parametrize(("fps", "interval_ticks"), [(5.0, 4), (10.0, 2)])
+@pytest.mark.parametrize("phase", [0, 1])
+def test_latest_image_never_waits_when_no_frame_is_due(
+    monkeypatch: pytest.MonkeyPatch, fps: float, interval_ticks: int, phase: int
+) -> None:
+    """A 10 Hz policy (a step every 2nd tick) against a camera at *fps*: no
+    step waits, since every frame due has come; each answer is the newest
+    frame, with the tick it was rendered on."""
+    waits: list[float] = []
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps)
+    )
+    real_get = sensor._frame_queue.get
+
+    def get(block: bool = True, timeout: float | None = None) -> object:
+        if block:
+            waits.append(timeout if timeout is not None else float("inf"))
+        return real_get(block, timeout)
+
+    monkeypatch.setattr(sensor._frame_queue, "get", get)
+    newest = None
+    for tick in range(1, 25):
+        if (tick - phase) % interval_ticks == 0:
+            sensor._on_sensor_data(_rendered(tick, tick))  # type: ignore[arg-type]
+            newest = tick
+        if tick % 2 == 0:
+            started = time.monotonic()
+            latest = sensor.latest_image(tick)
+            assert time.monotonic() - started < 0.5
+            if newest is None:
+                assert latest is None
+            else:
+                assert latest is not None
+                assert latest[0] == newest
+                assert int(latest[1][0, 0, 0]) == newest
+    assert waits == []
+
+
+def test_latest_image_waits_for_a_frame_that_is_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A frame due by this tick is still on its way from CARLA's thread: wait."""
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=10.0)
+    )
+    sensor._on_sensor_data(_rendered(10, 1))  # type: ignore[arg-type]
+    assert sensor.latest_image(10) is not None
+    timer = threading.Timer(
+        0.05,
+        sensor._on_sensor_data,
+        (_rendered(12, 2),),
+    )
+    timer.start()
+    try:
+        latest = sensor.latest_image(12)
+    finally:
+        timer.join()
+    assert latest is not None
+    assert latest[0] == 12
+
+
+def test_a_due_frame_that_never_comes_costs_one_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.01)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=10.0)
+    )
+    sensor._on_sensor_data(_rendered(10))  # type: ignore[arg-type]
+    assert sensor.latest_image(10) is not None
+    # Nothing on 12: one wait, then the stale frame is not handed out ...
+    assert sensor.latest_image(12) is None
+    # ... and the next tick does not wait for it again.
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 60.0)
+    started = time.monotonic()
+    assert sensor.latest_image(13) is None
+    assert time.monotonic() - started < 0.5
+
+
+def test_latest_image_keeps_the_newest_frame_however_they_arrive() -> None:
+    sensor = _sensor()
+    sensor._frame_queue = queue.Queue()
+    for frame in (5, 7, 6):
+        sensor._frame_queue.put(_rendered(frame, frame))
+    latest = sensor.latest_image(7)
+    assert latest is not None
+    assert latest[0] == 7
+    assert int(latest[1][0, 0, 0]) == 7
+    assert latest[1].shape == (1, 1, 3)

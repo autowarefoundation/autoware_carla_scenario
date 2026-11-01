@@ -61,6 +61,7 @@ from .driver.observation import (
 )
 from .ego_base_link import ego_base_link
 from .kinematics.walker_motion import WalkerVelocities, is_walker
+from .sensor.base import sensor_tick_s
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
@@ -106,9 +107,6 @@ _WRITER_MODULE = "autoware_carla_scenario_t4"
 _VERSION = "0"
 #: How long a key frame waits for a camera's image, in seconds.
 _FRAME_TIMEOUT_S = 1.0
-#: How far below the interval a sensor's ``sensor_tick`` is set; see
-#: ``sensor.carla_lidar._SENSOR_TICK_MARGIN_S``, which the LiDARs use.
-_SENSOR_TICK_MARGIN_S = 1e-6
 #: The actors annotated, by blueprint prefix.
 _ANNOTATED_KINDS = ("vehicle.", "walker.")
 
@@ -217,9 +215,7 @@ class _FrameCamera:
         blueprint.set_attribute("fov", str(cfg.fov))
         if self._interval_ticks > 1:
             interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
-            blueprint.set_attribute(
-                "sensor_tick", str(interval_s - _SENSOR_TICK_MARGIN_S)
-            )
+            blueprint.set_attribute("sensor_tick", str(sensor_tick_s(interval_s)))
         for name in BLUEPRINT_ATTRIBUTES:
             value = getattr(cfg, name)
             if value is not None and blueprint.has_attribute(name):
@@ -325,9 +321,10 @@ class T4Recording:
             for logical_id, cam in settings.cameras
         }
         #: What a driver entity fed on a frame: ``(frame, sweeps, frames)``, a
-        #: sweep as ``(the frame it was taken on, points in the rig frame)``.
+        #: sweep as ``(the frame it was taken on, points in the rig frame)``,
+        #: a camera frame as ``(the frame it was rendered on, logical id, JPEG)``.
         self._fed: Optional[
-            tuple[int, list[tuple[int, Any]], list[tuple[str, bytes]]]
+            tuple[int, list[tuple[int, Any]], list[tuple[int, str, bytes]]]
         ] = None
 
         with _lock:
@@ -470,7 +467,7 @@ class T4Recording:
 
     def _fed_for(
         self, frame: int
-    ) -> tuple[int, list[tuple[int, Any]], list[tuple[str, bytes]]]:
+    ) -> tuple[int, list[tuple[int, Any]], list[tuple[int, str, bytes]]]:
         if self._fed is None or self._fed[0] != frame:
             self._fed = (frame, [], [])
         return self._fed
@@ -491,10 +488,26 @@ class T4Recording:
                 (frame if taken_on is None else int(taken_on), points_in_rig)
             )
 
-    def feed_camera_jpeg(self, frame: int, logical_id: str, jpeg: bytes) -> None:
-        """A camera frame the driver policy got on *frame*, as it got it."""
+    def feed_camera_jpeg(
+        self,
+        frame: int,
+        logical_id: str,
+        jpeg: bytes,
+        *,
+        taken_on: Optional[int] = None,
+    ) -> None:
+        """A camera frame the driver policy got on *frame*, as it got it.
+
+        *taken_on* is the frame it was rendered on (*frame* by default): a
+        camera slower than the policy, or one whose frames fall on the other
+        ticks, hands the policy a frame from a tick before.  Without a LiDAR
+        it is then written on that frame's ego pose and boxes; with one, on
+        the key frame of the step's sweep (#951, :meth:`_record_fed`).
+        """
         if self._active:
-            self._fed_for(frame)[2].append((logical_id, jpeg))
+            self._fed_for(frame)[2].append(
+                (frame if taken_on is None else int(taken_on), logical_id, jpeg)
+            )
 
     # -- Every tick -----------------------------------------------------------
 
@@ -558,31 +571,38 @@ class T4Recording:
         """Write what a driver entity fed on *frame*, on the frame its sweeps
         were taken on, as :meth:`_record` does the recorder's own LiDARs'.
 
-        The key frame is the oldest fed sweep's (*frame* without one); a sweep
-        taken later joins nothing, as a LiDAR's on another tick of the interval
-        does not.  A sweep whose frame has no snapshot -- before the recording
-        started, older than the snapshots kept, or not after the key frame
-        written last -- is dropped, and the frame written without it.
+        The key frame is the oldest fed sweep's; without a sweep, the oldest
+        camera frame's, and *frame* without either.  A sweep taken later joins
+        nothing, as a LiDAR's on another tick of the interval does not.  A
+        camera frame rendered on another tick than the key frame's goes on the
+        key frame all the same, the step's sample: the writer stamps a sample's
+        data with the sample's time, and a camera faster than the LiDAR, or on
+        the other ticks of its interval, would otherwise never be written
+        (#951).  It is at most a policy step off.  A sweep whose frame has no
+        snapshot, or a sweep or camera frame from before the recording started
+        or not after the key frame written last, is dropped, and the frame
+        written without it.
         """
         fed, self._fed = self._fed, None
         if fed is None or fed[0] != frame or frame < self.start_frame:
             return
-        sweeps: list[tuple[int, Any]] = []
-        for taken_on, points in fed[1]:
-            if (
-                taken_on < self.start_frame
-                or taken_on <= self._last_frame
-                or taken_on not in self._snapshots
-            ):
-                logger.debug(
-                    "T4 dataset: no snapshot of frame %d for a sweep fed on "
-                    "frame %d; dropped",
-                    taken_on,
-                    frame,
-                )
-                continue
-            sweeps.append((taken_on, points))
-        key_frame = min((taken_on for taken_on, _ in sweeps), default=frame)
+        sweeps = [
+            (taken_on, points)
+            for taken_on, points in fed[1]
+            if self._has_snapshot(taken_on, frame, "a sweep")
+        ]
+        images = [
+            (taken_on, logical_id, jpeg)
+            for taken_on, logical_id, jpeg in fed[2]
+            if self._is_new(taken_on, frame, f"a {logical_id} frame")
+        ]
+        if sweeps:
+            key_frame = min(taken_on for taken_on, _ in sweeps)
+        else:
+            key_frame = min(
+                (taken_on for taken_on, _, _ in images if taken_on in self._snapshots),
+                default=frame,
+            )
         if key_frame <= self._last_frame:
             return
         points_on_key = [points for taken_on, points in sweeps if taken_on == key_frame]
@@ -594,10 +614,58 @@ class T4Recording:
                 frame,
                 key_frame,
             )
+        for taken_on, logical_id, _ in images:
+            if taken_on != key_frame:
+                logger.debug(
+                    "T4 dataset: %s's frame rendered on frame %d written on "
+                    "frame %d",
+                    logical_id,
+                    taken_on,
+                    key_frame,
+                )
+        jpegs_on_key = [(logical_id, jpeg) for _, logical_id, jpeg in images]
         self._last_frame = key_frame
         self._write_frame(
-            world, key_frame, self._snapshots[key_frame], points_on_key, fed[2], []
+            world,
+            key_frame,
+            self._snapshots[key_frame],
+            points_on_key,
+            jpegs_on_key,
+            [],
         )
+
+    def _has_snapshot(self, taken_on: int, frame: int, what: str) -> bool:
+        """Whether *what*, taken on *taken_on* and fed on *frame*, can be
+        written on its own frame: its frame has a snapshot, and is not one
+        written already."""
+        if (
+            taken_on < self.start_frame
+            or taken_on <= self._last_frame
+            or taken_on not in self._snapshots
+        ):
+            logger.debug(
+                "T4 dataset: no snapshot of frame %d for %s fed on frame %d; dropped",
+                taken_on,
+                what,
+                frame,
+            )
+            return False
+        return True
+
+    def _is_new(self, taken_on: int, frame: int, what: str) -> bool:
+        """Whether *what*, taken on *taken_on* and fed on *frame*, is from the
+        recording and after the key frame written last."""
+        if taken_on < self.start_frame or taken_on <= self._last_frame:
+            logger.debug(
+                "T4 dataset: %s taken on frame %d, fed on frame %d, is not after "
+                "frame %d; dropped",
+                what,
+                taken_on,
+                frame,
+                max(self.start_frame - 1, self._last_frame),
+            )
+            return False
+        return True
 
     def _write_frame(
         self,

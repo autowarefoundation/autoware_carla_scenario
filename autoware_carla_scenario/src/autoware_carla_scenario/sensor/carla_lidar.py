@@ -27,6 +27,7 @@ import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import resolve_seed
+from .base import sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -39,15 +40,6 @@ __all__ = ["CarlaLidarSensor", "CarlaLidarSensorConfig"]
 #: How long :meth:`CarlaLidarSensor.latest_sweep` waits for a sweep that is due, in
 #: seconds.
 _SWEEP_TIMEOUT: float = 1.0
-
-#: How far below ``sweep_interval_s`` the blueprint's ``sensor_tick`` is set.  CARLA
-#: sums the ticks' float deltas and sweeps once the sum reaches ``sensor_tick``;
-#: two 0.05 s ticks sum to a hair under 0.1 s, so a ``sensor_tick`` of exactly 0.1
-#: sweeps one tick late every time it is reached.  What is left over carries to
-#: the next sweep, so the margin only adds up, a tick in every
-#: ``interval / margin`` sweeps -- a sweep a tick early, which
-#: :meth:`CarlaLidarSensor.latest_sweep` takes as the newest it has.
-_SENSOR_TICK_MARGIN_S: float = 1e-6
 
 
 @dataclass(frozen=True)
@@ -183,9 +175,7 @@ class CarlaLidarSensor:
             )
         if self._interval_ticks > 1:
             interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
-            blueprint.set_attribute(
-                "sensor_tick", str(interval_s - _SENSOR_TICK_MARGIN_S)
-            )
+            blueprint.set_attribute("sensor_tick", str(sensor_tick_s(interval_s)))
         transform = _carla.Transform(
             _carla.Location(x=cfg.position_x, y=cfg.position_y, z=cfg.position_z),
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),

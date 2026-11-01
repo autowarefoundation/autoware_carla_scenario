@@ -554,7 +554,8 @@ def test_a_configured_camera_is_mounted_on_the_ego() -> None:
     blueprint = clock.world.get_blueprint_library.return_value.find.return_value
     blueprint.set_attribute.assert_any_call("image_size_x", "4")
     blueprint.set_attribute.assert_any_call("fov", "60.0")
-    blueprint.set_attribute.assert_any_call("sensor_tick", "0.1")
+    # Just under the 0.1 s interval, so two ticks' float deltas reach it.
+    blueprint.set_attribute.assert_any_call("sensor_tick", "0.099999")
     (_, transform), kwargs = clock.world.spawn_actor.call_args
     assert kwargs["attach_to"] is actor
     assert transform.location.x == pytest.approx(1.25)
