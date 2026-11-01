@@ -157,13 +157,31 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
 
     segments = [segment for segment in parts.path.split("/") if segment]
 
+    # How many leading segments name the repository itself.  Two everywhere --
+    # owner and name -- plus HuggingFace's optional repo-type prefix.
+    repo_len = 2
+    if (
+        parts.netloc.endswith("huggingface.co")
+        and segments[:1]
+        and (segments[0] in _HF_REPO_PREFIXES)
+    ):
+        repo_len = 3
+
     # GitLab: ``<group>[/<subgroup>...]/<repo>/-/<kind>/<ref>/<path...>``.  The
-    # ``-`` marker ends the repository, however many groups precede it.
+    # ``-`` marker ends the repository, however many groups precede it.  Only
+    # where no GitHub/HuggingFace view follows the owner/name pair, and never
+    # on those two hosts: there a ``-`` is a directory inside the viewed path.
     marker = -1
-    for index in range(1, len(segments)):
-        if segments[index] == _GITLAB_VIEW_MARKER:
-            marker = index
-            break
+    gitlab_like = not (
+        parts.netloc.endswith("github.com")
+        or parts.netloc.endswith("huggingface.co")
+        or (len(segments) > repo_len and segments[repo_len] in _WEB_VIEW_SEGMENTS)
+    )
+    if gitlab_like:
+        for index in range(1, len(segments)):
+            if segments[index] == _GITLAB_VIEW_MARKER:
+                marker = index
+                break
     if marker != -1:
         if (
             marker + 2 >= len(segments)
@@ -175,16 +193,6 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
         )
         gitlab_path = "/".join(segments[marker + 3 :])
         return gitlab_url, segments[marker + 2], gitlab_path
-
-    # How many leading segments name the repository itself.  Two everywhere --
-    # owner and name -- plus HuggingFace's optional repo-type prefix.
-    repo_len = 2
-    if (
-        parts.netloc.endswith("huggingface.co")
-        and segments[:1]
-        and (segments[0] in _HF_REPO_PREFIXES)
-    ):
-        repo_len = 3
 
     if len(segments) <= repo_len or segments[repo_len] not in _WEB_VIEW_SEGMENTS:
         return url, "", ""

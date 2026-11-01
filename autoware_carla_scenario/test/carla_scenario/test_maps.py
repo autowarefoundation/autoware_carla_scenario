@@ -273,6 +273,33 @@ class TestMapSource:
                 "main",
                 "m/lanelet2_map.osm",
             ),
+            # A self-hosted GitLab, subgroups included.
+            (
+                "https://git.example.com/g/s/maps/-/raw/main/m/lanelet2_map.osm",
+                "https://git.example.com/g/s/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
+            # On GitHub and HuggingFace a '-' is a directory in the path.
+            (
+                "https://github.com/o/maps/tree/main/-/tree/x",
+                "https://github.com/o/maps",
+                "main",
+                "-/tree/x",
+            ),
+            (
+                "https://huggingface.co/datasets/o/maps/tree/main/-/raw/x",
+                "https://huggingface.co/datasets/o/maps",
+                "main",
+                "-/raw/x",
+            ),
+            # A GitHub-style view ahead of the '-' wins on any host.
+            (
+                "https://git.example.com/o/maps/tree/main/-/x",
+                "https://git.example.com/o/maps",
+                "main",
+                "-/x",
+            ),
         ],
     )
     def test_parses_the_urls_people_actually_have(
