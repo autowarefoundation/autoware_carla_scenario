@@ -47,8 +47,11 @@ class _Execution:
         backend: Any = None,
         box_ahead: float = 0.0,
         box_left: float = 0.0,
+        kind: str = "",
+        responding_to: str = "",
     ) -> None:
         self.name, self.path, self.label = name, path, label
+        self.kind, self.responding_to = kind, responding_to
         self.entity_name = name
         self.actor, self.backend = actor, backend
         self.box_ahead, self.box_left = box_ahead, box_left
@@ -114,6 +117,8 @@ def test_a_challenging_adversity_is_sampled_and_driven() -> None:
     assert run.path[0].t == 0.0 and run.path[-1].speed < 10.0
     assert action.weight == pytest.approx(0.01)
     assert [c.name for c in action.choices] == ["npc1"]
+    # What it carries out, for AdversityActiveCondition: the adversity itself.
+    assert (run.kind, run.responding_to) == ("brake_check", "")
 
 
 def test_one_adversity_at_a_time_and_none_in_the_cooldown() -> None:

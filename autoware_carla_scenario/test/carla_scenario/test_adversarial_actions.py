@@ -63,8 +63,11 @@ class _Execution:
         backend: Any = None,
         box_ahead: float = 0.0,
         box_left: float = 0.0,
+        kind: str = "",
+        responding_to: str = "",
     ) -> None:
         self.entity_name = entity_name
+        self.kind, self.responding_to = kind, responding_to
         self.path = path
         self.following_mode = following_mode
         self.label = label

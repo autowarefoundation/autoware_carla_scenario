@@ -245,10 +245,11 @@ class AdversarialTrafficAction(BaseAction):
             sampled.adversity.probability,
             self.weight,
         )
-        self._start(world, scene, sampled.name, sampled.command)
+        kind = sampled.adversity.kind.value
+        self._start(world, scene, sampled.name, sampled.command, kind, "")
         for victim, response in sampled.responses:
             logger.info("%s: '%s' responds: %s", self.label, victim, response)
-            self._start(world, scene, victim, response)
+            self._start(world, scene, victim, response, kind, sampled.name)
 
     def _start(
         self,
@@ -256,9 +257,13 @@ class AdversarialTrafficAction(BaseAction):
         scene: Scene,
         name: str,
         command: AdversarialCommand,
+        kind: str,
+        responding_to: str,
     ) -> None:
         """Start driving *command* on *name*, from this tick: a registered
-        entity, or a background vehicle's actor through the backend."""
+        entity, or a background vehicle's actor through the backend.  *kind*
+        is the adversity it carries out, or (*responding_to* named) the one
+        it responds to."""
         actor: Optional["carla.Actor"] = None
         if not drivable(name) and name in self._background:
             actor = self._background[name]
@@ -270,6 +275,8 @@ class AdversarialTrafficAction(BaseAction):
             f"{self.label}:{name}",
             actor,
             self._backend,
+            kind,
+            responding_to,
         )
         if started is None:
             return

@@ -1252,6 +1252,21 @@ class AdversityLocation:
         raise KeyError(name)
 
 
+class AdversityActiveCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("AdversityActiveCondition(): no constructor takes these "
+                      "arguments (required: keyword label)")
+
+    def __init__(self, entities: Optional[EntityFilter] = None, kinds = None,
+                 include_responses: bool = False, *_kw, label = _Required()):
+        _keyword_only(_kw, "AdversityActiveCondition(): label")
+        super().__init__(_required_str(label, "AdversityActiveCondition(): label"))
+
+    @property
+    def entities(self) -> EntityFilter:
+        raise NotImplementedError()
+
+
 class AdversityFeasibleCondition(BaseCondition):
     def __init__(self, label):
         compile_error("AdversityFeasibleCondition(): no constructor takes these arguments "

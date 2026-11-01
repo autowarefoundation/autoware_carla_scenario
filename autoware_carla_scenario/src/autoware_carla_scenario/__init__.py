@@ -136,6 +136,9 @@ if TYPE_CHECKING:
         AdversityKind as AdversityKind,
         AdversityLocation as AdversityLocation,
     )
+    from .conditions.adversity_active import (
+        AdversityActiveCondition as AdversityActiveCondition,
+    )
     from .conditions.adversity_feasible import (
         AdversityFeasibleCondition as AdversityFeasibleCondition,
     )
@@ -555,6 +558,7 @@ __all__ = [
     "IgnoreLeaderAction",
     "JaywalkAction",
     "RunTrafficRuleAction",
+    "AdversityActiveCondition",
     "AdversityFeasibleCondition",
     "AdversityKind",
     "AdversityLocation",
@@ -609,6 +613,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "IgnoreLeaderAction": (".actions.adversarial", "IgnoreLeaderAction"),
     "JaywalkAction": (".actions.adversarial", "JaywalkAction"),
     "RunTrafficRuleAction": (".actions.adversarial", "RunTrafficRuleAction"),
+    "AdversityActiveCondition": (
+        ".conditions.adversity_active",
+        "AdversityActiveCondition",
+    ),
     "AdversityFeasibleCondition": (
         ".conditions.adversity_feasible",
         "AdversityFeasibleCondition",
