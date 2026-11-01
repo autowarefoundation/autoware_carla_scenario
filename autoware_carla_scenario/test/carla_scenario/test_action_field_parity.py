@@ -66,6 +66,10 @@ NEEDED_PARAMS: dict[str, dict[str, Any]] = {
     "traffic_parameters": {"speed_factor_mean": 1.0},
     "vehicle_parameters": {"speed_factor_mean": 1.0},
     "routing": {"goal_lanelet_id": 300},
+    # A required lanelet: 0 is the empty field (#1021).
+    "construction_zone": {"lanelet_id": 243},
+    "urban_construction_zone": {"lanelet_id": 243},
+    "stalled_object": {"lanelet_id": 243},
 }
 
 #: Fields that are not flags the built action is configured with.

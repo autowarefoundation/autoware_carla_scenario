@@ -180,8 +180,8 @@ class SpawnAction(BaseAction):
 
     Raises:
         ValueError: For the ego; for neither or both of *entity_name* and
-            *name*; a prop with no *position*; a negative *shift_max* or
-            *speed*.
+            *name* (a blank *name* is none); a prop with no *position*, or
+            one on lanelet 0 or less; a negative *shift_max* or *speed*.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -232,14 +232,20 @@ class SpawnAction(BaseAction):
         length: float = 0.0,
         width: float = 0.0,
     ) -> None:
-        if (entity_name is None) == (name is None or name == ""):
+        # A blank name (what a card's empty text field may hold) is none.
+        prop_name = ""
+        if name is not None:
+            given_name: str = name
+            if given_name.strip() != "":
+                prop_name = given_name
+        if (entity_name is None) == (prop_name == ""):
             raise ValueError(
                 f"{label}: spawn an entity or a prop (a name), one of the two"
             )
         if entity_name is not None and str(entity_name) == str(EGO_ROLE_NAME):
             raise ValueError(f"{label}: the ego is in the scene from the start")
         if entity_name is None and position is None:
-            raise ValueError(f"{label}: adding prop '{name}' needs a position")
+            raise ValueError(f"{label}: adding prop '{prop_name}' needs a position")
         if shift_max < 0.0:
             raise ValueError(f"{label}: shift_max must not be negative")
         if speed < 0.0:
@@ -248,10 +254,25 @@ class SpawnAction(BaseAction):
             raise ValueError(f"{label}: length and width must not be negative")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = "" if entity_name is None else str(entity_name)
-        self._name = "" if name is None else name
+        self._name = prop_name
         at: Optional[TrajectoryVertex] = None
         if position is not None:
             at = TrajectoryVertex(position)
+            if entity_name is None:
+                placed: TrajectoryVertex = at
+                where = placed.position
+                if isinstance(where, Lanelet2Pose):
+                    # Named as the class: Codon does not narrow a union by
+                    # isinstance() (docs/typecheck.md).
+                    on_lane: Lanelet2Pose = where
+                    if int(on_lane.lanelet_id) <= 0:
+                        # An entity's "where it was declared to spawn": a
+                        # prop has no such place, and would never be added.
+                        raise ValueError(
+                            f"{label}: adding prop '{prop_name}' needs a "
+                            f"lanelet (got {int(on_lane.lanelet_id)}) or a "
+                            "route pose"
+                        )
         self._at = at
         self._shift_max = float(shift_max)
         self._speed = float(speed)
