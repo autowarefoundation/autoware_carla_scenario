@@ -39,6 +39,7 @@ import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
+    ActionStateCondition,
     AdversarialBrakeAction,
     AdversarialCutInAction,
     AdversarialTrafficAction,
@@ -69,8 +70,6 @@ from autoware_carla_scenario import (
     to_carla_world,
     to_opendrive,
 )
-from autoware_carla_scenario.action_state import ActionState
-from autoware_carla_scenario.conditions import ActionStateCondition
 
 from .configs import AdversityConfig
 
@@ -148,7 +147,7 @@ class AdversityScenario(BaseScenario):
         self.register_pass_condition(
             ActionStateCondition(
                 cfg.kind,
-                ActionState.COMPLETE,
+                "completeState",
                 actions,
                 label=f"{cfg.kind}_carried_out",
             )
