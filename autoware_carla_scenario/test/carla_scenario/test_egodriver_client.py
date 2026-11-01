@@ -253,6 +253,51 @@ def test_start_session_advertises_the_camera_extrinsics(policy: _StubPolicy) -> 
     assert advertised.rig_to_camera.vec.x != pytest.approx(0.0)
 
 
+def _revision1_policy_sees(policy: _StubPolicy, rear_axle_offset_m: float) -> Pose:
+    """Return the camera body a revision-1 *policy* is declared, the session
+    started at *rear_axle_offset_m*."""
+    camera = DriverCameraConfig(
+        logical_id="camera_front",
+        position_x=1.5,
+        position_y=0.2,
+        position_z=1.6,
+        yaw=15.0,
+        pitch=-5.0,
+    )
+    config = DriverClientConfig(
+        address=f"localhost:{policy.port}",  # type: ignore[attr-defined]
+        timeout_s=10.0,
+        cameras=(camera,),
+    )
+    channel = grpc.insecure_channel(config.address, options=channel_options())
+    client = EgoDriverGrpcClient(config, channel=channel)
+    try:
+        client.start_session(
+            "session-1", "scene", rear_axle_offset_m=rear_axle_offset_m
+        )
+    finally:
+        client.close_session()
+    return Pose.from_proto(
+        policy.sessions[-1].rollout_spec.vehicle.available_cameras[0].rig_to_camera
+    )
+
+
+def test_start_session_advertises_the_camera_in_the_rig_off_the_rear_axle(
+    policy: _StubPolicy,
+) -> None:
+    """CARLA mounts the camera relative to the actor origin, the vehicle's
+    centre, and the rig origin is the rear axle: the declared camera body is the
+    mount moved by the rear-axle offset, as the LiDAR's is (revision 1)."""
+    from autoware_carla_scenario.driver.observation import sensor_pose_in_rig
+
+    advertised = _revision1_policy_sees(policy, -1.4)
+    expected = sensor_pose_in_rig(1.5, 0.2, 1.6, 0.0, -5.0, 15.0, -1.4)
+    assert np.allclose(advertised.position, expected.position, atol=1e-5)
+    assert (advertised.rotation * expected.rotation.inv()).magnitude() < 1e-6
+    # 1.5 m ahead of the actor origin, which is 1.4 m ahead of the rear axle.
+    assert advertised.position[0] == pytest.approx(2.9, abs=1e-5)
+
+
 def test_close_session_is_idempotent(policy: _StubPolicy) -> None:
     client = _client(policy)
     client.start_session("session-1", "scene")
@@ -425,7 +470,10 @@ def test_unreachable_policy_fails_at_start_session() -> None:
     client.close_session()
 
 
-def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
+@pytest.mark.parametrize("rear_axle_offset_m", [0.0, -1.4])
+def test_a_policy_on_contract_revision_2_gets_the_optical_frame(
+    rear_axle_offset_m: float,
+) -> None:
     """A carla-driver-interface 2.x policy declares revision 2; the client then
     declares its cameras' optical frames and says so with ``start_session``."""
     from carla_driver_interface.contract import (
@@ -435,7 +483,7 @@ def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
     )
     from carla_driver_interface.geometry import body_to_optical
 
-    from autoware_carla_scenario.driver.observation import camera_extrinsics_to_rig
+    from autoware_carla_scenario.driver.observation import sensor_pose_in_rig
 
     class _Revision2(_StubPolicy):
         def get_version(self, request, context):  # noqa: ANN001, D102
@@ -461,7 +509,9 @@ def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
         config, channel=grpc.insecure_channel(config.address, options=channel_options())
     )
     try:
-        client.start_session("session-1", "scene")
+        client.start_session(
+            "session-1", "scene", rear_axle_offset_m=rear_axle_offset_m
+        )
     finally:
         client.close_session()
         server.stop(grace=None)
@@ -470,7 +520,10 @@ def test_a_policy_on_contract_revision_2_gets_the_optical_frame() -> None:
     advertised = Pose.from_proto(
         policy.sessions[0].rollout_spec.vehicle.available_cameras[0].rig_to_camera
     )
-    expected = body_to_optical(camera_extrinsics_to_rig(1.5, 0.0, 1.6, 0.0, -5.0, 15.0))
+    # The mount is relative to the actor origin; the rig's is the rear axle.
+    expected = body_to_optical(
+        sensor_pose_in_rig(1.5, 0.0, 1.6, 0.0, -5.0, 15.0, rear_axle_offset_m)
+    )
     assert np.allclose(advertised.position, expected.position, atol=1e-5)
     assert (advertised.rotation * expected.rotation.inv()).magnitude() < 1e-6
 
