@@ -5007,6 +5007,16 @@ register_constraint_spec(
                 default="left",
                 options=_DIRECTIONS,
             ),
+            FieldSpec(
+                name="include_forks",
+                label="Include forks",
+                kind="bool",
+                default=False,
+                help=(
+                    "Count a lane that forks off or joins beside it too, such "
+                    "as a turn pocket, which the routing graph does not."
+                ),
+            ),
         ),
         description="A same-direction neighbour lane exists on that side.",
     )

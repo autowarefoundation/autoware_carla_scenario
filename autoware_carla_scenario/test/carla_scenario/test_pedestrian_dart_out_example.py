@@ -59,7 +59,7 @@ def test_the_shipped_case_sweeps_the_kerb_lanes_of_a_left_hand_map() -> None:
     (both,) = cfg.sweep.constraints["ego.spawn_lanelet_id"]
     assert both.constraints[0] == {
         "type": "not",
-        "constraint": {"type": "has_adjacent", "value": "left"},
+        "constraint": {"type": "has_adjacent", "value": "left", "include_forks": True},
     }
 
 
