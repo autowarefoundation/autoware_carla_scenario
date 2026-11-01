@@ -539,12 +539,13 @@ def _relative_file(value: str, base: Path) -> str:
     relative to *base*.
 
     hilspy expands no ``~``, so an expanded path is returned even when it is
-    absolute; a relative *value* that names no file under *base* (a LiDAR
-    codec's model name) is returned as it is.
+    absolute; any other absolute *value* is returned as it is, not normalized
+    (a registered codec's argument may not be a path), and so is a relative
+    *value* that names no file under *base* (a LiDAR codec's model name).
     """
     path = Path(value).expanduser()
     if path.is_absolute():
-        return str(path)
+        return str(path) if value.startswith("~") else value
     if (base / path).is_file():
         return str((base / path).resolve())
     return value

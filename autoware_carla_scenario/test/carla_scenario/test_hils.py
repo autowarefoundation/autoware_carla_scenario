@@ -355,6 +355,20 @@ def test_a_home_relative_file_is_expanded(
     assert config.devices[1].codec == "lidar:vlp16"
 
 
+def test_an_absolute_codec_argument_is_passed_as_written(tmp_path: Path) -> None:
+    # Only a ``~`` is expanded: an absolute argument is not normalized, as a
+    # registered codec's argument need not be a path.
+    path = tmp_path / "hils.yaml"
+    path.write_text(
+        "devices:\n"
+        "  can:\n"
+        "    url: can://vcan0\n"
+        "    codec: custom://host//a/\n"
+    )
+    config = load_config(path)
+    assert config.devices[0].codec == "custom://host//a/"
+
+
 def test_a_relative_profiles_option_is_relative_to_the_configuration(
     tmp_path: Path,
 ) -> None:
