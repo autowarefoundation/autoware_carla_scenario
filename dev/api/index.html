@@ -2865,6 +2865,10 @@ and composite conditions reset their children.</p>
 <td>Holds while the number of road users <code>entities</code> (an <code>EntityFilter</code>) takes compares to <code>count</code>: "a vehicle within 30 m ahead of the ego" (<code>EntityFilter(kind=RoadUserKind.VEHICLE, min_ahead_m=0, max_ahead_m=30)</code>), "no pedestrian on the crosswalk" (<code>EQUAL_TO</code> 0). Its message names the ones it took. The <code>entity_count</code> card, whose filter fields every filtered condition shares.</td>
 </tr>
 <tr>
+<td><code>AdversityActiveCondition(entities=None, kinds=None, include_responses=False, *, label)</code></td>
+<td>Holds while a road user that <code>entities</code> (an <code>EntityFilter</code>; <code>None</code>: every one) takes is carrying out an adversity of one of <code>kinds</code> (<code>AdversityKind</code>s; <code>None</code> or empty: any). It counts a named NPC's own adversarial action and a background vehicle that NADE sampled. It holds from when the road user starts driving the adversity's path until it is handed back to traffic, so put it under a <code>StickyCondition</code> to mean "it happened". A NADE victim's response counts only with <code>include_responses</code>. Imported from the top level or <code>conditions.adversity_active</code>, because it pulls in the Lanelet2 layer. See <a href="../adversity/#whether-an-adversity-is-under-way">Adversarial Actions and NADE</a>.</td>
+</tr>
+<tr>
 <td><code>OffRoadFractionCondition(fraction, entity_name=None, *, label)</code></td>
 <td>Fails once at least <code>fraction</code> (in <code>(0, 1]</code>) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the <code>offroad</code> metric, with a tolerance. See <a href="../metrics/#off-the-road-as-a-fail-condition">Metrics</a>.</td>
 </tr>
@@ -3722,7 +3726,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 05:28:29 UTC"><span class="timeago" datetime="2026-11-01T05:28:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 05:28:29 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 07:19:52 UTC"><span class="timeago" datetime="2026-11-01T07:19:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 07:19:52 UTC">2026-11-01</span>
   </span>
 
     

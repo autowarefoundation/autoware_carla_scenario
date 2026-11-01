@@ -1800,6 +1800,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#whether-an-adversity-is-under-way" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Whether an adversity is under way
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stalled-objects-and-collisions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2281,6 +2292,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#whether-an-adversity-is-under-way" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Whether an adversity is under way
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stalled-objects-and-collisions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2628,6 +2650,47 @@ weighted failures with its 95% interval, the relative half width it has
 converged to (TeraSim's NADE stops below 0.3), the self-normalised rate and
 the effective number of runs (openodd's weighted outcomes, see
 <a href="../coverage/">Coverage</a>).</p>
+<h2 id="whether-an-adversity-is-under-way">Whether an adversity is under way<a class="headerlink" href="#whether-an-adversity-is-under-way" title="Permanent link">&para;</a></h2>
+<p><code>AdversityActiveCondition</code> holds while a road user is carrying out an
+adversity. It does not matter who started it: a named NPC's own adversarial
+action, or NADE sampling a background vehicle. An <code>EntityFilter</code> says whose
+adversities count, and a list of kinds says which (<a href="../api/">Conditions</a>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">AdversityActiveCondition</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">AdversityKind</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">EntityFilter</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">StickyCondition</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># A cut-in by anyone within 30 m of the ego, at any time in the run.</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pass_condition</span><span class="p">(</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">StickyCondition</span><span class="p">(</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        <span class="n">AdversityActiveCondition</span><span class="p">(</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>            <span class="n">EntityFilter</span><span class="p">(</span><span class="n">max_distance_m</span><span class="o">=</span><span class="mf">30.0</span><span class="p">),</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>            <span class="p">[</span><span class="n">AdversityKind</span><span class="o">.</span><span class="n">CUT_IN</span><span class="p">],</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>            <span class="n">label</span><span class="o">=</span><span class="s2">"cut_in_near_ego"</span><span class="p">,</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="p">)</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="p">)</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="p">)</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="c1"># A brake check by one of the TrafficManager's background vehicles ahead.</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">AdversityActiveCondition</span><span class="p">(</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>    <span class="n">EntityFilter</span><span class="p">(</span><span class="n">names</span><span class="o">=</span><span class="p">(</span><span class="s2">"background*"</span><span class="p">,),</span> <span class="n">min_ahead_m</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>    <span class="p">[</span><span class="n">AdversityKind</span><span class="o">.</span><span class="n">BRAKE_CHECK</span><span class="p">],</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">"background_brake_check_ahead"</span><span class="p">,</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="p">)</span>
+</code></pre></div>
+<p><strong>How long it holds.</strong> It holds from the tick the road user starts driving
+the adversity's path to the tick it is handed back to traffic. Under a
+<code>StickyCondition</code> it says that the adversity happened. With no filter and no
+kinds, it holds for any adversity anywhere.</p>
+<p><strong>Victims' responses.</strong> A NADE victim's response (it avoids or accepts
+another road user's adversity) counts only with <code>include_responses=True</code>. It
+counts as the adversity it responds to, and its message names whose that is.</p>
+<p><strong>Where the state comes from.</strong> Each adversity's execution records itself in
+<code>adversity_activity</code> when it starts and removes itself when it hands the road
+user back. The runner clears what is recorded before each scenario.</p>
+<p>It is the <code>adversity_active</code> card. Its filter fields are the
+<code>entity_count</code> card's.</p>
 <h2 id="stalled-objects-and-collisions">Stalled objects and collisions<a class="headerlink" href="#stalled-objects-and-collisions" title="Permanent link">&para;</a></h2>
 <p>TeraSim's <code>StalledObjectAdversity</code> and <code>CollisionAdversity</code> are scheduled,
 not sampled. <code>StalledObjectAction</code> stands a vehicle still at a pose from
@@ -2637,16 +2700,16 @@ removed). Outside that window the vehicle is out of the world.</p>
 in <code>setup</code>, preferably out of the world (<code>spawn.hidden</code>). The action is a
 trajectory run (the engine of <code>RoutingAction</code>'s <code>position</code> mode) of a held pose, with <code>hidden_outside_trajectory</code>.
 <code>collision_objects</code> creates two of them for a collision's aftermath.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span><span class="p">,</span> <span class="n">StalledObjectAction</span><span class="p">,</span> <span class="n">collision_objects</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">StalledObjectAction</span><span class="p">(</span><span class="s2">"stalled1"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">),</span> <span class="n">start_time</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">for</span> <span class="n">crashed</span> <span class="ow">in</span> <span class="n">collision_objects</span><span class="p">(</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="s2">"npc3"</span><span class="p">,</span> <span class="s2">"npc4"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">12.0</span><span class="p">),</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">17.0</span><span class="p">,</span> <span class="n">heading</span><span class="o">=</span><span class="mf">0.4</span><span class="p">),</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">end_time</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">):</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">crashed</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">Lanelet2Pose</span><span class="p">,</span> <span class="n">StalledObjectAction</span><span class="p">,</span> <span class="n">collision_objects</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">StalledObjectAction</span><span class="p">(</span><span class="s2">"stalled1"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">),</span> <span class="n">start_time</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">for</span> <span class="n">crashed</span> <span class="ow">in</span> <span class="n">collision_objects</span><span class="p">(</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="s2">"npc3"</span><span class="p">,</span> <span class="s2">"npc4"</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">12.0</span><span class="p">),</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="mi">2001</span><span class="p">,</span> <span class="mf">17.0</span><span class="p">,</span> <span class="n">heading</span><span class="o">=</span><span class="mf">0.4</span><span class="p">),</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">end_time</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">):</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">crashed</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="construction-zones">Construction zones<a class="headerlink" href="#construction-zones" title="Permanent link">&para;</a></h2>
 <p><code>ConstructionZoneAction</code> lays out TeraSim's <code>ConstructionAdversity</code> along a
@@ -2714,15 +2777,15 @@ while a run is under way. When the zone appears, two things happen:</p>
 placed: a closure Autoware cannot see is one it drives into. At <code>end_time</code> the
 props are removed and the lane is reopened; when the run ends, the lane is
 reopened and the runner takes the props away with every other.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConstructionSettings</span><span class="p">,</span> <span class="n">ConstructionZoneAction</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="mi">1043</span><span class="p">,</span> <span class="n">start_s</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">end_s</span><span class="o">=</span><span class="mf">260.0</span><span class="p">,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        <span class="n">settings</span><span class="o">=</span><span class="n">ConstructionSettings</span><span class="p">(</span><span class="n">construction_type</span><span class="o">=</span><span class="s2">"mixed"</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">),</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="p">)</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConstructionSettings</span><span class="p">,</span> <span class="n">ConstructionZoneAction</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="mi">1043</span><span class="p">,</span> <span class="n">start_s</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">end_s</span><span class="o">=</span><span class="mf">260.0</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="n">settings</span><span class="o">=</span><span class="n">ConstructionSettings</span><span class="p">(</span><span class="n">construction_type</span><span class="o">=</span><span class="s2">"mixed"</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">),</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="p">)</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="urban-construction-zones">Urban construction zones<a class="headerlink" href="#urban-construction-zones" title="Permanent link">&para;</a></h3>
 <p><code>layout="urban"</code> lays out TeraSim's <code>UrbanConstructionAdversity</code>
@@ -2777,25 +2840,25 @@ the work zone and every 5 m in the merge taper, three warning signs 30 m
 apart, merge signs 50 m apart, signs 2 m out on the shoulder, a 200 m warning
 zone and a 150 m merge taper. In the editor, the <code>urban_construction_zone</code>
 action starts from these values.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">URBAN_CONSTRUCTION</span><span class="p">,</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">ConstructionSettings</span><span class="p">,</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">,</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># The 300 m approach to an intersection, closed from the right.</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">ConstructionZoneAction</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">300.0</span><span class="p">,</span> <span class="n">URBAN_CONSTRUCTION</span><span class="p">))</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1"># Closed from the left, with a shorter merge taper and three signs before it.</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="mi">1051</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">200.0</span><span class="p">,</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="n">ConstructionSettings</span><span class="p">(</span>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>            <span class="n">layout</span><span class="o">=</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">spacing</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">warning_zone_length</span><span class="o">=</span><span class="mf">200.0</span><span class="p">,</span>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>            <span class="n">warning_sign_offset</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>            <span class="n">merge_distance</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">merge_signs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="p">),</span>
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="p">)</span>
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">URBAN_CONSTRUCTION</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">ConstructionSettings</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># The 300 m approach to an intersection, closed from the right.</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">ConstructionZoneAction</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">300.0</span><span class="p">,</span> <span class="n">URBAN_CONSTRUCTION</span><span class="p">))</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="c1"># Closed from the left, with a shorter merge taper and three signs before it.</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>        <span class="mi">1051</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>        <span class="n">ConstructionSettings</span><span class="p">(</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>            <span class="n">layout</span><span class="o">=</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">spacing</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">warning_zone_length</span><span class="o">=</span><span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>            <span class="n">warning_sign_offset</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>            <span class="n">merge_distance</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">merge_signs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>        <span class="p">),</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="p">)</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="p">)</span>
 </code></pre></div>
 <h2 id="coordinate-conventions">Coordinate conventions<a class="headerlink" href="#coordinate-conventions" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2910,7 +2973,7 @@ action starts from these values.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 11:51:38 UTC"><span class="timeago" datetime="2026-10-27T11:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 11:51:38 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 07:19:52 UTC"><span class="timeago" datetime="2026-11-01T07:19:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 07:19:52 UTC">2026-11-01</span>
   </span>
 
     

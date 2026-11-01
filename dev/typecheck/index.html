@@ -4768,9 +4768,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-262 of the package's 382
-modules (69%; about 76,300 of
-132,200 lines) are <code>CHECKED</code>: the kinematics, the
+264 of the package's 384
+modules (69%; about 76,500 of
+132,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4782,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 262 CHECKED modules</summary>
+<summary>The 264 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -4948,6 +4948,10 @@ first paragraph of its docstring:</p>
 <td>When each phase-1 adversity fires, and what it does then (#392).</td>
 </tr>
 <tr>
+<td><code>adversity_activity</code></td>
+<td>Which adversities are under way now, for the conditions that ask.</td>
+</tr>
+<tr>
 <td><code>adversity_event</code></td>
 <td>What an action reports for the run's log, beside its lifecycle (#397).</td>
 </tr>
@@ -5022,6 +5026,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>conditions.action_state</code></td>
 <td>Condition on the lifecycle state of a named action.</td>
+</tr>
+<tr>
+<td><code>conditions.adversity_active</code></td>
+<td>Condition that holds while a road user is carrying out an adversity.</td>
 </tr>
 <tr>
 <td><code>conditions.adversity_feasible</code></td>
@@ -5842,7 +5850,7 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>119 functions and methods of those modules are <code>UNCALLED</code>
+<p>120 functions and methods of those modules are <code>UNCALLED</code>
 (28 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -5855,7 +5863,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 119 UNCALLED functions and methods, and why</summary>
+<summary>The 120 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5864,6 +5872,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>authoring.framework_pin.Pin.uv_source</code>: builds the <code>[tool.uv.sources]</code> entry, a dict[str, Any] of str and bool values (<code>{"path": ..., "editable": True}</code>), which Codon cannot express</li>
 <li><code>autoware_stack.bridge_node.bridge_command</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; CommandAutowareLauncher.start() and DockerAutowareLauncher.start() call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node.bridge_ros_args</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
+<li><code>conditions.adversity_active.AdversityActiveCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.and_condition.AndCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.base.BaseCondition.__init_subclass__</code>: wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for</li>
 <li><code>conditions.base.BaseCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
