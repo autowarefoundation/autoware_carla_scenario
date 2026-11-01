@@ -808,6 +808,7 @@ def _check_entity(
     _check_entity_numbers(out, path, entity)
     _check_goal(out, path, entity, routed=routed_goal)
     _check_model(out, path, entity)
+    _check_unread_fields(out, path, entity)
     spawn = entity.spawn
     if routed and (entity.kind == "ego" or spawn.hidden):
         # Placed by the route search, or parked out of the world until an
@@ -885,6 +886,35 @@ def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
             out.error(f"{path}.{key}", "This must be a finite number.", entity.id)
 
 
+def _check_unread_fields(out: _Collector, path: str, entity: Entity) -> None:
+    """Refuse a value the runtime has no way to honour for this entity.
+
+    The model holds every field for every kind, but not every kind reads every
+    field; a value set where nothing reads it would be dropped in silence, as
+    a goal on a vehicle other than the ego would (:func:`_check_goal`).
+
+    * A pedestrian has no initial speed.  It stands until a walk tells it how
+      fast to go, and a walker told to move at spawn would walk on, in a
+      straight line, for the whole run -- a behaviour nothing asked for.
+    * Only the ego is driven by what the document chooses; every other
+      vehicle is the TrafficManager's.
+    """
+    if entity.kind == "pedestrian" and entity.initial_speed_kmh != 0.0:
+        out.error(
+            f"{path}.initial_speed_kmh",
+            "A pedestrian has no initial speed: it stands until a walk card "
+            "tells it how fast to go. Set it to 0 and give the walk a speed.",
+            entity.id,
+        )
+    if entity.kind != "ego" and entity.driven_by != "autopilot":
+        out.error(
+            f"{path}.driven_by",
+            f"Only the ego is driven by the stack the document names; this "
+            f"{entity.kind} would ignore driven_by: {entity.driven_by}.",
+            entity.id,
+        )
+
+
 def _check_model(out: _Collector, path: str, entity: Entity) -> None:
     """Check the blueprint belongs to the family this kind spawns from.
 
@@ -911,6 +941,15 @@ def _check_model(out: _Collector, path: str, entity: Entity) -> None:
                 entity.id,
             )
         return
+    if entity.size is not None:
+        # The size is read only to choose an ``auto`` vehicle.
+        out.error(
+            f"{path}.size",
+            f"A size chooses the vehicle of vehicle_type: {AUTO_MODEL}; this "
+            f"{entity.kind} names its blueprint, so the size would be ignored. "
+            f"Remove it, or set vehicle_type: {AUTO_MODEL}.",
+            entity.id,
+        )
     if not entity.vehicle_type.startswith(wanted):
         out.error(
             f"{path}.vehicle_type",

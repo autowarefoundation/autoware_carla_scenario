@@ -545,7 +545,8 @@ The sweeper enumerates a single target key per run, so one entity's spawn can be
 searched per scenario; the editor warns when a document asks for more.
 
 The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
-`ego.spawn_s` keys. Other entities get a declared
+`ego.spawn_s` keys, with its lateral offset and heading as `ego.spawn_t` /
+`ego.spawn_heading`. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
@@ -596,6 +597,8 @@ ego and exports it as the framework's own keys:
 ego:
   spawn_lanelet_id: 183
   spawn_s: 0.0
+  spawn_t: 0.0
+  spawn_heading: 0.0
   entity: autoware
   goal_lanelet_id: 265
   goal_s: 12.5

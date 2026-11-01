@@ -11,7 +11,8 @@ Spawn keys
 ----------
 The ego's spawn reaches the runner through the framework's own
 ``ego.spawn_lanelet_id`` / ``ego.spawn_s`` keys, which is what the sweeper
-overrides today.  Other entities get a declared ``scenario.spawn_overrides``
+overrides today, with its lateral offset and heading as ``ego.spawn_t`` /
+``ego.spawn_heading``.  Other entities get a declared ``scenario.spawn_overrides``
 sub-tree so that they are addressable by the same plain ``key=value`` override
 mechanism -- the keys are written into the generated YAML precisely so that
 Hydra's struct mode accepts them.
@@ -238,6 +239,10 @@ def build_scenario_config(
             "initial_speed_kmh": ego.initial_speed_kmh,
             "spawn_lanelet_id": ego.spawn.lanelet_id,
             "spawn_s": ego.spawn.s.value,
+            # Across the lane and turned against it, as an NPC's spawn is: the
+            # runner builds the ego's pose from these keys alone.
+            "spawn_t": ego.spawn.t,
+            "spawn_heading": ego.spawn.heading,
             "entity": ego.driven_by,
         }
         if ego.goal is not None:

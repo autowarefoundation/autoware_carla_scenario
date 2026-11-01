@@ -19,11 +19,15 @@
     <input type="text" name="vehicle_type" class="ed-input mono" style="font-size:11.5px"
            value="{{ target.vehicle_type }}">
   </div>
+  {# A pedestrian has no initial speed -- a walk card sets how fast it goes --
+     so the field is shown for one only to clear a value the validator refuses. #}
+  {% if target.kind != 'pedestrian' or target.initial_speed_kmh %}
   <div class="ed-field">
     <label class="ed-label">Initial speed <span class="unit">(km/h)</span></label>
     <input type="number" step="any" name="initial_speed_kmh" class="ed-input"
            value="{{ target.initial_speed_kmh }}">
   </div>
+  {% endif %}
 
   <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Spawn</h4>
   <div class="ed-field">

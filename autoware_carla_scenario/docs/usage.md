@@ -464,6 +464,8 @@ Defines the default config group composition:
 | `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h) |
 | `ego.spawn_lanelet_id` | int | `242` | Lanelet ID for spawn position |
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
+| `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
+| `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
 
 #### Entity Configuration
 

@@ -354,7 +354,8 @@ far enough away.
   once out of sight to read its box, so the choice follows the server's
   version and assets rather than a table written for one (`entity.fit`).
   With none fitting, it is the kind's default. `auto` on a pedestrian, or
-  without a size, is a validation error.
+  without a size, is a validation error, and so is a size on an entity that
+  names its blueprint: nothing would read it.
 
 ## Matching semantics
 

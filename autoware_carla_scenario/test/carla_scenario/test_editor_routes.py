@@ -2525,6 +2525,25 @@ class TestDerivedLanelets:
         )
         assert _entity(store, draft_id, "npc1").spawn.heading == stored
 
+    def test_a_pedestrian_is_offered_no_initial_speed(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A walk card sets how fast a pedestrian goes; the validator refuses
+        an initial speed, so the inspector offers none -- unless one is set,
+        and has to be cleared."""
+        client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
+        walker = next(
+            e for e in _document(store, draft_id).entities if e.kind == "pedestrian"
+        )
+        field = 'name="initial_speed_kmh"'
+        inspector = f"/draft/{draft_id}/inspector/{walker.id}"
+        assert field not in client.get(inspector).text
+        assert field in client.get(f"/draft/{draft_id}/inspector/npc1").text
+        client.post(
+            f"/draft/{draft_id}/entity/{walker.id}", data={"initial_speed_kmh": "4"}
+        )
+        assert field in client.get(inspector).text
+
 
 class TestDraftsDoNotShareAnExport:
     """The staged wheelhouse belongs to a draft, not to a document id (#678).

@@ -40,6 +40,8 @@ class EgoVehicleConfig:
     initial_speed_kmh: float = 0.0
     spawn_lanelet_id: int = 242
     spawn_s: float = 25.0
+    spawn_t: float = 0.0
+    spawn_heading: float = 0.0
     goal_lanelet_id: Optional[int] = None
     goal_s: float = 0.0
     waypoint_lanelet_ids: List[int] = List[int]()
