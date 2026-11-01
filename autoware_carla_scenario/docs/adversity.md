@@ -83,9 +83,18 @@ self.register_pre_tick(
 
 TeraSim recognises a ramp by its SUMO edge name, which contains `"Ramp"`.
 Lanelet2 has no such name, so `MapFeatures.merges` defines a merging lane as
-a lane that ends into the lane on its left. It either ends beside that lane,
+a lane that ends into the lane beside it. It either ends beside that lane,
 or shares what follows with it. This holds at the lanelet itself, or along
 its straightest successors within 100 m (`MERGE_WINDOW_M`).
+
+`merges(lanelet, side)` asks for one side: `"left"` for a lane ending into
+the lane on its left (an on-ramp where traffic keeps right), `"right"` for
+one ending into the lane on its right (where traffic keeps left, as on the
+nishishinjuku fixture map). Without a side it answers for either. `MERGE`
+looks on both sides of the agent, the right first, for a lane merging toward
+it: on its right, one ending into the lane on its left; on its left, one
+ending into the lane on its right. Two lanes over, it changes lanes toward
+that side.
 
 ### A crosswalk's light
 
