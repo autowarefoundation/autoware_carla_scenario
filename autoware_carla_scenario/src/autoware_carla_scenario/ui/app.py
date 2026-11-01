@@ -481,18 +481,12 @@ def _scenarios(summary: SessionSummary) -> set[str]:
     """The scenarios a session ran, named as :func:`_family` names them: a
     batch's entries name them as its summary does; a multirun or single
     session's are its ``scenario=`` override, which its summary (the result
-    file's stem) does not give, so they are read as :func:`results.load_results`
-    reads them."""
+    file's stem) does not give, so they are read from its overrides
+    (:func:`results.session_scenarios`)."""
     if summary.session_type == "batch":
         return {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
-    return _family(
-        results.load_results(
-            _base_path(),
-            summary.session_type,
-            summary.date,
-            summary.time,
-            metrics=False,
-        )
+    return results.session_scenarios(
+        _base_path(), summary.session_type, summary.date, summary.time
     )
 
 
@@ -582,17 +576,22 @@ async def compare_sessions(request: Request) -> HTMLResponse:
     for _, found in loaded:
         family |= _family(found)
     # The sessions offered: those picked, and those that ran a scenario of the
-    # family (all when none is picked yet).
+    # family (all when none is picked yet). Only scanned sessions are offered,
+    # so a picked ref is offered only when it names a real session. The scan
+    # stays on the event loop, as every other page's does (its cache is not
+    # locked); only the reading of the sessions' overrides is threaded.
     selected = {ref for ref, _ in loaded}
-    offered = []
-    for summary in scanner.scan_sessions(_base_path()):
-        ref = _session_ref(summary.session_type, summary.date, summary.time)
-        if (
-            not family
-            or ref in selected
-            or await asyncio.to_thread(_scenarios, summary) & family
-        ):
-            offered.append((ref, summary))
+    sessions = scanner.scan_sessions(_base_path())
+
+    def offer() -> list[tuple[str, SessionSummary]]:
+        out = []
+        for summary in sessions:
+            ref = _session_ref(summary.session_type, summary.date, summary.time)
+            if not family or ref in selected or _scenarios(summary) & family:
+                out.append((ref, summary))
+        return out
+
+    offered = await asyncio.to_thread(offer)
     comparison = None
     matrices: list[tuple[str, str]] = []
     if len(loaded) >= 2:

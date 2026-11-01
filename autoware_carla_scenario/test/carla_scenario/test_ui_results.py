@@ -509,6 +509,33 @@ def test_a_single_session_is_offered_its_family(
     }
 
 
+def test_session_scenarios_names_them_as_load_results_does_from_overrides_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "multirun" / "2026-11-01" / "10-00-00"
+    _job(session / "0", "lane_change/left", "LaneChangeScenario", True)
+    _job(session / "1", None, "CutInScenario", True)
+    expected = {
+        r.scenario
+        for r in results.load_results(
+            tmp_path, "multirun", "2026-11-01", "10-00-00", metrics=False
+        )
+    }
+    assert expected == {"lane_change/left", "CutInScenario"}
+
+    def no_read(path: Path) -> None:
+        raise AssertionError(f"read {path}")
+
+    # Cheap enough to run for every session /compare lists: no result,
+    # coverage or trajectory file is read.
+    monkeypatch.setattr(results, "_read_json", no_read)
+    assert (
+        results.session_scenarios(tmp_path, "multirun", "2026-11-01", "10-00-00")
+        == expected
+    )
+    assert results.session_scenarios(tmp_path, "multirun", "..", "10-00-00") == set()
+
+
 def test_the_picked_sessions_are_always_offered(
     client: TestClient, tmp_path: Path
 ) -> None:
