@@ -51,6 +51,14 @@ no lane on their **left**, the kerb lanes of Nishi-Shinjuku, which drives on
 the left. To sweep a right-hand-traffic map such as Town10HD_Opt, use a copy of
 `pedestrian_dart_out.yaml` with `value: right` in that constraint.
 
+The constraint sets `include_forks: true`: a turn pocket that forks off the
+same lanelet as the lane beside it counts as that lane's neighbour, though
+the two share no boundary and the routing graph gives neither a neighbour. On
+Nishi-Shinjuku that keeps the right-turn pockets 160, 185, 213 and 556 out of
+the sweep, as they lie beside 159, 184, 215 and 555. The other sweeps that
+ask `has_adjacent` (lane_change, lane_change_fail, cut_in) leave it off: a
+lane change needs the lane the routing graph can change into.
+
 ## A pedestrian who turns back
 
 By default the pedestrian runs across whatever comes. Set

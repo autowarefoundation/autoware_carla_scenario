@@ -54,10 +54,15 @@ sweep:
           # On a right-hand-traffic map (Town10HD_Opt) it is `right`: sweep
           # a copy of this file with `value: right` (a command-line override
           # cannot reach it, as the key `ego.spawn_lanelet_id` has a dot).
+          # A turn pocket that forks off beside a lane counts as a lane on
+          # that side too (`include_forks`, #1066): the pocket shares no
+          # boundary with the lane, so the routing graph gives neither a
+          # neighbour, yet the pocket is no kerb lane.
           - type: not
             constraint:
               type: has_adjacent
               value: left
+              include_forks: true
           - type: not
             constraint:
               type: is_junction
