@@ -1113,6 +1113,20 @@ class TestResolveMapPaths:
         assert again.xodr_path == destination
         assert again.xodr_is_derived and again.install_xodr is None
 
+    def test_an_opendrive_captured_under_another_name_is_not_used(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The directory's ``TownA.xodr`` is not the town ``map.name`` loads (#1050)."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        default = resolve_map_paths({"source": _uri(origin_repo)}).opendrive_path
+        assert default is not None and default.name == "TownA.xodr"
+        default.parent.mkdir(parents=True, exist_ok=True)
+        default.write_text("<OpenDRIVE town='TownA'/>")
+
+        renamed = resolve_map_paths({"source": _uri(origin_repo), "name": "Town01"})
+        assert renamed.xodr_path is None and not renamed.xodr_is_derived
+        assert renamed.opendrive_path == default.parent / "Town01.xodr"
+
     def test_the_opendrive_is_not_installed_into_carla_unless_asked(self) -> None:
         config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
 
@@ -1505,6 +1519,25 @@ class TestOpenDrive:
     ) -> None:
         resolved = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
         assert ensure_xodr(resolved, allow_server=False) == resolved.xodr_path
+
+    def test_another_carla_maps_cached_file_is_not_reused(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One captured under the directory's name is not ``map_name``'s (#1050)."""
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        resolved.derived.mkdir(parents=True, exist_ok=True)
+        resolved.derived_xodr().write_text("<OpenDRIVE town='TownA'/>")
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_is_derived
+
+        monkeypatch.delenv(map_asset_env_var("Town01"), raising=False)
+        with pytest.raises(OpenDriveUnavailable, match=map_asset_env_var("Town01")):
+            ensure_xodr(resolved, map_name="Town01", allow_server=False)
+
+        resolved.derived_xodr("Town01").write_text("<OpenDRIVE town='Town01'/>")
+        assert ensure_xodr(
+            resolved, map_name="Town01", allow_server=False
+        ) == resolved.derived_xodr("Town01")
 
     def test_says_what_is_missing_when_there_is_nowhere_to_get_one(
         self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
