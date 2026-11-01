@@ -326,6 +326,66 @@ def test_relative_files_are_relative_to_the_configuration(tmp_path: Path) -> Non
     assert config.devices[1].codec == "lidar:vlp16"
 
 
+def test_a_home_relative_file_is_expanded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # hilspy expands no ``~``: the codec's file and a ``profiles`` option
+    # reach it expanded, whether they exist or not.
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "v.dbc").write_text('VERSION ""\n')
+    monkeypatch.setenv("HOME", str(home))
+    path = tmp_path / "config" / "hils.yaml"
+    path.parent.mkdir()
+    path.write_text(
+        "devices:\n"
+        "  can:\n"
+        "    url: can://vcan0\n"
+        "    codec: dbc:~/v.dbc\n"
+        "    messages: [{name: M, fields: {S: $speed}}]\n"
+        "  lidar:\n"
+        "    url: udp://127.0.0.1:2368\n"
+        "    codec: lidar:vlp16\n"
+        "    options: {profiles: ~/p.yaml, rpm: 600}\n"
+        "    sensor: {blueprint: sensor.lidar.ray_cast}\n"
+    )
+    config = load_config(path)
+    assert config.devices[0].codec == f"dbc:{home / 'v.dbc'}"
+    assert config.devices[1].options == {"profiles": str(home / "p.yaml"), "rpm": 600}
+    assert config.devices[1].codec == "lidar:vlp16"
+
+
+def test_an_absolute_codec_argument_is_passed_as_written(tmp_path: Path) -> None:
+    # Only a ``~`` is expanded: an absolute argument is not normalized, as a
+    # registered codec's argument need not be a path.
+    path = tmp_path / "hils.yaml"
+    path.write_text(
+        "devices:\n"
+        "  can:\n"
+        "    url: can://vcan0\n"
+        "    codec: custom://host//a/\n"
+    )
+    config = load_config(path)
+    assert config.devices[0].codec == "custom://host//a/"
+
+
+def test_a_relative_profiles_option_is_relative_to_the_configuration(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "p.yaml").write_text("{}\n")
+    path = tmp_path / "hils.yaml"
+    path.write_text(
+        "devices:\n"
+        "  lidar:\n"
+        "    url: udp://127.0.0.1:2368\n"
+        "    codec: lidar:vlp16\n"
+        "    options: {profiles: p.yaml}\n"
+        "    sensor: {blueprint: sensor.lidar.ray_cast}\n"
+    )
+    config = load_config(path)
+    assert config.devices[0].options == {"profiles": str(tmp_path / "p.yaml")}
+
+
 def test_a_missing_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(HilsConfigError, match="not a file"):
         load_config(tmp_path / "absent.yaml")
