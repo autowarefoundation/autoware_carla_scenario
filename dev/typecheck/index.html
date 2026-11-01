@@ -4740,9 +4740,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-260 of the package's 380
-modules (68%; about 75,800 of
-131,600 lines) are <code>CHECKED</code>: the kinematics, the
+261 of the package's 381
+modules (69%; about 75,900 of
+131,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4754,7 +4754,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 260 CHECKED modules</summary>
+<summary>The 261 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5524,6 +5524,10 @@ first paragraph of its docstring:</p>
 <td>What one run leaves under its file stem: the single list of them.</td>
 </tr>
 <tr>
+<td><code>run_timeout</code></td>
+<td><code>scenario.timeout_seconds</code>, the run's own fail-safe, read and checked.</td>
+</tr>
+<tr>
 <td><code>scenario_base</code></td>
 <td>Base class for CARLA scenarios.</td>
 </tr>
@@ -5806,7 +5810,7 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>118 functions and methods of those modules are <code>UNCALLED</code>
+<p>119 functions and methods of those modules are <code>UNCALLED</code>
 (28 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -5819,7 +5823,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 118 UNCALLED functions and methods, and why</summary>
+<summary>The 119 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5888,6 +5892,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>route.model._parse_segment</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (one segment of a route search); only parse_route_search, itself uncalled, calls it</li>
 <li><code>route.model._tristate</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a segment's opposite_lane, stop_line, ... flags); only _parse_segment, itself uncalled, calls it</li>
 <li><code>route.model.parse_route_search</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>run_timeout.run_timeout_seconds</code>: takes the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express; the check it applies is check_run_timeout's</li>
 <li><code>scenario_base.BaseScenario._register_tick</code>: takes the list a plain callback goes into (<code>List[Callable[[carla.World], None]]</code>), and the check has no value of a list of callables to call with; register_init(), register_pre_tick() and register_post_tick() call it with BaseScenario's own lists, so its body is compiled through them</li>
 <li><code>scenario_base.BaseScenario.create_ego</code>: instantiates the ego's class held in <code>ego_type</code>, which Codon cannot hold as a value</li>
 <li><code>scenario_base.BaseScenario.register_cover</code>: builds a CoverItem of values of any type (<code>expression: Callable[[carla.World], Any]</code>, <code>values: Iterable[Any]</code>, <code>ignore: Callable[[Any], bool]</code>, <code>event: SamplingEvent | BaseCondition</code>), which Codon cannot express; coverage.items is not checked</li>
