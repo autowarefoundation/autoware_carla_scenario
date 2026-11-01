@@ -81,12 +81,17 @@ class _FakeDriverClient(BaseEgoDriverClient):
         self.drives: List[Tuple[int, int]] = []
         self.renderer_payloads: List[bytes] = []
         self.closed = 0
+        #: The rear-axle offset each start_session was given.
+        self.rear_axle_offsets: List[float] = []
         self._terminate_after = terminate_after
         #: The turn indicator each drive answers, in order; then none.
         self._turn_indicators = list(turn_indicators)
 
-    def start_session(self, session_uuid: str, scene_id: str) -> None:
+    def start_session(
+        self, session_uuid: str, scene_id: str, *, rear_axle_offset_m: float = 0.0
+    ) -> None:
         self.started.append((session_uuid, scene_id))
+        self.rear_axle_offsets.append(rear_axle_offset_m)
 
     def submit_route(self, timestamp_us: int, waypoints_in_rig) -> None:
         self.routes.append(np.asarray(waypoints_in_rig))
@@ -248,6 +253,8 @@ def test_start_opens_a_session_and_sends_a_route() -> None:
     session_uuid, scene_id = client.started[0]
     assert session_uuid
     assert scene_id == "Town10HD_Opt"
+    # The cameras are declared in the rig, off the rear axle the entity found.
+    assert client.rear_axle_offsets == [pytest.approx(-1.4)]
 
     assert len(client.routes) == 1
     route = client.routes[0]
@@ -299,7 +306,9 @@ def test_a_session_that_fails_to_start_leaves_no_sensors_on_offer(
 
     entity, client = _entity()
 
-    def _refuse(session_uuid: str, scene_id: str) -> None:
+    def _refuse(
+        session_uuid: str, scene_id: str, *, rear_axle_offset_m: float = 0.0
+    ) -> None:
         raise ConnectionError("policy unreachable")
 
     monkeypatch.setattr(client, "start_session", _refuse)

@@ -801,6 +801,65 @@ def test_a_driver_policys_ego_feeds_the_dataset(
     assert [a["num_lidar_pts"] for a in _table(root, "sample_annotation")] == [1] * 5
 
 
+def test_the_camera_a_policy_is_told_of_is_the_one_the_dataset_calibrates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``rig_to_camera`` a driver policy is declared and the dataset's
+    calibration of the same mount are one pose: both off the rear axle, with
+    the mount relative to the actor origin, where CARLA attaches the camera."""
+    from carla_driver_interface.geometry import Pose
+
+    from autoware_carla_scenario.driver.egodriver_client import EgoDriverGrpcClient
+
+    camera = DriverCameraConfig(
+        logical_id="cam_front",
+        image_width=64,
+        image_height=48,
+        fov=90.0,
+        position_x=1.5,
+        position_y=0.3,
+        position_z=1.6,
+        roll=2.0,
+        pitch=-5.0,
+        yaw=15.0,
+    )
+    driver = _driver(cameras=(camera,))
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world, driver)
+    finally:
+        t4.withdraw_driver_sensors()
+    jpeg = _jpeg()
+    for frame in range(101, 105):
+        world.frame = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_lidar(
+                frame, np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
+            )
+            recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    sensors = {s["token"]: s["channel"] for s in _table(root, "sensor")}
+    (calibrated,) = [
+        c
+        for c in _table(root, "calibrated_sensor")
+        if sensors[c["sensor_token"]] == "CAM_FRONT"
+    ]
+
+    (spec,) = EgoDriverGrpcClient(driver)._camera_specs(-1.25)  # noqa: SLF001
+    advertised = Pose.from_proto(spec.rig_to_camera)
+    np.testing.assert_allclose(
+        calibrated["translation"], advertised.position, atol=1e-6
+    )
+    w, x, y, z = calibrated["rotation"]
+    quat = np.array([x, y, z, w])
+    # q and -q are one rotation.
+    sign = 1.0 if float(np.dot(quat, advertised.quat_xyzw)) >= 0.0 else -1.0
+    np.testing.assert_allclose(sign * quat, advertised.quat_xyzw, atol=1e-6)
+
+
 def test_a_recording_after_a_driver_fed_one_is_not_fed_by_a_driver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
