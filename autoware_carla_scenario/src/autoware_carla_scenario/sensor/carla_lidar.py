@@ -1,10 +1,11 @@
 """CARLA ray-cast LiDAR: one full revolution per sweep, a sweep every so many ticks.
 
 Sweeps arrive asynchronously, like camera frames, into a small queue that drops
-its oldest sweep when full and that the caller drains once per policy step; :meth:`CarlaLidarSensor.latest_sweep` hands back the newest
-raw ``[N, 4]`` buffer in the sensor's own (left-handed) frame, with the frame it
-was taken on, and the conversion into the rig frame is left to whoever sends it
--- only a sweep actually sent is worth converting.
+its oldest sweep when full and that the caller drains once per policy step;
+:meth:`CarlaLidarSensor.latest_sweep` hands back the newest raw ``[N, 4]``
+buffer in the sensor's own (left-handed) frame, with the frame it was taken on,
+and the conversion into the rig frame is left to whoever sends it -- only a
+sweep actually sent is worth converting.
 
 A sweep costs the server one ray per point, every tick it is taken on: at a
 million points a second that is most of what a tick costs.  A LiDAR read once a

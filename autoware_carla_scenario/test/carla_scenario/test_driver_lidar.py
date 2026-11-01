@@ -171,7 +171,7 @@ def test_sweeps_nobody_reads_stay_bounded_and_the_newest_is_kept(
     lidar = CarlaLidarSensor(DriverLidarConfig())
     for frame in range(1, 101):
         lidar._receive(_measurement(frame))  # noqa: SLF001
-        assert lidar._sweeps.qsize() <= carla_lidar._SWEEP_QUEUE_SIZE  # noqa: SLF001
+        assert 0 < lidar._sweeps.qsize() <= lidar._sweeps.maxsize  # noqa: SLF001
     sweep = lidar.latest_sweep(100)
     assert sweep is not None and sweep[0] == 100 and sweep[1][0, 0] == 100.0
 
@@ -224,7 +224,7 @@ def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
         if tick % 2 == 0:
             lidar._receive(_measurement(world.frame, n=1000))  # noqa: SLF001
         entity.on_tick(world, 0.0)  # type: ignore[arg-type]
-        assert lidar._sweeps.qsize() <= carla_lidar._SWEEP_QUEUE_SIZE  # noqa: SLF001
+        assert 0 < lidar._sweeps.qsize() <= lidar._sweeps.maxsize  # noqa: SLF001
     assert entity._handshake is not None and not entity._handshake.ready
     newest = max(frame for frame, _ in list(lidar._sweeps.queue))  # noqa: SLF001
     assert newest == world.frame - 1
