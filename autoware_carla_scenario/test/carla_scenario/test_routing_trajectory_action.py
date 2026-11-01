@@ -432,6 +432,41 @@ class TestFollow:
         assert worst < 1.0
         assert entity.actor.control.brake == 1.0
 
+    def test_a_timed_stop_lasts_its_time_not_its_distance(
+        self, entity: _Entity
+    ) -> None:
+        # A brake check: from 8 m/s at 9 m/s^2 it stops 3.6 m on in 0.9 s,
+        # and the path holds it there until its 2 s are up.  Within the
+        # arrival band of the end long before then, it is not let go early.
+        speed, rate = 8.0, 9.0
+        stop_t = speed / rate
+        vertices = []
+        for step in range(21):
+            t = step * 0.1
+            moving = min(t, stop_t)
+            x = speed * moving - 0.5 * rate * moving * moving
+            vertices.append(TrajectoryVertex(CarlaWorldPose(x, 0.0, 0.0), _at(t)))
+        action = _route(
+            "npc1",
+            Trajectory("brake", vertices),
+            TrajectoryTiming(),
+            RoutingMode.FOLLOW,
+        )
+        entity.actor.vx = entity.actor.speed = speed
+        world = _World()
+        elapsed = 0.0
+        while elapsed < 1.9:
+            action.tick(world, elapsed)
+            entity.actor.step(_DT, driven=True)
+            elapsed += _DT
+        assert not action.finished
+        while elapsed < 3.0 and not action.finished:
+            action.tick(world, elapsed)
+            entity.actor.step(_DT, driven=True)
+            elapsed += _DT
+        assert action.finished
+        assert elapsed == pytest.approx(2.0, abs=2 * _DT)
+
     def test_untimed_it_holds_the_speed_it_had(self, entity: _Entity) -> None:
         entity.actor.vx = entity.actor.speed = 5.0
         action = _route(

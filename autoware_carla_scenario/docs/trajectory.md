@@ -258,7 +258,10 @@ scenario anyone wrote.
 The action stays `runningState` until the entity reaches the end of the
 trajectory: the last vertex's time with a timing, the end of the path without
 one (never, for a closed trajectory), within `ARRIVAL_TOLERANCE_M` (1 m) of it
-in `FOLLOW` mode. Then a vehicle is braked to a stop and a walker stood still
+in `FOLLOW` mode. A timed path that ends at rest -- a brake check's, 2 s of
+braking that stops a few metres on -- lasts its time in `FOLLOW` mode too: a
+vehicle that reaches its end early stands there on the brake until the last
+vertex's time. Then a vehicle is braked to a stop and a walker stood still
 where the trajectory ended. Pass `until=` to end it on a condition of your own.
 `stop_at_end=False` (an extension) leaves a vehicle moving as it arrived instead
 -- in `POSITION` mode with the last segment's velocity -- for an action that

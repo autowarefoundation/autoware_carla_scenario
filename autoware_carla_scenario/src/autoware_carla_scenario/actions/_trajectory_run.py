@@ -86,6 +86,10 @@ _WALKER_GATE_CREEP_MPS = 0.5
 #: The deceleration (m/s²) a ``FOLLOW`` plan brakes at to stop at a vertex
 #: whose condition has not held yet.
 _GATE_DECELERATION_MPS2 = 2.0
+#: A timed path that moves less than this (m) over its last
+#: _AT_REST_WINDOW_S ends at rest: a vehicle there waits for its end time.
+_AT_REST_DISTANCE_M = 0.05
+_AT_REST_WINDOW_S = 0.5
 #: How far past now (s) a plan stamp may lie: a segment that is never
 #: finished (no speed to go at) is stamped this far off rather than at
 #: infinity.
@@ -742,6 +746,14 @@ class TrajectoryRun(BaseAction):
             if self._finished:
                 return
         if not resolved.closed and here >= resolved.length - ARRIVAL_TOLERANCE_M:
+            if self._held_at_end():
+                import typesafe_carla.carla as carla  # noqa: PLC0415
+
+                self._follower.reset()
+                as_vehicle(actor).apply_control(
+                    carla.VehicleControl(throttle=0.0, brake=1.0)
+                )
+                return
             self._finished = True
             return
         plan = (
@@ -829,6 +841,25 @@ class TrajectoryRun(BaseAction):
             0.0 if reference.domain is ReferenceContext.ABSOLUTE else self._start_time
         )
         return origin + reference.offset + vertex_time * reference.scale
+
+    def _held_at_end(self) -> bool:
+        """Whether a ``FOLLOW`` vehicle within the arrival band of the
+        end of an open path, is to stand there rather than end: the path is
+        timed, ends at rest, and its last vertex's time has not come.  A
+        brake check is 2 s of braking that stops a few metres on; ended by
+        distance, the vehicle would be let go still braking.  A path that
+        ends in motion still ends on arrival."""
+        resolved = self._resolved
+        assert resolved is not None
+        if self._time_reference is None or resolved.times is None:
+            return False
+        end = resolved.end_time
+        if self._trajectory_time() >= end - 1e-9:
+            return False
+        last = resolved.distance_at_time(end) - resolved.distance_at_time(
+            max(resolved.start_time, end - _AT_REST_WINDOW_S)
+        )
+        return last < _AT_REST_DISTANCE_M
 
     def _walk(self, world: "carla.World", actor: "carla.Actor") -> None:
         """One tick of ``FOLLOW`` mode for a pedestrian."""
