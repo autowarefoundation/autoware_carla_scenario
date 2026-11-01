@@ -6,7 +6,9 @@ package, which this module imports only when it converts: the viewer runs
 without it and says how to install it.  A recording already beside the log
 (made by the run, ``rerun.enabled``, or by hand) is served as it is, and one
 made here is kept there for the next time (or, where the session's directory
-cannot be written, in the user's cache directory).  The conversion runs in Rust
+cannot be written, in the user's cache directory).  A recording beside the log
+that is older than it is never replaced -- the run may have merged its sensors
+into it -- and the one made again is kept in the cache directory instead.  The conversion runs in Rust
 with the GIL released, so the viewer converts in a worker thread
 (``asyncio.to_thread``) and goes on serving.
 
@@ -206,6 +208,10 @@ def ensure_recording(trajectory: Path) -> Path:
     """The recording of *trajectory*, made now if there is none (or an older
     one than the log).
 
+    A recording made here goes beside the log when there is none there and
+    the directory can be written, and in the cache directory otherwise: one
+    already beside the log (older than the log, or not) is left as it is.
+
     Blocking: call it in a worker thread.
 
     Raises:
@@ -227,7 +233,13 @@ def ensure_recording(trajectory: Path) -> Path:
         for made in (beside, cached):
             if _fresh(made, trajectory):
                 return made
-        if os.access(trajectory.parent, os.W_OK):
+        # A recording already beside the log is never replaced: the run may
+        # have merged its sensors (``rerun.lidar``, ``rerun.cameras``) into it,
+        # which converting the log again would lose, and it only looks older
+        # than the log after a copy that does not keep the times (``cp -r``,
+        # ``scp``, ``rsync -r``).  The fresh one goes in the cache instead
+        # (one file a log, replaced when the log changes).
+        if os.access(trajectory.parent, os.W_OK) and not os.path.lexists(beside):
             _convert(trajectory, beside)
             return beside
         _convert(trajectory, cached)
