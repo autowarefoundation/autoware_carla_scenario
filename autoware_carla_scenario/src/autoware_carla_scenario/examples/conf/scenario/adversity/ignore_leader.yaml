@@ -1,0 +1,19 @@
+# @package _global_
+# A slow ego (8 km/h) 25 m ahead holds back a faster NPC behind it, under the
+# speed limit, which drives on as if the ego were not there: ignore leader
+# (IgnoreLeaderAction). Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/ignore_leader map=town10hd_opt
+scenario:
+  name: adversity
+  kind: ignore_leader
+  npc_lanelet_id: 324
+  npc_ahead_m: -25.0
+  npc_speed_kmh: 25.0
+  ego_speed_kmh: 8.0
+  timeout_seconds: 30.0
+
+ego:
+  initial_speed_kmh: 8.0
+  spawn_lanelet_id: 324
+  spawn_s: 30.0

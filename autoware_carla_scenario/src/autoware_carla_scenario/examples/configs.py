@@ -351,6 +351,75 @@ class TemporaryStopConfig:
 
 
 @dataclass
+class AdversityConfig:
+    """Parameters for the adversity examples: one of TeraSim's phase-1
+    adversities carried out by an NPC (or a pedestrian) placed to make it
+    fire, or NADE among background traffic (#404).
+
+    The shipped cases (``conf/scenario/adversity``) are placed on Town10HD_Opt
+    (``map=town10hd_opt``).
+    """
+
+    name: str = "adversity"
+
+    #: What is carried out: ``brake_check``, ``ignore_leader``, ``cut_in``,
+    #: ``traffic_rule``, ``jaywalking`` (by one NPC or pedestrian), or ``nade``.
+    kind: str = "brake_check"
+
+    #: The lanelet of the NPC (or the pedestrian's kerb).
+    npc_lanelet_id: int = 324
+
+    #: How far ahead of the ego's spawn ``s`` the NPC starts, along its
+    #: lanelet (m; negative: behind).
+    npc_ahead_m: float = 15.0
+
+    #: The pedestrian's offset from its lanelet's centreline (m, negative to
+    #: the right of the direction of travel): at the kerb.
+    npc_offset_m: float = -3.0
+
+    #: The NPC's speed, held until the adversity takes it over (km/h).
+    npc_speed_kmh: float = 30.0
+
+    #: The NPC's blueprint.
+    npc_vehicle_type: str = "vehicle.mini.cooper"
+
+    #: The pedestrian's blueprint.
+    walker_type: str = "walker.pedestrian.0015"
+
+    #: The ego's speed, held for the run (km/h); ``None``: the traffic
+    #: manager's own.
+    ego_speed_kmh: Optional[float] = None
+
+    #: Every traffic light red (``traffic_rule``: the NPC stops for it, then
+    #: runs it); green otherwise.
+    red_light: bool = False
+
+    #: The run fails when the adversity has not been carried out by then (s).
+    timeout_seconds: float = 30.0
+
+    #: ``nade``: how long the run lasts (s).
+    nade_seconds: float = 45.0
+
+    #: ``nade``: each kind's naturalistic probability a tick when its trigger
+    #: holds.
+    nade_probability: float = 0.05
+
+    #: ``nade``: the importance-sampling probability every adversity is drawn
+    #: with (TeraSim's is far smaller, so a short run shows several).
+    nade_is_probability: float = 0.5
+
+    #: ``nade``: how long after a sampled adversity none is (s).
+    nade_cooldown: float = 2.0
+
+    #: ``nade``: an adversity counts when it challenges another NPC, not only
+    #: the ego.
+    nade_challenge_npcs: bool = True
+
+    #: ``nade``: the sampler's seed.
+    nade_seed: int = 7
+
+
+@dataclass
 class ScenarioRunConfig:
     """Root configuration assembled by Hydra.
 
@@ -369,6 +438,7 @@ class ScenarioRunConfig:
         | TemporaryStopConfig
         | PedestrianDartOutConfig
         | CutInConfig
+        | AdversityConfig
     ) = field(default_factory=IntersectionPassingConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
     #: The run's seed, which every random draw of the run follows

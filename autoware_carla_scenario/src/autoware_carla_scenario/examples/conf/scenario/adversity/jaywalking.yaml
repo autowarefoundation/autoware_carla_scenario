@@ -1,0 +1,17 @@
+# @package _global_
+# A pedestrian at the kerb 35 m ahead of the ego, off any crosswalk, walks
+# across the road: jaywalking (JaywalkAction). Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/jaywalking map=town10hd_opt
+scenario:
+  name: adversity
+  kind: jaywalking
+  npc_lanelet_id: 324
+  npc_ahead_m: 35.0
+  npc_offset_m: -3.0
+  timeout_seconds: 30.0
+
+ego:
+  initial_speed_kmh: 15.0
+  spawn_lanelet_id: 324
+  spawn_s: 5.0
