@@ -58,7 +58,7 @@ from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
 from ..control_domain import ControlDomain, movement_of
-from .base import TickTiming
+from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -488,6 +488,39 @@ class RoutingAction(TrajectoryRun):
         self._start_pose = None
         self._warned_off = False
         self._route_start = None
+
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Step the run (:meth:`TrajectoryRun.tick`); a pedestrian's walk that
+        the run's ``until`` condition ended before it arrived is stopped."""
+        from ..action_state import ActionState  # noqa: PLC0415
+
+        super().tick(world, elapsed)
+        if self._walking and self.state is ActionState.END_TRANSITION:
+            self._stop_walk()
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Overridden mid-walk: the pedestrian's walk is stopped, and CARLA's
+        walker controller with it, as on arrival."""
+        self._stop_walk()
+
+    def close(self) -> None:
+        """Stop a pedestrian's walk the run ends in the middle of, and close
+        the conditions (:meth:`BaseAction.close`)."""
+        self._stop_walk()
+        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
+        BaseAction.close(self)
+
+    def _stop_walk(self) -> None:
+        """Stop the walk this action's ``driver`` run gave a pedestrian, if it
+        is still being walked (:meth:`PedestrianEntity.stop_walk`)."""
+        if not self._walking:
+            return
+        self._walking = False
+        self._stepping = False
+        pedestrian = find_pedestrian_entity(self._entity_name)
+        if pedestrian is not None:
+            walker: PedestrianEntity = pedestrian
+            walker.stop_walk()
 
     # ------------------------------------------------------------------
     # Public state
