@@ -293,7 +293,7 @@ def test_malformed_yaml_is_a_one_line_error(
             "  lanelet2_path: ${oc.env:DETECT_NO_3D_TEST_UNSET_VARIABLE}\n",
             "DETECT_NO_3D_TEST_UNSET_VARIABLE",
         ),
-        ("map:\n  name: M\n  source: not-a-uri\n", "map.yaml"),
+        ("map:\n  name: M\n  source: not-a-uri\n", "is not a repository URL"),
         ("map:\n  name: M\n  directory: /nonexistent/dir\n", "does not exist"),
     ],
 )
