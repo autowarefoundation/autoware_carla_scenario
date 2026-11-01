@@ -35,8 +35,11 @@ from .stop_line import (
     get_stop_line_poses_with_following,
 )
 from .transform import (
+    lane_beside,
+    lane_change_target_lanelets,
     lanelet_length,
     lanelets_ahead,
+    lanes_ahead_before_junction,
     route_road_ids,
     on_lanelet,
     project_onto_lanelet,
@@ -67,8 +70,11 @@ __all__ = [
     "get_stop_line_poses",
     "get_stop_line_poses_with_following",
     "lanelet2_traffic_light_id_to_opendrive_controller_id",
+    "lane_beside",
+    "lane_change_target_lanelets",
     "lanelet_length",
     "lanelets_ahead",
+    "lanes_ahead_before_junction",
     "route_road_ids",
     "on_lanelet",
     "project_onto_lanelet",

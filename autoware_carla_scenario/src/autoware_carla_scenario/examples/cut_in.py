@@ -70,9 +70,11 @@ from autoware_carla_scenario import (
     to_opendrive,
     vehicle_bumpers,
 )
-from autoware_carla_scenario.coordinate import MapManager
+from autoware_carla_scenario.coordinate import (
+    MapManager,
+    lanes_ahead_before_junction as lanes_ahead_before_junction,
+)
 from autoware_carla_scenario.failure import FailureCategory
-from autoware_carla_scenario.odd import lanelet_in_junction
 
 from .configs import CutInConfig
 
@@ -133,44 +135,6 @@ def left_lanes_ahead(
         seconds,
         label="ego_left_its_lane",
     )
-
-
-def lanes_ahead_before_junction(lanelet_id: int, distance_m: float) -> list[int]:
-    """*lanelet_id* and the lanelets ahead of it up to the first junction.
-
-    :func:`lanelets_ahead` reaches through junctions and down every branch, and
-    in a junction lanelets overlap: a vehicle crossing straight on in the lane
-    beside is inside the ego lane's left or right turn.  So only the lanelets
-    reached from *lanelet_id* through no junction lanelet are kept -- the lane
-    the ego is on until the next intersection, where a lane change ends.  In
-    the order :func:`lanelets_ahead` gives, *lanelet_id* first.
-    """
-    mm = MapManager.get_instance()
-    layer = mm.lanelet_map.laneletLayer
-    graph = mm.routing_graph
-    ahead = lanelets_ahead(lanelet_id, distance_m)
-    kept: list[int] = [lanelet_id]
-    # Until nothing more is added: a lanelet may be listed before the
-    # predecessor that reaches it without a junction.
-    grew = True
-    while grew:
-        grew = False
-        for candidate in ahead:
-            if candidate in kept:
-                continue
-            lanelet = layer[candidate]
-            if lanelet_in_junction(lanelet):
-                continue
-            for previous in graph.previous(lanelet, False):
-                if int(previous.id) in kept:
-                    kept.append(candidate)
-                    grew = True
-                    break
-    ordered: list[int] = []
-    for candidate in ahead:
-        if candidate in kept:
-            ordered.append(candidate)
-    return ordered
 
 
 def _beside(lanelet_id: int) -> list[int]:

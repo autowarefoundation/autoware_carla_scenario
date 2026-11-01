@@ -54,10 +54,13 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.failure import FailureCategory
 
-from autoware_carla_scenario.coordinate import MapManager
+from autoware_carla_scenario.coordinate import (
+    lane_beside as lane_beside,
+    lane_change_target_lanelets,
+    lanes_ahead_before_junction as lanes_ahead_before_junction,
+)
 
 from .configs import LaneChangeConfig
-from .cut_in import lanes_ahead_before_junction
 
 logger = logging.getLogger(__name__)
 
@@ -72,32 +75,6 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
 TARGET_LANES_AHEAD_M = 1000.0
 
 
-def lane_beside(lanelet_id: int, direction: str) -> int | None:
-    """The lanelet beside *lanelet_id* on *direction*'s side, or ``None``.
-
-    The lane a vehicle may change into from it: the routing graph's ``left``
-    / ``right``, as the sweep's ``has_adjacent`` and ``adjacent`` binding pick
-    it.  Failing that, its ``adjacentLeft`` / ``adjacentRight``: a lane beside
-    it in the same direction that a lane change into crosses a line it may not
-    cross -- where a ``lane_change_fail`` case must still notice the ego.
-    """
-    mm = MapManager.get_instance()
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
-    graph = mm.routing_graph
-    # One call per side: Codon cannot type a bound method held in a variable.
-    if direction == "left":
-        beside = graph.left(lanelet)
-        if beside is None:
-            beside = graph.adjacentLeft(lanelet)
-    else:
-        beside = graph.right(lanelet)
-        if beside is None:
-            beside = graph.adjacentRight(lanelet)
-    if beside is None:
-        return None
-    return int(beside.id)
-
-
 def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
     """The ego is on the lane beside *lanelet_id* on *direction*'s side, latched.
 
@@ -110,23 +87,19 @@ def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
     with no lane on that side in its direction), a lane change has nowhere to
     end: the condition never holds.
     """
-    own = lanes_ahead_before_junction(lanelet_id, TARGET_LANES_AHEAD_M)
     # Appended one by one, and chosen by if/else: Codon gives neither a list
     # comprehension nor a conditional expression the base class's type.
     on_lanes: list[BaseCondition] = []
-    beside = lane_beside(lanelet_id, direction)
-    if beside is not None:
-        found: int = beside
-        for lanelet in lanes_ahead_before_junction(found, TARGET_LANES_AHEAD_M):
-            if lanelet in own:
-                continue
-            on_lanes.append(
-                EntityLanePositionCondition(
-                    EGO_ROLE_NAME,
-                    Lanelet2Pose(lanelet_id=lanelet, s=0.0),
-                    label=f"ego_on_lanelet_{lanelet}",
-                )
+    for lanelet in lane_change_target_lanelets(
+        lanelet_id, direction, TARGET_LANES_AHEAD_M
+    ):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                EGO_ROLE_NAME,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"ego_on_lanelet_{lanelet}",
             )
+        )
     on_any: BaseCondition
     if not on_lanes:
         # Pending on every check: a logical NOT of a condition that always holds.

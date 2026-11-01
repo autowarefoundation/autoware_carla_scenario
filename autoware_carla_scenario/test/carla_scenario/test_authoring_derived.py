@@ -172,11 +172,13 @@ class TestLaneOf:
         [("same", -2), ("left", -1), ("right", -3), ("any", None)],
     )
     def test_the_lane_follows_the_relation(self, lane: str, lane_id: Any) -> None:
+        """Of an OpenDRIVE position (a CARLA one is converted first): a
+        lanelet's lane beside is read in Lanelet2 (test_lane_change_target)."""
         from autoware_carla_scenario.conditions import EntityLaneOfCondition
-        from autoware_carla_scenario.coordinate import Lanelet2Pose
+        from autoware_carla_scenario.coordinate import CarlaWorldPose
 
         condition = EntityLaneOfCondition(
-            "ego", Lanelet2Pose(lanelet_id=183, s=5.0), lane, label="x"
+            "ego", CarlaWorldPose(x=1.0, y=2.0, z=0.0), lane, label="x"
         )
         details = condition.get_details()
         assert (details["road_id"], details["lane_id"]) == ("5", lane_id)
