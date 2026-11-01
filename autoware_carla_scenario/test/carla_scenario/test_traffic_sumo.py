@@ -3634,6 +3634,7 @@ def test_the_radii_must_be_positive_and_finite() -> None:
             BicycleConfig(radius_m=bad)
         with pytest.raises(ValueError, match="^pedestrians.radius_m must be positive"):
             PedestrianConfig(radius_m=bad)
+    for bad in (0.0, -5.0, math.nan, -math.inf):
         with pytest.raises(
             ValueError, match="^bicycles.max_distance_m must be positive"
         ):
@@ -3642,11 +3643,13 @@ def test_the_radii_must_be_positive_and_finite() -> None:
             ValueError, match="^pedestrians.max_distance_m must be positive"
         ):
             PedestrianConfig(max_distance_m=bad)
+    # inf is no limit on how far a walk or a ride goes, as before.
+    assert BicycleConfig(max_distance_m=math.inf).max_distance_m == math.inf
+    assert PedestrianConfig(max_distance_m=math.inf).max_distance_m == math.inf
 
 
 def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
     positive = (
-        "resync_distance_m",
         "curve_lateral_acceleration",
         "lateral_resolution_m",
         "step_length_s",
@@ -3666,6 +3669,12 @@ def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
     for key in positive:
         with pytest.raises(ValueError, match=f"^{key} must be positive"):
             SumoBackendConfig.from_mapping({key: 0.0})
+    # resync_distance_m: inf never puts a car back, as before; NaN, 0 and
+    # below are refused.
+    assert SumoBackendConfig(resync_distance_m=math.inf).resync_distance_m == math.inf
+    for bad in (0.0, -1.0, math.nan, -math.inf):
+        with pytest.raises(ValueError, match="^resync_distance_m must be positive"):
+            SumoBackendConfig.from_mapping({"resync_distance_m": bad})
     # 0 is meaningful for these: never correct SUMO, and no warm-up.
     zero = SumoBackendConfig(feedback_distance_m=0.0, warmup_s=0.0)
     assert zero.feedback_distance_m == 0.0 and zero.warmup_s == 0.0

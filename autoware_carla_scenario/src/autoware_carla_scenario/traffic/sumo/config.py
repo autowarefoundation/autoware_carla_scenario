@@ -54,6 +54,16 @@ def _check_positive(key: str, value: Optional[float]) -> None:
         raise ValueError(f"{key} must be positive and finite or null (got {value!r})")
 
 
+def _check_positive_or_inf(key: str, value: Optional[float]) -> None:
+    """Refuse a value that is not > 0 (``None`` and ``inf`` pass).
+
+    For a distance where ``inf`` has a meaning -- no bound -- that SUMO's
+    tools and the backend read as such: NaN and 0 or below are refused.
+    """
+    if value is not None and not value > 0.0:
+        raise ValueError(f"{key} must be positive or null (got {value!r})")
+
+
 def _check_not_negative(key: str, value: float) -> None:
     """Refuse a value that is not finite and >= 0."""
     if not (math.isfinite(value) and value >= 0.0):
@@ -135,7 +145,8 @@ class PedestrianConfig:
         persons_per_hour: Walks generated per hour of simulated time.
         period_s: Seconds between two walks; overrides ``persons_per_hour``.
         end_s: Seconds of demand to generate.
-        max_distance_m: The longest walk generated, metres.
+        max_distance_m: The longest walk generated, metres; ``.inf`` for no
+            limit.
         radius_m: Mirror only the pedestrians this close to the ego (or to a
             vehicle CARLA drives) into CARLA, and remove one that walks more
             than 1.25 times as far away; the rest walk on in SUMO only, where
@@ -163,7 +174,7 @@ class PedestrianConfig:
             self.period_s,
             self.end_s,
         )
-        _check_positive("pedestrians.max_distance_m", self.max_distance_m)
+        _check_positive_or_inf("pedestrians.max_distance_m", self.max_distance_m)
         _check_positive("pedestrians.radius_m", self.radius_m)
         _check_count("pedestrians.max_persons", self.max_persons)
 
@@ -246,7 +257,7 @@ class BicycleConfig:
             self.end_s,
         )
         _check_not_negative("bicycles.min_distance_m", self.min_distance_m)
-        _check_positive("bicycles.max_distance_m", self.max_distance_m)
+        _check_positive_or_inf("bicycles.max_distance_m", self.max_distance_m)
         _check_positive("bicycles.radius_m", self.radius_m)
         _check_count("bicycles.max_bicycles", self.max_bicycles)
 
@@ -323,7 +334,8 @@ class SumoBackendConfig:
             step; inside a junction nothing is corrected.  ``0`` never
             corrects SUMO.
         resync_distance_m: With ``physics``, a car further than this from its
-            SUMO vehicle (after a collision, say) is put back on it in CARLA.
+            SUMO vehicle (after a collision, say) is put back on it in CARLA;
+            ``.inf`` never puts it back.
         traffic_light_authority: Which simulator's signals the other follows.
             ``carla``: SUMO's signals take the states of CARLA's lights every
             step, so SUMO traffic obeys the lights the ego sees and a scenario
@@ -469,7 +481,7 @@ class SumoBackendConfig:
                 f"tm_port must be an integer within 1-65535 (got {self.tm_port!r})"
             )
         _check_not_negative("feedback_distance_m", self.feedback_distance_m)
-        _check_positive("resync_distance_m", self.resync_distance_m)
+        _check_positive_or_inf("resync_distance_m", self.resync_distance_m)
         _check_positive("curve_lateral_acceleration", self.curve_lateral_acceleration)
         _check_positive("lateral_resolution_m", self.lateral_resolution_m)
         _check_positive("lane_change_duration_s", self.lane_change_duration_s)
