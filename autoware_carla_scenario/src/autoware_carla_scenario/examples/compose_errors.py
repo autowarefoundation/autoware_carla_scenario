@@ -66,7 +66,8 @@ def resolve_scenarios(pattern: str) -> list[str] | None:
 
     None, once stderr names the closest configs and lists them all, when it
     matches none; None, once stderr says why, when it is not a valid pattern
-    (a ``**`` that is not a whole path component).  Nothing goes to stdout,
+    (a ``**`` that is not a whole path component, a leading ``/`` or a
+    ``..`` component).  Nothing goes to stdout,
     which may be a tool's JSON.
     """
     from ..registry import get_conf_dirs  # noqa: PLC0415

@@ -68,8 +68,8 @@ def _resolve_scenario_names(scenario: str) -> list[str]:
 
     Raises:
         ValueError: *scenario* is not a valid pattern (a ``**`` that is not a
-            whole path component); :func:`run_scenarios` answers it with an
-            error response.
+            whole path component, a leading ``/`` or a ``..`` component);
+            :func:`run_scenarios` answers it with an error response.
     """
     if is_scenario_glob(scenario):
         return resolve_scenario_glob(scenario, scanner.scenario_conf_dirs())

@@ -86,7 +86,9 @@ directory: `*` stays within one path component, and a `**` component crosses
 them. A trailing `**` means everything below it and is read as `**/*`, so
 `lane_change/**` and `**` select every config below `lane_change/` and
 `scenario/`. A `**` inside a component (`lane_change/**left`) is refused with
-an error naming the pattern. The pattern means the same on every supported
+an error naming the pattern, and so is a pattern that could reach outside
+`scenario/`: one starting with `/` (`/lane_change/*`) or with a `..` component
+(`../*`). The pattern means the same on every supported
 Python version, and the viewer's Run form reads it the same way.
 
 **Batch constraints:**
