@@ -228,6 +228,51 @@ class TestMapSource:
             ),
             ("/srv/maps@main", "/srv/maps", "main", ""),
             ("/srv/maps", "/srv/maps", "", ""),
+            # GitLab's views sit behind a '-' segment (#1046).
+            (
+                "https://gitlab.com/o/maps/-/tree/main/nishishinjuku",
+                "https://gitlab.com/o/maps",
+                "main",
+                "nishishinjuku",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/blob/v1.0/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "v1.0",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/raw/dev/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "dev",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/tree/main",
+                "https://gitlab.com/o/maps",
+                "main",
+                "",
+            ),
+            # The '-' ends the repository, so a subgroup path is unambiguous.
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T",
+                "https://gitlab.com/group/sub/maps",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T@v2",
+                "https://gitlab.com/group/sub/maps",
+                "v2",
+                "maps/T",
+            ),
+            # GitHub's form is unchanged.
+            (
+                "https://github.com/o/maps/blob/main/m/lanelet2_map.osm",
+                "https://github.com/o/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
         ],
     )
     def test_parses_the_urls_people_actually_have(
