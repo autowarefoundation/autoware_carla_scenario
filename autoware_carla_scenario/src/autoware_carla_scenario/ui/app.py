@@ -62,8 +62,14 @@ def _resolve_scenario_names(scenario: str) -> list[str]:
     ``scenario`` CLI matches it
     (:func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`
     over :func:`scanner.scenario_conf_dirs`): ``*`` within one path
-    component, the names sorted as strings, ``[]`` when nothing matches.
-    Otherwise the name is returned as-is, as the CLI runs it.
+    component, a trailing ``**`` everything below, the names sorted as
+    strings, ``[]`` when nothing matches.  Otherwise the name is returned
+    as-is, as the CLI runs it.
+
+    Raises:
+        ValueError: *scenario* is not a valid pattern (a ``**`` that is not a
+            whole path component); :func:`run_scenarios` answers it with an
+            error response.
     """
     if is_scenario_glob(scenario):
         return resolve_scenario_glob(scenario, scanner.scenario_conf_dirs())
@@ -249,6 +255,13 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     if body.get("launcher") == "slurm":
         return _submit_slurm(scenario, extra_overrides, sweeper, body.get("slurm"))
 
+    try:
+        scenario_names = _resolve_scenario_names(scenario)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    if not scenario_names:
+        return {"status": "error", "message": f"No scenarios match '{scenario}'"}
+
     if sweeper:
         # Expand each scenario's sweep in-process (no CARLA), as
         # scenario-batch does (sweeper.expand.expand_config): constraints,
@@ -256,10 +269,6 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
         # plain single-scenario run.
         from ..odd.sampler import OddDraws  # noqa: PLC0415
         from .sweep_resolver import SweepResolutionError, resolve_sweep  # noqa: PLC0415
-
-        scenario_names = _resolve_scenario_names(scenario)
-        if not scenario_names:
-            return {"status": "error", "message": f"No scenarios match '{scenario}'"}
 
         overrides_list: list[list[str]] = []
         errors: list[str] = []
@@ -298,9 +307,6 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     else:
         # No sweeper: expand globs into individual jobs so progress
         # tracking reports each scenario separately (e.g. [2/5]).
-        scenario_names = _resolve_scenario_names(scenario)
-        if not scenario_names:
-            return {"status": "error", "message": f"No scenarios match '{scenario}'"}
         overrides_list = [[f"scenario={name}"] for name in scenario_names]
         started = runner.start_run(
             overrides_list,

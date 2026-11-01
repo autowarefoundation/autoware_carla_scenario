@@ -14,16 +14,20 @@ from typing import Any
 
 import pytest
 
+from fastapi.testclient import TestClient
+
 import autoware_carla_scenario
 import autoware_carla_scenario.registry as registry
-from autoware_carla_scenario.examples import run
+from autoware_carla_scenario import scenario_glob
+from autoware_carla_scenario.examples import compose_errors, run
+from autoware_carla_scenario.odd import cli as odd_cli
 from autoware_carla_scenario.scenario_glob import (
     is_scenario_glob,
     resolve_scenario_glob,
     scenario_names,
 )
 from autoware_carla_scenario.ui import app as app_module
-from autoware_carla_scenario.ui import scanner
+from autoware_carla_scenario.ui import runner, scanner
 
 _BUILTIN_LEFT = (
     Path(autoware_carla_scenario.__file__).resolve().parent
@@ -53,7 +57,9 @@ _PATTERNS = (
     "*/left",
     "glob_pkg/*",
     "glob_pkg/**/*",
+    "glob_pkg/**",
     "**/*",
+    "**",
     "lane_change/left",
     "glob_pkg/a/b",
     "*/a-*",
@@ -222,3 +228,148 @@ def test_viewer_and_cli_tell_a_pattern_alike(
     monkeypatch.setattr(app_module, "resolve_scenario_glob", spy)
     app_module._resolve_scenario_names(value)
     assert resolved == ([value] if is_glob else [])
+
+
+# A tree under ``scenario/`` for the ``**`` tests (#1001): configs one, two
+# and three levels deep, and one at the top.
+_STAR_STAR_TREE = (
+    "top.yaml",
+    "x/a.yaml",
+    "x/sub/b.yaml",
+    "x/sub/deep/c.yaml",
+    "y/d.yaml",
+)
+_EVERY_X = ["x/a", "x/sub/b", "x/sub/deep/c"]
+
+
+@pytest.fixture
+def star_star_conf(tmp_path: Path) -> Path:
+    for name in _STAR_STAR_TREE:
+        path = tmp_path / "scenario" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+    (tmp_path / "scenario" / "x" / "note.txt").write_text("not a config\n")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("x/**", _EVERY_X),
+        ("**", ["top", *_EVERY_X, "y/d"]),
+        ("x/sub/**", ["x/sub/b", "x/sub/deep/c"]),
+        ("x/**/*", _EVERY_X),
+        ("**/*", ["top", *_EVERY_X, "y/d"]),
+        ("x/**/c", ["x/sub/deep/c"]),
+        ("x/*", ["x/a"]),
+    ],
+)
+def test_double_star_matches_everything_below(
+    star_star_conf: Path, pattern: str, expected: list[str]
+) -> None:
+    """A trailing ``**`` is ``**/*`` on every Python (#1001): 3.10-3.12
+    would raise and 3.13+ would not recurse."""
+    assert resolve_scenario_glob(pattern, [star_star_conf]) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "glob"),
+    [
+        ("x/**", "x/**/*"),
+        ("**", "**/*"),
+        ("x/**/*", "x/**/*"),
+        ("x/**/c", "x/**/c"),
+        ("x/*", "x/*"),
+        ("lane_change/left", "lane_change/left"),
+    ],
+)
+def test_only_a_trailing_double_star_is_rewritten(pattern: str, glob: str) -> None:
+    assert scenario_glob._glob_pattern(pattern) == glob
+
+
+_MALFORMED = ("x/**a", "a**", "x/b**/c", "**x/*")
+
+
+@pytest.mark.parametrize("pattern", _MALFORMED)
+def test_a_double_star_inside_a_component_is_refused(
+    star_star_conf: Path, pattern: str
+) -> None:
+    with pytest.raises(ValueError, match="invalid scenario pattern") as excinfo:
+        resolve_scenario_glob(pattern, [star_star_conf])
+    assert repr(pattern) in str(excinfo.value)
+
+
+@pytest.mark.parametrize("pattern", _MALFORMED)
+def test_the_cli_reports_a_malformed_pattern(
+    pattern: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        run._resolve_scenario_glob(pattern)
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Error: invalid scenario pattern")
+    assert repr(pattern) in out
+
+
+def test_the_odd_cli_reports_a_malformed_pattern() -> None:
+    with pytest.raises(ValueError, match="invalid scenario pattern 'x/\\*\\*a'"):
+        odd_cli._scenario_configs(["scenario=x/**a"])
+
+
+def test_the_odd_cli_reports_no_match() -> None:
+    with pytest.raises(ValueError, match="no scenario configs match 'no_such_\\*'"):
+        odd_cli._scenario_configs(["scenario=no_such_*"])
+
+
+def test_compose_errors_reports_a_malformed_pattern(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert compose_errors.resolve_scenarios("x/**a") is None
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("Error: invalid scenario pattern 'x/**a'")
+
+
+def test_the_viewer_resolver_raises_value_error(star_star_conf: Path) -> None:
+    with pytest.raises(ValueError, match="invalid scenario pattern"):
+        app_module._resolve_scenario_names("x/**a")
+
+
+@pytest.mark.parametrize("sweeper", ["", "lanelet"])
+def test_the_viewer_answers_a_malformed_pattern_with_an_error(
+    star_star_conf: Path, monkeypatch: pytest.MonkeyPatch, sweeper: str
+) -> None:
+    """``/api/run`` answers an invalid pattern with an error, not a 500, and
+    starts nothing."""
+
+    def no_run(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("nothing should run")
+
+    monkeypatch.setattr(runner, "start_run", no_run)
+    monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/run",
+        json={"scenario": "x/**a", "extra_overrides": [], "sweeper": sweeper},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert "invalid scenario pattern 'x/**a'" in body["message"]
+
+
+def test_the_viewer_runs_every_config_below_a_double_star(
+    star_star_conf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[list[str]]] = []
+
+    def fake_start_run(overrides_list: list[list[str]], **kwargs: Any) -> bool:
+        seen.append(overrides_list)
+        return True
+
+    monkeypatch.setattr(runner, "start_run", fake_start_run)
+    monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
+    client = TestClient(app_module.app)
+    response = client.post("/api/run", json={"scenario": "x/**"})
+    assert response.json() == {"status": "started"}
+    assert seen == [[[f"scenario={name}"] for name in _EVERY_X]]

@@ -65,13 +65,19 @@ def resolve_scenarios(pattern: str) -> list[str] | None:
     """The scenario configs *pattern* (a name or a glob) matches.
 
     None, once stderr names the closest configs and lists them all, when it
-    matches none.  Nothing goes to stdout, which may be a tool's JSON.
+    matches none; None, once stderr says why, when it is not a valid pattern
+    (a ``**`` that is not a whole path component).  Nothing goes to stdout,
+    which may be a tool's JSON.
     """
     from ..registry import get_conf_dirs  # noqa: PLC0415
     from ..scenario_glob import resolve_scenario_glob, scenario_dirs  # noqa: PLC0415
 
     conf_dirs = get_conf_dirs()
-    names = resolve_scenario_glob(pattern, conf_dirs)
+    try:
+        names = resolve_scenario_glob(pattern, conf_dirs)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+        return None
     if names:
         return names
     known = resolve_scenario_glob("**/*", conf_dirs)

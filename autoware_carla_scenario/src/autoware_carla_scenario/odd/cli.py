@@ -202,6 +202,8 @@ def _show(spec: str) -> int:
 def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
     """Scenario config names (globs expanded) and the Hydra overrides in *items*."""
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
+    from ..registry import get_conf_dirs  # noqa: PLC0415
+    from ..scenario_glob import resolve_scenario_glob  # noqa: PLC0415
 
     patterns: list[str] = []
     overrides: list[str] = []
@@ -215,10 +217,11 @@ def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
     names: list[str] = []
     for pattern in patterns:
         if run._is_glob_pattern(pattern):
-            try:
-                names += run._resolve_scenario_glob(pattern)
-            except SystemExit:  # it has said what it could not match
-                raise ValueError(f"no scenario configs match {pattern!r}") from None
+            # An invalid pattern raises ValueError, which the caller reports.
+            matched = resolve_scenario_glob(pattern, get_conf_dirs())
+            if not matched:
+                raise ValueError(f"no scenario configs match {pattern!r}")
+            names += matched
         else:
             names.append(pattern)
     return names, overrides
