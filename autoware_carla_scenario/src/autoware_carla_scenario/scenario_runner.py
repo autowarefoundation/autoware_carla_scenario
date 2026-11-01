@@ -68,6 +68,7 @@ from .world_reset import (
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter, recording_path
+from .run_outputs import run_outputs_exist
 from .t4 import T4Recorder, T4Recording
 from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
@@ -458,20 +459,12 @@ def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
 
     A batch can run one scenario class more than once -- two configs of it, or
     the cases of a sweep -- and each run keeps a result, trajectory, recording
-    and coverage file of its own, all under one stem.
+    and coverage file of its own, all under one stem.  A stem is taken while
+    any output of a run (``run_outputs``) exists under it.
     """
     stem = scenario_name
     counter = 1
-    while any(
-        (output_dir / f"{stem}{suffix}").exists()
-        for suffix in (
-            "_result.json",
-            ".trajectory.jsonl",
-            "_coverage.json",
-            "_odd.tar.gz",
-            ".t4",
-        )
-    ):
+    while run_outputs_exist(output_dir, stem):
         stem = f"{scenario_name}-{counter}"
         counter += 1
     return stem

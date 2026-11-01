@@ -90,8 +90,10 @@ saying so, and `collect` lists them. `resubmit` submits again the cases with no
 outcome and those that raised on every attempt (`ERROR`); `--failed` adds the
 ones that ran and failed, `--cases a,b` names them (labels or indices; a case
 named twice runs once), and `--array-parallelism`/`--cases-per-task` change
-how they are spread. A case run again replaces its earlier files, so
-`resubmit` refuses while a job of the batch is queued or running, or while
+how they are spread. A case run again replaces its earlier files: before it
+runs, the task removes every output of its stem (`run_outputs`), its T4
+dataset directory (`{stem}.t4`) included, so none of the last attempt's is left
+beside the new result. So `resubmit` refuses while a job of the batch is queued or running, or while
 `squeue` cannot tell whether one is (`--force` submits all the same).
 `collect` can be run any number of times.
 

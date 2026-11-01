@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..run_outputs import RUN_FILE_SUFFIXES
 from .scripts import BatchPaths
 from .stems import config_key, sequential_stems
 
@@ -52,20 +53,6 @@ MANIFEST_VERSION = 2
 
 #: The versions this framework reads.
 MANIFEST_VERSIONS: tuple[int, ...] = (1, 2)
-
-#: The files a run writes under its stem (``scenario_runner``): what is
-#: removed before a case runs again, so a rerun never leaves a stale one.
-RUN_FILE_SUFFIXES: tuple[str, ...] = (
-    "_result.json",
-    ".trajectory.jsonl",
-    "_coverage.json",
-    "_odd.tar.gz",
-    "_environment.json",
-    "_requirements.lock",
-    ".log",
-    # The Rerun recording of the trajectory log (rerun.enabled).
-    ".rrd",
-)
 
 
 def file_sha256(path: Path) -> str:
