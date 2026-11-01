@@ -38,7 +38,7 @@ from autoware_carla_scenario.authoring.models import (
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.conditions import AlwaysTrueCondition
 from autoware_carla_scenario.conditions.base import BaseCondition, ScenarioResult
-from autoware_carla_scenario.npc_collisions import NpcCollisionMonitor
+from autoware_carla_scenario.npc_collisions import SCAN_EVERY_TICKS, NpcCollisionMonitor
 from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH, TrajectoryRecorder
 from autoware_carla_scenario.waypoint_arrival import WaypointArrival
 
@@ -404,6 +404,30 @@ class TestNpcCollisions:
         assert any("Collision" in r.getMessage() for r in caplog.records)
         monitor.close()
         assert all(sensor.stopped for sensor in world.sensors)
+
+    def test_a_vehicle_gone_before_its_sensor_is_skipped_not_fatal(self) -> None:
+        # A backend takes a vehicle out of CARLA between the listing and the
+        # sensor's spawn (SUMO's mesoscopic far traffic, #449): that one is
+        # skipped, and the others are still sensed, then and on later ticks.
+        a = _actor(2, "vehicle.mini", "sumo:far")
+        b = _actor(3, "vehicle.mini", "npc2")
+        world = _MonitoredWorld([a, b])
+        spawn = world.spawn_actor
+
+        def gone_once(blueprint: Any, transform: Any, attach_to: Any) -> _Sensor:
+            if attach_to is a:
+                raise RuntimeError("tsc_world_spawn_actor: std::exception")
+            return spawn(blueprint, transform, attach_to)
+
+        world.spawn_actor = gone_once  # type: ignore[method-assign]
+        monitor = NpcCollisionMonitor()
+        monitor.tick(world, 0.0)  # type: ignore[arg-type]
+        assert len(world.sensors) == 1
+        world.actors.append(_actor(4, "vehicle.mini", "npc3"))
+        for tick in range(1, SCAN_EVERY_TICKS + 1):  # to the next scan
+            monitor.tick(world, 0.05 * tick)  # type: ignore[arg-type]
+        assert len(world.sensors) == 2  # still logging: npc3 is sensed
+        monitor.close()
 
     def test_a_sensor_data_is_heard_through_its_collision_event(self) -> None:
         """#648: typesafe_carla's Codon library hands the listener a

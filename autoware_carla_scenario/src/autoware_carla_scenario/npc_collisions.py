@@ -329,7 +329,17 @@ class NpcCollisionMonitor:
                 continue
             if blueprint is None:
                 blueprint = world.get_blueprint_library().find("sensor.other.collision")
-            sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=actor)
+            try:
+                sensor = world.spawn_actor(
+                    blueprint, carla.Transform(), attach_to=actor
+                )
+            except RuntimeError:
+                # Gone between the listing and now: a backend took it out of
+                # CARLA (SUMO's mesoscopic far traffic does, every few ticks).
+                # Not a reason to stop logging the others; a vehicle still
+                # there is sensed on the next tick.
+                present.discard(actor.id)
+                continue
             parent = actor.id
             sensor.listen(_Listener(self, parent))
             self._sensed[parent] = _Sensed(sensor, name)
