@@ -50,7 +50,7 @@ def test_minimal_top_level_yaml_gets_a_top_level_key(tmp_path: Path) -> None:
     assert data["no_3d_model_lanelet_ids"] == _IDS
     assert data["name"] == "M"
     # The tool still reads the file it wrote.
-    assert _resolve_map_config(path)[0] == "M"
+    assert _resolve_map_config(path).name == "M"
 
 
 @pytest.mark.parametrize(

@@ -66,10 +66,13 @@ uv run viewer
 
 ### Detect missing 3D models
 
-For diagnosing lanelets that do not project onto a CARLA ground mesh:
+For diagnosing lanelets that do not project onto a CARLA ground mesh, pass a
+map config (run from the repository root, with CARLA running); the detected IDs
+are written to its `no_3d_model_lanelet_ids`:
 
 ```bash
-uv run detect-no-3d-model --map /path/to/map.xodr
+uv run detect-no-3d-model \
+  autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/nishishinjuku.yaml
 ```
 
 ## Documentation
