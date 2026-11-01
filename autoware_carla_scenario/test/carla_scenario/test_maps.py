@@ -916,6 +916,11 @@ class TestAtTip:
         assert cache.at_tip(source) == source
         tail = MapSource(repo_url=f"file://{remote}", ref="ain")
         assert cache.at_tip(tail) == tail
+        # `only` is the tail of `refs/heads/nested/only`, which ls-remote's
+        # pattern matches but git's own resolution (and the fetch) does not.
+        _git(remote, "branch", "nested/only", "main")
+        nested = MapSource(repo_url=f"file://{remote}", ref="only")
+        assert cache.at_tip(nested) == nested
 
 
 # ---------------------------------------------------------------------------
