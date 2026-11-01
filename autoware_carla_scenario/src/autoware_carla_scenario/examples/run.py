@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -741,6 +742,23 @@ def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)  # type: ignore[arg-type]
 
 
+def _run_timeout_seconds(cfg: DictConfig) -> float:
+    """``scenario.timeout_seconds``, the run's own fail-safe, checked.
+
+    Hydra reads ``scenario.timeout_seconds=nan`` (or ``inf``) as a float, and
+    a NaN timeout never fires: the run would have no time bound at all.
+
+    Raises:
+        ValueError: naming the key, when it is not positive and finite.
+    """
+    timeout = float(cfg.scenario.get("timeout_seconds", 60.0))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(
+            f"scenario.timeout_seconds must be positive and finite, got {timeout}"
+        )
+    return timeout
+
+
 def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
     """``server.world_reset`` and ``server.reload_every``, checked.
 
@@ -1427,7 +1445,7 @@ def run_batch(
         # Autoware stack needs to localize, route and engage.
         queue.add(
             scenario,
-            timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+            timeout_seconds=_run_timeout_seconds(cfg),
             case=_odd_case(cfg),
         )
     # From here the queue alone holds the scenarios, and lets each go once it
@@ -1760,7 +1778,7 @@ def _run_scenario(
         output_dir=output_dir,
         # The runner's own fail-safe: the queue default (60 s) is shorter than
         # an Autoware stack needs to localize, route and engage.
-        timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+        timeout_seconds=_run_timeout_seconds(cfg),
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(cfg),

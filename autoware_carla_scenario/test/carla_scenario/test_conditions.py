@@ -82,6 +82,16 @@ class TestTimeoutCondition:
         condition = TimeoutCondition(label="test_timeout")
         assert condition.timeout_seconds == pytest.approx(60.0)
 
+    @pytest.mark.parametrize(
+        "timeout", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0]
+    )
+    def test_refuses_a_timeout_that_is_not_positive_and_finite(
+        self, timeout: float
+    ) -> None:
+        """A NaN timeout fails every comparison, so it would never fire (#934)."""
+        with pytest.raises(ValueError, match="positive and finite"):
+            TimeoutCondition(timeout, label="test_timeout")
+
     def test_message_contains_timeout_info(self) -> None:
         condition = TimeoutCondition(timeout_seconds=30.0, label="test_timeout")
         world = MagicMock()

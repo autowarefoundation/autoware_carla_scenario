@@ -1594,9 +1594,14 @@ def _as_float(raw: Any, label: str, fallback: float) -> float:
     if not text:
         return fallback
     try:
-        return float(text)
+        number = float(text)
     except ValueError as exc:
         raise EditorError(f"{label} must be a number, got {raw!r}.") from exc
+    # "nan" and "inf" parse, but no field of the editor means them: a NaN
+    # timeout never fires, a NaN offset places nothing.
+    if not math.isfinite(number):
+        raise EditorError(f"{label} must be a finite number, got {raw!r}.")
+    return number
 
 
 def as_int(raw: Any, label: str, fallback: int) -> int:

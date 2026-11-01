@@ -2738,3 +2738,14 @@ class TestMapActionsKeepConcurrentEdits:
                 pass
         assert "draft_a" not in service._locks
         assert len(service._locks) == 0
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "NaN"])
+def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
+    """A NaN timeout typed into the editor never fires (#934)."""
+    from autoware_carla_scenario.editor.service import EditorError, _as_float
+
+    with pytest.raises(EditorError, match="finite"):
+        _as_float(raw, "Timeout", 60.0)
+    assert _as_float(" 12.5 ", "Timeout", 60.0) == 12.5
+    assert _as_float("", "Timeout", 60.0) == 60.0

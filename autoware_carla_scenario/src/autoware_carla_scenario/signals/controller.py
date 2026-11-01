@@ -39,6 +39,7 @@ and the controller needs no reference to the run's start.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -117,6 +118,12 @@ class Phase:
     duration_seconds: float
     states: "tuple[PhaseState, ...]"
 
+    def __post_init__(self) -> None:
+        # NaN fails every comparison, so a NaN duration would hold the phase
+        # for ever, and an infinite one does the same.
+        if not math.isfinite(self.duration_seconds) or self.duration_seconds < 0:
+            raise ValueError("phase duration_seconds must be finite and not negative")
+
 
 @dataclass
 class SignalController:
@@ -144,6 +151,11 @@ class SignalController:
     #: World time this controller's first phase began.  A controller that
     #: references this one measures its own delay from here.
     _started_at: Optional[float] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # A NaN delay is never over, so the controller would never start.
+        if not math.isfinite(self.delay_seconds) or self.delay_seconds < 0:
+            raise ValueError("delay_seconds must be finite and not negative")
 
     # ------------------------------------------------------------------
     # Observation

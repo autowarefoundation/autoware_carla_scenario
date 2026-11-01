@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import time
@@ -99,9 +100,14 @@ def _bounds_the_run(condition: BaseCondition) -> bool:
     timeout, not a limit on the run; a :class:`PersistentCondition` resets on
     every failure its child reports, so around a timeout it never fires at
     all.
+
+    A :class:`TimeoutCondition` whose timeout is not finite (NaN, or
+    infinity) does not count either: it never fires, so it bounds nothing,
+    and the default timeout is still added.  Its constructor refuses one;
+    this guards a timeout changed after construction.
     """
     if isinstance(condition, TimeoutCondition):
-        return True
+        return math.isfinite(condition.timeout_seconds)
     if isinstance(condition, OrCondition):
         return any(_bounds_the_run(child) for child in condition._conditions)
     if isinstance(condition, StickyCondition):
