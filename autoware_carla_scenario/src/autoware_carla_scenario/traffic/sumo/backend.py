@@ -3224,7 +3224,11 @@ class SumoTrafficBackend(TrafficBackend):
             if sumo_id not in own:
                 (bikes if self._is_bicycle(sumo_id) else cars).append(sumo_id)
         bicycles = self._config.bicycles
-        radius = bicycles.radius_m or self._config.spawn_radius_m
+        radius = (
+            self._config.spawn_radius_m
+            if bicycles.radius_m is None
+            else bicycles.radius_m
+        )
         # Measured from one ego pose, read once.
         ego = (
             None
@@ -3243,18 +3247,28 @@ class SumoTrafficBackend(TrafficBackend):
         limit: Optional[int],
     ) -> list[str]:
         """Those of *ids* within *radius* of the *ego* (SUMO's frame), at most
-        *limit* of them, nearest first."""
+        *limit* of them, nearest first.
+
+        ``None`` is no radius or no limit; a limit of ``0`` (or below) keeps
+        none, and so does a radius of ``0`` (or below), as nothing is that
+        close -- the config refuses both, but a limit is a limit.
+        """
+        if limit is not None and limit <= 0:
+            return []
+        if radius is not None and radius <= 0.0:
+            return []
         if ego is None:
-            # Nothing to measure from: the first ones SUMO lists.
-            return ids[:limit] if limit else ids
-        if not ids or not (radius or limit):
+            # Nothing to measure from: the first ones SUMO lists, up to the
+            # limit (the radius cannot be measured yet).
+            return ids if limit is None else ids[:limit]
+        if not ids or (radius is None and limit is None):
             return ids
         tc = self._traci
         dist = {i: math.dist((ego.x, ego.y), tc.vehicle.getPosition(i)) for i in ids}
         ids = sorted(ids, key=dist.__getitem__)
-        if radius:
+        if radius is not None:
             ids = [i for i in ids if dist[i] <= radius]
-        if limit:
+        if limit is not None:
             ids = ids[:limit]
         return ids
 

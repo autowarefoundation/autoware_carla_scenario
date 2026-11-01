@@ -891,6 +891,16 @@ SUMO traffic sees it where CARLA has it and reacts to it. With the default the
 scenario's NPCs behave exactly as under the `traffic_manager` backend, while
 SUMO fills the rest of the road.
 
+**How much of SUMO's traffic reaches CARLA**: an ambient vehicle is mirrored
+into CARLA while it is within `spawn_radius_m` of the ego, at most
+`max_vehicles` of them, the nearest first; the rest drive in SUMO only, where
+its traffic still sees them. `null` (the default) is no radius and no limit,
+and a limit of `0` mirrors none. A limit must be a whole number from 0, a
+radius positive and finite. Until there is an ego to measure from, the first
+`max_vehicles` SUMO lists are mirrored. SUMO's own pedestrians and bicycles
+have limits of their own (`pedestrians.max_persons`, `bicycles.max_bicycles`),
+read the same way.
+
 A published pedestrian is a SUMO person moved to its CARLA pose every tick
 with `moveToXY` and `keepRoute` 6: placed exactly there, on whichever lane is
 there, footway or road. A SUMO vehicle brakes for a person on its lane, on a
@@ -919,7 +929,7 @@ footways (`randomTrips.py --pedestrians`, unweighted, up to `max_distance_m`
 each) and are mirrored into CARLA as walkers (`blueprint`, with the role name
 `sumo:<id>`) while they are near the ego or a vehicle CARLA drives: within
 `radius_m`, kept until 1.25 times as far, at most `max_persons` of them, the
-nearest first. With `radius_m: null` the radii are `mesoscopic`'s when that is
+nearest first (`null`: no limit; `0`: none). With `radius_m: null` the radii are `mesoscopic`'s when that is
 enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
 SUMO's traffic still sees them. A walker is put where its person was at the
 start of the step and walked at its speed (`WalkerControl`), so CARLA animates
@@ -969,8 +979,8 @@ bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, from
 bicycles, each one of `blueprints` (those the world lacks are left out; with
 none left, bicycles ride in SUMO only, where its traffic still sees them), with
 the role name `sumo:<id>`. They count against limits of their own:
-`radius_m` (the vehicles' `spawn_radius_m` when null) and `max_bicycles`,
-apart from `max_vehicles`. A mirror follows its bicycle as
+`radius_m` (the vehicles' `spawn_radius_m` when null) and `max_bicycles`
+(`null`: no limit; `0`: none), apart from `max_vehicles`. A mirror follows its bicycle as
 `bicycles.vehicle_control` says, `teleport` by default: a bicycle changing
 between sidewalk and road crosses the kerb, which CARLA's vehicle physics
 would trip on. Bicycles stay in SUMO when `mesoscopic` is enabled: the queue
