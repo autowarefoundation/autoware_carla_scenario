@@ -1735,6 +1735,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The SUMO backend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measured-on-town10hd_opt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured on Town10HD_Opt
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -2470,6 +2487,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="The SUMO backend">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measured-on-town10hd_opt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured on Town10HD_Opt
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3879,6 +3913,78 @@ vehicle has no actor while it is far: a scenario that reads it -- a condition
 on its speed -- should check <code>entity.simulation_fidelity</code>, or call
 <code>entity.require_microscopic(world)</code> first. SUMO's FCD output records the
 microscopic vehicles only.</p>
+<h4 id="measured-on-town10hd_opt">Measured on Town10HD_Opt<a class="headerlink" href="#measured-on-town10hd_opt" title="Permanent link">&para;</a></h4>
+<p>The options above were first checked against SUMO and a fake CARLA. These numbers come from a real CARLA 0.10 server with Town10HD_Opt (#449), measured with <code>tools/traffic_benchmark</code>.</p>
+<p><strong>The setup:</strong></p>
+<ul>
+<li>the ego is driven by the TrafficManager for 120 s;</li>
+<li>SUMO's ambient demand is 4000 vehicles per hour;</li>
+<li>the figures cover the ticks after the first 20 s;</li>
+<li>"tick" means the wall time of <code>world.tick()</code> plus the backend's tick.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th>Tick, mean</th>
+<th>Tick, p95</th>
+<th>Vehicles in CARLA</th>
+<th>In the queue model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>every SUMO vehicle mirrored</td>
+<td>42.8 ms</td>
+<td>55.4 ms</td>
+<td>79</td>
+<td>--</td>
+</tr>
+<tr>
+<td><code>spawn_radius_m=150</code></td>
+<td>21.0 ms</td>
+<td>28.0 ms</td>
+<td>42</td>
+<td>--</td>
+</tr>
+<tr>
+<td><code>mesoscopic</code> (default radii), <code>physics</code></td>
+<td>40.3 ms</td>
+<td>51.7 ms</td>
+<td>76</td>
+<td>2</td>
+</tr>
+<tr>
+<td><code>mesoscopic</code> (default radii), <code>teleport</code></td>
+<td>18.1 ms</td>
+<td>25.2 ms</td>
+<td>76</td>
+<td>2</td>
+</tr>
+<tr>
+<td><code>mesoscopic</code>, <code>micro_radius_m=80</code>, <code>physics</code></td>
+<td>9.1 ms</td>
+<td>13.1 ms</td>
+<td>16</td>
+<td>49</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What the measurements show:</strong></p>
+<ul>
+<li><strong>Town10HD_Opt is small.</strong> Within the default 200 m nearly all of it is near the ego, so the queue model holds little and the mesoscopic mode saves next to nothing. A micro radius that leaves the queue model most of the map (80 m here) cuts the tick to a fifth.</li>
+<li><strong>Popping.</strong> With a small radius, vehicles come and go within sight. At 80 m they appear about 95 m from the ego (median) and leave about 114 m away. Choose the radius from what the scenario's sensors must see, not from the map.</li>
+<li><strong>Cost of control.</strong> <code>teleport</code> costs the backend a quarter of what <code>physics</code> does (7 ms against 28 ms a tick here).</li>
+</ul>
+<p><strong>What was observed:</strong></p>
+<ul>
+<li><strong>Returning vehicles.</strong> A vehicle coming back from the queue model appears on its lane, never overlapping another. The closest same-lane neighbours were 5.2 m apart, centre to centre, in a queue at a light; the vehicles 3.5 m away were in the next lane. Queued vehicles come back stopped, where the queue stands.</li>
+<li><strong>Physics on appearing.</strong> Under <code>physics</code>, a vehicle that comes into CARLA drops about 0.5 m onto the road and drives off well below SUMO's speed (#1003). <code>teleport</code> does not.</li>
+<li><strong>Pedestrians.</strong> In 120 s with 2400 persons per hour, 27 persons stepped onto the 16 signalled crossings and none did so on red. Over 1914 ticks of a crossing showing green, the road it crosses was never green too. Every SUMO person near the ego was a CARLA walker, which the ego's sensors see as any walker.</li>
+<li><strong>A scenario vehicle.</strong> With <code>mesoscopic.scenario_vehicles=true</code> and <code>scenario_vehicles=sumo</code>, a scenario vehicle left CARLA once it was far and came back, as a new actor, once it was near. The "has no actor" warning was logged once, when it left.</li>
+<li><strong>Collision logging.</strong> NPC collision logging stopped as vehicles left CARLA (fixed in #999).</li>
+<li><strong>Walker blueprint.</strong> The persons' default blueprint was not in CARLA 0.10 (fixed in #1002).</li>
+</ul>
 <p><strong>Manoeuvres</strong> of SUMO-driven vehicles become TraCI calls: <code>change_lane</code> →
 <code>changeLane</code> (SUMO obeys a solid line, and says so), <code>set_desired_speed</code> →
 <code>setSpeed</code>, <code>turn_at_junction</code> → a route onto the junction's outgoing edge in
@@ -3909,7 +4015,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 05:34:18 UTC"><span class="timeago" datetime="2026-11-01T05:34:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 05:34:18 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 08:24:12 UTC"><span class="timeago" datetime="2026-11-01T08:24:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 08:24:12 UTC">2026-11-01</span>
   </span>
 
     
