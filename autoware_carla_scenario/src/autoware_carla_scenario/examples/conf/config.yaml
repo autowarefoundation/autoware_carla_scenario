@@ -231,7 +231,9 @@ ego:
 #   uv run scenario ... traffic=sumo background_traffic.enabled=true
 #
 # Where vehicles appear and disappear is given as lanelet constraints, the
-# vocabulary a sweep uses, so the same settings fit any map.
+# vocabulary a sweep uses, so the same settings fit any map. Only lanelets
+# vehicles drive on are matched: crosswalks, walkways, road shoulders, bicycle
+# lanes and parking lots never are, whatever the constraints say.
 background_traffic:
   enabled: false
   # null follows the run's seed (`seed` above).
@@ -257,8 +259,9 @@ background_traffic:
     min_gap_m: 20.0
     blueprint: null
   sink:
-    # Where they are removed; null for no sink. Lanelets with no successor --
-    # the ends of the map's roads -- by default.
+    # Where they are removed; null for no sink. Road lanelets with no
+    # successor -- the ends of the map's roads -- by default (a crosswalk has
+    # no successor either, but is not a road lanelet).
     constraints:
       - type: not
         constraint:

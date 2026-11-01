@@ -362,6 +362,148 @@ class ScalarComparisonRule:
         raise NotImplementedError()
 
 
+@tuple
+class RoadUserKind:
+    value: str
+    ANY: ClassVar[RoadUserKind] = RoadUserKind("any")
+    VEHICLE: ClassVar[RoadUserKind] = RoadUserKind("vehicle")
+    PEDESTRIAN: ClassVar[RoadUserKind] = RoadUserKind("pedestrian")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == RoadUserKind.ANY:
+            return "ANY"
+        if self == RoadUserKind.VEHICLE:
+            return "VEHICLE"
+        if self == RoadUserKind.PEDESTRIAN:
+            return "PEDESTRIAN"
+        raise ValueError("not a member of RoadUserKind")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[RoadUserKind]:
+        return [RoadUserKind.ANY, RoadUserKind.VEHICLE, RoadUserKind.PEDESTRIAN]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> RoadUserKind:
+        if name == "ANY":
+            return RoadUserKind.ANY
+        if name == "VEHICLE":
+            return RoadUserKind.VEHICLE
+        if name == "PEDESTRIAN":
+            return RoadUserKind.PEDESTRIAN
+        raise KeyError(name)
+
+
+class SelectedEntity:
+    def __init__(self):
+        compile_error("SelectedEntity(): no constructor takes these arguments "
+                      "(required: name, actor_id, distance, ahead, left)")
+
+    def __init__(self, name: str, actor_id: int, distance: float, ahead: float,
+                 left: float):
+        pass
+
+    # Python's frozen dataclass fields, read as properties (#298).
+    @property
+    def name(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def actor_id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def distance(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def ahead(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def left(self) -> float:
+        raise NotImplementedError()
+
+
+class EntityFilter:
+    # Python's frozen dataclass. names and lanelet_ids, tuple[X, ...] in
+    # Python, are List[X] here (docs/typecheck.md), so the constructor takes
+    # them untyped.
+    def __init__(self, names = (), kind: RoadUserKind = RoadUserKind("any"),
+                 reference: str = "Ego", min_distance_m: Optional[float] = None,
+                 max_distance_m: Optional[float] = None,
+                 min_ahead_m: Optional[float] = None,
+                 max_ahead_m: Optional[float] = None,
+                 min_left_m: Optional[float] = None,
+                 max_left_m: Optional[float] = None,
+                 lanelet_ids = (), include_reference: bool = False):
+        pass
+
+    # Python's frozen dataclass fields, read as properties (#298).
+    @property
+    def names(self) -> List[str]:
+        raise NotImplementedError()
+
+    @property
+    def kind(self) -> RoadUserKind:
+        raise NotImplementedError()
+
+    @property
+    def reference(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def min_distance_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def max_distance_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def min_ahead_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def max_ahead_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def min_left_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def max_left_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def lanelet_ids(self) -> List[int]:
+        raise NotImplementedError()
+
+    @property
+    def include_reference(self) -> bool:
+        raise NotImplementedError()
+
+    def validate(self) -> None:
+        raise NotImplementedError()
+
+    @property
+    def relative(self) -> bool:
+        raise NotImplementedError()
+
+    def describe(self) -> str:
+        raise NotImplementedError()
+
+    def takes_name(self, name: str) -> bool:
+        raise NotImplementedError()
+
+    def select(self, world: carla.World) -> List[SelectedEntity]:
+        raise NotImplementedError()
+
+
 class ConditionStatus:
     label: str
     satisfied: bool
@@ -841,6 +983,26 @@ class EntityDistanceCondition(BaseCondition):
         _expect_role(source)
         _expect_role(target)
         super().__init__(_required_str(label, "EntityDistanceCondition(): label"))
+
+
+class EntityCountCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityCountCondition(): no constructor takes these arguments "
+                      "(required: entities, keyword label)")
+
+    def __init__(self, entities: EntityFilter,
+                 rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
+                 count: int = 1, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityCountCondition(): label")
+        super().__init__(_required_str(label, "EntityCountCondition(): label"))
+
+    @property
+    def entities(self) -> EntityFilter:
+        raise NotImplementedError()
+
+    @property
+    def matched(self) -> List[str]:
+        raise NotImplementedError()
 
 
 class EntityPositionDistanceCondition(BaseCondition):

@@ -47,6 +47,13 @@ from .not_condition import NotCondition
 from .off_road_fraction import OffRoadFractionCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
+from .entity_count import EntityCountCondition
+from .entity_filter import (
+    EntityFilter,
+    RoadUserKind,
+    SelectedEntity,
+    entity_filter_from_fields,
+)
 from .place_clear import PlaceClearCondition
 from .route_progress import RouteProgressCondition
 from .trajectory_time import TrajectoryTimeCondition
@@ -72,7 +79,10 @@ __all__ = [
     "MetricCondition",
     "TrajectoryTimeCondition",
     "DistanceCoordinateSystem",
+    "EntityCountCondition",
     "EntityDistanceCondition",
+    "EntityFilter",
+    "RoadUserKind",
     "EntityExistenceCondition",
     "EntityLaneOfCondition",
     "EntityLanePositionCondition",
@@ -87,6 +97,8 @@ __all__ = [
     "RelativeSpeedCondition",
     "RouteProgressCondition",
     "ScalarComparisonRule",
+    "SelectedEntity",
+    "entity_filter_from_fields",
     "ScenarioResult",
     "SpeedCondition",
     "SpeedCoordinateSystem",
