@@ -205,6 +205,14 @@ class EgoVehicleConfig:
     #: Longitudinal offset along the lanelet centerline.
     spawn_s: float = 25.0
 
+    #: Lateral offset from the spawn lanelet's centreline (m), positive to its
+    #: left -- a document's ``spawn.t``.
+    spawn_t: float = 0.0
+
+    #: Yaw relative to the spawn lanelet's direction of travel (rad), positive
+    #: anticlockwise -- a document's ``spawn.heading``.
+    spawn_heading: float = 0.0
+
     #: Lanelet the ego is routed to.  Required for ``entity: autoware``, which
     #: plans its route to it and will not move without one -- though a scenario
     #: may name it in ``setup()`` instead of here.  The other entities are

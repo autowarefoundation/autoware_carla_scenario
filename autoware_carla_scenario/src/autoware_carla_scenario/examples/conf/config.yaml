@@ -188,6 +188,10 @@ ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 242
   spawn_s: 25.0
+  # Lateral offset (m, positive to the left) and heading (rad, relative to the
+  # lanelet's direction of travel) of the spawn.
+  spawn_t: 0.0
+  spawn_heading: 0.0
   # Where the ego is going; each scenario names it, or derives it in setup().
   goal_lanelet_id: null
   goal_s: 0.0

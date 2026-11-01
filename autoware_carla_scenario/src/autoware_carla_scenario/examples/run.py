@@ -258,11 +258,25 @@ def build_ego_and_spawn(
         goal_pose=build_goal_pose(cfg),
         waypoint_poses=build_waypoint_poses(cfg),
     )
-    spawn_pose = Lanelet2Pose(
-        lanelet_id=cfg.ego.spawn_lanelet_id,
-        s=cfg.ego.spawn_s,
+    return ego, build_spawn_pose(cfg), ground_projection
+
+
+def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
+    """Extract the ego's spawn pose from the ``ego.spawn_*`` keys.
+
+    ``ego.spawn_lanelet_id`` and ``ego.spawn_s`` place it along the lanelet,
+    ``ego.spawn_t`` across it and ``ego.spawn_heading`` turns it against the
+    lane's direction of travel -- the same pose an NPC's document spawn is
+    (``spawn.t`` and ``spawn.heading``).  A config that predates the last two
+    keys spawns on the centreline facing along the lane, as it always did.
+    """
+    ego_cfg = cfg.ego
+    return Lanelet2Pose(
+        lanelet_id=int(ego_cfg.spawn_lanelet_id),
+        s=float(ego_cfg.spawn_s),
+        t=float(ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=float(ego_cfg.get("spawn_heading", 0.0) or 0.0),
     )
-    return ego, spawn_pose, ground_projection
 
 
 def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
@@ -319,6 +333,8 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
     start = Lanelet2Pose(
         lanelet_id=int(spawn_lanelet_id),
         s=float(ego_cfg.get("spawn_s", 0.0)),
+        t=float(ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=float(ego_cfg.get("spawn_heading", 0.0) or 0.0),
     )
     goal = build_goal_pose(cfg)
     scenario_cfg = cfg.get("scenario") or {}

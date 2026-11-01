@@ -338,7 +338,15 @@ class DeclarativeScenario(BaseScenario):
             (spawn_id, spawn_s), goal = ego_placement(
                 frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
             )
-            self._spawn_pose = Lanelet2Pose(lanelet_id=spawn_id, s=spawn_s)
+            # The route places the ego along it; across the lane and turned
+            # against it is still what the run asked for.
+            authored = self._spawn_pose
+            self._spawn_pose = Lanelet2Pose(
+                lanelet_id=spawn_id,
+                s=spawn_s,
+                t=authored.t if authored is not None else 0.0,
+                heading=authored.heading if authored is not None else 0.0,
+            )
             if goal is not None and self.goal_pose is None:
                 self.goal_pose = Lanelet2Pose(lanelet_id=goal[0], s=goal[1])
         set_scenario_route(match, lanelet_map, routing_graph)

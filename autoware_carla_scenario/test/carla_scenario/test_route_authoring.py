@@ -539,6 +539,22 @@ class TestTheRunPicksItsRoute:
         ]
         assert not any(isinstance(a, TurnAction) for a in scenario._pre_tick_actions)
 
+    def test_the_route_keeps_the_spawns_offset_and_heading(self, loaded: None) -> None:
+        """The route places the ego along it; ``ego.spawn_t`` and
+        ``ego.spawn_heading`` still say where across the lane and which way."""
+        scenario = DeclarativeScenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
+                )
+            ),
+            spawn_pose=Lanelet2Pose(lanelet_id=0, s=0.0, t=1.5, heading=0.25),
+            config=DeclarativeScenarioConfig(),
+            document=_document(),
+        )
+        scenario._prepare_route()
+        assert scenario._spawn_pose == _approx_pose(rm.W_IN1, 45.0, 1.5, 0.25)
+
     def test_without_a_goal_the_ego_is_turned_at_each_junction(
         self, loaded: None
     ) -> None:
