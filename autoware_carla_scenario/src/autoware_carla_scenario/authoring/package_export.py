@@ -133,10 +133,20 @@ def _sanitize_identifier(raw: str) -> str:
 
 
 def package_names(document: ScenarioDocument) -> dict[str, str]:
-    """Return the naming variants a generated package needs."""
-    scenario_id = _sanitize_identifier(document.id)
+    """Return the naming variants a generated package needs.
+
+    ``scenario_id`` is ``document.id`` unchanged: it is the registered builder
+    name, the conf file name and the conf's ``scenario.name`` alike, and they
+    must agree for ``scenario=<id>`` to select the scenario.  The model already
+    restricts it to ``^[a-z][a-z0-9_]*$``, and it is only ever used as a
+    string, never as a Python identifier, so a keyword such as ``class`` is
+    harmless.  Only the Python package and distribution names are sanitised;
+    the package name always ends in ``_scenario``, so it is never a keyword.
+    """
+    scenario_id = document.id
+    module_id = _sanitize_identifier(scenario_id)
     package_name = (
-        scenario_id if scenario_id.endswith("_scenario") else f"{scenario_id}_scenario"
+        module_id if module_id.endswith("_scenario") else f"{module_id}_scenario"
     )
     return {
         "scenario_id": scenario_id,
