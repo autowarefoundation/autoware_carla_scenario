@@ -274,7 +274,11 @@ class GitMapCache:
             return source
         ref = source.ref or "HEAD"
         try:
-            listing = self._git(None, "ls-remote", source.repo_url, ref, capture=True)
+            # `<ref>^{}` as well: ls-remote lists an annotated tag's peeled
+            # line only when a pattern names it.
+            listing = self._git(
+                None, "ls-remote", source.repo_url, ref, ref + "^{}", capture=True
+            )
         except MapCacheError:
             # Falling back to the *note* rather than to the branch: the entry
             # this cache holds is named after the commit the ref last resolved
@@ -289,8 +293,8 @@ class GitMapCache:
                 f"the cached {remembered[:10]}" if remembered else "what is cached",
             )
             return source.at(remembered) if remembered else source
-        fields = listing.split()
-        at_commit = source.at(fields[0]) if fields else source
+        commit = _exact_tip(listing, ref)
+        at_commit = source.at(commit) if commit else source
         if not at_commit.pinned:
             logger.warning("%s names no ref in %s.", ref, source.repo_url)
             return source
@@ -690,6 +694,50 @@ class GitMapCache:
             materialised = "[\n" + items + "\n  ]"
         fields.append(("materialised", materialised))
         (entry / "meta.json").write_text(_json_object(fields), encoding="utf-8")
+
+
+#: The full ref names a short ref can stand for, in the order git tries them
+#: (``ref_rev_parse_rules`` in git's refs.c, used by ``git rev-parse`` and by
+#: the ``git fetch origin <ref>`` the checkout runs): an exact name first, then
+#: a tag, then a branch.  ``%s`` is the ref as written.
+_REF_RULES = (
+    "%s",
+    "refs/%s",
+    "refs/tags/%s",
+    "refs/heads/%s",
+    "refs/remotes/%s",
+    "refs/remotes/%s/HEAD",
+)
+
+
+def _exact_tip(listing: str, ref: str) -> str:
+    """Return the commit *ref* names in a ``git ls-remote`` *listing*.
+
+    ``ls-remote <url> <ref>`` matches every ref whose name *ends* in
+    ``/<ref>``, so its first line can be ``refs/heads/archive/main`` for
+    ``main``, or an annotated tag's own object rather than the commit it tags.
+    The ref is resolved the way git itself resolves it, so that the commit
+    named here is the one the checkout's ``git fetch origin <ref>`` gets: the
+    first of :data:`_REF_RULES` the remote has wins -- a tag before a branch of
+    the same name, as ``git rev-parse`` would choose -- and a tag is peeled to
+    its commit (``<name>^{}``) when the listing carries the peeled line.
+
+    Returns ``""`` when no ref in the listing is *ref* exactly.
+    """
+    shas: dict[str, str] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            shas[fields[1]] = fields[0]
+    for rule in _REF_RULES:
+        name = rule.replace("%s", ref)
+        peeled = shas.get(name + "^{}", "")
+        if peeled:
+            return peeled
+        direct = shas.get(name, "")
+        if direct:
+            return direct
+    return ""
 
 
 def _json_field(raw: str, key: str) -> Optional[str]:

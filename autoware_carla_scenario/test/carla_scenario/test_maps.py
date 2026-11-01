@@ -839,6 +839,85 @@ class TestPinning:
         assert resolve_map(_uri(origin_repo), cache=cache, refresh=True).commit != first
 
 
+class TestAtTip:
+    """Asking the remote which commit a ref names, exactly (#1044)."""
+
+    @pytest.fixture
+    def remote(self, origin_repo: Path, tmp_path: Path) -> Path:
+        """A bare remote whose refs share names and tails.
+
+        ``archive/main`` and the annotated ``v1.0`` are at the first commit,
+        ``main`` has moved on; ``dup`` is both a tag (first commit) and a
+        branch (second commit), and ``light`` a lightweight tag.
+        """
+        _git(origin_repo, "branch", "archive/main")
+        _git(origin_repo, "tag", "-a", "v1.0", "-m", "Release")
+        _git(origin_repo, "tag", "light")
+        _git(origin_repo, "tag", "-a", "dup", "-m", "Tag named like a branch")
+        _git(origin_repo, "commit", "--quiet", "--allow-empty", "-m", "Second")
+        _git(origin_repo, "branch", "dup")
+        bare = tmp_path / "remote.git"
+        _git(tmp_path, "clone", "--quiet", "--bare", str(origin_repo), str(bare))
+        return bare
+
+    @staticmethod
+    def _rev(repo: Path, rev: str) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", rev],
+            cwd=str(repo),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def _tip(self, cache: GitMapCache, remote: Path, ref: str) -> str:
+        return cache.at_tip(MapSource(repo_url=f"file://{remote}", ref=ref)).ref
+
+    def test_a_branch_is_not_another_ending_in_its_name(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        assert self._rev(remote, "archive/main") != self._rev(remote, "main")
+        assert self._tip(cache, remote, "main") == self._rev(remote, "refs/heads/main")
+
+    def test_an_annotated_tag_is_peeled_to_its_commit(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        tip = self._tip(cache, remote, "v1.0")
+        assert tip == self._rev(remote, "v1.0^{commit}")
+        assert tip != self._rev(remote, "refs/tags/v1.0")
+
+    def test_a_lightweight_tag(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "light") == self._rev(remote, "light")
+
+    def test_a_tag_wins_over_a_branch_of_the_same_name_as_in_git(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        tip = self._tip(cache, remote, "dup")
+        assert tip == self._rev(remote, "refs/tags/dup^{commit}")
+        assert tip != self._rev(remote, "refs/heads/dup")
+        # The same commit the checkout's `git fetch origin <ref>` gets.
+        scratch = tmp_path / "scratch"
+        _git(tmp_path, "init", "--quiet", str(scratch))
+        _git(scratch, "fetch", "--quiet", str(remote), "dup")
+        assert tip == self._rev(scratch, "FETCH_HEAD^{commit}")
+
+    def test_a_full_ref_names_itself(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "refs/heads/dup") == self._rev(
+            remote, "refs/heads/dup"
+        )
+
+    def test_head(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "HEAD") == self._rev(remote, "HEAD")
+
+    def test_a_ref_only_matching_a_tail_is_not_found(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        source = MapSource(repo_url=f"file://{remote}", ref="archive")
+        assert cache.at_tip(source) == source
+        tail = MapSource(repo_url=f"file://{remote}", ref="ain")
+        assert cache.at_tip(tail) == tail
+
+
 # ---------------------------------------------------------------------------
 # Browsing
 # ---------------------------------------------------------------------------
