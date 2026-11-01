@@ -535,9 +535,17 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
 
 
 def _relative_file(value: str, base: Path) -> str:
-    """*value* made absolute when it names a file relative to *base*."""
+    """*value* with ``~`` expanded, and made absolute when it names a file
+    relative to *base*.
+
+    hilspy expands no ``~``, so an expanded path is returned even when it is
+    absolute; a relative *value* that names no file under *base* (a LiDAR
+    codec's model name) is returned as it is.
+    """
     path = Path(value).expanduser()
-    if not path.is_absolute() and (base / path).is_file():
+    if path.is_absolute():
+        return str(path)
+    if (base / path).is_file():
         return str((base / path).resolve())
     return value
 
