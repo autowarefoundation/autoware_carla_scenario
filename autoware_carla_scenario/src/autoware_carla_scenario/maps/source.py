@@ -30,7 +30,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 __all__ = ["MapSource", "MapSourceError"]
 
@@ -202,11 +202,16 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
     if not rest:
         return url, "", ""
 
-    ref, path_segments = rest[0], rest[1:]
+    # A page URL percent-encodes its ref and path (a HuggingFace PR ref is
+    # ``refs%2Fpr%2F3``, a space is ``%20``), so each segment is decoded --
+    # after the split, so that an encoded '/' stays inside its own segment
+    # and never moves the ref/path boundary (#1052).
+    ref = unquote(rest[0])
+    path = "/".join([unquote(segment) for segment in rest[1:]])
     repo_url = urlunsplit(
         (parts.scheme, parts.netloc, "/" + "/".join(repo_segments), "", "")
     )
-    return repo_url, ref, "/".join(path_segments)
+    return repo_url, ref, path
 
 
 def _is_repository(url: str) -> bool:

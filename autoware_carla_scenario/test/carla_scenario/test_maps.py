@@ -308,6 +308,60 @@ class TestMapSource:
         source = MapSource.parse(uri)
         assert (source.repo_url, source.ref, source.path) == (repo_url, ref, path)
 
+    @pytest.mark.parametrize(
+        ("uri", "repo_url", "ref", "path"),
+        [
+            # A HuggingFace PR ref is percent-encoded in the page URL (#1052).
+            (
+                "https://huggingface.co/datasets/o/maps/tree/refs%2Fpr%2F3/m/T",
+                "https://huggingface.co/datasets/o/maps",
+                "refs/pr/3",
+                "m/T",
+            ),
+            # A space in the path.
+            (
+                "https://github.com/o/maps/tree/main/maps/My%20Town",
+                "https://github.com/o/maps",
+                "main",
+                "maps/My Town",
+            ),
+            # An encoded '/' in a ref stays in the ref: the split comes first.
+            (
+                "https://github.com/o/maps/tree/feature%2Fx/maps/T",
+                "https://github.com/o/maps",
+                "feature/x",
+                "maps/T",
+            ),
+            # Plain GitHub and GitLab page URLs are unchanged.
+            (
+                "https://github.com/o/maps/tree/main/maps/T",
+                "https://github.com/o/maps",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/tree/main/maps/T",
+                "https://gitlab.com/o/maps",
+                "main",
+                "maps/T",
+            ),
+        ],
+    )
+    def test_decodes_the_ref_and_path_of_a_page_url(
+        self, uri: str, repo_url: str, ref: str, path: str
+    ) -> None:
+        source = MapSource.parse(uri)
+        assert (source.repo_url, source.ref, source.path) == (repo_url, ref, path)
+        assert MapSource.parse(source.uri) == source
+
+    def test_an_explicit_ref_and_a_plain_url_are_not_decoded(self) -> None:
+        source = MapSource.parse("https://example.com/o/a%20b@v%201#m%20T")
+        assert (source.repo_url, source.ref, source.path) == (
+            "https://example.com/o/a%20b",
+            "v%201",
+            "m%20T",
+        )
+
     def test_canonical_form_round_trips(self) -> None:
         uri = "https://huggingface.co/datasets/O/N/tree/dev/maps/T"
         assert MapSource.parse(MapSource.parse(uri).uri) == MapSource.parse(uri)
