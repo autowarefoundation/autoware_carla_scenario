@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..run_outputs import run_output_paths
+from ..run_timeout import run_timeout_seconds
 from .manifest import (
     BatchLayout,
     config_key,
@@ -498,10 +499,14 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
         build_fn = _build_fn(manifest.get("build_scenario_fn"))
         configs = []
+        timeouts = []
         for case in cases:
             cfg = run._compose_config(case["scenario"], list(case["overrides"]))
             _check_same_config(case, cfg, manifest.get("cwd"))
             worker_overrides(cfg, slot)
+            # Refused before anything is built, as a local batch refuses it
+            # (the submitting process already did, for a batch it checked).
+            timeouts.append(run_timeout_seconds(cfg))
             configs.append(cfg)
         scenarios = []
         for i, (case, cfg) in enumerate(zip(cases, configs), 1):
@@ -535,7 +540,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
         task.update(state="running")
         with queue:
-            for position, (case, cfg) in enumerate(zip(cases, configs)):
+            for position, (case, cfg, timeout) in enumerate(
+                zip(cases, configs, timeouts)
+            ):
                 if position > 0 and cooldown > 0:
                     # Between consecutive cases, as a local batch's queue waits.
                     time.sleep(cooldown)
@@ -553,7 +560,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 )
                 queue.add(
                     scenarios.pop(0),
-                    timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
+                    timeout_seconds=timeout,
                     case=run._odd_case(cfg),
                     file_stem=stem,
                 )

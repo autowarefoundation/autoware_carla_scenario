@@ -18,7 +18,7 @@ from .actions import (ConstructionSettings, ConstructionZoneAction, URBAN_CONSTR
                       TrafficParametersAction, TrafficSourceAction, TrafficSinkAction)
 from ._bridge_pose import BridgePose
 from .autoware_bridge.grpc_server import GrpcAutowareBridgeServer
-from .conditions import (AccelerationCondition, AccelerationDirection,
+from .conditions import (AccelerationCondition, AccelerationDirection, ActionStateCondition,
                          AdversityActiveCondition, AdversityFeasibleCondition,
                          AdversityKind, AdversityLocation,
                          AlwaysTrueCondition,

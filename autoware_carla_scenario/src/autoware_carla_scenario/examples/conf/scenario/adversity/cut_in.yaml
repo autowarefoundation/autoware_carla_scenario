@@ -1,0 +1,18 @@
+# @package _global_
+# An NPC 6 m ahead in the lane on the ego's left (lanelet 324 beside 446)
+# changes in front of the ego, close behind it there: a cut-in
+# (AdversarialCutInAction). Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/cut_in map=town10hd_opt
+scenario:
+  name: adversity
+  kind: cut_in
+  npc_lanelet_id: 324
+  npc_ahead_m: 6.0
+  npc_speed_kmh: 30.0
+  timeout_seconds: 30.0
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 446
+  spawn_s: 5.0

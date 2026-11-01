@@ -770,6 +770,252 @@ def test_on_the_wall_clock_sensor_frames_go_out_from_a_thread(world: _World) -> 
         receiver.close()
 
 
+def _camera(world: _World, clock: str = "simulation") -> tuple[Any, Any]:
+    url = _mem()
+    receiver = hilspy.open(url)
+    bridge = _bridge(
+        {
+            "clock": clock,
+            "devices": {
+                "camera": {"url": url, "sensor": {"blueprint": "sensor.camera.rgb"}}
+            },
+        },
+        world,
+    )
+    return bridge, receiver
+
+
+def _frame(raw: bytes) -> Any:
+    return types.SimpleNamespace(timestamp=0.05, raw_data=raw, width=2, height=2)
+
+
+def test_a_frame_measured_as_the_scenario_ends_is_not_sent(world: _World) -> None:
+    bridge, receiver = _camera(world)
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        callback = sensor.callback
+        assert callback is not None
+        # The ego's last tick: CARLA hands its frame over after the bridge
+        # flushed that tick.
+        callback(_frame(bytes(16)))
+        bridge._finish()
+        world.tick()
+        bridge.step()
+        assert _drain(receiver) == []
+    finally:
+        bridge.close()
+        receiver.close()
+
+
+def test_after_a_new_ego_only_its_sensor_frames_are_sent(world: _World) -> None:
+    bridge, receiver = _camera(world)
+    try:
+        world.tick()
+        bridge.step()
+        [old] = world.sensors
+        old_callback = old.callback
+        assert old_callback is not None
+        old_callback(_frame(b"OLD-EGO-FRAME-01"))
+        # The run's ``end`` and the next run's ``start``, before the next tick.
+        bridge._finish()
+        world.actors.append(_Ego(2))
+        bridge._begin(world.actors[1], "next")
+        new = world.sensors[1]
+        assert new.callback is not None
+        new.callback(_frame(b"NEW-EGO-FRAME-01"))
+        # A callback of the old sensor still in CARLA's hands comes late.
+        old_callback(_frame(b"OLD-EGO-FRAME-02"))
+        world.tick()
+        bridge.step()
+        assert [m.data for m in _drain(receiver)] == [b"NEW-EGO-FRAME-01"]
+    finally:
+        bridge.close()
+        receiver.close()
+
+
+def test_a_callback_in_flight_while_the_sensor_goes_is_not_sent(
+    world: _World,
+) -> None:
+    bridge, receiver = _camera(world)
+    entered, release = threading.Event(), threading.Event()
+
+    class _InFlight:
+        timestamp, width, height = 0.05, 2, 2
+
+        @property
+        def raw_data(self) -> bytes:
+            # CARLA's thread is inside the callback when the sensor goes, and
+            # queues the frame only after detach drained the queue.
+            entered.set()
+            assert release.wait(5.0)
+            return bytes(16)
+
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        callback = sensor.callback
+        assert callback is not None
+        in_flight = _start(lambda: callback(_InFlight()))
+        assert entered.wait(5.0)
+        bridge._finish()
+        release.set()
+        in_flight.join(5.0)
+        assert not in_flight.is_alive()
+        world.tick()
+        bridge.step()
+        assert _drain(receiver) == []
+    finally:
+        release.set()
+        bridge.close()
+        receiver.close()
+
+
+@pytest.mark.parametrize("clock", ["simulation", "wall"])
+def test_a_callback_while_the_sensor_stops_is_not_sent(
+    world: _World, clock: str
+) -> None:
+    bridge, receiver = _camera(world, clock)
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        callback = sensor.callback
+        assert callback is not None
+        stop = sensor.stop
+
+        def stop_with_a_last_frame() -> None:
+            callback(_frame(b"OLD-EGO-FRAME-01"))
+            stop()
+
+        sensor.stop = stop_with_a_last_frame  # type: ignore[method-assign]
+        bridge._finish()
+        world.tick()
+        bridge.step()
+        # The next scenario's frame is the first one sent (one thread sends
+        # every frame of the device, in order, with the wall clock).
+        world.actors.append(_Ego(2))
+        bridge._begin(world.actors[1], "next")
+        new = world.sensors[1]
+        assert new.callback is not None
+        new.callback(_frame(b"NEW-EGO-FRAME-01"))
+        world.tick()
+        bridge.step()
+        frame = receiver.recv(2.0)
+        assert frame is not None and frame.data == b"NEW-EGO-FRAME-01"
+        assert _drain(receiver) == []
+    finally:
+        bridge.close()
+        receiver.close()
+
+
+def test_on_the_wall_clock_no_frame_is_sent_after_the_sensor_goes(
+    world: _World,
+) -> None:
+    bridge, receiver = _camera(world, "wall")
+    [device] = bridge._sensors
+    entered, release, moved_on = (threading.Event() for _ in range(3))
+
+    class _GatedChannel:
+        """Holds the device's first send until released."""
+
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+            self._first = True
+
+        def send(self, *args: Any) -> None:
+            if self._first:
+                self._first = False
+                entered.set()
+                assert release.wait(5.0)
+            self._inner.send(*args)
+
+    device.channel = _GatedChannel(device.channel)
+    next_generation = device._next_generation
+
+    def signalled_next_generation() -> int:
+        generation = next_generation()
+        moved_on.set()
+        return generation
+
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        sensor.callback(_frame(b"OLD-EGO-FRAME-01"))
+        world.tick()
+        bridge.step()
+        # The device's thread is sending the first frame ...
+        assert entered.wait(5.0)
+        # ... while the second waits in the outbox as the scenario ends.
+        sensor.callback(_frame(b"OLD-EGO-FRAME-02"))
+        world.tick()
+        bridge.step()
+        device._next_generation = signalled_next_generation
+        finishing = _start(bridge._finish)
+        assert moved_on.wait(5.0)
+        device._next_generation = next_generation
+        # The send under way finishes before the scenario has ended.
+        release.set()
+        finishing.join(5.0)
+        assert not finishing.is_alive()
+        world.actors.append(_Ego(2))
+        bridge._begin(world.actors[1], "next")
+        new = world.sensors[1]
+        assert new.callback is not None
+        new.callback(_frame(b"NEW-EGO-FRAME-01"))
+        world.tick()
+        bridge.step()
+        sent = [receiver.recv(2.0), receiver.recv(2.0)]
+        assert [m.data for m in sent if m is not None] == [
+            b"OLD-EGO-FRAME-01",
+            b"NEW-EGO-FRAME-01",
+        ]
+        assert _drain(receiver) == []
+    finally:
+        release.set()
+        bridge.close()
+        receiver.close()
+
+
+def test_a_send_that_hangs_does_not_keep_the_scenario_from_ending(
+    world: _World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.hils import bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "_SEND_WAIT_S", 0.05)
+    bridge, receiver = _camera(world, "wall")
+    [device] = bridge._sensors
+    entered, release = threading.Event(), threading.Event()
+
+    class _HungChannel:
+        def send(self, *args: Any) -> None:
+            entered.set()
+            assert release.wait(5.0)
+
+    device.channel = _HungChannel()
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        sensor.callback(_frame(bytes(16)))
+        world.tick()
+        bridge.step()
+        assert entered.wait(5.0)
+        with caplog.at_level("WARNING"):
+            bridge._finish()
+        assert not bridge.active
+        assert any("still under way" in r.getMessage() for r in caplog.records)
+    finally:
+        release.set()
+        bridge.close()
+        receiver.close()
+
+
 def test_run_waits_for_carla_and_returns_once_stopped(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

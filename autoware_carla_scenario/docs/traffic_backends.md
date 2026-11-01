@@ -736,6 +736,14 @@ self.register_pre_tick(
   initialization have SUMO's warm-up to spread out. Under
   `traffic=traffic_manager` they are CARLA vehicles on autopilot. `none` creates
   none, with a warning.
+- **Where they go** is a driving lane. Both backends put a vehicle on the lane
+  nearest the spot asked for, facing along it (the TrafficManager would turn
+  one put askew onto its lane at once). Under `traffic_manager`, where that
+  lane runs against the spot's heading (near a two-way road's centre line) the
+  lane beside it running the spot's way is taken instead, or the spot is
+  refused. Both refuse a spot more than 5 m
+  (`BACKGROUND_MAX_OFFSET_M` in `traffic/base.py`) from any driving lane -- a
+  crosswalk, a footway -- with an info message; the source tries elsewhere.
 - **`speed_kmh`** is the speed they drive at, at most: both backends cap a
   vehicle at exactly this and let it enter at no more. It must be finite and at
   least 1 km/h; `0`, a negative speed, NaN or infinity is refused by

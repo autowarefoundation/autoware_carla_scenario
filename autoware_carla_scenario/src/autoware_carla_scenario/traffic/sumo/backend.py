@@ -109,6 +109,7 @@ from ..base import (
     TrafficBackendError,
     TrafficBackendUnavailable,
     TrafficContext,
+    BACKGROUND_MAX_OFFSET_M,
     TurnDirection,
     check_background_speed,
 )
@@ -276,8 +277,6 @@ _KEEP_ROUTE_ANYWHERE = 2 | 4
 #: exists, m, and how many junctions its route runs through.
 _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
-#: How far from a lane a background vehicle may be asked for and still be put on it, m.
-_BACKGROUND_MAX_OFFSET_M = 5.0
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
 
@@ -2239,8 +2238,16 @@ class SumoTrafficBackend(TrafficBackend):
         # convertRoad answers with the nearest lane however far away it is;
         # a background vehicle goes only where there is one.
         lane_x, lane_y = tc.simulation.convert2D(edge, pos, lane)
-        if math.hypot(lane_x - pose.x, lane_y - pose.y) > _BACKGROUND_MAX_OFFSET_M:
-            logger.debug("No lane for background vehicle %s near %s", sumo_id, pose)
+        offset = math.hypot(lane_x - pose.x, lane_y - pose.y)
+        if offset > BACKGROUND_MAX_OFFSET_M:
+            # The same value, and the same report, as the TrafficManager's.
+            logger.info(
+                "Background vehicle %s refused: its nearest lane is %.1f m away "
+                "(at most %.1f m)",
+                sumo_id,
+                offset,
+                BACKGROUND_MAX_OFFSET_M,
+            )
             return None
         route_id = f"route:{sumo_id}"
         try:
