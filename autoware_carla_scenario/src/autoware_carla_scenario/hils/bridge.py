@@ -41,6 +41,7 @@ the runner's ticks like this client does.
 
 from __future__ import annotations
 
+import functools
 import logging
 import queue
 import threading
@@ -106,6 +107,11 @@ _RECV_POLL_S = 0.2
 #: Sends a sensor device may have waiting with ``clock: wall`` before the
 #: oldest is dropped: a device slower than its sensor gets the newest data.
 _WALL_QUEUE = 2
+
+#: How long a sensor's :meth:`_SensorDevice.detach` waits for a send under
+#: way, seconds: a device that hangs in a send must not keep the scenario
+#: from ending (nor the bridge from closing).
+_SEND_WAIT_S = 5.0
 
 #: A failing send is logged the first time and then once in this many.
 _LOG_EVERY = 100
@@ -296,6 +302,22 @@ class _SensorDevice:
     thread with a simulated clock, so sends interleave with its advances in
     time order, or on the device's own thread with the wall clock, as a paced
     LiDAR send takes as long as the revolution it streams.
+
+    Nothing a detached sensor measured is sent once :meth:`detach` returns.
+    Each :meth:`attach` and :meth:`detach` starts a new *generation*; the
+    callback tags what it queues with the generation it was attached in, and
+    every send checks the tag against the current generation while holding
+    :attr:`_send_lock`, which :meth:`detach` takes once it moved to the next
+    generation.  So a measurement still queued, one waiting in the outbox, or
+    one a callback in flight queues after :meth:`detach` drained the queues
+    (CARLA may still be inside the callback when ``stop()`` returns) is
+    dropped, and a send already under way finishes before :meth:`detach`
+    returns, unless it hangs longer than :data:`_SEND_WAIT_S`.  A plain drain
+    could not promise that: a callback can put after it.  :attr:`_convert_lock` guards the conversion (a LiDAR's revolution)
+    apart from the send, so that with the wall clock :meth:`flush` never
+    waits for the device's thread.  The two locks are leaves, never held
+    together nor while taking the bridge's locks (:meth:`HilsBridge._finish`
+    releases ``_forward_lock`` before it detaches the sensors).
     """
 
     def __init__(
@@ -311,10 +333,23 @@ class _SensorDevice:
         self.channel = channel
         self._hilspy = hilspy
         self._actor: Optional["carla.Actor"] = None
+        #: Gathers a LiDAR's arcs into revolutions (under :attr:`_convert_lock`).
         self._revolution: Optional[LidarRevolution] = None
-        self._received: "queue.Queue[Tuple[float, Any, int, int]]" = queue.Queue()
+        #: The attach generation (:meth:`attach`, :meth:`detach`); written by
+        #: the bridge's thread only, under :attr:`_generation_lock`.
+        self._generation = 0
+        self._generation_lock = threading.Lock()
+        #: Held while a measurement is converted and sent, and by
+        #: :meth:`detach` to wait for a send under way.
+        self._send_lock = threading.Lock()
+        #: Held while a measurement is converted into a message.
+        self._convert_lock = threading.Lock()
+        #: What the callback copied, tagged with its generation.
+        self._received: "queue.Queue[Tuple[int, float, Any, int, int]]" = queue.Queue()
         self._failures = _Failures(spec.name)
-        self._outbox: Optional["queue.Queue[Optional[Any]]"] = None
+        #: With the wall clock, the messages for the device's thread, tagged
+        #: with their generation (``None`` stops the thread).
+        self._outbox: Optional["queue.Queue[Optional[Tuple[int, Any]]]"] = None
         self._thread: Optional[threading.Thread] = None
         if threaded:
             self._outbox = queue.Queue(maxsize=_WALL_QUEUE)
@@ -343,6 +378,8 @@ class _SensorDevice:
             carla_module.Rotation(roll=roll, pitch=pitch, yaw=yaw),
         )
         actor = world.spawn_actor(blueprint, transform, attach_to=ego)
+        generation = self._next_generation()
+        revolution: Optional[LidarRevolution] = None
         if spec.is_lidar:
             attributes = actor.attributes
             frequency = (
@@ -350,31 +387,62 @@ class _SensorDevice:
                 if "rotation_frequency" in attributes
                 else 1.0 / dt
             )
-            self._revolution = LidarRevolution(frequency, dt)
-        actor.listen(self._on_data)
+            revolution = LidarRevolution(frequency, dt)
+        with self._convert_lock:
+            self._revolution = revolution
+        actor.listen(functools.partial(self._on_data, generation))
         self._actor = actor
         logger.info("%s: %s attached to ego %d", self.spec.name, spec.blueprint, ego.id)
 
-    def detach(self) -> None:
-        actor, self._actor = self._actor, None
-        if actor is None:
-            return
-        try:
-            actor.stop()
-            if actor.is_alive:
-                actor.destroy()
-        except Exception:  # noqa: BLE001 - the ego (and its sensors) may be gone
-            logger.debug(
-                "%s: the sensor was gone already", self.spec.name, exc_info=True
-            )
+    def _next_generation(self) -> int:
+        with self._generation_lock:
+            self._generation += 1
+            return self._generation
 
-    def _on_data(self, data: Any) -> None:
+    def _current(self, generation: int) -> bool:
+        """Whether *generation* is the sensor's current one."""
+        with self._generation_lock:
+            return generation == self._generation
+
+    def detach(self) -> None:
+        """Remove the sensor; nothing it measured is sent once this returns."""
+        # First, so that whatever is queued, and whatever a callback still
+        # queues, is stale for every send that has not checked yet ...
+        self._next_generation()
+        # ... then wait for a conversion and a send that checked already.
+        with self._convert_lock:
+            self._revolution = None
+        if self._send_lock.acquire(timeout=_SEND_WAIT_S):
+            self._send_lock.release()
+        else:
+            logger.warning(
+                "%s: a send still under way after %.0f s; detaching anyway",
+                self.spec.name,
+                _SEND_WAIT_S,
+            )
+        actor, self._actor = self._actor, None
+        if actor is not None:
+            try:
+                actor.stop()
+                if actor.is_alive:
+                    actor.destroy()
+            except Exception:  # noqa: BLE001 - the ego (and its sensors) may be gone
+                logger.debug(
+                    "%s: the sensor was gone already", self.spec.name, exc_info=True
+                )
+        # Not needed for correctness (the generation is): what is stale need
+        # not wait in memory for the next flush.
+        _drain_queue(self._received)
+        if self._outbox is not None:
+            _drain_queue(self._outbox)
+
+    def _on_data(self, generation: int, data: Any) -> None:
         """The sensor's listener, on a CARLA thread: copy, queue, return."""
         try:
             raw = np.frombuffer(data.raw_data, dtype=np.uint8).copy()
             width = int(getattr(data, "width", 0))
             height = int(getattr(data, "height", 0))
-            self._received.put((float(data.timestamp), raw, width, height))
+            self._received.put((generation, float(data.timestamp), raw, width, height))
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("%s: failed to receive a measurement", self.spec.name)
 
@@ -399,53 +467,69 @@ class _SensorDevice:
             self._failures.report("send", exc)
 
     def flush(self) -> None:
-        """Send what was measured since the last flush."""
+        """Send what the attached sensor measured since the last flush; what
+        a sensor detached since measured is dropped."""
         while True:
             try:
-                measured = self._received.get_nowait()
+                generation, timestamp, raw, width, height = self._received.get_nowait()
             except queue.Empty:
                 return
-            try:
-                message = self._message(measured)
-            except Exception as exc:  # noqa: BLE001
-                self._failures.report("conversion", exc)
-                continue
+            with self._convert_lock:
+                if not self._current(generation):
+                    continue
+                try:
+                    message = self._message((timestamp, raw, width, height))
+                except Exception as exc:  # noqa: BLE001
+                    self._failures.report("conversion", exc)
+                    continue
             if message is None:
                 continue
-            if self._outbox is None:
-                self._send(message)
+            if self._outbox is not None:
+                _put_newest(self._outbox, (generation, message))
                 continue
-            while True:
-                try:
-                    self._outbox.put_nowait(message)
-                    break
-                except queue.Full:
-                    try:
-                        self._outbox.get_nowait()
-                    except queue.Empty:
-                        pass
+            self._send_current(generation, message)
 
     def _send_loop(self) -> None:
         assert self._outbox is not None
         while True:
-            message = self._outbox.get()
-            if message is None:
+            item = self._outbox.get()
+            if item is None:
                 return
-            self._send(message)
+            self._send_current(*item)
+
+    def _send_current(self, generation: int, message: Any) -> None:
+        """Send *message* unless its sensor was detached since it measured it."""
+        with self._send_lock:
+            if self._current(generation):
+                self._send(message)
 
     def close(self) -> None:
         self.detach()
         if self._outbox is not None and self._thread is not None:
-            while True:
-                try:
-                    self._outbox.put_nowait(None)
-                    break
-                except queue.Full:
-                    try:
-                        self._outbox.get_nowait()
-                    except queue.Empty:
-                        pass
+            _put_newest(self._outbox, None)
             self._thread.join(timeout=5.0)
+
+
+def _drain_queue(items: "queue.Queue[Any]") -> None:
+    """Empty *items* without waiting."""
+    while True:
+        try:
+            items.get_nowait()
+        except queue.Empty:
+            return
+
+
+def _put_newest(items: "queue.Queue[Any]", item: Any) -> None:
+    """Put *item* in the bounded *items*, dropping the oldest when full."""
+    while True:
+        try:
+            items.put_nowait(item)
+            return
+        except queue.Full:
+            try:
+                items.get_nowait()
+            except queue.Empty:
+                pass
 
 
 class HilsBridge:
