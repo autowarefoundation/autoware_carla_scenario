@@ -34,6 +34,7 @@ from ..trajectory.authoring import (
     relative_vertex_problems,
     vertex_problems,
 )
+from ..constants import MIN_BACKGROUND_SPEED_KMH
 from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from .registry import (
     INT_KINDS,
@@ -501,6 +502,8 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         _check_routing(out, path, node)
     if node.type == "spawn":
         _check_spawn(out, path, node)
+    if node.type == "traffic_source":
+        _check_traffic_source(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
@@ -528,8 +531,7 @@ def _check_advance_conditions(
     if not accepted:
         out.error(
             f"{path}.advance_conditions",
-            f"{node.type!r} follows no vertices, so it takes no waypoint "
-            "conditions.",
+            f"{node.type!r} follows no vertices, so it takes no waypoint conditions.",
             node.id,
         )
         return
@@ -752,6 +754,24 @@ def _check_spawn(out: _Collector, path: str, node: ActionNode) -> None:
             out.error(f"{path}.{key}", f"{what} must not be negative.", node.id)
 
 
+def _check_traffic_source(out: _Collector, path: str, node: ActionNode) -> None:
+    """A Traffic Source's speed is the most its vehicles drive at: at least
+    :data:`~..constants.MIN_BACKGROUND_SPEED_KMH`, as TrafficSourceAction
+    asks (#967).  0 would be traffic that never moves.  A blank or non-finite
+    one is the field check's."""
+    value = node.params.get("speed_kmh")
+    if _is_blank(value) or not _coercible_float(value):
+        return
+    if float(str(value).strip()) < MIN_BACKGROUND_SPEED_KMH:
+        out.error(
+            f"{path}.speed_kmh",
+            f"Speed must be at least {MIN_BACKGROUND_SPEED_KMH:g} km/h: it is the "
+            "most the vehicles drive at, and traffic that never moves is no "
+            "traffic.",
+            node.id,
+        )
+
+
 def _check_times_for_reference(
     out: _Collector, path: str, node: ActionNode, timed: bool
 ) -> None:
@@ -864,8 +884,7 @@ def _check_binding(
     if binding_spec.produces != produces:
         out.error(
             path,
-            f"{binding_spec.title} works out a {binding_spec.produces}, "
-            f"not a {noun}.",
+            f"{binding_spec.title} works out a {binding_spec.produces}, not a {noun}.",
             owner_id,
         )
         return

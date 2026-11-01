@@ -1153,6 +1153,7 @@ register_action_spec(
                 kind="number",
                 default=30.0,
                 unit="km/h",
+                help="The most each vehicle drives at; at least 1 km/h.",
             ),
             FieldSpec(
                 name="min_gap_m",

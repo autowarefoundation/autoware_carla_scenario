@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
 from ..seed import resolve_seed
+from ..traffic.base import check_background_speed
 from ..utils.clearance import _HIDDEN_BELOW_M
 from .base import BaseAction, TickTiming
 
@@ -202,7 +203,9 @@ class TrafficSourceAction(_BackendAction):
             source's and any other's -- past which it adds none; ``None`` for
             no limit.
         speed_kmh: The speed each drives at, at most: the traffic model may
-            hold it below that (a queue, a bend, a red light).
+            hold it below that (a queue, a bend, a red light).  At least
+            :data:`~autoware_carla_scenario.constants.MIN_BACKGROUND_SPEED_KMH`
+            (1 km/h) and finite: a vehicle that never moves is no traffic.
         min_gap_m: The least distance from a new vehicle to any other one.
         blueprint: CARLA blueprint, or ``None`` for the backend's own.
         seed: Seeds the choice of lanelet and position, for a reproducible run;
@@ -212,6 +215,10 @@ class TrafficSourceAction(_BackendAction):
             :class:`~autoware_carla_scenario.actions.base.BaseAction`, except
             that with no *until* it runs until the scenario ends.  It reissues
             by default: each tick of its run is a tick it may add a vehicle on.
+
+    Raises:
+        ValueError: If a count or rate is negative, or *speed_kmh* is below
+            1 km/h or not finite.
     """
 
     _region: LaneletRegion
@@ -250,6 +257,7 @@ class TrafficSourceAction(_BackendAction):
             raise ValueError("vehicle counts and rates must not be negative")
         if max_vehicles is not None and max_vehicles < 0:
             raise ValueError("max_vehicles must not be negative")
+        speed_kmh = check_background_speed(speed_kmh)
         super().__init__(
             label,
             condition=condition,

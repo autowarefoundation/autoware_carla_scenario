@@ -92,6 +92,7 @@ from autoware_carla_scenario.typecheck.mode import (
     check_registered_scenario,
     typecheck_mode,
 )
+from autoware_carla_scenario.traffic.base import check_background_speed
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
     TrafficConfig,
@@ -1656,6 +1657,10 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     So ``background_traffic.enabled=true`` turns it on for any run, and
     ``background_traffic.source.vehicles_per_minute=0`` keeps it to the vehicles
     placed during initialization.
+
+    Raises:
+        ValueError: If ``source.speed_kmh`` is not a number, not finite, or
+            below 1 km/h (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`).
     """
     background = cfg.get("background_traffic")
     if background is None or not background.get("enabled", False):
@@ -1674,6 +1679,16 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
 
     max_vehicles = source.get("max_vehicles")
     constraints = source.get("constraints") or []
+    # Refused here, naming the key, whether or not a source is built from it:
+    # 0 would be traffic that never moves (#967).
+    speed_value = source.get("speed_kmh", 30.0)
+    try:
+        speed_kmh = check_background_speed(float(str(speed_value)))
+    except ValueError as exc:
+        raise ValueError(
+            f"background_traffic.source.speed_kmh: {speed_value!r} is not a "
+            f"background speed ({exc})"
+        ) from exc
 
     def source_action(
         *, initial: int, rate: float, seed: int, label: str
@@ -1683,7 +1698,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             initial_vehicles=initial,
             vehicles_per_minute=rate,
             max_vehicles=None if max_vehicles is None else int(max_vehicles),
-            speed_kmh=float(source.get("speed_kmh", 30.0)),
+            speed_kmh=speed_kmh,
             min_gap_m=float(source.get("min_gap_m", 15.0)),
             blueprint=source.get("blueprint"),
             seed=seed,

@@ -429,6 +429,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
             "FIXED_DELTA_SECONDS",
             "LANE_CHANGE_CENTER_TOLERANCE_M",
             "LANE_CHANGE_HEADING_TOLERANCE_DEG",
+            "MIN_BACKGROUND_SPEED_KMH",
             "US_PER_S",
         )
     },

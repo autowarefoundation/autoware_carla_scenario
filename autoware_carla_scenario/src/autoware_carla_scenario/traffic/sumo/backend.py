@@ -110,6 +110,7 @@ from ..base import (
     TrafficBackendUnavailable,
     TrafficContext,
     TurnDirection,
+    check_background_speed,
 )
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
@@ -2210,8 +2211,10 @@ class SumoTrafficBackend(TrafficBackend):
     ) -> Optional[str]:
         """Add a SUMO vehicle at *transform*; it is mirrored into CARLA like
         the rest of SUMO's traffic, and wanders the network until its route
-        runs out."""
+        runs out.  Capped at exactly *speed_kmh*, as every backend caps it
+        (:meth:`TrafficBackend.spawn_background`)."""
         del world
+        speed_kmh = check_background_speed(speed_kmh)
         if not self._running:
             return None
         tc = self._traci
@@ -2248,12 +2251,14 @@ class SumoTrafficBackend(TrafficBackend):
                 typeID="DEFAULT_VEHTYPE",
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
-                # The fastest it can safely enter at: a fixed speed near a
+                # The fastest it can safely enter at, under the cap set next
+                # (SUMO inserts it on a later step): a fixed speed near a
                 # junction is one SUMO refuses to insert the vehicle at.
-                departSpeed="max" if speed_kmh > 0 else "0",
+                departSpeed="max",
             )
-            if speed_kmh > 0:
-                tc.vehicle.setMaxSpeed(sumo_id, max(speed_kmh / 3.6, 1.0))
+            # Exactly the cap asked for, as the TrafficManager backend gives
+            # it: no floor of SUMO's own (#967).
+            tc.vehicle.setMaxSpeed(sumo_id, speed_kmh / 3.6)
         except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
             logger.warning(
                 "SUMO could not add %s on %s_%d: %s", sumo_id, edge, lane, exc
@@ -4158,8 +4163,10 @@ class SumoTrafficBackend(TrafficBackend):
             )
         own, decel, tau = held
         limit = sight_speed(seen, decel, tau)
-        # Never to a standstill: a car in thick fog still creeps on.
-        vehicle.setMaxSpeed(sumo_id, max(min(own, limit), 1.0))
+        # Never to a standstill: a car in thick fog still creeps on.  Nor
+        # above its own: a background vehicle capped below the creep keeps
+        # its cap (#967).
+        vehicle.setMaxSpeed(sumo_id, min(own, max(limit, 1.0)))
 
     # ------------------------------------------------------------------
     # Internals: traffic lights

@@ -76,3 +76,13 @@ LANE_CHANGE_HEADING_TOLERANCE_DEG: float = 10.0
 # waiting on completion cannot be satisfied by a manoeuvre that did not occur.
 # Ending such a run is the scenario timeout's job, which is already a FAIL
 # condition.
+
+# Background traffic, as every backend's spawn_background agrees on it (#967).
+#
+# The least speed a background vehicle may be asked to drive at, km/h.  A
+# smaller one -- 0, a negative one, NaN or infinity -- is refused where it
+# enters (TrafficSourceAction, background_traffic.source.speed_kmh, the
+# editor's validator, the backends), not raised to this: ``speed_kmh`` is the
+# most a vehicle drives at, so a cap above the one asked for would break that,
+# and 0 would be a vehicle that never moves, which is no traffic.
+MIN_BACKGROUND_SPEED_KMH: float = 1.0
