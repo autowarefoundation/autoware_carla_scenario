@@ -20,7 +20,8 @@ of this package asks before taking any shortcut that could hand back a different
 revision.
 
 :meth:`MapSource.parse` also accepts the ``/tree/<ref>/<path>`` URLs of both
-hosts (and GitHub's ``/blob/``, HuggingFace's ``/resolve/``).  Pasting the page
+hosts (and GitHub's ``/blob/``, HuggingFace's ``/resolve/``), and GitLab's
+``/-/tree/``, ``/-/blob/`` and ``/-/raw/`` ones, subgroups included.  Pasting the page
 you are looking at is the intended way in.
 """
 
@@ -45,8 +46,16 @@ class MapSourceError(ValueError):
 
 #: The ``/<kind>/<ref>/<path...>`` infix a web UI puts between the repository
 #: and the file being viewed.  ``tree`` and ``blob`` are GitHub's, ``resolve``
-#: and ``raw`` are HuggingFace's download and source views.
-_WEB_VIEW_SEGMENTS = ("tree", "blob", "resolve", "raw", "src", "-")
+#: and ``raw`` are HuggingFace's download and source views.  GitLab's
+#: ``/-/<kind>/`` form is handled separately (see :data:`_GITLAB_VIEW_KINDS`).
+_WEB_VIEW_SEGMENTS = ("tree", "blob", "resolve", "raw", "src")
+
+#: The segment GitLab puts between a repository and its web views, which is
+#: what makes a subgroup path (``group/subgroup/repo``) unambiguous.
+_GITLAB_VIEW_MARKER = "-"
+
+#: The ``/-/<kind>/<ref>/<path...>`` views of GitLab that name a ref and path.
+_GITLAB_VIEW_KINDS = ("tree", "blob", "raw")
 
 #: Repository path prefixes HuggingFace puts in front of an owner/name pair.
 #: A model repository has no prefix at all, which is why this is a lookup
@@ -147,6 +156,7 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
         return url, "", ""
 
     segments = [segment for segment in parts.path.split("/") if segment]
+
     # How many leading segments name the repository itself.  Two everywhere --
     # owner and name -- plus HuggingFace's optional repo-type prefix.
     repo_len = 2
@@ -156,6 +166,33 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
         and (segments[0] in _HF_REPO_PREFIXES)
     ):
         repo_len = 3
+
+    # GitLab: ``<group>[/<subgroup>...]/<repo>/-/<kind>/<ref>/<path...>``.  The
+    # ``-`` marker ends the repository, however many groups precede it.  Only
+    # where no GitHub/HuggingFace view follows the owner/name pair, and never
+    # on those two hosts: there a ``-`` is a directory inside the viewed path.
+    marker = -1
+    gitlab_like = not (
+        parts.netloc.endswith("github.com")
+        or parts.netloc.endswith("huggingface.co")
+        or (len(segments) > repo_len and segments[repo_len] in _WEB_VIEW_SEGMENTS)
+    )
+    if gitlab_like:
+        for index in range(1, len(segments)):
+            if segments[index] == _GITLAB_VIEW_MARKER:
+                marker = index
+                break
+    if marker != -1:
+        if (
+            marker + 2 >= len(segments)
+            or segments[marker + 1] not in _GITLAB_VIEW_KINDS
+        ):
+            return url, "", ""
+        gitlab_url = urlunsplit(
+            (parts.scheme, parts.netloc, "/" + "/".join(segments[:marker]), "", "")
+        )
+        gitlab_path = "/".join(segments[marker + 3 :])
+        return gitlab_url, segments[marker + 2], gitlab_path
 
     if len(segments) <= repo_len or segments[repo_len] not in _WEB_VIEW_SEGMENTS:
         return url, "", ""
