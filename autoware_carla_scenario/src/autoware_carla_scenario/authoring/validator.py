@@ -35,7 +35,7 @@ from ..trajectory.authoring import (
     vertex_problems,
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
-from ._builders_generated import OVERRIDING_ACTIONS
+from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -482,6 +482,15 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
             f"{path}.overrides",
             f"{spec.title} commands no entity's speed, steering or lights, so "
             "there is no running action for it to override.",
+            node.id,
+        )
+    if not node.once and node.type not in ONCE_ACTIONS:
+        # Likewise: its constructor takes no ``once``, so it fires once
+        # whatever the card says, and the builder would drop the request.
+        out.error(
+            f"{path}.once",
+            f"{spec.title} ({node.type}) fires only once; it cannot be set to "
+            "fire again (once: false).",
             node.id,
         )
 

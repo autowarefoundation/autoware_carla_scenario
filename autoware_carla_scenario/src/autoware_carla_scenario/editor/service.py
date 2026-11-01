@@ -35,7 +35,7 @@ from typing import (
     get_args,
 )
 
-from ..authoring._builders_generated import OVERRIDING_ACTIONS
+from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from ..authoring.models import (
     AUTO_MODEL,
     ActionNode,
@@ -467,9 +467,18 @@ class EditorService:
         if "route_yaml" in form:
             document.route = parse_route_yaml(str(form["route_yaml"]))
         before = document.map.model_copy()
+        # ``group`` and ``name`` are required strings: a blank one is refused,
+        # not filled in.  A fallback would be some other map's name or group
+        # beside this map's paths -- a mixed map that resolves to neither --
+        # and the refusal leaves the draft exactly as it was.
+        for attribute, label in (("group", "Map group"), ("name", "CARLA map name")):
+            key = f"map_{attribute}"
+            if key in form:
+                value = str(form[key]).strip()
+                if not value:
+                    raise EditorError(f"{label} cannot be blank.")
+                setattr(document.map, attribute, value)
         for attribute in (
-            "group",
-            "name",
             "source",
             "directory",
             "xodr_path",
@@ -485,9 +494,6 @@ class EditorService:
             # into the canonical form, so the field shows what will be stored
             # and two spellings of one map are one string.
             document.map.source = self._canonical_source(document.map.source)
-        # ``group`` and ``name`` are plain strings, never None.
-        document.map.group = document.map.group or "nishishinjuku"
-        document.map.name = document.map.name or "Town10HD_Opt"
         if "map_no_3d_model_lanelet_ids" in form:
             from .forms import parse_int_list  # noqa: PLC0415
 
@@ -1266,7 +1272,9 @@ class EditorService:
                         "so nothing there can wait. Remove the trigger first."
                     )
                 action.phase = requested
-        action.once = "once" in form
+        # Only an action whose constructor takes ``once`` can fire again; any
+        # other offers no checkbox and always fires once.
+        action.once = action.type not in ONCE_ACTIONS or "once" in form
         # Only an action that commands an entity's control domains can take
         # one over; for any other, there is nothing to override.
         action.overrides = action.type in OVERRIDING_ACTIONS and "overrides" in form

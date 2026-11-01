@@ -794,6 +794,32 @@ class TestActionEditing:
         client.post(f"/draft/{draft_id}/action/{action.id}", data={"direction": "left"})
         assert _action(store, draft_id, action.id).once is False
 
+    def test_an_action_that_cannot_repeat_offers_no_fire_only_once(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Its constructor takes no ``once`` (#966): the checkbox would be
+        dropped by the builder, and leaving it out of the form must not store
+        ``once: false`` either."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "stalled_object", "actor": "npc1"},
+        )
+        stalled = next(
+            a for a in _document(store, draft_id).actions if a.type == "stalled_object"
+        )
+        page = client.get(f"/draft/{draft_id}?selected={stalled.id}").text
+        assert "Fire only once" not in page
+        client.post(f"/draft/{draft_id}/action/{stalled.id}", data={"s": "5.0"})
+        assert _action(store, draft_id, stalled.id).once is True
+
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        turn = next(a for a in _document(store, draft_id).actions if a.type == "turn")
+        assert (
+            "Fire only once" in client.get(f"/draft/{draft_id}?selected={turn.id}").text
+        )
+
     def test_checking_overrides_is_stored_where_it_means_something(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -1286,6 +1312,74 @@ class TestScenarioMetadata:
         )
         assert "Scenario id" in response.text
         assert _document(store, draft_id).id == "cut_in"
+
+    @pytest.mark.parametrize(
+        ("field", "label"),
+        [("map_name", "CARLA map name"), ("map_group", "Map group")],
+    )
+    def test_a_blank_map_name_or_group_is_refused_whole(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+        field: str,
+        label: str,
+    ) -> None:
+        before = _document(store, draft_id).map.model_copy()
+        form = {
+            "map_group": "other_group",
+            "map_name": "OtherMap",
+            "map_lanelet2_path": "elsewhere/lanelet2_map.osm",
+            "map_xodr_path": "elsewhere/map.xodr",
+            "title": "Renamed",
+        }
+        form[field] = "   "
+        response = client.post(f"/draft/{draft_id}/scenario", data=form)
+        assert response.status_code == 200
+        assert f"{label} cannot be blank." in response.text
+        # Nothing of the submission is kept -- neither a fallback name nor the
+        # other fields -- so the map is still entirely the one it was.
+        document = _document(store, draft_id)
+        assert document.map == before
+        assert document.title == "Cut in"
+
+    def test_an_invalid_value_a_model_refuses_is_reported(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # A handler that stores a form value unchecked reaches the model's own
+        # validation; that must come back as a message, not a 500 -- and, as
+        # it may be a handler's bug, still be logged.
+        def _unchecked(
+            self: EditorService, document: ScenarioDocument, form: Any
+        ) -> None:
+            document.timeout_seconds = form["timeout_seconds"]
+
+        monkeypatch.setattr(EditorService, "update_scenario", _unchecked)
+        before = _document(store, draft_id).timeout_seconds
+        response = client.post(
+            f"/draft/{draft_id}/scenario", data={"timeout_seconds": "soon"}
+        )
+        assert response.status_code == 200
+        assert "Invalid value" in response.text
+        assert "timeout_seconds" in response.text
+        assert "soon" in response.text
+        assert _document(store, draft_id).timeout_seconds == before
+        assert any(
+            record.exc_info and "timeout_seconds" in str(record.exc_info[1])
+            for record in caplog.records
+        )
+        # A long value is cut short rather than echoed whole.
+        response = client.post(
+            f"/draft/{draft_id}/scenario", data={"timeout_seconds": "x" * 500}
+        )
+        assert response.status_code == 200
+        assert "x" * 500 not in response.text
+        assert "xxx..." in response.text
 
 
 class TestValidateSaveExport:

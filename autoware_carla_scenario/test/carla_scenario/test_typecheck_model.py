@@ -6,7 +6,7 @@ would reject a correct scenario (or accept a wrong one).  These tests read
 the model as Python syntax -- it is written to parse as Python -- and compare
 every class and function ``autoware_carla_scenario/__init__.codon`` exports
 with the object of the same name: its parameters (names, order, which are
-keyword-only, which have defaults), the methods and properties it declares,
+keyword-only, which have defaults and their values), the methods and properties it declares,
 its enum members.  Every public name of a modelled module is declared or
 listed, with the reason, in ``typecheck/not_modelled.py`` (#237), and every
 model file is compared or exempt with the reason (#240).  They need no Codon.
@@ -27,7 +27,7 @@ import textwrap
 import types
 import typing
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import dotenv
@@ -479,6 +479,9 @@ def _assert_declared_as_in_python(
         for overload in definitions:
             assert isinstance(overload, ast.FunctionDef)
             assert _model_params(overload, drop_first=False) == expected, name
+            _assert_defaults_as_in_python(
+                name, _model_defaults(overload), python, module, root
+            )
         return
 
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -508,13 +511,16 @@ def _assert_declared_as_in_python(
     else:
         if "__init__" in methods:
             model_init = _model_params(methods["__init__"], drop_first=True)
+            model_defaults = _model_defaults(methods["__init__"])
         else:
             model_init = _model_fields(node)
+            model_defaults = _model_field_defaults(node)
         omitted = _OMITTED_PARAMETERS.get(name, set())
         python_init = [
             p for p in _python_params(python, drop_first=False) if p[1] not in omitted
         ]
         assert model_init == python_init, f"{name}(): the model's parameters differ"
+        _assert_defaults_as_in_python(name, model_defaults, python, module, root)
 
     if dataclasses.is_dataclass(python) and "__init__" not in methods:
         python_fields = {f.name for f in dataclasses.fields(python)}
@@ -563,10 +569,188 @@ def _assert_declared_as_in_python(
             assert _model_params(method, drop_first=False) == _python_params(
                 getattr(python, method_name), drop_first=False
             ), f"{name}.{method_name}(): the model's parameters differ"
+            _assert_defaults_as_in_python(
+                f"{name}.{method_name}",
+                _model_defaults(method),
+                getattr(python, method_name),
+                module,
+                root,
+            )
             continue
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
         ), f"{name}.{method_name}(): the model's parameters differ"
+        _assert_defaults_as_in_python(
+            f"{name}.{method_name}",
+            _model_defaults(method),
+            getattr(python, method_name),
+            module,
+            root,
+        )
+
+
+def _model_defaults(fn: ast.FunctionDef) -> dict[str, ast.expr]:
+    """Parameter -> the default *fn* declares for it in the model (a
+    `_Required()` marker is none: the body refuses the call)."""
+    args = fn.args
+    positional = [*args.posonlyargs, *args.args]
+    pairs = [
+        *zip(positional[len(positional) - len(args.defaults) :], args.defaults),
+        *zip(args.kwonlyargs, args.kw_defaults),
+    ]
+    return {a.arg: d for a, d in pairs if d is not None and not _is_required_marker(d)}
+
+
+def _model_field_defaults(cls: ast.ClassDef) -> dict[str, ast.expr]:
+    """Field -> its default, of a model class without an __init__."""
+    return {
+        stmt.target.id: stmt.value
+        for stmt in cls.body
+        if isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and stmt.value is not None
+        and "ClassVar" not in ast.unparse(stmt.annotation)
+    }
+
+
+#: OmegaConf's MISSING (`???`): a structured config's required field, which
+#: Python declares with a placeholder default so the dataclass stays
+#: constructible; the model gives such a field a default of its type, which
+#: no run reads before the config is merged.
+_MISSING = "???"
+
+#: The empty container a model builds by calling its type (`List[str]()`).
+_EMPTY_CONTAINERS: dict[str, Any] = {"List": [], "Dict": {}, "Set": set(), "Tuple": ()}
+
+
+def _assert_defaults_as_in_python(
+    label: str,
+    model: dict[str, ast.expr],
+    python: Any,
+    module: str,
+    root: Path = _MODEL,
+) -> None:
+    """Every default the model declares holds the value of Python's (#969):
+    _model_params compares only which parameters have one."""
+    try:
+        signature = inspect.signature(python)
+    except (TypeError, ValueError):
+        return
+    # A dataclass field's default_factory: its signature shows a placeholder.
+    factories = (
+        {
+            f.name: f.default_factory
+            for f in dataclasses.fields(python)
+            if f.default_factory is not dataclasses.MISSING
+        }
+        if inspect.isclass(python) and dataclasses.is_dataclass(python)
+        else {}
+    )
+    for param in signature.parameters.values():
+        node = model.get(param.name)
+        if node is None or param.default is inspect.Parameter.empty:
+            continue
+        default = factories[param.name]() if param.name in factories else param.default
+        where = f"{label}({param.name}=...)"
+        _assert_default_as_in_python(where, node, default, module, root)
+
+
+def _is_literal_value(value: Any) -> bool:
+    """*value* is one a model can write as a literal or an enum member."""
+    if isinstance(value, (list, tuple, set)):
+        return all(_is_literal_value(v) for v in value)
+    if isinstance(value, dict):
+        return all(
+            _is_literal_value(k) and _is_literal_value(v) for k, v in value.items()
+        )
+    return value is None or isinstance(value, (str, int, float, enum.Enum, PurePath))
+
+
+def _assert_default_as_in_python(
+    where: str, node: ast.expr, python: Any, module: str, root: Path
+) -> None:
+    if isinstance(python, str) and python == _MISSING:
+        return
+    if (
+        isinstance(node, ast.Constant)
+        and node.value is None
+        and python is not None
+        and (
+            (isinstance(python, (list, dict, set)) and not python)
+            or not _is_literal_value(python)
+        )
+    ):
+        # `None` stands in for an object Python builds (a dataclass instance,
+        # a default_factory's empty list or dict): the model leaves the
+        # parameter untyped, or the class is built by the framework alone, and
+        # its body never reads it.  A container of literals is no such object:
+        # the model spells it.
+        return
+    model = _model_value(node, python, module, root, where)
+    assert _comparable(model) == _comparable(
+        python
+    ), f"{where}: the model's default differs"
+
+
+def _model_value(
+    node: ast.expr, python: Any, module: str, root: Path, where: str
+) -> Any:
+    """The value *node*, a default in the model, stands for, read with
+    *python* (Python's default) as the hint for what Codon cannot spell as a
+    literal: an enum member, a named constant, an object built by its class."""
+    if isinstance(python, enum.Enum) and not isinstance(node, ast.Constant):
+        # An enum member, built from its value (`Enum(2)`) or named
+        # (`Enum.MEMBER`); a str enum may be passed as its str (a Constant).
+        if isinstance(node, ast.Call):
+            assert ast.unparse(node.func) == type(python).__name__, where
+            (arg,) = node.args
+            return type(python)(ast.literal_eval(arg))
+        assert isinstance(node, ast.Attribute), f"{where}: {ast.unparse(node)}"
+        assert ast.unparse(node.value) == type(python).__name__, where
+        return type(python)[node.attr]
+    if isinstance(python, enum.Enum):
+        python = python.value
+    if isinstance(node, ast.Name) and node.id not in {"None", "True", "False"}:
+        # A named constant (DEFAULT_TM_PORT): its value in the model.
+        constant = next(iter(_definitions(module, root).get(node.id, [])), None)
+        assert isinstance(
+            constant, (ast.Assign, ast.AnnAssign)
+        ), f"{where}: {node.id} is no constant of the model"
+        assert constant.value is not None, where
+        return _model_value(constant.value, python, module, root, where)
+    if isinstance(node, ast.Call) and not node.args and not node.keywords:
+        # An empty container (`List[str]()`) or an object built with its
+        # defaults (`NadeSettings()`), compared with Python's built so.
+        func = node.func.value if isinstance(node.func, ast.Subscript) else node.func
+        name = ast.unparse(func)
+        if name in _EMPTY_CONTAINERS:
+            return _EMPTY_CONTAINERS[name]
+        assert name == type(python).__name__, f"{where}: {ast.unparse(node)}"
+        return type(python)()
+    if isinstance(node, (ast.List, ast.Tuple)):
+        hints = list(python) if isinstance(python, (list, tuple)) else []
+        if len(hints) != len(node.elts):
+            hints = [None] * len(node.elts)
+        return [
+            _model_value(e, h, module, root, where) for e, h in zip(node.elts, hints)
+        ]
+    literal = ast.literal_eval(node)  # a ValueError: no literal
+    assert isinstance(literal, bool) == isinstance(python, bool), f"{where}: a bool"
+    return literal
+
+
+def _comparable(value: Any) -> Any:
+    """*value* as a model's and Python's defaults compare: a list as a tuple
+    (a model's List of a Python tuple), a path as its str, an enum as its
+    value, an EntityRole as its role name (a parameter Python types
+    `Union[EntityRole, str]` takes the str in the model)."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_comparable(v) for v in value)
+    if isinstance(value, (PurePath, acs.EntityRole)):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return value.value
+    return value
 
 
 def _enum_values(node: ast.ClassDef) -> dict[str, Any]:

@@ -14,6 +14,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import (
     FileResponse,
@@ -135,6 +136,33 @@ def _body(request: Request, context: dict[str, Any]) -> HTMLResponse:
     )
 
 
+#: The longest rendering of a refused value an error message shows.
+_MAX_SHOWN_INPUT = 80
+
+
+def describe_validation_error(exc: ValidationError) -> str:
+    """The sentence the editor shows for a value the document's models refused.
+
+    One clause per refused field, naming the model and field it reached and
+    the value it was given, so the author can tell which input to correct.
+    The value is cut short, so an unexpectedly large one cannot flood the page.
+
+    The handlers are meant to check a form value before storing it, so a
+    refusal that reaches here may equally be a bug in a handler: it is logged
+    with its traceback, so catching it does not also hide it.
+    """
+    logger.warning("Edit refused by the document's validation", exc_info=exc)
+    clauses = []
+    for error in exc.errors():
+        where = ".".join(str(part) for part in error.get("loc", ()))
+        field = f"{exc.title}.{where}" if where else exc.title
+        given = repr(error.get("input"))
+        if len(given) > _MAX_SHOWN_INPUT:
+            given = given[: _MAX_SHOWN_INPUT - 3] + "..."
+        clauses.append(f"{field}: {error['msg']} (got {given})")
+    return "Invalid value -- " + "; ".join(clauses) + "."
+
+
 def _apply(
     request: Request,
     draft_id: str,
@@ -160,6 +188,12 @@ def _apply(
             result = mutate(draft.document)
         except EditorError as exc:
             error = str(exc)
+            draft = service.require_draft(draft_id)
+        except ValidationError as exc:
+            # The document's models validate on assignment, so a form value a
+            # handler stores without checking it first is refused here rather
+            # than escaping as a bare 500.
+            error = describe_validation_error(exc)
             draft = service.require_draft(draft_id)
         else:
             service.save(draft)
@@ -295,9 +329,14 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
     def _run() -> HTMLResponse:
         try:
             draft, result = service.run_map_operation(draft_id, act)
-        except EditorError as exc:
+        except (EditorError, ValidationError) as exc:
+            message = (
+                describe_validation_error(exc)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
             fresh = service.require_draft(draft_id)
-            return _body(request, _context(request, fresh, "scenario", error=str(exc)))
+            return _body(request, _context(request, fresh, "scenario", error=message))
         message = result if isinstance(result, str) else ""
         return _body(request, _context(request, draft, "scenario", notice=message))
 
