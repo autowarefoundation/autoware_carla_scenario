@@ -526,7 +526,11 @@ Position). Its route comes from one of five sources:
 
 - **Goal lanelet, via lanelets** (the default) -- a goal lanelet and `s`
   along it, and the lanelets to pass on the way: what an ego is sent to. It
-  takes no waypoint conditions and no time reference.
+  takes no waypoint conditions and no time reference, and it is driven in
+  Driver mode only, from where the entity stands (*Start this far along* 0):
+  the goal is a destination for the entity's driver, not a way to follow,
+  place it on, or start along. `RoutingAction` refuses a goal with
+  `mode=FOLLOW`/`POSITION` or a positive `initial_distance_offset` too.
 - **Vertices (map frame)** -- written in the card, one vertex per line:
   `x, y[, yaw]` (metres, radians; `81234.5, 50123.0` leaves the yaw to the
   path). The line above the text says how many vertices and how long. Their
