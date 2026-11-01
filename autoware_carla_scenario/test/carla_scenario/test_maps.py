@@ -809,6 +809,19 @@ class TestLinksInAMapDirectory:
         assert resolved.xodr_path == derived / "TownA.xodr"
         assert resolved.xodr_is_derived
 
+    def test_a_stray_xodr_in_the_derived_directory_is_ignored(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Only the file :meth:`ResolvedMap.derived_xodr` names is the map's (#1050)."""
+        derived = resolve_map(_uri(origin_repo), cache=cache).derived
+        derived.mkdir(parents=True, exist_ok=True)
+        (derived / "Town01.xodr").write_text("<OpenDRIVE town='Town01'/>")
+
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_path is None
+        assert not resolved.xodr_is_derived
+        assert resolved.cached_derived_xodr("Town01") == derived / "Town01.xodr"
+
     def test_a_map_directory_linked_out_of_the_checkout_is_refused(
         self, tmp_path: Path, cache: GitMapCache, outside: Path
     ) -> None:
@@ -1085,6 +1098,21 @@ class TestResolveMapPaths:
         assert town_a.opendrive_path is not None
         assert town_a.opendrive_path.name == "TownA.xodr"
 
+    def test_an_opendrive_captured_under_the_carla_map_name_is_found(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run on ``map.name`` writes ``<map.name>.xodr``; the next read finds it."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        config = {"source": _uri(origin_repo), "name": "Town01"}
+        destination = resolve_map_paths(config).opendrive_path
+        assert destination is not None and destination.name == "Town01.xodr"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("<OpenDRIVE/>")
+
+        again = resolve_map_paths(config)
+        assert again.xodr_path == destination
+        assert again.xodr_is_derived and again.install_xodr is None
+
     def test_the_opendrive_is_not_installed_into_carla_unless_asked(self) -> None:
         config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
 
@@ -1092,6 +1120,56 @@ class TestResolveMapPaths:
         assert resolve_map_paths({**config, "overwrite_xodr": True}).overwrite_xodr
         off = resolve_map_paths({**config, "overwrite_xodr": False})
         assert off.overwrite_xodr is False
+
+
+def _map_repo(path: Path) -> Path:
+    """A repository holding one map at ``map/``, as many single-map repos do."""
+    (path / "map").mkdir(parents=True)
+    (path / "map" / "lanelet2_map.osm").write_text(_OSM)
+    _git(path, "init", "--quiet", "--initial-branch", "main", ".")
+    _git(path, "add", "-A")
+    _git(path, "commit", "--quiet", "-m", "Publish the map")
+    return path
+
+
+class TestDerivedDirectory:
+    """Where an OpenDRIVE taken from CARLA is kept, per repository (#1050)."""
+
+    def test_two_repositories_at_the_same_path_do_not_share_one(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        first = _map_repo(tmp_path / "town01_map")
+        second = _map_repo(tmp_path / "town10_map")
+
+        a = resolve_map(_uri(first, "map"), cache=cache)
+        captured = a.derived_xodr()
+        captured.parent.mkdir(parents=True, exist_ok=True)
+        captured.write_text("<OpenDRIVE town='Town01'/>")
+
+        b = resolve_map(_uri(second, "map"), cache=cache)
+        assert a.derived != b.derived
+        assert b.xodr_path is None and not b.xodr_is_derived
+        # The first repository still finds its own.
+        assert resolve_map(_uri(first, "map"), cache=cache).xodr_path == captured
+
+    def test_the_ref_is_not_part_of_the_key(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """The OpenDRIVE comes out of CARLA, so a new commit need not refetch it."""
+        on_branch = resolve_map(_uri(origin_repo), cache=cache)
+        pinned = resolve_map(_uri(origin_repo, ref=on_branch.commit), cache=cache)
+        assert on_branch.derived == pinned.derived
+
+    def test_two_maps_of_one_repository_do_not_share_one(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        town_a = cache.derived_dir(MapSource.parse(_uri(origin_repo)))
+        town_b = cache.derived_dir(
+            MapSource.parse(_uri(origin_repo, "autoware_maps/TownB"))
+        )
+        assert town_a != town_b
+        # Both under the one repository's directory.
+        assert town_a.parent == town_b.parent
 
 
 # ---------------------------------------------------------------------------

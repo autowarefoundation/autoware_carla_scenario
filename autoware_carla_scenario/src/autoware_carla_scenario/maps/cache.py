@@ -228,9 +228,27 @@ class GitMapCache:
         slug = _SLUG_UNSAFE.sub("-", f"{source.repo_name}-{source.ref or 'HEAD'}")
         return self.root / REPOS_SUBDIR / f"{slug.strip('-').lower()}-{digest}"
 
-    def derived_dir(self, path: str) -> Path:
-        """Return where artefacts generated from the map at *path* are kept."""
-        return self.root / DERIVED_SUBDIR / (path or "root")
+    def derived_dir(self, source: MapSource) -> Path:
+        """Return where artefacts generated from *source*'s map are kept.
+
+        Keyed on the repository as well as the map's path inside it, the way
+        :meth:`entry_dir` is: two repositories that both keep their map at
+        ``map/`` must not share an OpenDRIVE, or the second is handed the
+        first one's town.  The slug is for a person; the digest of the URL is
+        what keeps repositories apart.
+
+        The ref is deliberately *not* part of the key.  What lands here is read
+        back out of CARLA (:func:`~...maps.opendrive.ensure_xodr`,
+        ``ScenarioQueue._capture_opendrive``), so it is a function of the CARLA
+        town the map was recorded on, not of the repository's revision.  Keying
+        it on the commit would capture the town again every time a branch
+        moves, and would split a map Autoware's setup unpacked (no commit) from
+        the same map cloned here.  A stale file is replaced the way it always
+        was, by fetching again with ``refresh``.
+        """
+        digest = hashlib.sha256(source.repo_url.encode("utf-8")).hexdigest()[:10]
+        slug = _SLUG_UNSAFE.sub("-", source.repo_name).strip("-").lower() or "repo"
+        return self.root / DERIVED_SUBDIR / f"{slug}-{digest}" / (source.path or "root")
 
     def provisioned(self, source: MapSource) -> Optional[Path]:
         """Return *source*'s map directory if it is already on disk, unpacked.
