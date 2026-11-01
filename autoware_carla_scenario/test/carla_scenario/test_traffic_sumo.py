@@ -1756,7 +1756,7 @@ def test_a_spawn_puts_the_box_at_the_centre_it_is_given() -> None:
         actor = backend._spawn_at_centre(world, _Blueprint(), "vehicle.fake", centre)
         tf = actor.get_transform()
         assert (tf.location.x, tf.location.y) == pytest.approx((10.0, 18.7))
-        assert tf.location.z == pytest.approx(0.5)  # a little above the road
+        assert tf.location.z == pytest.approx(0.05)  # just above the road (#1003)
     # The first at the centre, as its blueprint has no box to read; the
     # second where it belongs straight away.
     assert world.spawned_at[0].location.y == pytest.approx(20.0)
@@ -1768,6 +1768,38 @@ def test_a_spawn_puts_the_box_at_the_centre_it_is_given() -> None:
     assert (plain.transform.location.x, plain.transform.location.y) == pytest.approx(
         (10.0, 20.0)
     )
+
+
+class _KerbWorld(_FakeWorld):
+    """Refuses a spawn whose wheels would touch the kerb: one below *floor*."""
+
+    def __init__(self, floor: float) -> None:
+        super().__init__([])
+        self.floor = floor
+
+    def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> Any:
+        if transform.location.z < self.floor:
+            self.spawn_attempts += 1
+            return None
+        return super().try_spawn_actor(blueprint, transform)
+
+
+def test_a_spawn_is_as_near_the_road_as_carla_takes_it() -> None:
+    # Spawned high, a mirror falls onto the road and loses its speed (#1003):
+    # the lowest lift CARLA takes, higher only when it refuses one.
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    centre = Pose2D(10.0, 20.0, 0.0, 90.0)
+    world = _KerbWorld(floor=0.1)
+    actor = backend._spawn_at_centre(world, _Blueprint(), "vehicle.fake", centre)
+    assert actor.get_transform().location.z == pytest.approx(0.2)
+    assert world.spawn_attempts == 2
+    nowhere = _KerbWorld(floor=1.0)
+    assert (
+        backend._spawn_at_centre(nowhere, _Blueprint(), "vehicle.fake", centre) is None
+    )
+    assert nowhere.spawn_attempts == 3
 
 
 @needs_sumo

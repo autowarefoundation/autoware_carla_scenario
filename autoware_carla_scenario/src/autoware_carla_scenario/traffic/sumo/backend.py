@@ -162,6 +162,10 @@ from .signal_states import (
 
 logger = logging.getLogger(__name__)
 
+#: How far above the road a SUMO vehicle is spawned into CARLA (m), tried in
+#: turn: the lowest CARLA takes, so it does not drop onto the road (#1003).
+_SPAWN_LIFTS_M = (0.05, 0.2, 0.5)
+
 __all__ = ["SumoTrafficBackend", "is_bicycle"]
 
 #: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
@@ -3757,27 +3761,34 @@ class SumoTrafficBackend(TrafficBackend):
         guess: the box offset the last actor of the same blueprint had, none
         for the first.  Where the actor's own offset differs, it is put where
         its box is centred at once (``set_transform``), before the first tick
-        it is followed on.  A little above the road, as at road height the
-        wheels touch the kerb and the spawn is refused.
+        it is followed on.  As near the road as CARLA takes it
+        (:data:`_SPAWN_LIFTS_M`): at road height the wheels touch the kerb and
+        the spawn is refused, and one spawned higher falls onto the road,
+        visibly (#1003).
         """
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
         guess = self._blueprint_offsets.get(blueprint_id, (0.0, 0.0))
 
-        def at(offset: tuple[float, float]) -> Any:
+        def at(offset: tuple[float, float], lift: float) -> Any:
             origin = box_centre_to_origin(centre, offset)
             return carla.Transform(
-                carla.Location(origin.x, origin.y, centre.z + 0.5),
+                carla.Location(origin.x, origin.y, centre.z + lift),
                 carla.Rotation(yaw=centre.heading_deg),
             )
 
-        actor = world.try_spawn_actor(blueprint, at(guess))
+        actor = None
+        lift = _SPAWN_LIFTS_M[0]
+        for lift in _SPAWN_LIFTS_M:
+            actor = world.try_spawn_actor(blueprint, at(guess, lift))
+            if actor is not None:
+                break
         if actor is None:
             return None
         offset = self._box_offset(actor)
         self._blueprint_offsets[blueprint_id] = offset
         if offset != guess:
-            actor.set_transform(at(offset))
+            actor.set_transform(at(offset, lift))
         return actor
 
     def _forget_actor(self, actor: Any) -> None:
