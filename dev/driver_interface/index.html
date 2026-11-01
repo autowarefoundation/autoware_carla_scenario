@@ -2494,6 +2494,13 @@ the framework declares its cameras in the policy's revision:</p>
 </tr>
 </tbody>
 </table>
+<p>Either way the pose is in the rig, whose origin is the rear axle (see
+<a href="#coordinate-frames">Coordinate frames</a> below), while a camera's <code>position_*</code> mount
+is relative to the CARLA actor origin, the vehicle's centre, where CARLA attaches
+it: the declared pose is the mount moved by the rear-axle offset, as the LiDAR's
+sweeps and a <a href="../t4_dataset/">T4 dataset</a>'s camera calibration are. The default
+camera at <code>position_x: 1.5</code> on a car whose rear axle is 1.4 m behind its centre is
+declared at x = 2.9 in the rig.</p>
 <p>A 2.x policy is handed the optical frame either way, also by autoware_carla_scenario 4.x,
 whose cameras its server translates. A revision the framework does not know fails
 <code>start_session</code> with <code>ContractError</code>, before the scenario starts.</p>
@@ -3097,7 +3104,9 @@ out). An action aimed at the policy's ego holds only until the policy's next com
   negated, and angular velocity — a pseudovector — picks up an extra sign flip.</li>
 <li><strong>Rig origin.</strong> alpasim puts the rig origin at the rear-axle centre projected to the
   ground, while a CARLA actor's origin is at the vehicle centre. The offset is derived
-  from the vehicle's wheel physics and logged at session start.</li>
+  from the vehicle's wheel physics and logged at session start. Sensor mounts
+  (<code>driver.cameras</code>, <code>driver.lidars</code>) are relative to the actor origin; the cameras'
+  <code>rig_to_camera</code> and the LiDAR sweeps are moved by the offset into the rig.</li>
 </ul>
 <div class="admonition warning">
 <p class="admonition-title">Rear-axle offset on CARLA 0.9.x</p>
@@ -3210,7 +3219,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 21:46:20 UTC"><span class="timeago" datetime="2026-10-31T21:46:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 21:46:20 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 01:47:12 UTC"><span class="timeago" datetime="2026-11-01T01:47:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 01:47:12 UTC">2026-11-01</span>
   </span>
 
     
