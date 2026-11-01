@@ -233,7 +233,12 @@ class AdversarialAction(BaseAction):
         if command is None or scene is None:
             return None
         return start_execution(
-            scene, self._entity_name, command, self._following_mode, self.label
+            scene,
+            self._entity_name,
+            command,
+            self._following_mode,
+            self.label,
+            kind=self.kind.value,
         )
 
 

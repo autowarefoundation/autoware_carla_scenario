@@ -471,6 +471,13 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "AdversityActiveCondition": {
+        "active": (
+            "the adversities its last check found, as adversity_activity "
+            "ActiveAdversity records, for a run's report; a scenario reads the "
+            "condition's verdict, not them"
+        ),
+    },
     "PedestrianEntity": {
         "walk_path": (
             "the walk route_to() laid out, a trajectory.model ResolvedTrajectory "
