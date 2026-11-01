@@ -179,6 +179,55 @@ converged to (TeraSim's NADE stops below 0.3), the self-normalised rate and
 the effective number of runs (openodd's weighted outcomes, see
 [Coverage](coverage.md)).
 
+## Whether an adversity is under way
+
+`AdversityActiveCondition` holds while a road user is carrying out an
+adversity. It does not matter who started it: a named NPC's own adversarial
+action, or NADE sampling a background vehicle. An `EntityFilter` says whose
+adversities count, and a list of kinds says which ([Conditions](api.md)):
+
+```python
+from autoware_carla_scenario import (
+    AdversityActiveCondition,
+    AdversityKind,
+    EntityFilter,
+    StickyCondition,
+)
+
+# A cut-in by anyone within 30 m of the ego, at any time in the run.
+self.register_pass_condition(
+    StickyCondition(
+        AdversityActiveCondition(
+            EntityFilter(max_distance_m=30.0),
+            [AdversityKind.CUT_IN],
+            label="cut_in_near_ego",
+        )
+    )
+)
+# A brake check by one of the TrafficManager's background vehicles ahead.
+AdversityActiveCondition(
+    EntityFilter(names=("background*",), min_ahead_m=0.0),
+    [AdversityKind.BRAKE_CHECK],
+    label="background_brake_check_ahead",
+)
+```
+
+**How long it holds.** It holds from the tick the road user starts driving
+the adversity's path to the tick it is handed back to traffic. Under a
+`StickyCondition` it says that the adversity happened. With no filter and no
+kinds, it holds for any adversity anywhere.
+
+**Victims' responses.** A NADE victim's response (it avoids or accepts
+another road user's adversity) counts only with `include_responses=True`. It
+counts as the adversity it responds to, and its message names whose that is.
+
+**Where the state comes from.** Each adversity's execution records itself in
+`adversity_activity` when it starts and removes itself when it hands the road
+user back. The runner clears what is recorded before each scenario.
+
+It is the `adversity_active` card. Its filter fields are the
+`entity_count` card's.
+
 ## Stalled objects and collisions
 
 TeraSim's `StalledObjectAdversity` and `CollisionAdversity` are scheduled,
