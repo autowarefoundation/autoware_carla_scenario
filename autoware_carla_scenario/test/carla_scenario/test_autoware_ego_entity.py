@@ -647,12 +647,14 @@ class TestLaunchedStack:
 
     def test_a_stack_that_never_reaches_the_bridge_ends_the_run(self) -> None:
         bridge = FakeAutowareBridge(connected=False)
-        entity = _launched_entity(bridge, _FakeLauncher(), boot_timeout_s=0.0)
+        entity = _launched_entity(bridge, _FakeLauncher(), boot_timeout_s=60.0)
         world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
         _place(entity, world)
         entity.on_scenario_start(world)
 
-        entity.on_tick(world, 0.0)
+        # An hour later, wall clock, the stack has still not dialled in.
+        with mock.patch("time.monotonic", return_value=time.monotonic() + 3600.0):
+            entity.on_tick(world, 0.0)
 
         assert entity.termination_requested
         assert entity.termination_reason is not None
