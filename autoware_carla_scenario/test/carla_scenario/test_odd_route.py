@@ -68,6 +68,21 @@ def _length(nishishinjuku: tuple[Any, Any], lanelet_id: int) -> float:
     return float(lanelet2.geometry.length2d(nishishinjuku[0].laneletLayer[lanelet_id]))
 
 
+def _abreast_of(
+    nishishinjuku: tuple[Any, Any], lanelet_id: int, s: float, beside_id: int
+) -> float:
+    """``s`` on *beside_id* abreast of ``s`` on *lanelet_id*."""
+    from autoware_carla_scenario.trajectory.relative_lane import (
+        _arc,
+        _centreline,
+        _point_at,
+    )
+
+    layer = nishishinjuku[0].laneletLayer
+    x, y = _point_at(_centreline(layer[lanelet_id]), s)
+    return _arc(layer[beside_id], x, y)[0]
+
+
 def _map_odd(
     *modules: OddModule, extra: tuple[OddAttribute, ...] = ()
 ) -> OddDefinition:
@@ -263,6 +278,41 @@ class TestPlanRoute:
         assert metres[183] == pytest.approx(_length(nishishinjuku, 183) / 2)
         assert metres[184] == pytest.approx(_length(nishishinjuku, 184) / 2)
 
+    def test_a_lane_change_past_the_middle_crosses_at_the_start(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        # 157 and 158 run side by side; the start is past 157's middle (#958).
+        start = 0.8 * _length(nishishinjuku, 157)
+        goal = 0.95 * _length(nishishinjuku, 158)
+        route = PlannedRoute(
+            start=Lanelet2Pose(157, start), goal=Lanelet2Pose(158, goal)
+        )
+        planned = plan_route(route, *nishishinjuku)
+        assert [i for i, _ in planned] == [157, 158]
+        assert planned[0][1] == pytest.approx(0.0)
+        assert planned[1][1] == pytest.approx(
+            goal - _abreast_of(nishishinjuku, 157, start, 158)
+        )
+
+    def test_a_goal_before_the_middle_beside_crosses_abreast_of_it(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        start = 0.1 * _length(nishishinjuku, 157)
+        goal = 0.3 * _length(nishishinjuku, 158)
+        route = PlannedRoute(
+            start=Lanelet2Pose(157, start), goal=Lanelet2Pose(158, goal)
+        )
+        planned = plan_route(route, *nishishinjuku)
+        assert [i for i, _ in planned] == [157, 158]
+        cross = _abreast_of(nishishinjuku, 158, goal, 157)
+        assert planned[0][1] == pytest.approx(cross - start)
+        # From abreast of the crossing to the goal: next to nothing, though
+        # not exactly nothing, the lanes not quite parallel.
+        assert planned[1][1] == pytest.approx(
+            goal - _abreast_of(nishishinjuku, 157, cross, 158)
+        )
+        assert 0.0 <= planned[1][1] < 0.1
+
     def test_no_goal(self, nishishinjuku: tuple[Any, Any]) -> None:
         with pytest.raises(RouteError, match="no goal"):
             plan_route(PlannedRoute(start=LEFT_TURN.start), *nishishinjuku)
@@ -383,9 +433,14 @@ class TestALegBehindItsStart:
         ids = [int(ll.id) for ll in route_lanelets(route, *nishishinjuku)]
         assert ids[:2] == [157, 158] and ids[-1] == 157 and ids.count(157) == 2
         planned = plan_route(route, *nishishinjuku)
-        # Left by a lane change: half of it to the start's end, as plan_route
-        # splits one, and to the goal on its way back round.
-        assert planned[0][1] == pytest.approx(0.1 * length)
+        # Left by a lane change past its middle: right at the start, so none
+        # of it, then 158 from abreast of the start on (#958), and 157 to
+        # the goal on its way back round.
+        assert planned[0][1] == pytest.approx(0.0)
+        assert planned[1][1] == pytest.approx(
+            _length(nishishinjuku, 158)
+            - _abreast_of(nishishinjuku, 157, 0.8 * length, 158)
+        )
         assert planned[-1][1] == pytest.approx(0.2 * length)
 
     def test_a_waypoint_behind_the_one_before(
@@ -887,6 +942,31 @@ class TestRoutePoses:
             _length(nishishinjuku, 184) / 2
         )
 
+    @pytest.mark.parametrize(
+        ("start", "goal"),
+        [(0.8, 0.95), (0.1, 0.3)],
+        ids=["start-past-the-middle", "goal-before-the-middle"],
+    )
+    def test_a_lane_change_never_runs_back(
+        self, nishishinjuku: tuple[Any, Any], start: float, goal: float
+    ) -> None:
+        """157 and 158 run side by side: the poses go forward from the start,
+        not from either lanelet's middle (#958)."""
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        first = Lanelet2Pose(157, start * _length(nishishinjuku, 157))
+        last = Lanelet2Pose(158, goal * _length(nishishinjuku, 158))
+        poses = route_poses(PlannedRoute(start=first, goal=last), *nishishinjuku, 5.0)
+        assert poses[0] == first
+        assert poses[-1] == last
+        # Each pose's s projected onto 158: never decreasing, none behind the start.
+        along = [
+            p.s if p.lanelet_id == 158 else _abreast_of(nishishinjuku, 157, p.s, 158)
+            for p in poses
+        ]
+        assert all(b >= a - 1e-6 for a, b in zip(along, along[1:]))
+        assert min(along) >= along[0] - 1e-6
+
     def test_the_lanelets_are_plan_routes(self, nishishinjuku: tuple[Any, Any]) -> None:
         from autoware_carla_scenario.odd.route_plan import route_lanelets
 
@@ -950,3 +1030,84 @@ class TestAWalkAgainstTheLanelets:
         # x along the walk: 17, 15, 13, 11, then 10, 8, 6, 4, 2 -- always down.
         x = [p.s + (10.0 if p.lanelet_id == 2 else 0.0) for p in poses]
         assert all(b < a for a, b in zip(x, x[1:]))
+
+
+def _three_lanes() -> tuple[Any, Any]:
+    """Three straight 30 m lanes side by side along x, 1 to 3 leftwards, with
+    dashed lines between them to change lanes across."""
+    import lanelet2.routing
+    import lanelet2.traffic_rules
+    from lanelet2.core import AttributeMap, Lanelet, LaneletMap, LineString3d, Point3d
+
+    ids = iter(range(100, 1000))
+
+    def line(y: float) -> Any:
+        return LineString3d(
+            next(ids),
+            [Point3d(next(ids), 0.0, y, 0.0), Point3d(next(ids), 30.0, y, 0.0)],
+            AttributeMap({"type": "line_thin", "subtype": "dashed"}),
+        )
+
+    lines = [line(y) for y in (0.0, 3.0, 6.0, 9.0)]
+    lanelet_map = LaneletMap()
+    for k in range(3):
+        lanelet_map.add(
+            Lanelet(
+                k + 1,
+                lines[k + 1],
+                lines[k],
+                AttributeMap(
+                    {"type": "lanelet", "subtype": "road", "location": "urban"}
+                ),
+            )
+        )
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany,
+        lanelet2.traffic_rules.Participants.Vehicle,
+    )
+    return lanelet_map, lanelet2.routing.RoutingGraph(lanelet_map, rules)
+
+
+class TestSuccessiveLaneChanges:
+    """Two lane changes in a row, from lane 1 across 2 to 3 (#958)."""
+
+    @pytest.mark.parametrize(
+        ("start", "goal", "metres"),
+        [
+            # Middle to middle: lane 2 is crossed straight over.
+            (2.0, 28.0, [13.0, 0.0, 13.0]),
+            # Past the middle: across at the start.
+            (20.0, 28.0, [0.0, 0.0, 8.0]),
+            # The goal before the middle: across abreast of it.
+            (2.0, 5.0, [3.0, 0.0, 0.0]),
+        ],
+    )
+    def test_x_never_runs_back(
+        self, start: float, goal: float, metres: list[float]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = _three_lanes()
+        route = PlannedRoute(start=Lanelet2Pose(1, start), goal=Lanelet2Pose(3, goal))
+        poses = route_poses(route, lanelet_map, graph, 2.0)
+        assert poses[0] == route.start
+        assert poses[-1] == route.goal
+        # Straight lanes from x = 0: s is x.
+        assert all(b.s >= a.s for a, b in zip(poses, poses[1:]))
+        planned = plan_route(route, lanelet_map, graph)
+        assert [i for i, _ in planned] == [1, 2, 3]
+        assert [m for _, m in planned] == pytest.approx(metres)
+
+    def test_inverted_lanelets_are_measured_the_way_they_are_travelled(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import _driven, _lengths, _Leg
+
+        lanelet_map, graph = _three_lanes()
+        lanelets = [lanelet_map.laneletLayer[i].invert() for i in (3, 2, 1)]
+        # Not one another's followers: each step is a lane change.  From x =
+        # 25 down to x = 3, metres counted from x = 30.
+        leg = _Leg(Lanelet2Pose(3, 25.0), Lanelet2Pose(1, 3.0), lanelets)
+        assert _driven(leg, _lengths(lanelets), graph) == pytest.approx(
+            [(5.0, 15.0), (15.0, 15.0), (15.0, 27.0)]
+        )

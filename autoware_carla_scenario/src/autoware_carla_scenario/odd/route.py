@@ -25,10 +25,12 @@ The metres the route spends in each bucket of each attribute the map decides
 are the run's *expected* coverage, and summed over a batch of scenarios they
 say which buckets no planned route reaches at all.
 
-Two simplifications, both in the length rather than in the verdict: a lane
-change splits the length of the lanelets on either side of it between them,
-and a goal behind the start on the same lanelet is a route of no length (the
-routing graph is not asked to go round the block).
+The metres on each lanelet are the ones a vehicle following the route's
+poses drives: a lane change crosses from one lanelet to the one beside it
+once, at their middle unless the route begins past it or ends before it, so
+the stretch they run side by side is counted once, split between them; and a
+goal behind the start on the same lanelet is reached round the block, as
+far as the routing graph has a way back to it.
 
 The planning itself (:class:`PlannedRoute`, :func:`plan_route` and
 :class:`RouteError`) lives in :mod:`~autoware_carla_scenario.odd.route_plan`
