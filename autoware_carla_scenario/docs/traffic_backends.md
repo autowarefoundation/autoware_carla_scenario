@@ -732,7 +732,10 @@ self.register_pre_tick(
   none, with a warning.
 - **Where they go** is a driving lane. Both backends put a vehicle on the lane
   nearest the spot asked for, facing along it (the TrafficManager would turn
-  one put askew onto its lane at once), and refuse a spot more than 5 m
+  one put askew onto its lane at once). Under `traffic_manager`, where that
+  lane runs against the spot's heading (near a two-way road's centre line) the
+  lane beside it running the spot's way is taken instead, or the spot is
+  refused. Both refuse a spot more than 5 m
   (`BACKGROUND_MAX_OFFSET_M` in `traffic/base.py`) from any driving lane -- a
   crosswalk, a footway -- with an info message; the source tries elsewhere.
 - **`speed_kmh`** is the speed they drive at, at most: both backends cap a

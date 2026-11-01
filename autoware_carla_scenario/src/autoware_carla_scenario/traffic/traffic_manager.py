@@ -609,10 +609,13 @@ class TrafficManagerBackend(TrafficBackend):
         SUMO puts its vehicle on its nearest lane, and refused (``None``,
         logged) where that is farther than
         :data:`~.base.BACKGROUND_MAX_OFFSET_M`: a crosswalk, a footway, the
-        middle of a junction's plaza.  The vehicle faces along the lane, not
-        at *transform*'s yaw: the TrafficManager drives it along its lane
-        whichever way it was put, so one put askew or against the lane would
-        swerve or turn round at once, and SUMO's departs along its lane too.
+        middle of a junction's plaza.  Where the nearest lane runs more than
+        90 degrees from *transform*'s yaw (a spot near a two-way road's centre
+        line), the lane beside it that runs *transform*'s way is taken
+        instead, or the spot is refused: a vehicle is never put facing
+        traffic.  The vehicle faces along the lane, not exactly at
+        *transform*'s yaw: the TrafficManager drives it along its lane, so one
+        put askew would swerve at once, and SUMO's departs along its lane too.
 
         One spawned before :meth:`start` is put on autopilot there, with every
         other vehicle; one spawned during the run is put on it at once.  It is
@@ -1692,10 +1695,23 @@ def _background_lane(
         )
         return None
     waypoint: "carla.Waypoint" = found
+    yaw = transform.rotation.yaw
+    if _heading_error_deg(waypoint.transform.rotation.yaw, yaw) > 90.0:
+        # The nearest lane runs against the spot's heading -- a spot near the
+        # centre line of a two-way road: the lane beside it that runs the
+        # spot's way, if there is one; never a vehicle put facing traffic.
+        along = _background_lane_along(waypoint, location, yaw)
+        if along is None:
+            logger.info(
+                "Background vehicle refused at (%.1f, %.1f): its nearest lane "
+                "runs the other way",
+                location.x,
+                location.y,
+            )
+            return None
+        waypoint = along
     lane = waypoint.transform
-    # Measured across the ground, as SUMO measures it: a lane on a slope or a
-    # bridge is no farther for the height the spot was asked at.
-    offset = math.hypot(lane.location.x - location.x, lane.location.y - location.y)
+    offset = _ground_distance(lane.location, location)
     if offset > BACKGROUND_MAX_OFFSET_M:
         # The same value, and the same report, as SUMO's.
         logger.info(
@@ -1708,6 +1724,37 @@ def _background_lane(
         )
         return None
     return lane
+
+
+def _background_lane_along(
+    waypoint: "carla.Waypoint", location: "carla.Location", yaw: float
+) -> Optional["carla.Waypoint"]:
+    """The driving lane beside *waypoint* nearest *location* whose heading is
+    within 90 degrees of *yaw*, or ``None``."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    best: Optional["carla.Waypoint"] = None
+    best_offset = math.inf
+    for side in (LaneChangeDirection.LEFT, LaneChangeDirection.RIGHT):
+        found = _adjacent_lane(waypoint, side)
+        if found is None:
+            continue
+        neighbour: "carla.Waypoint" = found
+        if neighbour.lane_type != carla.LaneType.Driving:
+            continue
+        if _heading_error_deg(neighbour.transform.rotation.yaw, yaw) > 90.0:
+            continue
+        offset = _ground_distance(neighbour.transform.location, location)
+        if offset < best_offset:
+            best, best_offset = neighbour, offset
+    return best
+
+
+def _ground_distance(a: "carla.Location", b: "carla.Location") -> float:
+    """How far *a* is from *b* across the ground, m: as SUMO measures a
+    background vehicle's offset, a lane on a slope or a bridge is no farther
+    for the height the spot was asked at."""
+    return math.hypot(a.x - b.x, a.y - b.y)
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

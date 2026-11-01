@@ -28,6 +28,23 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 _LANE_YAW = 90.0
 
 
+def _waypoint(
+    x: float,
+    y: float,
+    yaw: float,
+    lane_type: Any = carla.LaneType.Driving,
+    left: Any = None,
+    right: Any = None,
+) -> Any:
+    """A fake ``carla.Waypoint`` on a lane centred at *x*, heading *yaw*."""
+    return SimpleNamespace(
+        transform=carla.Transform(carla.Location(x, y, 1.25), carla.Rotation(yaw=yaw)),
+        lane_type=lane_type,
+        get_left_lane=lambda: left,
+        get_right_lane=lambda: right,
+    )
+
+
 class _Lane:
     """A map with one driving lane, along x = 0; every query is kept."""
 
@@ -39,11 +56,27 @@ class _Lane:
         self.queries.append(kwargs)
         if not self.present:
             return None
-        return SimpleNamespace(
-            transform=carla.Transform(
-                carla.Location(0.0, location.y, 1.25), carla.Rotation(yaw=_LANE_YAW)
-            )
-        )
+        return _waypoint(0.0, location.y, _LANE_YAW)
+
+
+class _TwoWayRoad(_Lane):
+    """A two-way road whose centre line is x = 0: the nearest lane, centred
+    at x = 1.6, runs towards -y; across the centre line, at x = -1.6, its
+    left neighbour runs towards +y.  *beside* replaces that neighbour."""
+
+    _UNSET: Any = object()
+
+    def __init__(self, beside: Any = _UNSET) -> None:
+        super().__init__()
+        self.beside = beside
+
+    def get_waypoint(self, location: Any, **kwargs: Any) -> Optional[Any]:
+        self.queries.append(kwargs)
+        beside = self.beside
+        if beside is self._UNSET:
+            beside = _waypoint(-1.6, location.y, _LANE_YAW)
+        sidewalk = _waypoint(3.2, location.y, -_LANE_YAW, carla.LaneType.Sidewalk)
+        return _waypoint(1.6, location.y, -_LANE_YAW, left=beside, right=sidewalk)
 
 
 class _Actor:
@@ -134,8 +167,8 @@ class TestTrafficManager:
         )
         assert inside is not None and outside is None
 
-    @pytest.mark.parametrize("asked_yaw", [0.0, -90.0, 180.0])
-    def test_it_faces_along_its_lane_whatever_yaw_it_was_asked_at(
+    @pytest.mark.parametrize("asked_yaw", [0.0, 45.0, 90.0, 150.0, 180.0])
+    def test_it_faces_along_its_lane_at_any_yaw_within_90_degrees_of_it(
         self, monkeypatch: pytest.MonkeyPatch, asked_yaw: float
     ) -> None:
         handle, world, _road = _tm_spawn(monkeypatch, _spot(1.0, asked_yaw))
@@ -148,6 +181,60 @@ class TestTrafficManager:
         vx, vy = world.actor.velocity
         assert vx == pytest.approx(0.0, abs=1e-5)
         assert vy == pytest.approx(10.0, rel=1e-5)
+
+
+class TestTrafficManagerDirection:
+    """A spot near a two-way road's centre line goes on the lane running its
+    way, never on the nearest one when that runs against it."""
+
+    def test_the_lane_beside_running_its_way_is_taken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        handle, world, _road = _tm_spawn(
+            monkeypatch, _spot(0.2, _LANE_YAW), _TwoWayRoad()
+        )
+        assert handle is not None
+        (at,) = world.spawned
+        assert at.location.x == pytest.approx(-1.6)
+        assert at.rotation.yaw == pytest.approx(_LANE_YAW)
+        assert world.actor.velocity is not None
+        _vx, vy = world.actor.velocity
+        assert vy == pytest.approx(10.0, rel=1e-5)
+
+    def test_the_nearest_lane_is_kept_when_it_runs_its_way(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        handle, world, _road = _tm_spawn(
+            monkeypatch, _spot(0.2, -_LANE_YAW), _TwoWayRoad()
+        )
+        assert handle is not None
+        (at,) = world.spawned
+        assert at.location.x == pytest.approx(1.6)
+        assert at.rotation.yaw == pytest.approx(-_LANE_YAW)
+
+    @pytest.mark.parametrize(
+        "beside",
+        [
+            None,
+            _waypoint(-1.6, 5.0, -_LANE_YAW),
+            _waypoint(-1.6, 5.0, _LANE_YAW, carla.LaneType.Shoulder),
+            _waypoint(-6.0, 5.0, _LANE_YAW),
+        ],
+        ids=["no-lane", "also-against", "not-driving", "too-far"],
+    )
+    def test_refused_when_no_lane_beside_runs_its_way(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        beside: Any,
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger=tm_module.__name__):
+            handle, world, _road = _tm_spawn(
+                monkeypatch, _spot(0.2, _LANE_YAW), _TwoWayRoad(beside)
+            )
+        assert handle is None
+        assert world.spawned == []
+        assert any("refused" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
