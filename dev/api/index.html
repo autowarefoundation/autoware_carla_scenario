@@ -2829,6 +2829,14 @@ and composite conditions reset their children.</p>
 <td>Safety checks.</td>
 </tr>
 <tr>
+<td><code>EntityFilter(names=(), kind=RoadUserKind.ANY, reference="Ego", min_distance_m=None, max_distance_m=None, min_ahead_m=None, max_ahead_m=None, min_left_m=None, max_left_m=None, lanelet_ids=(), include_reference=False)</code></td>
+<td>Which road users a condition looks at, when it is about <em>some</em> of them rather than one named entity. <code>names</code> are role-name patterns (<code>*</code> any run of characters, <code>?</code> any one), so the TrafficManager's (<code>background*</code>) and SUMO's (<code>sumo:*</code>) background vehicles can be picked out as well as a scenario's own; <code>kind</code> is vehicles, pedestrians or both (<code>RoadUserKind</code>); the distance between centres, and the offset ahead (negative: behind) and to the left (negative: to the right) in <code>reference</code>'s frame on the ground plane, bound it relative to that entity; <code>lanelet_ids</code> require it on one of them. Every bound is optional. <code>select(world)</code> answers which match now, as <code>SelectedEntity(name, actor_id, distance, ahead, left)</code>. The reference itself, actors without a role name and actors parked under the map are never taken (the reference is, with <code>include_reference</code>); a filter with a relative bound takes nothing while its reference is not in the world.</td>
+</tr>
+<tr>
+<td><code>EntityCountCondition(entities, rule=GREATER_THAN_OR_EQUAL, count=1, *, label)</code></td>
+<td>Holds while the number of road users <code>entities</code> (an <code>EntityFilter</code>) takes compares to <code>count</code>: "a vehicle within 30 m ahead of the ego" (<code>EntityFilter(kind=RoadUserKind.VEHICLE, min_ahead_m=0, max_ahead_m=30)</code>), "no pedestrian on the crosswalk" (<code>EQUAL_TO</code> 0). Its message names the ones it took. The <code>entity_count</code> card, whose filter fields every filtered condition shares.</td>
+</tr>
+<tr>
 <td><code>OffRoadFractionCondition(fraction, entity_name=None, *, label)</code></td>
 <td>Fails once at least <code>fraction</code> (in <code>(0, 1]</code>) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the <code>offroad</code> metric, with a tolerance. See <a href="../metrics/#off-the-road-as-a-fail-condition">Metrics</a>.</td>
 </tr>
@@ -3686,7 +3694,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 23:38:20 UTC"><span class="timeago" datetime="2026-10-31T23:38:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 23:38:20 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 05:28:29 UTC"><span class="timeago" datetime="2026-11-01T05:28:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 05:28:29 UTC">2026-11-01</span>
   </span>
 
     

@@ -4740,9 +4740,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-258 of the package's 378
-modules (68%; about 75,200 of
-130,800 lines) are <code>CHECKED</code>: the kinematics, the
+260 of the package's 380
+modules (68%; about 75,800 of
+131,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4754,7 +4754,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 258 CHECKED modules</summary>
+<summary>The 260 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5084,8 +5084,16 @@ first paragraph of its docstring:</p>
 <td>Elapsed-time-based scenario pass condition.</td>
 </tr>
 <tr>
+<td><code>conditions.entity_count</code></td>
+<td>Condition on how many road users an <code>EntityFilter</code> takes.</td>
+</tr>
+<tr>
 <td><code>conditions.entity_existence</code></td>
 <td>Fail condition that triggers when a named actor does not exist.</td>
+</tr>
+<tr>
+<td><code>conditions.entity_filter</code></td>
+<td>Which road users a condition looks at: an <code>EntityFilter</code>.</td>
 </tr>
 <tr>
 <td><code>conditions.lane_change_settled</code></td>
@@ -5798,7 +5806,7 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>117 functions and methods of those modules are <code>UNCALLED</code>
+<p>118 functions and methods of those modules are <code>UNCALLED</code>
 (28 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -5811,7 +5819,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 117 UNCALLED functions and methods, and why</summary>
+<summary>The 118 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5843,6 +5851,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>conditions.composition.turn_indicator.TurnIndicatorCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.waypoint.WaypointCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.elapsed_time.ElapsedTimeCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.entity_count.EntityCountCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.metric.MetricCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.not_condition.NotCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.off_road_fraction.OffRoadFractionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
