@@ -276,7 +276,12 @@ class TestPlanRoute:
         assert [i for i, _ in planned] == [183, 184, after]
         metres = dict(planned)
         assert metres[183] == pytest.approx(_length(nishishinjuku, 183) / 2)
-        assert metres[184] == pytest.approx(_length(nishishinjuku, 184) / 2)
+        # From abreast of 183's middle: about half of 184, not exactly.
+        middle = _length(nishishinjuku, 183) / 2
+        assert metres[184] == pytest.approx(
+            _length(nishishinjuku, 184) - _abreast_of(nishishinjuku, 183, middle, 184)
+        )
+        assert metres[184] == pytest.approx(_length(nishishinjuku, 184) / 2, abs=0.1)
 
     def test_a_lane_change_past_the_middle_crosses_at_the_start(
         self, nishishinjuku: tuple[Any, Any]
@@ -939,8 +944,27 @@ class TestRoutePoses:
             < _length(nishishinjuku, 183) / 2
         )
         assert min(p.s for p in poses if p.lanelet_id == 184) == pytest.approx(
-            _length(nishishinjuku, 184) / 2
+            _abreast_of(nishishinjuku, 183, _length(nishishinjuku, 183) / 2, 184)
         )
+
+    def test_a_lane_change_joins_abreast_not_at_half_the_other_length(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        """146 (18 m) and 147 (29 m) side by side: half of 147 is 5.5 m behind
+        abreast of half of 146, so joining there would run back."""
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = nishishinjuku
+        assert graph.right(lanelet_map.laneletLayer[146]).id == 147
+        first = Lanelet2Pose(146, 0.0)
+        last = Lanelet2Pose(147, _length(nishishinjuku, 147))
+        poses = route_poses(PlannedRoute(start=first, goal=last), *nishishinjuku, 2.0)
+        assert poses[0] == first and poses[-1] == last
+        middle = _length(nishishinjuku, 146) / 2
+        assert max(p.s for p in poses if p.lanelet_id == 146) <= middle
+        join = _abreast_of(nishishinjuku, 146, middle, 147)
+        assert join > _length(nishishinjuku, 147) / 2 + 5.0
+        assert min(p.s for p in poses if p.lanelet_id == 147) == pytest.approx(join)
 
     @pytest.mark.parametrize(
         ("start", "goal"),

@@ -348,14 +348,11 @@ def _driven(
     """``(begin, end)`` metres driven along each lanelet of *leg*, the way it
     is travelled: its :func:`_spans`, cut where a lane change crosses.
 
-    A lanelet left by a lane change is left at its middle and the lanelet
-    changed to joined at its own, though not behind the point abreast of
-    where the first is entered (the leg's begin, or where a lane change
-    joined it).  Entered past its middle, or left where the leg ends before
-    it, it is left there instead and the lanelet changed to joined abreast of
-    that point.  Either way no further on than the leg ends on the lanelet
-    changed to: a leg that ends there before the join crosses abreast of its
-    end.
+    A lanelet left by a lane change is left at its middle -- or where it is
+    entered (the leg's begin, or where a lane change joined it), when that
+    is past the middle, or abreast of where the leg ends, when that is
+    before it -- and the lanelet changed to is joined abreast of that point,
+    no further on than the leg ends on it.
     """
     spans = _spans(leg, lengths)
     changes = _lane_changes(leg.lanelets, routing_graph)
@@ -382,19 +379,14 @@ def _driven(
         if before:
             begin = min(max(begin, joined), end)
         if after:
-            beside = leg.lanelets[i + 1]
-            middle = lengths[i] / 2.0
-            if begin <= middle <= limits[i]:
-                # Middle to middle, but never behind where the lanelet is
-                # entered.
-                joined = max(
-                    lengths[i + 1] / 2.0,
-                    _abreast(lanelet, lengths[i], begin, beside, lengths[i + 1]),
-                )
-                end = middle
-            else:
-                end = max(begin, min(limits[i], middle))
-                joined = _abreast(lanelet, lengths[i], end, beside, lengths[i + 1])
+            # At the middle, though not behind where the lanelet is entered
+            # nor past how far it may be driven; joined abreast of that, even
+            # when it is the middle: half of a lanelet of another length is
+            # not beside it, and joining there would run back or skip ahead.
+            end = max(begin, min(limits[i], lengths[i] / 2.0))
+            joined = _abreast(
+                lanelet, lengths[i], end, leg.lanelets[i + 1], lengths[i + 1]
+            )
             joined = min(joined, limits[i + 1])
         driven.append((begin, end))
     return driven
