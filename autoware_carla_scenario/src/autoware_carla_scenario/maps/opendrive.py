@@ -220,8 +220,16 @@ def ensure_xodr(
         OpenDriveUnavailable: If no OpenDRIVE could be found or fetched.
     """
     name = map_name or resolved.name
-    if not refresh and resolved.xodr_path is not None:
-        return resolved.xodr_path
+    if not refresh:
+        # A derived file is only this CARLA map's when it was captured under
+        # its name; the one resolve_map found is named after the directory.
+        if resolved.xodr_path is not None and (
+            not resolved.xodr_is_derived or name == resolved.name
+        ):
+            return resolved.xodr_path
+        cached = resolved.cached_derived_xodr(name)
+        if cached is not None:
+            return cached
 
     destination = resolved.derived_xodr(name)
     destination.parent.mkdir(parents=True, exist_ok=True)
