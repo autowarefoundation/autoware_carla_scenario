@@ -108,7 +108,12 @@ def list_maps(
         MapCacheError: If the repository could not be cloned or updated.
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
-    files = (cache or GitMapCache()).list_files(parsed.with_path(""), refresh=refresh)
+    store = cache or GitMapCache()
+    # Listed at the commit the ref names now, as `resolve_map` resolves it: a
+    # branch listed under its own name would be cloned once and never moved,
+    # and kept in a second entry beside the one resolving fills.  Offline,
+    # `at_tip` falls back to the commit last resolved, or to the ref itself.
+    files = store.list_files(store.at_tip(parsed.with_path("")), refresh=refresh)
 
     prefix = f"{parsed.path}/" if parsed.path else ""
     by_directory: dict[str, list[str]] = {}

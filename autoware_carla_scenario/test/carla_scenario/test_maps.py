@@ -1094,6 +1094,78 @@ class TestListMaps:
         assert [entry.name for entry in entries] == ["TownB"]
 
 
+class TestListMapsAtTip:
+    """Listing a branch lists what it names now, from resolving's entry (#1051)."""
+
+    @pytest.fixture
+    def remote(self, origin_repo: Path, tmp_path: Path) -> Path:
+        """A bare clone of the map repository, pushed to like a real remote."""
+        bare = tmp_path / "remote.git"
+        _git(tmp_path, "clone", "--quiet", "--bare", str(origin_repo), str(bare))
+        return bare
+
+    @staticmethod
+    def _push_town_c(remote: Path, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        _git(tmp_path, "clone", "--quiet", str(remote), str(work))
+        (work / "autoware_maps" / "TownC").mkdir()
+        (work / "autoware_maps" / "TownC" / "lanelet2_map.osm").write_text(_OSM)
+        _git(work, "add", "-A")
+        _git(work, "commit", "--quiet", "-m", "Publish TownC")
+        _git(work, "push", "--quiet", "origin", "main")
+
+    @staticmethod
+    def _entries(cache: GitMapCache) -> list[str]:
+        return sorted(
+            path.name
+            for path in (cache.root / ".repos").iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        )
+
+    def test_a_new_commit_on_the_branch_is_listed(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        assert [e.name for e in list_maps(uri, cache=cache)] == ["TownA", "TownB"]
+
+        self._push_town_c(remote, tmp_path)
+
+        names = [e.name for e in list_maps(uri, cache=cache)]
+        assert names == ["TownA", "TownB", "TownC"]
+
+    def test_listing_and_resolving_share_one_entry(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        entry = list_maps(uri, cache=cache)[0]
+        listed = self._entries(cache)
+        resolved = resolve_map(entry.uri, cache=cache)
+
+        assert len(listed) == 1
+        assert self._entries(cache) == listed
+        assert resolved.lanelet2_path.is_relative_to(cache.root / ".repos" / listed[0])
+
+    def test_an_unreachable_remote_still_lists_what_was_cached(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        first = [e.name for e in list_maps(uri, cache=cache)]
+        remote.rename(tmp_path / "moved-away")
+
+        assert [e.name for e in list_maps(uri, cache=cache)] == first
+
+    def test_an_unreachable_remote_lists_an_entry_filed_under_the_branch(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        # A cache filled before listing asked for the tip: the entry is named
+        # after the branch and no tip was ever recorded.
+        uri = f"git+file://{remote}@main"
+        cache.list_files(MapSource.parse(uri))
+        remote.rename(tmp_path / "moved-away")
+
+        assert [e.name for e in list_maps(uri, cache=cache)] == ["TownA", "TownB"]
+
+
 # ---------------------------------------------------------------------------
 # Config resolution
 # ---------------------------------------------------------------------------
