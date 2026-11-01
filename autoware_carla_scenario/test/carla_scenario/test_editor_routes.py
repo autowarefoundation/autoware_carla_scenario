@@ -2394,6 +2394,78 @@ class TestTheJunctionEditor:
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == "ns_green"
 
+    def test_renaming_a_group_onto_another_groups_name_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A carried rename onto a taken name would merge the two groups."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+        client.post(f"/draft/{draft_id}/signal-controller")
+        before = self._map(store, draft_id).model_dump()
+
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": " ew ", "lanelet2_regulatory_element_ids": "1330"},
+        )
+
+        assert "There is already a signal group called &#39;ew&#39;" in response.text
+        assert self._map(store, draft_id).model_dump() == before
+
+    def test_renaming_a_group_to_its_own_name_is_no_rename(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "ns", "lanelet2_regulatory_element_ids": "1339"},
+        )
+
+        assert "There is already" not in response.text
+        groups = self._map(store, draft_id).signal_groups
+        assert [g.name for g in groups] == ["ns", "ew"]
+        assert groups[0].lanelet2_regulatory_element_ids == [1339]
+
+    def test_renaming_a_controller_onto_another_controllers_name_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._card(client, store, draft_id)
+        before = _document(store, draft_id).model_dump()
+
+        response = client.post(
+            f"/draft/{draft_id}/signal-controller/0", data={"name": "junction_2"}
+        )
+
+        assert "There is already a signal controller called" in response.text
+        assert _document(store, draft_id).model_dump() == before
+
+    def test_renaming_a_phase_onto_another_phases_name_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        self._card(client, store, draft_id)
+        before = _document(store, draft_id).model_dump()
+
+        response = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/1",
+            data={"name": "phase_1", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        assert "There is already a phase" in response.text
+        assert _document(store, draft_id).model_dump() == before
+
     def test_deleting_a_phase_clears_the_cards_that_named_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

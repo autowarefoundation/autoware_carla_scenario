@@ -558,6 +558,9 @@ class EditorService:
         if "name" in form:
             new_name = str(form["name"]).strip()
             if new_name and new_name != group.name:
+                _refuse_taken_name(
+                    "signal group", new_name, document.map.signal_groups, group
+                )
                 self._rename_signal_group(document, group.name, new_name)
                 group.name = new_name
         if "lanelet2_regulatory_element_ids" in form:
@@ -629,6 +632,12 @@ class EditorService:
         if "name" in form:
             new_name = str(form["name"]).strip()
             if new_name and new_name != controller.name:
+                _refuse_taken_name(
+                    "signal controller",
+                    new_name,
+                    document.map.traffic_signal_controllers,
+                    controller,
+                )
                 old = controller.name
                 for other in document.map.traffic_signal_controllers:
                     if other.reference == old:
@@ -694,6 +703,9 @@ class EditorService:
         if "name" in form:
             new_name = str(form["name"]).strip()
             if new_name and new_name != phase.name:
+                _refuse_taken_name(
+                    f"phase of {controller.name!r}", new_name, controller.phases, phase
+                )
                 old = phase.name
                 for path, node in _signal_controller_uses(document):
                     if (
@@ -1540,6 +1552,20 @@ def _parse(fields: Any, form: Mapping[str, Any], prefix: str = "") -> dict[str, 
 def _signal_group_names(document: ScenarioDocument) -> "list[str]":
     """Every declared group name, in declaration order."""
     return [group.name for group in document.map.signal_groups]
+
+
+def _refuse_taken_name(what: str, name: str, rows: "Sequence[Any]", row: Any) -> None:
+    """Raise when a row other than *row* is already called *name*.
+
+    A rename carries into every reference to the old name, so renaming onto a
+    name in use would merge the two rows' references -- and renaming back
+    would then take both.  Names compare stripped, as the validator reads them.
+
+    Raises:
+        EditorError: If another row in *rows* already has the name.
+    """
+    if any(other is not row and (other.name or "").strip() == name for other in rows):
+        raise EditorError(f"There is already a {what} called {name!r}.")
 
 
 def _unused_name(stem: str, taken: "Sequence[str]") -> str:
