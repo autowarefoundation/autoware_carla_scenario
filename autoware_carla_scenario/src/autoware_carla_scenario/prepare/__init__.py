@@ -45,6 +45,9 @@ __all__ = [
 class BackendError(RuntimeError):
     """A backend that cannot be started, or stopped answering."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 class InsufficientResourcesError(BackendError):
     """The host has less than the backends a run needs would take."""

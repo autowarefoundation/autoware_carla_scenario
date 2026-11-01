@@ -126,9 +126,11 @@ def assign_gpus(
 
 def _gpus() -> tuple[Gpu, ...]:
     """Every GPU ``nvidia-smi`` lists, with its free memory; none without it."""
-    smi = shutil.which("nvidia-smi")
-    if smi is None:
-        return ()
+    gpus: list[Gpu] = []
+    found = shutil.which("nvidia-smi")
+    if found is None:
+        return tuple(gpus)
+    smi: str = found
     try:
         out = subprocess.run(
             [
@@ -142,8 +144,7 @@ def _gpus() -> tuple[Gpu, ...]:
             timeout=30,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return ()
-    gpus: list[Gpu] = []
+        return tuple(gpus)
     for line in out.splitlines():
         fields = [field.strip() for field in line.split(",")]
         if len(fields) != 3:
