@@ -386,6 +386,10 @@ class PedestrianEntity(WalkedEntity):
         from ..trajectory.model import ResolvedTrajectory  # noqa: PLC0415
 
         self._walk = None
+        # CARLA's walker controller keeps the targets of the walk it was
+        # given (_walker_ai.drive builds them once a controller): released,
+        # so the new walk gets a controller of its own.
+        self._release_controller()
         actor = self._walker
         if actor is None:
             logger.warning(
@@ -444,10 +448,44 @@ class PedestrianEntity(WalkedEntity):
         """Walk *path* as it is, from its start, which :meth:`walk_on` then
         walks a tick at a time: the walk :meth:`route_to` would lay out, given
         whole (a recorded walk).  *cross_factor* as :meth:`route_to`'s."""
+        # A new walk: the controller of the one before, if any, is released,
+        # as in route_to.
+        self._release_controller()
         self._walk = path
         self._walk_distance = 0.0
         self._walk_speed = walking_speed
         self._walk_cross = cross_factor
+
+    def stop_walk(self) -> None:
+        """Stop the walk :meth:`route_to` or :meth:`walk_along` laid out before
+        it has arrived: the walk is forgotten, CARLA's walker controller
+        stopped and destroyed, and the walker stands where it is -- what
+        :meth:`walk_on` does on arrival.  For an action whose run ends early
+        (overridden, or its ``until`` condition met).
+
+        Safe to call with no walk, again, and once the walker is destroyed.
+        """
+        walked = self._walk is not None
+        self._walk = None
+        actor = self._walker
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        walker: "carla.Actor" = actor
+        _release_walker_ai(walker)
+        if not walked:
+            return
+        try:
+            walker.apply_control(carla.WalkerControl(speed=0.0))
+        except RuntimeError:
+            pass  # the actor is gone from the world
+
+    def _release_controller(self) -> None:
+        """Stop and destroy the walker's controller, if it has one."""
+        actor = self._walker
+        if actor is not None:
+            walker: "carla.Actor" = actor
+            _release_walker_ai(walker)
 
     def set_turn_back(
         self,

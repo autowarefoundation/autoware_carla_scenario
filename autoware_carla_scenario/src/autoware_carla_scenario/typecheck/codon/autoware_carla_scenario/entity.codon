@@ -121,6 +121,9 @@ class PedestrianEntity:
     def walk_on(self, speed_mps: Optional[float] = None) -> None:
         raise NotImplementedError()
 
+    def stop_walk(self) -> None:
+        raise NotImplementedError()
+
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 
