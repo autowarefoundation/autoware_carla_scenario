@@ -2803,7 +2803,8 @@ register_action_spec(
                     "pedestrian route walker, Autoware) drives Lanelet2 routes "
                     "between the waypoints, its speed set to meet their times. "
                     "Follow: a controller drives straight legs between them. "
-                    "Position: placed on the legs every tick (a replay)."
+                    "Position: placed on the legs every tick (a replay). "
+                    "A goal lanelet is a destination for its driver: Driver only."
                 ),
             ),
             FieldSpec(
@@ -2950,6 +2951,10 @@ register_action_spec(
                 kind="number",
                 default=0.0,
                 unit="m",
+                help=(
+                    "Along written-out waypoints; a goal lanelet has none to "
+                    "start along, so leave it 0."
+                ),
             ),
             *_TURN_BACK_FIELDS,
             FieldSpec(
