@@ -284,6 +284,27 @@ def test_the_cache_keeps_one_recording_a_log(
     assert rrd.read_bytes() == b"made by the run"
 
 
+def test_a_recording_the_run_writes_during_the_conversion_is_kept(
+    tmp_path: Path, converter: _FakeConverter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_case(tmp_path, "Case", None)
+    log = tmp_path / "Case.trajectory.jsonl"
+    rrd = tmp_path / "Case.rrd"
+    convert = converter.convert
+
+    def run_writes_meanwhile(jsonl: str, out_rrd: str, **kwargs: Any) -> Any:
+        # scenario-run converts its log and merges its sensors meanwhile.
+        rrd.write_bytes(b"trajectory + LiDAR")
+        return convert(jsonl, out_rrd, **kwargs)
+
+    monkeypatch.setattr(converter, "convert", run_writes_meanwhile)
+    assert recordings.ensure_recording(log) == rrd
+    assert rrd.read_bytes() == b"trajectory + LiDAR"
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".rrd")] == [
+        "Case.rrd"
+    ]
+
+
 def test_a_fresh_recording_beside_the_log_wins_over_the_cache(
     tmp_path: Path, converter: _FakeConverter
 ) -> None:

@@ -180,7 +180,24 @@ def _map_dir() -> str | None:
     return str(default) if default.is_dir() else None
 
 
-def _convert(trajectory: Path, out: Path) -> None:
+def _publish(tmp: Path, out: Path, replace: bool) -> None:
+    """Rename *tmp* to *out*; without *replace*, only while there is no *out*
+    (``FileExistsError`` otherwise), so a file written there meanwhile -- by a
+    run converting its own log -- is kept."""
+    if replace:
+        os.replace(tmp, out)
+        return
+    try:
+        os.link(tmp, out)  # fails, atomically, when out exists
+    except FileExistsError:
+        raise
+    except OSError:  # a file system without hard links
+        if os.path.lexists(out):
+            raise FileExistsError(str(out)) from None
+        os.replace(tmp, out)
+
+
+def _convert(trajectory: Path, out: Path, replace: bool = True) -> None:
     module = _converter()
     if module is None:
         raise ConverterMissingError
@@ -195,7 +212,9 @@ def _convert(trajectory: Path, out: Path) -> None:
         kwargs["map_dir"] = map_dir
     try:
         stats = module.convert(str(trajectory), str(tmp), **kwargs)
-        os.replace(tmp, out)
+        _publish(tmp, out, replace)
+    except FileExistsError:
+        raise
     except Exception as exc:  # ConversionError and its kinds, or an OSError
         raise RecordingError(f"Converting {trajectory.name} failed: {exc}") from exc
     finally:
@@ -239,9 +258,15 @@ def ensure_recording(trajectory: Path) -> Path:
         # than the log after a copy that does not keep the times (``cp -r``,
         # ``scp``, ``rsync -r``).  The fresh one goes in the cache instead
         # (one file a log, replaced when the log changes).
+        # The check is made again as the recording is put in place, so one
+        # the run writes there during the conversion is kept too.
         if os.access(trajectory.parent, os.W_OK) and not os.path.lexists(beside):
-            _convert(trajectory, beside)
-            return beside
+            try:
+                _convert(trajectory, beside, replace=False)
+                return beside
+            except FileExistsError:
+                if _fresh(beside, trajectory):
+                    return beside
         _convert(trajectory, cached)
         return cached
 
