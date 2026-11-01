@@ -5,7 +5,10 @@ motion is retargeted onto it by direction: :class:`WalkerRetarget` swings
 each bone of :data:`CARLA_BONES` from where the walker's own animation holds
 it onto the direction the motion gives the SOMA joint it follows, parents
 first, and hands the result to ``Walker.set_bones()`` as transforms relative
-to the parent.  The rotation helpers (:func:`rotation_matrix`,
+to the parent.  It also follows where the posed bones put the body's lowest
+point (:attr:`WalkerRetarget.lift`), so a crouch or a fall can be kept on the
+ground rather than hung from the hips.  That uses the walker's own bones and
+the directions only, not where a motion places its joints.  The rotation helpers (:func:`rotation_matrix`,
 :func:`rotator`, :func:`swing`) follow Unreal's conventions.
 
 Where the directions come from is the caller's: a SOMA ``.npz``
@@ -211,6 +214,10 @@ class _Rest:
     parent_world: Matrix
     direction: Vector
     location: "carla.Location"
+    #: From the parent's head to the bone's, and from the bone's head to the
+    #: child it points at, in the world as the animation held them.
+    offset: Vector
+    tip: Vector
 
 
 class WalkerRetarget:
@@ -226,11 +233,20 @@ class WalkerRetarget:
         facing: The walker's rotation.
         upper_body_only: Drive only the bones above the hips; the legs keep
             the animation's pose.
+
+    Attributes:
+        lift: How far the last posed frame moves the walker up (negative:
+            down) to keep its lowest point where the animation's was: about
+            -0.8 m lying down, 0 standing.
     """
 
     _rests: list[_Rest]
     _body: Matrix
+    _hips: str
+    _still_lowest: float
+    _rest_lowest: float
     missing: tuple[str, ...]
+    lift: float
 
     def __init__(
         self,
@@ -241,7 +257,18 @@ class WalkerRetarget:
         by_name = {str(b.name): b for b in bones}
         self._body = rotation_matrix(facing)
         self._rests = []
+        self._hips = "crl_hips__C"
+        self.lift = 0.0
         missing: list[str] = []
+        hips = by_name[self._hips].world.location if self._hips in by_name else None
+        # The lowest point of the bones a frame leaves alone (the legs, with
+        # upper_body_only), relative to the hips: it does not move.
+        still: list[float] = []
+        if hips is not None and upper_body_only:
+            for b in bones:
+                if _is_leg(str(b.name)):
+                    still.append(float(b.world.location.z) - float(hips.z))
+        self._still_lowest = min(still) if still else math.inf
         for bone in CARLA_BONES:
             if upper_body_only and not bone.upper_body:
                 continue
@@ -262,6 +289,7 @@ class WalkerRetarget:
                 missing.append(bone.name)
                 continue
             relative = by_name[bone.name].relative.location
+            start = by_name[bone.parent].world.location
             self._rests.append(
                 _Rest(
                     bone=bone,
@@ -269,9 +297,22 @@ class WalkerRetarget:
                     parent_world=rotation_matrix(by_name[bone.parent].world.rotation),
                     direction=direction,
                     location=carla.Location(x=relative.x, y=relative.y, z=relative.z),
+                    offset=(
+                        here.location.x - start.x,
+                        here.location.y - start.y,
+                        here.location.z - start.z,
+                    ),
+                    tip=(
+                        there.x - here.location.x,
+                        there.y - here.location.y,
+                        there.z - here.location.z,
+                    ),
                 )
             )
         self.missing = tuple(missing)
+        self._rest_lowest = self._lowest(
+            {rest.bone.name: rest.world for rest in self._rests}
+        )
 
     @property
     def driven(self) -> tuple[str, ...]:
@@ -300,7 +341,37 @@ class WalkerRetarget:
             posed[rest.bone.name] = world
             relative = rotator(_mul(_transposed(parent), world))
             result.append((rest.bone.name, carla.Transform(rest.location, relative)))
+        lowest = self._lowest(posed)
+        if math.isfinite(lowest) and math.isfinite(self._rest_lowest):
+            self.lift = self._rest_lowest - lowest
         return result
+
+    def _lowest(self, posed: dict[str, Matrix]) -> float:
+        """The lowest head or tip of the bones, posed as *posed* (each driven
+        bone's world rotation), relative to the hips; ``inf`` without any.
+
+        Each bone keeps its length: its head is its parent's head plus the
+        parent's offset to it, turned as the parent turned from its rest.
+        """
+        heads: dict[str, Vector] = {self._hips: (0.0, 0.0, 0.0)}
+        lowest = self._still_lowest
+        for rest in self._rests:
+            start = heads.get(rest.bone.parent)
+            if start is None:
+                continue
+            parent = posed.get(rest.bone.parent, rest.parent_world)
+            step = _apply(_mul(parent, _transposed(rest.parent_world)), rest.offset)
+            head = (start[0] + step[0], start[1] + step[1], start[2] + step[2])
+            heads[rest.bone.name] = head
+            world = posed.get(rest.bone.name, rest.world)
+            reach = _apply(_mul(world, _transposed(rest.world)), rest.tip)
+            lowest = min(lowest, head[2], head[2] + reach[2])
+        return lowest
+
+
+def _is_leg(name: str) -> bool:
+    """Whether bone *name* is of a leg (from the thigh down)."""
+    return any(part in name for part in ("thigh", "leg__", "foot", "toe", "ball"))
 
 
 #: The joint each followed SOMA joint's bone runs to, the first a skeleton has

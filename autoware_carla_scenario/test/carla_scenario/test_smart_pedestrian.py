@@ -39,6 +39,7 @@ from autoware_carla_scenario.pedestrian.motion_client import (
     to_carla,
     to_contract,
 )
+from autoware_carla_scenario.pedestrian.poser import WalkerPoser
 from autoware_carla_scenario.pedestrian.skeleton import directions_from_joints
 from autoware_carla_scenario.prepare import Resources
 from autoware_carla_scenario.prepare import pool as pool_module
@@ -185,6 +186,12 @@ class _Walker:
 
     def set_transform(self, transform: carla.Transform) -> None:
         self.transform = transform
+
+    def set_location(self, location: carla.Location) -> None:
+        self.transform = carla.Transform(location, self.transform.rotation)
+
+    def set_simulate_physics(self, enabled: bool) -> None:
+        self.simulated = enabled
 
     def apply_control(self, control: Any) -> None:
         self.controls.append(control)
@@ -394,6 +401,21 @@ class TestSmartPedestrianControllerAction:
         assert not action.moving
         assert action._client is None
         assert scene.walker.blend == 0.0
+
+    def test_a_still_walker_stands_facing_where_it_faces(self, scene: _Scene) -> None:
+        poser = WalkerPoser("walker1", "test")
+        assert poser.begin(upper_body_only=False)
+        # A root drifting by a millimetre is not a way to turn to.
+        poser.place(
+            carla.Location(x=10.0, y=5.0, z=1.0),
+            90.0,
+            carla.Vector3D(-0.001, -0.002, 0.0),
+        )
+        control = scene.walker.controls[-1]
+        assert control.speed == 0.0
+        assert (control.direction.x, control.direction.y) == pytest.approx(
+            (0.0, 1.0), abs=1e-6
+        )
 
     def test_a_missing_pedestrian_moves_nothing(self, generator: _Generator) -> None:
         action = SmartPedestrianControllerAction("nobody", duration_s=1.0)
