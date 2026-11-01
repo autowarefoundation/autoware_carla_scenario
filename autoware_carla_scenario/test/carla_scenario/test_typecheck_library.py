@@ -3029,7 +3029,7 @@ _URLLIB = """
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 
 def repository(url: str) -> str:
@@ -3037,7 +3037,8 @@ def repository(url: str) -> str:
     if not parts.scheme or not parts.netloc:
         return url
     segments = [s for s in parts.path.split("/") if s]
-    return urlunsplit((parts.scheme, parts.netloc, "/" + "/".join(segments), "", ""))
+    ref = unquote(segments[-1], encoding="utf-8", errors="strict")
+    return urlunsplit((parts.scheme, parts.netloc, "/" + "/".join(segments), "", "")) + ref
 
 
 def host(url: str) -> Optional[str]:
