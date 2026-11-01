@@ -249,7 +249,7 @@ If pre-commit hooks fail:
   prebuilt package); `TYPESAFE_CARLA_PYCARLA_BUILD=0` turns a missing build
   into an `ImportError`, as the Docker image does.
   The official `carla` package is not a dependency and must not be imported.
-- **openodd-py** (>=0.16.0) - Everything OpenODD: the ODD model, the
+- **openodd-py** (>=0.17.0) - Everything OpenODD: the ODD model, the
   OpenODD reader, versions, the bundled default ODD, the sampler, and
   coverage (cover items, the collector, the coverage file, the merged report,
   the COD export) -- `import openodd`, an abi3 wheel on a Rust core. This
