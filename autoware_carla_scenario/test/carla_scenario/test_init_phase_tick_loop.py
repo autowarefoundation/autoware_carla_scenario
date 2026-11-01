@@ -134,6 +134,12 @@ _ON_THE_LOOP: dict[str, Make] = {
     "construction_zone": lambda _: ConstructionZoneAction(
         1, 20.0, 70.0, start_time=1.0, end_time=3.0
     ),
+    "construction_zone_appearing": lambda _: ConstructionZoneAction(
+        1, 20.0, 70.0, start_time=1.0
+    ),
+    "construction_zone_cleared": lambda _: ConstructionZoneAction(
+        1, 20.0, 70.0, end_time=3.0
+    ),
 }
 
 #: Every action that is over once commanded, or is meant to act once at init.
@@ -144,6 +150,7 @@ _IN_THE_PHASE: dict[str, Make] = {
         _NOT_JUNCTION, initial_vehicles=5, vehicles_per_minute=6.0
     ),
     "traffic_sink": lambda _: TrafficSinkAction(_NOT_JUNCTION),
+    "construction_zone_standing": lambda _: ConstructionZoneAction(1, 20.0, 70.0),
 }
 
 

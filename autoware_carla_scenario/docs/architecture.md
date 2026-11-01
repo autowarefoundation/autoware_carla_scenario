@@ -245,11 +245,13 @@ waits on an `until` the world has to reach, says so with
 instead, where it fires on the first tick: a trajectory or a stalled object, a
 rate-limited (or `until`-bounded) `SetSpeedAction`, a lane change waiting to
 settle, a walk that may turn back, a played or generated pedestrian motion, an
-adversarial manoeuvre or NADE traffic, a construction zone, and a
+adversarial manoeuvre or NADE traffic, a construction zone that appears late
+or is cleared away, and a
 `RoutingAction` that moves its entity itself. Left in the phase, such an action
 would sit in `runningState` for the whole run with nothing driving it. A
 `TrafficSourceAction` or `TrafficSinkAction` stays in the phase on purpose:
-registered there it acts once and stops.
+registered there it acts once and stops, as does a construction zone that
+stands from the start for the whole run, placed before the ego starts.
 
 ### The scenario clock
 
