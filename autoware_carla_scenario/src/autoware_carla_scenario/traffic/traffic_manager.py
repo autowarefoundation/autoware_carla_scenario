@@ -27,6 +27,7 @@ from ..constants import (
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
+    BACKGROUND_MAX_OFFSET_M,
     DrivenEntity,
     LaneChangeDirection,
     TrafficBackend,
@@ -601,7 +602,20 @@ class TrafficManagerBackend(TrafficBackend):
         speed_kmh: float,
         blueprint: Optional[str] = None,
     ) -> Optional[str]:
-        """Spawn a CARLA vehicle at *transform* and give it to the TrafficManager.
+        """Spawn a CARLA vehicle on the driving lane at *transform* and give it
+        to the TrafficManager.
+
+        *transform* is snapped to the nearest ``Driving`` lane's centre, as
+        SUMO puts its vehicle on its nearest lane, and refused (``None``,
+        logged) where that is farther than
+        :data:`~.base.BACKGROUND_MAX_OFFSET_M`: a crosswalk, a footway, the
+        middle of a junction's plaza.  Where the nearest lane runs more than
+        90 degrees from *transform*'s yaw (a spot near a two-way road's centre
+        line), the lane beside it that runs *transform*'s way is taken
+        instead, or the spot is refused: a vehicle is never put facing
+        traffic.  The vehicle faces along the lane, not exactly at
+        *transform*'s yaw: the TrafficManager drives it along its lane, so one
+        put askew would swerve at once, and SUMO's departs along its lane too.
 
         One spawned before :meth:`start` is put on autopilot there, with every
         other vehicle; one spawned during the run is put on it at once.  It is
@@ -611,6 +625,10 @@ class TrafficManagerBackend(TrafficBackend):
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
         speed_kmh = check_background_speed(speed_kmh)
+        lane = _background_lane(world, transform)
+        if lane is None:
+            return None
+        on_lane: "carla.Transform" = lane
         library = world.get_blueprint_library()
         found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)
         if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
@@ -623,9 +641,9 @@ class TrafficManagerBackend(TrafficBackend):
             chosen.set_attribute("role_name", handle)
         lifted = carla.Transform(
             carla.Location(
-                transform.location.x, transform.location.y, transform.location.z + 0.5
+                on_lane.location.x, on_lane.location.y, on_lane.location.z + 0.5
             ),
-            transform.rotation,
+            carla.Rotation(0.0, on_lane.rotation.yaw, 0.0),
         )
         actor = world.try_spawn_actor(chosen, lifted)
         if actor is None:
@@ -1655,6 +1673,88 @@ def _dead_end_within(start: "carla.Waypoint", distance: float) -> bool:
         for following in ahead:
             frontier.append((following, travelled + _DEAD_END_STEP_M))
     return False
+
+
+def _background_lane(
+    world: "carla.World", transform: "carla.Transform"
+) -> Optional["carla.Transform"]:
+    """The centre of the driving lane nearest *transform*, facing along it,
+    or ``None`` (logged) where none is within
+    :data:`~.base.BACKGROUND_MAX_OFFSET_M` of it."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    location = transform.location
+    found = run_carla_map(world).get_waypoint(
+        location, project_to_road=True, lane_type=int(carla.LaneType.Driving)
+    )
+    if found is None:
+        logger.info(
+            "Background vehicle refused: no driving lane near (%.1f, %.1f)",
+            location.x,
+            location.y,
+        )
+        return None
+    waypoint: "carla.Waypoint" = found
+    yaw = transform.rotation.yaw
+    if _heading_error_deg(waypoint.transform.rotation.yaw, yaw) > 90.0:
+        # The nearest lane runs against the spot's heading -- a spot near the
+        # centre line of a two-way road: the lane beside it that runs the
+        # spot's way, if there is one; never a vehicle put facing traffic.
+        along = _background_lane_along(waypoint, location, yaw)
+        if along is None:
+            logger.info(
+                "Background vehicle refused at (%.1f, %.1f): its nearest lane "
+                "runs the other way",
+                location.x,
+                location.y,
+            )
+            return None
+        waypoint = along
+    lane = waypoint.transform
+    offset = _ground_distance(lane.location, location)
+    if offset > BACKGROUND_MAX_OFFSET_M:
+        # The same value, and the same report, as SUMO's.
+        logger.info(
+            "Background vehicle refused at (%.1f, %.1f): its nearest lane is "
+            "%.1f m away (at most %.1f m)",
+            location.x,
+            location.y,
+            offset,
+            BACKGROUND_MAX_OFFSET_M,
+        )
+        return None
+    return lane
+
+
+def _background_lane_along(
+    waypoint: "carla.Waypoint", location: "carla.Location", yaw: float
+) -> Optional["carla.Waypoint"]:
+    """The driving lane beside *waypoint* nearest *location* whose heading is
+    within 90 degrees of *yaw*, or ``None``."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    best: Optional["carla.Waypoint"] = None
+    best_offset = math.inf
+    for side in (LaneChangeDirection.LEFT, LaneChangeDirection.RIGHT):
+        found = _adjacent_lane(waypoint, side)
+        if found is None:
+            continue
+        neighbour: "carla.Waypoint" = found
+        if neighbour.lane_type != carla.LaneType.Driving:
+            continue
+        if _heading_error_deg(neighbour.transform.rotation.yaw, yaw) > 90.0:
+            continue
+        offset = _ground_distance(neighbour.transform.location, location)
+        if offset < best_offset:
+            best, best_offset = neighbour, offset
+    return best
+
+
+def _ground_distance(a: "carla.Location", b: "carla.Location") -> float:
+    """How far *a* is from *b* across the ground, m: as SUMO measures a
+    background vehicle's offset, a lane on a slope or a bridge is no farther
+    for the height the spot was asked at."""
+    return math.hypot(a.x - b.x, a.y - b.y)
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

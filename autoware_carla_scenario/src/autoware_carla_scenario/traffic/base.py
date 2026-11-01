@@ -114,6 +114,13 @@ class TrafficBackendUnavailable(TrafficBackendError):
 # ---------------------------------------------------------------------------
 
 
+#: How far, horizontally, from the centre of a driving lane a background
+#: vehicle may be asked for and still be put on it, m; farther (a crosswalk, a
+#: footway, a plaza) it is refused.  Every backend snaps the spot to its
+#: nearest lane and measures it against this one value (#976).
+BACKGROUND_MAX_OFFSET_M: float = 5.0
+
+
 def check_background_speed(speed_kmh: float) -> float:
     """*speed_kmh* as a background vehicle's speed cap, in km/h.
 
@@ -950,6 +957,9 @@ class TrafficBackend:
         Args:
             world: The CARLA world.
             transform: Where, as a ``carla.Transform`` on a driving lane.
+                Each backend puts the vehicle on its nearest driving lane,
+                facing along it, and refuses a spot farther than
+                :data:`BACKGROUND_MAX_OFFSET_M` from one.
             speed_kmh: The speed it drives at, at most, in km/h: the cap is
                 exactly this on every backend.  It also enters at no more than
                 this.  Finite and at least

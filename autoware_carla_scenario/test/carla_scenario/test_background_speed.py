@@ -92,6 +92,14 @@ class _FakeWorld:
         self.spawned += 1
         return self.actor
 
+    def get_map(self) -> Any:
+        """A driving lane under every spot (#976 refuses one off the road)."""
+        return SimpleNamespace(
+            get_waypoint=lambda location, **kwargs: SimpleNamespace(
+                transform=carla.Transform(location, carla.Rotation())
+            )
+        )
+
 
 def _tm_backend() -> tuple[TrafficManagerBackend, _FakeTM]:
     tm = _FakeTM()

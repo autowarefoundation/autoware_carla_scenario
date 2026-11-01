@@ -825,6 +825,16 @@ class _BackgroundWorld:
         self.spawned.append(_BackgroundActor())
         return self.spawned[-1]
 
+    def get_map(self) -> Any:
+        """A driving lane under every spot (#976 refuses one off the road)."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        return SimpleNamespace(
+            get_waypoint=lambda location, **kwargs: SimpleNamespace(
+                transform=carla.Transform(location, carla.Rotation())
+            )
+        )
+
 
 def _road_transform() -> Any:
     import typesafe_carla.carla as carla  # noqa: PLC0415
