@@ -1138,20 +1138,20 @@ class TestTheDefaultTimeout:
         """Hydra reads ``scenario.timeout_seconds=nan`` as a float (#934)."""
         from omegaconf import OmegaConf
 
-        from autoware_carla_scenario.examples.run import _run_timeout_seconds
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
 
         cfg = OmegaConf.create({"scenario": {"timeout_seconds": float(timeout)}})
         with pytest.raises(ValueError, match="scenario.timeout_seconds"):
-            _run_timeout_seconds(cfg)
+            run_timeout_seconds(cfg)
 
     def test_the_command_line_timeout_is_read_as_given(self):
         from omegaconf import OmegaConf
 
-        from autoware_carla_scenario.examples.run import _run_timeout_seconds
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
 
-        assert _run_timeout_seconds(OmegaConf.create({"scenario": {}})) == 60.0
+        assert run_timeout_seconds(OmegaConf.create({"scenario": {}})) == 60.0
         cfg = OmegaConf.create({"scenario": {"timeout_seconds": 15}})
-        assert _run_timeout_seconds(cfg) == 15.0
+        assert run_timeout_seconds(cfg) == 15.0
 
     def test_the_registered_conditions_fire_at_the_scenarios_own_limit(self):
         """What is left registered fails at 20.4 s, and not at 12 s."""

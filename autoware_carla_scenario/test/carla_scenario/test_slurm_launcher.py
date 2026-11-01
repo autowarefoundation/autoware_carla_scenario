@@ -554,6 +554,122 @@ def test_slurm_without_sbatch_is_refused_before_the_batch_expands(
     assert "sbatch" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("scenario.timeout_seconds=nan", "scenario.timeout_seconds"),
+        ("scenario.timeout_seconds=inf", "scenario.timeout_seconds"),
+        ("scenario.timeout_seconds=0", "scenario.timeout_seconds"),
+        # The local queue's own settings, which a task reads only on its node.
+        ("server.cooldown_max_retries=-1", "server.cooldown_max_retries"),
+    ],
+)
+def test_slurm_refuses_what_a_local_batch_refuses_before_submitting(
+    fake_slurm: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+    key: str,
+) -> None:
+    """#977: the whole batch is refused up front, naming the key."""
+    from autoware_carla_scenario.slurm import submit
+
+    def submitted(**_: object) -> int:
+        raise AssertionError("submitted the batch")
+
+    def output_dir() -> Path:
+        raise AssertionError("made the batch's output directory")
+
+    monkeypatch.setattr(submit, "submit_batch", submitted)
+    monkeypatch.setattr(fake_slurm.run, "_make_batch_output_dir", output_dir)
+    with pytest.raises(ValueError, match=re.escape(key)):
+        fake_slurm.run.run_batch([_CONCRETE], ["launcher=slurm", override])
+    # A local batch refuses the same value (once its output directory is made).
+    local = fake_slurm.batch_dir("local")
+    monkeypatch.setattr(fake_slurm.run, "_make_batch_output_dir", lambda: local)
+    with pytest.raises(ValueError, match=re.escape(key)):
+        fake_slurm.run.run_batch([_CONCRETE], [override])
+    assert not (fake_slurm.state / "sbatch.log").exists()
+
+
+def test_slurm_checks_every_case_not_only_the_first(
+    fake_slurm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A task builds its queue from the first case of its own chunk."""
+    from autoware_carla_scenario.slurm import submit
+
+    compose = fake_slurm.run._compose_config
+
+    def composed(name: str, overrides: list[str]) -> Any:
+        cfg = compose(name, overrides)
+        if calls:
+            cfg.server.cooldown_max_retries = -1
+        calls.append(name)
+        return cfg
+
+    calls: list[str] = []
+    monkeypatch.setattr(fake_slurm.run, "_compose_config", composed)
+    monkeypatch.setattr(
+        submit, "submit_batch", lambda **_: pytest.fail("submitted the batch")
+    )
+    with pytest.raises(ValueError, match="server.cooldown_max_retries"):
+        fake_slurm.run.run_batch([_CONCRETE, _CONCRETE], ["launcher=slurm"])
+    assert len(calls) == 2
+
+
+def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#977: a case submitted with a NaN timeout fails its task, naming the key,
+    before anything is built."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path, cases=1)
+    manifest = layout.read_manifest()
+    manifest["cases"][0].update(
+        scenario=_CONCRETE,
+        overrides=["scenario.timeout_seconds=nan"],
+        stem="S",
+        scenario_class="X",
+    )
+    write_json(layout.manifest, manifest)
+    released: list[bool] = []
+    slot = SimpleNamespace(
+        rpc=31500,
+        to_dict=dict,
+        release=lambda keep_lock=False: released.append(keep_lock),
+    )
+
+    def no_watchdog(*_args: object) -> None:
+        raise OSError("no watchdog here")
+
+    def built(*_args: object, **_kw: object) -> None:
+        raise AssertionError("built the scenario")
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    monkeypatch.setattr(worker, "acquire_slot", lambda *_a, **_k: slot)
+    monkeypatch.setattr(worker, "CarlaWatchdog", no_watchdog)
+    monkeypatch.setattr(worker, "worker_overrides", lambda _cfg, _slot: {})
+    monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    monkeypatch.setattr(run, "build_scenario", built)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 0, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    status = layout.read_task(0, 0)
+    assert status is not None and status["state"] == "failed"
+    assert "ValueError: scenario.timeout_seconds" in status["error"]
+    assert "nan" in status["error"]
+    assert released == [False]
+
+
 def test_launcher_local_runs_the_batch_here_unchanged(
     fake_slurm: SimpleNamespace,
 ) -> None:

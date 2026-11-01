@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import signal
 import sys
@@ -82,6 +81,7 @@ from autoware_carla_scenario.rerun import (
     RerunUnavailableError,
 )
 from autoware_carla_scenario.rerun import report as rerun_report
+from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
@@ -769,23 +769,6 @@ def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)  # type: ignore[arg-type]
 
 
-def _run_timeout_seconds(cfg: DictConfig) -> float:
-    """``scenario.timeout_seconds``, the run's own fail-safe, checked.
-
-    Hydra reads ``scenario.timeout_seconds=nan`` (or ``inf``) as a float, and
-    a NaN timeout never fires: the run would have no time bound at all.
-
-    Raises:
-        ValueError: naming the key, when it is not positive and finite.
-    """
-    timeout = float(cfg.scenario.get("timeout_seconds", 60.0))
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError(
-            f"scenario.timeout_seconds must be positive and finite, got {timeout}"
-        )
-    return timeout
-
-
 def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
     """``server.world_reset`` and ``server.reload_every``, checked.
 
@@ -1236,7 +1219,7 @@ def _batch_queue(
     case as a T4 dataset (:func:`build_t4_recorder`).
     """
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
-    cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
+    cooldown_max_retries = _cooldown_max_retries(first_cfg)
     world_reset, reload_every = world_reset_settings(first_cfg)
     return ScenarioQueue(
         host=first_cfg.server.host,
@@ -1264,6 +1247,68 @@ def _batch_queue(
         t4scene=build_t4scene_exporter(first_cfg),
         backends=build_backend_pool(first_cfg),
     )
+
+
+def _cooldown_max_retries(cfg: DictConfig) -> int:
+    """``server.cooldown_max_retries``, checked.
+
+    Raises:
+        ValueError: naming the key, when it is negative: a zero-attempt loop
+            would record every scenario as errored without running it.
+    """
+    retries = int(cfg.server.get("cooldown_max_retries", 0))
+    if retries < 0:
+        raise ValueError(f"server.cooldown_max_retries must be >= 0, got {retries}")
+    return retries
+
+
+def _check_batch_queue_settings(cfg: DictConfig) -> None:
+    """Refuse what :func:`_batch_queue` would refuse of *cfg*, building nothing
+    that starts: no queue, no CARLA, no Autoware.
+
+    Raises:
+        ValueError: naming the key, for a server, traffic or Autoware launcher
+            setting the queue would refuse.
+    """
+    server = cfg.server
+    float(server.get("cooldown_seconds", 0.0))
+    _cooldown_max_retries(cfg)
+    _optional_float(server.get("max_tick_rate_hz"))
+    world_reset_settings(cfg)
+    server_extra_args(cfg)
+    build_traffic_backend(cfg)
+    build_autoware_launcher(cfg)
+
+
+def _check_slurm_cases(configs: list[DictConfig]) -> None:
+    """Refuse a SLURM batch for what a local batch refuses as it queues its cases.
+
+    A local batch reads each case's ``scenario.timeout_seconds`` and
+    ``odd_case``, and builds its queue from its first config, in this process.
+    Under SLURM each task does that on its node (slurm/worker.py), after the
+    batch was submitted, and from the first case of its own chunk: so every
+    case is checked here, and the whole batch is refused before anything is
+    submitted, naming the key.
+
+    Raises:
+        ValueError: naming the key of the first value refused.
+    """
+    queue_settings: set[str] = set()
+    for cfg in configs:
+        run_timeout_seconds(cfg)
+        _odd_case(cfg)
+        # Once a distinct setting: a sweep's cases mostly share them.
+        key = json.dumps(
+            {
+                name: _to_dict(cfg[name]) if cfg.get(name) is not None else None
+                for name in ("server", "traffic", "traffic_manager", "autoware")
+            },
+            sort_keys=True,
+            default=str,
+        )
+        if key not in queue_settings:
+            queue_settings.add(key)
+            _check_batch_queue_settings(cfg)
 
 
 def _batch_launcher(configs: list[DictConfig]) -> str:
@@ -1441,6 +1486,10 @@ def run_batch(
     map_paths = resolve_map_paths(first_cfg.map)
     # Refused here, before a SLURM submission or CARLA starts.
     world_reset_settings(first_cfg)
+    if launcher == "slurm":
+        # What the local queue refuses below, for every case: a task would
+        # only refuse it on its node, once the batch was submitted.
+        _check_slurm_cases(configs)
 
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
@@ -1478,7 +1527,7 @@ def run_batch(
         # Autoware stack needs to localize, route and engage.
         queue.add(
             scenario,
-            timeout_seconds=_run_timeout_seconds(cfg),
+            timeout_seconds=run_timeout_seconds(cfg),
             case=_odd_case(cfg),
         )
     # From here the queue alone holds the scenarios, and lets each go once it
@@ -1825,7 +1874,7 @@ def _run_scenario(
         output_dir=output_dir,
         # The runner's own fail-safe: the queue default (60 s) is shorter than
         # an Autoware stack needs to localize, route and engage.
-        timeout_seconds=_run_timeout_seconds(cfg),
+        timeout_seconds=run_timeout_seconds(cfg),
         max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(cfg),
