@@ -120,7 +120,7 @@ nav:
   - Migrating: migration.md
 
 extra_javascript:
-  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - https://unpkg.com/mermaid@10.9.8/dist/mermaid.min.js
 
 extra_css:
   - stylesheets/extra.css
