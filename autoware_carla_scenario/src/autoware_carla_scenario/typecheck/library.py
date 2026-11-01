@@ -188,6 +188,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity.vehicle_entity",
     "autoware_carla_scenario.entity_role",
     "autoware_carla_scenario.environment_pin",
+    "autoware_carla_scenario.examples.adversity",
     "autoware_carla_scenario.examples.argv",
     "autoware_carla_scenario.examples.conf",
     "autoware_carla_scenario.examples.configs",

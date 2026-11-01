@@ -1,0 +1,17 @@
+# @package _global_
+# An NPC 15 m ahead of the ego, which follows it, brakes hard: a brake check
+# (AdversarialBrakeAction). Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/brake_check map=town10hd_opt
+scenario:
+  name: adversity
+  kind: brake_check
+  npc_lanelet_id: 324
+  npc_ahead_m: 15.0
+  npc_speed_kmh: 30.0
+  timeout_seconds: 30.0
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 324
+  spawn_s: 5.0

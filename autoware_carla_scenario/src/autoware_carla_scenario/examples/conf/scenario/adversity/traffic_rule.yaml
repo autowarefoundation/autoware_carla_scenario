@@ -1,0 +1,19 @@
+# @package _global_
+# Every light red: an NPC ahead of the ego, slowing for its light, drives on
+# through it (RunTrafficRuleAction). It reaches the light some 24 s in.
+# Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/traffic_rule map=town10hd_opt
+scenario:
+  name: adversity
+  kind: traffic_rule
+  npc_lanelet_id: 719
+  npc_ahead_m: 10.0
+  npc_speed_kmh: 30.0
+  red_light: true
+  timeout_seconds: 40.0
+
+ego:
+  initial_speed_kmh: 20.0
+  spawn_lanelet_id: 719
+  spawn_s: 2.0

@@ -93,6 +93,7 @@ nav:
       - Lane Change: scenarios/lane_change.md
       - Pedestrian Dart-out: scenarios/pedestrian_dart_out.md
       - Cut-in: scenarios/cut_in.md
+      - Adversities: scenarios/adversity.md
   - HD Maps: maps.md
   - Autoware as the Ego: autoware.md
   - External Driver Interface: driver_interface.md
