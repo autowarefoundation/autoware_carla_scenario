@@ -675,6 +675,28 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
                 "to apply to: write the waypoints out, or choose None.",
                 node.id,
             )
+        if params.get("mode", "driver") != "driver":
+            # The trajectory a goal stands for is only stops for a driver to
+            # route between: no legs to follow or to place the entity on.
+            out.error(
+                f"{path}.mode",
+                "A route to a goal is driven by the entity's own driver: "
+                "write the waypoints out to have it followed or placed, or "
+                "choose Driver.",
+                node.id,
+            )
+        offset = params.get("initial_distance_offset")
+        if (
+            not _is_blank(offset)
+            and _coercible_float(offset)
+            and float(str(offset)) > 0.0
+        ):
+            out.error(
+                f"{path}.initial_distance_offset",
+                "A route to a goal has no trajectory to start along: write "
+                "the waypoints out, or set Start this far along to 0.",
+                node.id,
+            )
     elif params.get("waypoint_lanelet_ids"):
         out.error(
             f"{path}.waypoint_lanelet_ids",

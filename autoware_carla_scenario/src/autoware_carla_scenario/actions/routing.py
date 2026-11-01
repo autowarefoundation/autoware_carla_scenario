@@ -330,10 +330,12 @@ class RoutingAction(TrajectoryRun):
             pedestrian walks this route.
         trajectory: The waypoints, the last one the goal, instead of *goal*
             and *waypoints*.
-        mode: Who moves the entity (:class:`RoutingMode`).
+        mode: Who moves the entity (:class:`RoutingMode`); a route to a
+            *goal* is ``driver`` only.
         time_reference: How the waypoints' times map onto the scenario clock;
             ``None`` ignores them.
-        initial_distance_offset: Start this many metres along the trajectory.
+        initial_distance_offset: Start this many metres along the trajectory
+            (a *trajectory* only: a goal's stops are no way to start along).
         until: Overrides what ends the run.  A ``follow`` or ``position``
             run it ends before the end of the trajectory stops the entity and
             gives a vehicle back to its driver, as an override does.
@@ -352,8 +354,9 @@ class RoutingAction(TrajectoryRun):
 
     Raises:
         ValueError: Without a goal or a trajectory, with both, with
-            waypoints beside a trajectory, a walking speed that is not
-            positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
+            waypoints beside a trajectory, a goal with a mode other than
+            ``driver`` or a positive *initial_distance_offset*, a walking
+            speed that is not positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
     _stop_at_goal: bool
@@ -428,6 +431,23 @@ class RoutingAction(TrajectoryRun):
             raise ValueError(
                 f"{label}: give a route a goal (with its waypoints) or a "
                 "trajectory, one of the two"
+            )
+        if goal is not None and mode is not RoutingMode.DRIVER:
+            # A goal is a destination for the entity's driver to route to:
+            # the trajectory standing for it is only its stops, with no legs
+            # between them for a controller to follow or a pose to place.
+            raise ValueError(
+                f"{label}: a route to a goal is driven by the entity's driver; "
+                "write the waypoints out as a trajectory to follow or place it "
+                "along, or choose driver mode"
+            )
+        if goal is not None and initial_distance_offset > 0.0:
+            # Refused rather than ignored, as the validator refuses it: the
+            # stops stand for no distance along a way, so an offset would drop
+            # them all and the run would end without routing anywhere.
+            raise ValueError(
+                f"{label}: a route to a goal has no trajectory to start along; "
+                "give initial_distance_offset only with a trajectory"
             )
         stops = tuple(waypoints)
         route: Trajectory = _goal_route(label, stops, goal, trajectory)
