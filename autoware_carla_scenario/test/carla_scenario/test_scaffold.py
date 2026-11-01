@@ -246,6 +246,24 @@ class TestCreateScenarioPackage:
         with pytest.raises(FileExistsError):
             create_scenario_package("dup_pkg", output_dir=tmp_path)
 
+    def test_the_refusal_names_how_each_entry_point_overwrites(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The Python API names ``force=True``; ``scenario-new``, ``--force`` (#993)."""
+        from autoware_carla_scenario.scaffold import PackageExistsError  # noqa: PLC0415
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        create_scenario_package("dup_pkg", output_dir=tmp_path)
+        with pytest.raises(PackageExistsError, match="force=True") as raised:
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert raised.value.root == tmp_path / "dup_pkg"
+
+        assert main(["dup_pkg", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert "--force" in err
+        assert "force=True" not in err
+        assert str(tmp_path / "dup_pkg") in err
+
     def test_force_overwrites(self, tmp_path: Path) -> None:
         create_scenario_package("dup_pkg", output_dir=tmp_path)
         # Should not raise when force=True.

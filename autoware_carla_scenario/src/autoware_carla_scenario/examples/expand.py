@@ -14,6 +14,12 @@ which is fetched on demand like a run would. Logs go to stderr, so stdout is
 the JSON alone.
 
     scenario-expand scenario=traffic_light_compliance/traffic_light_compliance
+
+The exit status is 0 when the scenario expanded, 1 when its ``controls:`` are
+invalid, and 2 when the command line does not compose: no ``scenario=``, no
+config matches it, or an override names a key the config does not have (the
+message suggests the closest config or key; ``+key=value`` adds a new one).
+``HYDRA_FULL_ERROR=1`` shows the traceback of such an error.
 """
 
 from __future__ import annotations
@@ -28,6 +34,9 @@ from ..sweeper.expand import expand_config
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if any(a in ("-h", "--help") for a in args):
+        print(__doc__)  # noqa: T201
+        return 0
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
@@ -47,11 +56,14 @@ def main(argv: list[str] | None = None) -> int:
     load_scenario_plugins()
     # Composed the way a glob batch run composes each scenario, so the
     # expansion sees the same config (package conf dirs included).
-    from .run import _compose_config  # noqa: PLC0415 -- imports the CARLA client
-
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
+    from .compose_errors import compose_or_report, resolve_scenarios  # noqa: PLC0415
 
-    cfg = _compose_config(scenario, overrides)
+    if resolve_scenarios(scenario) is None:
+        return 2
+    cfg = compose_or_report(scenario, overrides)
+    if cfg is None:
+        return 2
     try:
         cases = expand_config(cfg)
     except ControlsError as exc:
