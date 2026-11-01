@@ -16,6 +16,7 @@ from .actions._trajectory_run import forget_walkers
 from .actions.environment import forget_tire_friction
 from .actions.spawn import clear_props
 from .entity.ego import EgoVehicle
+from .adversity_activity import clear_adversities
 from .entity.registry import (
     clear_entities,
     register_entity,
@@ -1277,6 +1278,8 @@ class ScenarioRunner:
         # but a spawn card ticked outside any run (a test, a tool) holds a
         # speed for an actor id this run's world may reuse.
         clear_entities()
+        # What a scenario before carried out is not under way in this one.
+        clear_adversities()
         clear_props()
         _set_warmup_done(False)
         _clear_entry_speeds()

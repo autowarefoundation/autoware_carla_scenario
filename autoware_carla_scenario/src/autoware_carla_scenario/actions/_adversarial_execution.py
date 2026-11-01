@@ -24,6 +24,7 @@ import math
 from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
+from ..adversity_activity import ActiveAdversity, begin_adversity, end_adversity
 from ..adversity.command import AdversarialCommand, plan_command
 from ..adversity.geometry import PredictedState
 from ..adversity.observation import Scene
@@ -143,6 +144,9 @@ class AdversarialExecution:
     _handed_back: bool
     _actor: Optional["carla.Actor"]
     _backend: Optional[TrafficBackend]
+    _kind: str
+    _responding_to: str
+    _begun: bool
 
     def __init__(
         self,
@@ -154,6 +158,8 @@ class AdversarialExecution:
         backend: Optional[TrafficBackend] = None,
         box_ahead: float = 0.0,
         box_left: float = 0.0,
+        kind: str = "",
+        responding_to: str = "",
     ) -> None:
         self.entity_name = str(entity_name)
         trajectory = path_trajectory(label, path, box_ahead, box_left)
@@ -181,6 +187,12 @@ class AdversarialExecution:
         self._actor = actor
         self._backend = backend
         self._handed_back = False
+        # What it carries out, for the conditions asking what is under way
+        # (adversity_activity): noted when it first drives, until it hands
+        # the road user back.
+        self._kind = kind
+        self._responding_to = responding_to
+        self._begun = False
 
     @property
     def done(self) -> bool:
@@ -191,6 +203,17 @@ class AdversarialExecution:
         """Drive one tick; once the path is done, hand the vehicle back."""
         if self._handed_back:
             return
+        if not self._begun and self._kind:
+            begin_adversity(
+                ActiveAdversity(
+                    self.entity_name,
+                    self._kind,
+                    self._follow.label,
+                    self._responding_to,
+                    elapsed,
+                )
+            )
+            self._begun = True
         self._follow.tick(world, elapsed)
         if self._follow.state is not ActionState.COMPLETE:
             return
@@ -202,6 +225,7 @@ class AdversarialExecution:
         if self._handed_back:
             return
         self._handed_back = True
+        self._end()
         actor = self._actor
         backend = self._backend
         if actor is not None and backend is not None:
@@ -218,8 +242,14 @@ class AdversarialExecution:
         )
 
     def close(self) -> None:
-        """Close the follow action's conditions."""
+        """Close the follow action's conditions; what it carried out is over."""
+        self._end()
         self._follow.close()
+
+    def _end(self) -> None:
+        if self._begun:
+            self._begun = False
+            end_adversity(self.entity_name)
 
 
 def drivable(name: str) -> bool:
@@ -238,10 +268,14 @@ def start_execution(
     label: str,
     actor: Optional["carla.Actor"] = None,
     backend: Optional[TrafficBackend] = None,
+    kind: str = "",
+    responding_to: str = "",
 ) -> Optional[AdversarialExecution]:
     """*command* planned for *name* on *scene*, ready to drive -- a background
     vehicle's *actor* through its *backend* when given; None, with a warning,
-    when it cannot be planned (off the lanes, no lane to change to)."""
+    when it cannot be planned (off the lanes, no lane to change to).  *kind*
+    (an ``AdversityKind`` value) is what it carries out, and *responding_to*
+    whose adversity a victim's response is (adversity_activity)."""
     observed = scene.vehicle(name)
     try:
         path = plan_command(scene.features, observed, command)
@@ -258,4 +292,6 @@ def start_execution(
         backend,
         observed.agent.box_ahead,
         observed.agent.box_left,
+        kind,
+        responding_to,
     )
