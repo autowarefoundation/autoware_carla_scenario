@@ -253,6 +253,15 @@ would sit in `runningState` for the whole run with nothing driving it. A
 registered there it acts once and stops, as does a construction zone that
 stands from the start for the whole run, placed before the ego starts.
 
+`run_init` performs the actions in registration order and settles each one
+(complete, or under way for one that runs on) right after it fires, which also
+gives back the control domains it took. Two init actions on the same domain of
+one entity therefore both run, and the one registered last is what stands. The
+case that comes up in practice is an ego with a `goal` and an init Set Goal card
+for it: the ego's own goal is registered as it is spawned, before the
+document's cards, so the ego is handed both and keeps the card's (the
+validator warns about it).
+
 ### The scenario clock
 
 `_ScenarioClock` supplies the `elapsed` every action, condition, entity and
