@@ -90,8 +90,9 @@ class LaneletRegion:
     """The vehicle lanelets a list of sweep constraints matches on the run's map.
 
     Only lanelets a vehicle drives on count: a crosswalk, walkway, stairs,
-    road shoulder, bicycle lane or parking lot is never part of a region, what
-    the constraints say (:meth:`~autoware_carla_scenario.route.geometry.MapFeatures.is_road`,
+    road shoulder, bicycle lane or parking lot is never part of a region,
+    whatever the constraints say
+    (:meth:`~autoware_carla_scenario.route.geometry.MapFeatures.is_road`,
     the test vehicle routes use).  Those have no vehicle successor, so "no
     successor" alone would put every crosswalk in a sink and remove a vehicle
     driving over it; and a source would place vehicles across the road.
