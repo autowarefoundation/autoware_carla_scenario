@@ -335,6 +335,8 @@ class RoutingAction(TrajectoryRun):
             and hold it there (its driver asked for no speed) rather than let
             its driver drive on at its own speed (the default): a road user
             replayed from a recording waits where it was last seen going.
+            A route to a goal is then followed to its end, as a timed one is:
+            the run goes on until the vehicle arrives.
 
     Raises:
         ValueError: Without a goal or a trajectory, with both, with
@@ -499,9 +501,13 @@ class RoutingAction(TrajectoryRun):
             self._stop_walk()
 
     def _stopped(self, world: "carla.World") -> None:
-        """Overridden mid-walk: the pedestrian's walk is stopped, and CARLA's
-        walker controller with it, as on arrival."""
+        """Overridden mid-run: the pedestrian's walk is stopped, and CARLA's
+        walker controller with it, as on arrival; an entity a ``follow`` or
+        ``position`` run took from its driver is stopped and given back
+        (:meth:`TrajectoryRun._stopped`)."""
         self._stop_walk()
+        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
+        TrajectoryRun._stopped(self, world)
 
     def close(self) -> None:
         """Stop a pedestrian's walk the run ends in the middle of, and close
@@ -553,12 +559,13 @@ class RoutingAction(TrajectoryRun):
 
     @property
     def needs_tick_loop(self) -> bool:
-        """Anything but a vehicle handed an untimed route keeps acting."""
+        """Anything but a vehicle handed an untimed route keeps acting; a
+        vehicle to stop at its goal is watched until it arrives there."""
         if self._mode is not RoutingMode.DRIVER:
             return True
         if self._goal is None:
             return True  # a route written out is followed to its end
-        if self._timed():
+        if self._timed() or self._stop_at_goal:
             return True
         return self._walks_pedestrian()
 
@@ -746,7 +753,8 @@ class RoutingAction(TrajectoryRun):
         start = self._start_pose
         # A route written out is followed to its end, timed or not: what
         # ends the run (and so what a despawn after it waits for) is arrival.
-        follows = self._timed() or self._goal is None
+        # So is one to stop at its goal, which is told no speed on arrival.
+        follows = self._timed() or self._goal is None or self._stop_at_goal
         if actor is not None and start is not None and stops and follows:
             vehicle: "carla.Actor" = actor
             here: CarlaWorldPose = start
@@ -815,7 +823,7 @@ class RoutingAction(TrajectoryRun):
             poses = route_poses(route, mm.lanelet_map, mm.routing_graph, _PACE_STEP_M)
         except RouteError as error:
             logger.warning(
-                "%s: '%s' cannot be paced to its waypoints' times: %s",
+                "%s: '%s' cannot be paced along its route: %s",
                 self.label,
                 str(self._entity_name),
                 error,
