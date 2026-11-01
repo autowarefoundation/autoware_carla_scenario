@@ -311,8 +311,9 @@ class T4Recording:
         #: controller places its walker, which then reports 0 (#924).
         self._walker_ids: set[int] = set()
         self._walkers = WalkerVelocities()
-        #: World snapshots of the last ticks, by frame: a sweep of the
-        #: recorder's own LiDARs can be from a tick before it is read on.
+        #: World snapshots of the last ticks, by frame: a sweep (the recorder's
+        #: own LiDARs', or one a driver entity feeds) can be from a tick before
+        #: it is read on.
         self._snapshots: dict[int, Any] = {}
         self._last_frame = -1
         self._active = True
@@ -323,8 +324,11 @@ class T4Recording:
             logical_id: (cam.image_width, cam.image_height)
             for logical_id, cam in settings.cameras
         }
-        #: What a driver entity fed for a frame: ``(frame, sweeps, frames)``.
-        self._fed: Optional[tuple[int, list[Any], list[tuple[str, bytes]]]] = None
+        #: What a driver entity fed on a frame: ``(frame, sweeps, frames)``, a
+        #: sweep as ``(the frame it was taken on, points in the rig frame)``.
+        self._fed: Optional[
+            tuple[int, list[tuple[int, Any]], list[tuple[str, bytes]]]
+        ] = None
 
         with _lock:
             driver_rear_axle = _driver_rear_axle
@@ -464,16 +468,28 @@ class T4Recording:
 
     # -- What a driver entity feeds -----------------------------------------
 
-    def _fed_for(self, frame: int) -> tuple[int, list[Any], list[tuple[str, bytes]]]:
+    def _fed_for(
+        self, frame: int
+    ) -> tuple[int, list[tuple[int, Any]], list[tuple[str, bytes]]]:
         if self._fed is None or self._fed[0] != frame:
             self._fed = (frame, [], [])
         return self._fed
 
-    def feed_lidar(self, frame: int, points_in_rig: Any) -> None:
+    def feed_lidar(
+        self, frame: int, points_in_rig: Any, *, taken_on: Optional[int] = None
+    ) -> None:
         """A sweep the driver policy got on *frame*: ``[N, 4]`` float32 in the
-        rig frame (the ego's ``base_link``)."""
+        rig frame (the ego's ``base_link``).
+
+        *taken_on* is the frame the sweep was taken on (*frame* by default): a
+        LiDAR sweeps once a policy step, so the policy can be handed a sweep
+        from a tick before.  The sample is then that frame's -- its ego pose
+        and boxes -- as with the recorder's own LiDARs (#950).
+        """
         if self._active:
-            self._fed_for(frame)[1].append(points_in_rig)
+            self._fed_for(frame)[1].append(
+                (frame if taken_on is None else int(taken_on), points_in_rig)
+            )
 
     def feed_camera_jpeg(self, frame: int, logical_id: str, jpeg: bytes) -> None:
         """A camera frame the driver policy got on *frame*, as it got it."""
@@ -496,17 +512,14 @@ class T4Recording:
     def _record(self, world: "carla.World") -> None:
         snapshot = world.get_snapshot()
         frame = int(snapshot.frame)
-        if self.fed_by_driver:
-            fed, self._fed = self._fed, None
-            if fed is None or fed[0] != frame or frame < self.start_frame:
-                return
-            self._write_frame(world, frame, snapshot, fed[1], fed[2], [])
-            return
-
         self._snapshots[frame] = snapshot
         horizon = frame - 2 * self._settings.interval_ticks
         for old in [f for f in self._snapshots if f < horizon]:
             del self._snapshots[old]
+        if self.fed_by_driver:
+            self._record_fed(world, frame)
+            return
+
         key_frame: Optional[int] = None
         sweeps: list[tuple[int, Any, Any]] = []
         for lidar, mount in self._lidars:
@@ -540,6 +553,51 @@ class T4Recording:
             else:
                 raw_frames.append((channel, image))
         self._write_frame(world, key_frame, key_snapshot, points, [], raw_frames)
+
+    def _record_fed(self, world: "carla.World", frame: int) -> None:
+        """Write what a driver entity fed on *frame*, on the frame its sweeps
+        were taken on, as :meth:`_record` does the recorder's own LiDARs'.
+
+        The key frame is the oldest fed sweep's (*frame* without one); a sweep
+        taken later joins nothing, as a LiDAR's on another tick of the interval
+        does not.  A sweep whose frame has no snapshot -- before the recording
+        started, older than the snapshots kept, or not after the key frame
+        written last -- is dropped, and the frame written without it.
+        """
+        fed, self._fed = self._fed, None
+        if fed is None or fed[0] != frame or frame < self.start_frame:
+            return
+        sweeps: list[tuple[int, Any]] = []
+        for taken_on, points in fed[1]:
+            if (
+                taken_on < self.start_frame
+                or taken_on <= self._last_frame
+                or taken_on not in self._snapshots
+            ):
+                logger.debug(
+                    "T4 dataset: no snapshot of frame %d for a sweep fed on "
+                    "frame %d; dropped",
+                    taken_on,
+                    frame,
+                )
+                continue
+            sweeps.append((taken_on, points))
+        key_frame = min((taken_on for taken_on, _ in sweeps), default=frame)
+        if key_frame <= self._last_frame:
+            return
+        points_on_key = [points for taken_on, points in sweeps if taken_on == key_frame]
+        if len(points_on_key) < len(sweeps):
+            logger.debug(
+                "T4 dataset: %d sweep(s) fed on frame %d not taken on frame %d; "
+                "dropped",
+                len(sweeps) - len(points_on_key),
+                frame,
+                key_frame,
+            )
+        self._last_frame = key_frame
+        self._write_frame(
+            world, key_frame, self._snapshots[key_frame], points_on_key, fed[2], []
+        )
 
     def _write_frame(
         self,
