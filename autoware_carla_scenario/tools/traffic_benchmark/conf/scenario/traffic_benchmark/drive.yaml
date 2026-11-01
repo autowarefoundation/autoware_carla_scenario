@@ -1,0 +1,15 @@
+# @package _global_
+# The ego driving on its own on Town10HD_Opt, for the traffic benchmark.
+scenario:
+  name: traffic_benchmark
+  seconds: 120.0
+  # A SUMO-driven scenario vehicle this far ahead (m); null: none.
+  npc_ahead_m: null
+  npc_speed_kmh: 40.0
+  # Hold the ego at this speed (km/h); null: the TrafficManager's.
+  ego_speed_kmh: null
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 324
+  spawn_s: 5.0

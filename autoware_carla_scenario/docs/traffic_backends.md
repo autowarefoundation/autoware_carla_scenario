@@ -1160,6 +1160,40 @@ on its speed -- should check `entity.simulation_fidelity`, or call
 `entity.require_microscopic(world)` first. SUMO's FCD output records the
 microscopic vehicles only.
 
+#### Measured on Town10HD_Opt
+
+The options above were first checked against SUMO and a fake CARLA. These numbers come from a real CARLA 0.10 server with Town10HD_Opt (#449), measured with `tools/traffic_benchmark`.
+
+**The setup:**
+
+- the ego is driven by the TrafficManager for 120 s;
+- SUMO's ambient demand is 4000 vehicles per hour;
+- the figures cover the ticks after the first 20 s;
+- "tick" means the wall time of `world.tick()` plus the backend's tick.
+
+| Configuration | Tick, mean | Tick, p95 | Vehicles in CARLA | In the queue model |
+| --- | --- | --- | --- | --- |
+| every SUMO vehicle mirrored | 42.8 ms | 55.4 ms | 79 | -- |
+| `spawn_radius_m=150` | 21.0 ms | 28.0 ms | 42 | -- |
+| `mesoscopic` (default radii), `physics` | 40.3 ms | 51.7 ms | 76 | 2 |
+| `mesoscopic` (default radii), `teleport` | 18.1 ms | 25.2 ms | 76 | 2 |
+| `mesoscopic`, `micro_radius_m=80`, `physics` | 9.1 ms | 13.1 ms | 16 | 49 |
+
+**What the measurements show:**
+
+- **Town10HD_Opt is small.** Within the default 200 m nearly all of it is near the ego, so the queue model holds little and the mesoscopic mode saves next to nothing. A micro radius that leaves the queue model most of the map (80 m here) cuts the tick to a fifth.
+- **Popping.** With a small radius, vehicles come and go within sight. At 80 m they appear about 95 m from the ego (median) and leave about 114 m away. Choose the radius from what the scenario's sensors must see, not from the map.
+- **Cost of control.** `teleport` costs the backend a quarter of what `physics` does (7 ms against 28 ms a tick here).
+
+**What was observed:**
+
+- **Returning vehicles.** A vehicle coming back from the queue model appears on its lane, never overlapping another. The closest same-lane neighbours were 5.2 m apart, centre to centre, in a queue at a light; the vehicles 3.5 m away were in the next lane. Queued vehicles come back stopped, where the queue stands.
+- **Physics on appearing.** Under `physics`, a vehicle that comes into CARLA drops about 0.5 m onto the road and drives off well below SUMO's speed (#1003). `teleport` does not.
+- **Pedestrians.** In 120 s with 2400 persons per hour, 27 persons stepped onto the 16 signalled crossings and none did so on red. Over 1914 ticks of a crossing showing green, the road it crosses was never green too. Every SUMO person near the ego was a CARLA walker, which the ego's sensors see as any walker.
+- **A scenario vehicle.** With `mesoscopic.scenario_vehicles=true` and `scenario_vehicles=sumo`, a scenario vehicle left CARLA once it was far and came back, as a new actor, once it was near. The "has no actor" warning was logged once, when it left.
+- **Collision logging.** NPC collision logging stopped as vehicles left CARLA (fixed in #999).
+- **Walker blueprint.** The persons' default blueprint was not in CARLA 0.10 (fixed in #1002).
+
 **Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
 `changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →
 `setSpeed`, `turn_at_junction` → a route onto the junction's outgoing edge in
