@@ -74,6 +74,7 @@ from openodd.flaky import FlakyMetrics, FlakySearch, ParameterSpace
 from openodd.sampler import OddDraws, OddKnob, OddSample, knobs_from_mapping
 from openodd.sampler import OddSampler as _OddSampler
 
+from ..seed import DEFAULT_SEED
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS
 from .model import OddDefinition
 
@@ -90,6 +91,7 @@ __all__ = [
     "CONTROL_TARGETS",
     "controls_from_mapping",
     "knobs_from_mapping",
+    "sample_seed",
     "sampler_from_config",
     "search_from_config",
     "TIRE_FRICTION_KEY",
@@ -282,6 +284,15 @@ def sampler_from_config(
     return sampler, count
 
 
+def sample_seed(raw: Mapping[str, Any]) -> int:
+    """The seed of a ``sweep.odd_sample`` mapping: its ``seed``, or
+    :data:`~autoware_carla_scenario.seed.DEFAULT_SEED` when it is not given or
+    null (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep` fills a
+    null one in with the run's first)."""
+    value = raw.get("seed")
+    return DEFAULT_SEED if value is None else int(value)
+
+
 def search_from_config(
     raw: Mapping[str, Any],
     *,
@@ -294,7 +305,8 @@ def search_from_config(
     ``flaky``), and the case count (``None`` when not given), from a
     ``sweep.odd_sample`` mapping.
 
-    Fields: ``count``, ``seed``, ``strategy`` (``weighted`` with ``weights``,
+    Fields: ``count``, ``seed`` (:data:`~autoware_carla_scenario.seed.DEFAULT_SEED`
+    when not given or null), ``strategy`` (``weighted`` with ``weights``,
     else ``uniform``, when not given), ``odd`` (else *odd*, the
     run's), ``coverage_from`` (paths to earlier runs' coverage files or
     directories: the coverage ``strategy: coverage`` aims past, and the runs
@@ -335,7 +347,7 @@ def search_from_config(
     ]
     if resolved:
         coverage = load_and_merge(resolved)
-    seed = int(raw.get("seed", 0))
+    seed = sample_seed(raw)
     strategy = raw.get("strategy")
     sampler = OddSampler(
         definition,

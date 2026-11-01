@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
+from ..seed import DEFAULT_SEED
 from .bindings import Binding, parse_binding
 from .case_choice import case_lanelet as _case_lanelet
 from .case_choice import choose_cases as _choose_cases
@@ -105,7 +106,8 @@ def expand_sweep(
     *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
     the sampler goes on from them, and the cases drawn here are added to it.
     *seed* is the run's (the config's ``seed``): the
-    draws' when ``odd_sample.seed`` is not given or null.
+    draws' when ``odd_sample.seed`` is not given or null, and
+    :data:`~autoware_carla_scenario.seed.DEFAULT_SEED` when both are.
 
     With ``sweep.case_index``, only the case at that (0-based) index is kept.
 
@@ -117,8 +119,12 @@ def expand_sweep(
     """
     check_constraint_keys(sweep)
     odd_sample = sweep.get("odd_sample") or {}
-    if odd_sample and odd_sample.get("seed") is None and seed is not None:
-        odd_sample = {**odd_sample, "seed": seed}
+    if odd_sample and odd_sample.get("seed") is None:
+        # A run without a seed draws as one with DEFAULT_SEED does.
+        odd_sample = {
+            **odd_sample,
+            "seed": DEFAULT_SEED if seed is None else seed,
+        }
     if sweep.get("route"):
         if sweep.get("constraints"):
             raise ValueError(
@@ -295,6 +301,7 @@ def _with_odd_samples(
     from ..odd.sampler import (  # noqa: PLC0415
         ODD_CASE_KEY,
         encode_case,
+        sample_seed,
         search_from_config,
         with_tire_friction,
         with_visibility,
@@ -344,10 +351,10 @@ def _with_odd_samples(
         drawn.add(sampler.odd, samples)
     if raw.get("tire_friction", True):
         # After the draws are recorded: the grip is no attribute of the ODD.
-        samples = with_tire_friction(samples, raw.get("seed", 0))
+        samples = with_tire_friction(samples, sample_seed(raw))
     if raw.get("visibility", True):
         # Nor is how far drivers see.
-        samples = with_visibility(samples, raw.get("seed", 0))
+        samples = with_visibility(samples, sample_seed(raw))
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),
