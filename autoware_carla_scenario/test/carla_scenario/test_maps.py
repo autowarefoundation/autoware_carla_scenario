@@ -47,6 +47,7 @@ from autoware_carla_scenario.maps.opendrive import (
     ensure_xodr,
     installed_xodr,
     map_asset_env_var,
+    map_asset_path,
 )
 from autoware_carla_scenario.maps.resolver import MapResolutionError
 
@@ -1227,6 +1228,24 @@ class TestOpenDrive:
     ) -> None:
         monkeypatch.delenv(map_asset_env_var("TownA"), raising=False)
         assert installed_xodr("TownA") is None
+
+    def test_a_blank_variable_names_no_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(map_asset_env_var("TownA"), "   ")
+        assert map_asset_path("TownA") is None
+        assert installed_xodr("TownA") is None
+
+    def test_the_variable_is_stripped_and_its_tilde_expanded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #1031: every reader of the variable resolves it the same way."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        asset = tmp_path / "TownA.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_asset_env_var("TownA"), " ~/TownA.xodr \n")
+        assert map_asset_path("TownA") == asset
+        assert installed_xodr("TownA") == asset
 
     def test_takes_the_file_from_a_carla_installation_when_there_is_one(
         self,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import shutil
 import time
 from pathlib import Path
@@ -34,7 +33,7 @@ from .actions.base import reset_control_slots
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
-from .maps.opendrive import map_asset_env_var
+from .maps.opendrive import map_asset_env_var, map_asset_path
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
@@ -976,15 +975,14 @@ class ScenarioRunner:
             FileNotFoundError: If *xodr_path* does not exist.
         """
         env_var = map_asset_env_var(map_name)
-        dest_str = os.environ.get(env_var)
-        if not dest_str:
+        dest = map_asset_path(map_name)
+        if dest is None:
             raise RuntimeError(
                 f"Environment variable '{env_var}' is not set. "
                 f"Set it to the path of the internal .xodr file for map '{map_name}' "
                 f"inside the CARLA installation "
                 f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{map_name}.xodr)."
             )
-        dest = Path(dest_str)
         shutil.copy2(xodr_path, dest)
         self._xodr_path = xodr_path
         self.load_map_by_name(map_name)
