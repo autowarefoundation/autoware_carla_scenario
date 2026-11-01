@@ -2670,6 +2670,11 @@ starts (<code>Navigation::AddWalker</code>), so it is set to the walker's own ju
 and put back straight after. A map without a navigation mesh is said once, and its walkers are
 stepped along their routes as before. The navigation mesh comes with the map's
 import (roadgen's <code>&lt;Name&gt;Package.py</code> builds it with CARLA's RecastBuilder).
+The controller is stopped and destroyed however the walk ends: on arrival, when
+another action overrides the route (a <code>WalkStraightAction</code>, or a second route,
+which starts a controller of its own with its own targets), when the route's
+<code>until</code> condition ends it first (the walker stands where it is), and at the
+end of the run (<code>PedestrianEntity.stop_walk</code>).
 A vehicle driven by the framework's own controller (<code>follow</code> mode, a final
 approach), which the TrafficManager does not drive, brakes for a walker in its
 way within its stopping distance (<code>utils.clearance</code>). A walker that falls over all the same is taken out of the
@@ -2966,7 +2971,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 03:57:26 UTC"><span class="timeago" datetime="2026-11-01T03:57:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 03:57:26 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 09:41:57 UTC"><span class="timeago" datetime="2026-11-01T09:41:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 09:41:57 UTC">2026-11-01</span>
   </span>
 
     
