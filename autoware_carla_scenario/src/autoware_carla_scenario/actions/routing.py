@@ -324,7 +324,9 @@ class RoutingAction(TrajectoryRun):
         time_reference: How the waypoints' times map onto the scenario clock;
             ``None`` ignores them.
         initial_distance_offset: Start this many metres along the trajectory.
-        until: Overrides what ends the run.
+        until: Overrides what ends the run.  A ``follow`` or ``position``
+            run it ends before the end of the trajectory stops the entity and
+            gives a vehicle back to its driver, as an override does.
         control_config: Gains for ``follow`` mode.
         speed: The speed (m/s) the entity goes at where no time paces it;
             ``None`` takes its own (``follow``/``position``: the speed it has
@@ -822,10 +824,14 @@ class RoutingAction(TrajectoryRun):
         try:
             poses = route_poses(route, mm.lanelet_map, mm.routing_graph, _PACE_STEP_M)
         except RouteError as error:
+            unstopped = ""
+            if self._stop_at_goal:
+                unstopped = ", nor stopped at its goal"
             logger.warning(
-                "%s: '%s' cannot be paced along its route: %s",
+                "%s: '%s' cannot be paced along its route%s: %s",
                 self.label,
                 str(self._entity_name),
+                unstopped,
                 error,
             )
             return
@@ -936,6 +942,10 @@ class RoutingAction(TrajectoryRun):
 
         self._finishing = True
         resolved = self._resolved
+        if resolved is None:
+            # A route to a goal, with no trajectory written: the middle of
+            # the lanes it is paced along, which ends at the goal.
+            resolved = self._path
         if resolved is None:
             return
         written: ResolvedTrajectory = resolved

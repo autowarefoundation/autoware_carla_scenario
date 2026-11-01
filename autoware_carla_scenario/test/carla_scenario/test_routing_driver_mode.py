@@ -1746,6 +1746,7 @@ def test_a_driven_vehicle_at_its_route_end_stops_if_asked(
     )
     action._path = ResolvedTrajectory([0.0, 20.0], [0.0, 0.0], [0.0, 0.0], [None, None])
     action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    vehicle.finish_at = lambda world, points: True  # type: ignore[attr-defined]
     at_end = SimpleNamespace(
         get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=20.0, y=0.0)),
         get_speed_limit=lambda: 50.0,

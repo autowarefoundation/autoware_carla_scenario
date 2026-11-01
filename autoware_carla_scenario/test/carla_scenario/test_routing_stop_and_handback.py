@@ -3,8 +3,9 @@
 - A ``driver`` route to a goal with ``stop_at_goal`` and no times is paced to
   its goal and stopped there (#1016): the action plans the path itself, on the
   fixture map, rather than end on its first tick.
-- A ``follow`` or ``position`` run overridden by another action stops the
-  entity it took from its driver and hands it back (#1017).
+- A ``follow`` or ``position`` run overridden by another action, or ended
+  early by its ``until``, stops the entity it took from its driver and hands
+  it back (#1017).
 """
 
 from __future__ import annotations
@@ -82,6 +83,7 @@ class _Car:
         self.rotation = SimpleNamespace(yaw=yaw, pitch=0.0, roll=0.0)
         self.routes: list[Lanelet2Pose] = []
         self.speeds: list[float] = []
+        self.finishes: list[list[Any]] = []
         self.actor = SimpleNamespace(
             id=7,
             get_transform=lambda: SimpleNamespace(
@@ -103,6 +105,7 @@ class _Car:
         self.speeds.append(speed_kmh)
 
     def finish_at(self, world: Any, points: list) -> bool:
+        self.finishes.append(points)
         return True
 
 
@@ -152,6 +155,12 @@ def test_a_goal_route_stops_its_vehicle_at_the_goal(
     assert vehicle.routes == [Lanelet2Pose(_LANELET, 60.0)]
     assert 0.0 not in vehicle.speeds  # still its driver's (or its given) speed
     at_goal = to_carla_world(Lanelet2Pose(_LANELET, 60.0))
+    # The last metres driven by the backend itself, along the lanes to the
+    # goal, as a written trajectory's are: stopped there, not braked on from
+    # wherever arrival is noticed.
+    assert len(vehicle.finishes) == 1
+    end = vehicle.finishes[0][-1]
+    assert abs(end.x - at_goal.x) < 0.5 and abs(end.y - at_goal.y) < 0.5
     vehicle.location.x, vehicle.location.y = at_goal.x, at_goal.y
     for _ in range(3):
         action.tick(world, elapsed)
@@ -239,6 +248,43 @@ def test_a_run_ending_on_its_own_keeps_its_vehicle(handed: _Handed) -> None:
     action = _route("npc1", _line(length=10.0, duration=1.0), TrajectoryTiming())
     world, t = _World(), 0.0
     while t < 2.0:
+        action.tick(world, t)
+        t += _DT
+    assert action.state is ActionState.COMPLETE
+    assert handed.resumed == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "timing"),
+    [(RoutingMode.FOLLOW, None), (RoutingMode.POSITION, TrajectoryTiming())],
+)
+def test_a_run_its_until_ends_early_hands_its_vehicle_back_stopped(
+    handed: _Handed, mode: RoutingMode, timing: Optional[TrajectoryTiming]
+) -> None:
+    """OpenSCENARIO's stop transition, as an override is: not left released
+    on the follower's last pedals."""
+    trajectory = _line(length=400.0, duration=None if timing is None else 50.0)
+    action = _route("npc1", trajectory, timing, mode=mode, until=_At(2.0))
+    world, t = _World(), 0.0
+    while t < 3.0 - 1e-9:
+        action.tick(world, t)
+        handed.actor.step(_DT, driven=mode is RoutingMode.FOLLOW)
+        t += _DT
+    assert action.state is ActionState.COMPLETE
+    assert handed.released == 1
+    assert handed.resumed == 1
+    assert handed.actor.control.throttle == 0.0
+    assert handed.actor.control.brake == 1.0
+
+
+def test_a_run_its_until_ends_after_arrival_keeps_its_vehicle(
+    handed: _Handed,
+) -> None:
+    """Held at the end until *until* holds, as on arrival: not handed back."""
+    trajectory = _line(length=10.0, duration=1.0)
+    action = _route("npc1", trajectory, TrajectoryTiming(), until=_At(2.0))
+    world, t = _World(), 0.0
+    while t < 3.0:
         action.tick(world, t)
         t += _DT
     assert action.state is ActionState.COMPLETE

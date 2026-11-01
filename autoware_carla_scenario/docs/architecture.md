@@ -669,7 +669,8 @@ OpenSCENARIO's stop transition -- and gives back every domain it held, and any
 entity it took from its driver: a `follow` or `position` `RoutingAction`
 brakes its vehicle (or stands its walker still) and hands the vehicle back to
 its traffic backend, an adversity hands its road user back, a routed walk is
-stopped. The default is `False`: actions fighting over an
+stopped. A `follow` or `position` run that its `until` condition ends before
+the end of its trajectory gives its entity back the same way. The default is `False`: actions fighting over an
 entity say two things at once, and which one CARLA would end up doing is an
 accident of the tick order.
 
