@@ -972,8 +972,12 @@ def rerun_errors(
     results: list[ScenarioResult], conversions: list[RerunConversion]
 ) -> dict[int, str]:
     """Why each case's Rerun recording failed, by its position in *results*:
-    the cases whose ``rerun_recording`` is among the failed *conversions*."""
-    failed = {str(c.recording): c.error for c in conversions if c.error is not None}
+    the cases whose ``rerun_recording`` is among the failed *conversions*.
+
+    A recording converted more than once (a retried case, which writes under
+    the stem of the attempt it replaces) goes by its last conversion."""
+    latest = {str(c.recording): c.error for c in conversions}
+    failed = {path: error for path, error in latest.items() if error is not None}
     return {
         i: failed[result.rerun_recording]
         for i, result in enumerate(results)
