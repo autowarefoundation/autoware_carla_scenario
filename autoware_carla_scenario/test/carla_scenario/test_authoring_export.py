@@ -377,6 +377,90 @@ class TestGeneratedPackage:
         assert any("not reproducible" in note for note in manifest["notes"])
 
 
+#: Valid scenario ids, each with the Python package its export is named after.
+#: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
+#: so they are where the scenario id and the names derived from it could part.
+_SCENARIO_IDS = [
+    ("stop__line", "stop_line_scenario"),
+    ("stop_line_", "stop_line_scenario"),
+    ("stop_line", "stop_line_scenario"),
+]
+
+
+class TestScenarioIdAgreement:
+    """Every place an export names its scenario uses ``document.id`` (#1072)."""
+
+    @staticmethod
+    def _export(tmp_path: Path, scenario_id: str) -> Path:
+        return export_package(new_document(scenario_id), tmp_path, **OFFLINE).root
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_the_scenario_id_is_the_document_id(
+        self, scenario_id: str, package_name: str
+    ) -> None:
+        names = package_names(new_document(scenario_id))
+        assert names["scenario_id"] == scenario_id
+        assert names["package_name"] == package_name
+        assert names["distribution_name"] == package_name.replace("_", "-")
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_builder_conf_and_test_agree(
+        self, tmp_path: Path, scenario_id: str, package_name: str
+    ) -> None:
+        package = self._export(tmp_path, scenario_id)
+        module = package / "src" / package_name
+
+        conf_files = list((module / "conf" / "scenario").glob("*.yaml"))
+        assert [p.name for p in conf_files] == [f"{scenario_id}.yaml"]
+        conf = yaml.safe_load(conf_files[0].read_text())
+        assert conf["scenario"]["name"] == scenario_id
+
+        init = (module / "__init__.py").read_text()
+        assert f'register_scenario_builder("{scenario_id}", build_scenario)' in init
+
+        test = (package / "tests" / "test_scenario.py").read_text()
+        assert f'assert document.id == "{scenario_id}"' in test
+        assert f'get_scenario_builder("{scenario_id}")' in test
+
+        manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
+        assert manifest["scenario"]["id"] == scenario_id
+
+    @pytest.mark.parametrize("scenario_id", ["stop__line", "stop_line_"])
+    def test_the_exported_packages_own_tests_pass(
+        self, tmp_path: Path, scenario_id: str
+    ) -> None:
+        """Run the generated tests against this environment's framework.
+
+        The locked run (``uv sync`` from the package's own lock) needs the
+        network and is covered by the ``slow`` end-to-end test; putting the
+        package's ``src`` on the path checks the same assertions offline.
+        """
+        import subprocess
+
+        package = self._export(tmp_path, scenario_id)
+        env = {**os.environ, "PYTHONPATH": str(package / "src")}
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-o",
+                "addopts=",
+                "tests",
+            ],
+            cwd=package,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 class TestExportRefusals:
     def test_an_invalid_document_is_refused(self, tmp_path: Path) -> None:
         document = new_document()
