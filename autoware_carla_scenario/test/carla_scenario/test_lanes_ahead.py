@@ -51,6 +51,7 @@ from autoware_carla_scenario.coordinate import (
 from autoware_carla_scenario.examples.configs import CutInConfig
 from autoware_carla_scenario.examples.cut_in import (
     CUT_IN_ROLE,
+    ego_lanes_ahead,
     lanes_ahead_before_junction,
     left_lanes_ahead,
     npc_in_lanes_ahead,
@@ -342,9 +343,10 @@ def _cut_in_conditions(
         ) as ahead,
     ):
         scenario.setup()
-    # Once for the lanes the NPC cuts in on, once more for the ones the ego
-    # is to stay on.
-    calls = 2 if config.fail_on_leaving_lane else 1
+    # Once for the lanes the NPC cuts in on; for the ones the ego is to stay
+    # on, once more and once for the lanes before the junction, whose
+    # neighbours are left out of them.
+    calls = 3 if config.fail_on_leaving_lane else 1
     assert (
         ahead.call_args_list == [unittest.mock.call(A1, config.lanes_ahead_m)] * calls
     )
@@ -502,6 +504,74 @@ class TestCutInOnTheFixtureMap:
         pose = Lanelet2Pose(lanelet_id=npc_on, s=67.0)
         assert on_lanelet(to_carla_world(pose), overlapped)
         assert not self._cut_in(pose, ego_lanelet=ego)
+
+
+def _ego_at(pose: Lanelet2Pose) -> Any:
+    """A world holding the ego at *pose*."""
+    where = to_carla_world(pose)
+    actor = MagicMock()
+    actor.attributes = {"role_name": str(EGO_ROLE_NAME)}
+    actor.get_location.return_value = MagicMock(x=where.x, y=where.y, z=where.z)
+    world = MagicMock()
+    world.get_actors.return_value = [actor]
+    return world
+
+
+@pytest.mark.usefixtures("nishishinjuku")
+class TestLeftLanesAheadOnTheFixtureMap:
+    """The lanes ahead that loop round a block into the lane beside (#1080)."""
+
+    #: cut_in/left's case on lanelet 133: its lane on the left is 132, which
+    #: lanelets_ahead(133, 1000) reaches round the block.
+    SPAWN, BESIDE = 133, 132
+
+    def test_the_loop_reaches_the_lane_beside(self) -> None:
+        assert self.BESIDE in lanelets_ahead(self.SPAWN, CutInConfig().lanes_ahead_m)
+
+    def test_no_lanelet_beside_the_lane_is_the_egos(self) -> None:
+        reach = CutInConfig().lanes_ahead_m
+        kept = ego_lanes_ahead(self.SPAWN, reach)
+        assert self.BESIDE not in kept
+        own = lanes_ahead_before_junction(self.SPAWN, reach)
+        assert set(own) <= set(kept)
+        assert kept[0] == self.SPAWN
+
+    def _left(self, lanelet: int) -> bool:
+        condition = left_lanes_ahead(self.SPAWN, CutInConfig().lanes_ahead_m, 0.0)
+        pose = Lanelet2Pose(lanelet_id=lanelet, s=60.0)
+        return condition.check(_ego_at(pose), 1.0) is not None
+
+    def test_swerving_into_the_lane_beside_fails(self) -> None:
+        assert self._left(self.BESIDE)
+
+    def test_staying_in_the_lane_does_not(self) -> None:
+        assert not self._left(self.SPAWN)
+
+
+@pytest.mark.usefixtures("nishishinjuku")
+class TestATurnBesideTheLaneOnTheFixtureMap:
+    """A turn through the junction ahead that ends beside the ego's lane is
+    one of its lanes, not the lane beside it."""
+
+    #: From lanelet 3002156, the right turn 3002162 -> 3002161 runs beside
+    #: 3002160, which follows 3002156 before the junction.
+    SPAWN, LANE, TURN = 3002156, 3002160, 3002161
+
+    def test_the_turn_is_beside_the_lane(self) -> None:
+        reach = CutInConfig().lanes_ahead_m
+        assert self.LANE in lanes_ahead_before_junction(self.SPAWN, reach)
+        assert self.TURN not in lanes_ahead_before_junction(self.SPAWN, reach)
+        mm = MapManager.get_instance()
+        lane = mm.lanelet_map.laneletLayer[self.LANE]
+        assert int(mm.routing_graph.adjacentRight(lane).id) == self.TURN
+
+    def test_the_turn_is_kept(self) -> None:
+        assert self.TURN in ego_lanes_ahead(self.SPAWN, CutInConfig().lanes_ahead_m)
+
+    def test_taking_the_turn_does_not_fail(self) -> None:
+        condition = left_lanes_ahead(self.SPAWN, CutInConfig().lanes_ahead_m, 0.0)
+        pose = Lanelet2Pose(lanelet_id=self.TURN, s=20.0)
+        assert condition.check(_ego_at(pose), 1.0) is None
 
 
 # ---------------------------------------------------------------------------
