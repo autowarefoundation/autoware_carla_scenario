@@ -1141,7 +1141,10 @@ A recording already beside the log (`X.rrd` beside `X.trajectory.jsonl`) is
 shown as it is; otherwise the viewer makes it the first time the page is
 opened (in a worker thread, some tens of milliseconds for a case) and keeps it
 beside the log, or, where the session's directory cannot be written, in its
-cache directory. Making one needs the converter in the viewer's environment:
+cache directory. A recording beside the log that is older than the log (after a
+copy that does not keep file times, `cp -r`, `scp`, `rsync -r`) is made again
+into the cache directory, never over the one beside the log, which may hold the
+run's sensors. Making one needs the converter in the viewer's environment:
 
 ```bash
 pip install 'autoware-carla-scenario[rerun]'    # or: pip install autoware-carla-scenario-rerun
