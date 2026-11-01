@@ -243,6 +243,10 @@ def test_an_unknown_url_type_is_reported_on_one_line(
     err = capsys.readouterr().err
     assert err.startswith("scenario-setup: ") and err.count("\n") == 1
     assert "nosuch" in err
+    # A malformed URL is a ValueError, not urllib's URLError.
+    assert carla_install.main(["--url", "http://[::1/carla.tar.gz"]) == 1
+    err = capsys.readouterr().err
+    assert err == "scenario-setup: Invalid IPv6 URL\n"
 
 
 def _local_carla(path: Path) -> None:
@@ -301,6 +305,10 @@ def test_a_url_is_passed_on_unchanged(
     assert carla_install.package_url("HTTPS://x.invalid/c.tar.gz") == (
         "HTTPS://x.invalid/c.tar.gz"
     )
+    # urllib opens file: without the //; it is not a relative path "file:".
+    assert carla_install.package_url("file:/tmp/c.tar.gz") == "file:/tmp/c.tar.gz"
+    assert carla_install.package_url("C:/c.tar.gz").startswith("file:///")
+    assert carla_install.package_url("host:c.tar.gz").startswith("file:///")
     asked: list[str] = []
 
     def refused(request: urllib.request.Request, **_: object) -> None:

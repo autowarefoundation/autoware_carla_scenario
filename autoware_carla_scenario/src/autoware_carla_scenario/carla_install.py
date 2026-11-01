@@ -67,8 +67,9 @@ _RETRIES = 8
 _RETRY_DELAY = 2.0
 """Seconds before the first reconnection; each failed one doubles it, up to 60."""
 
-_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
-"""The ``scheme://`` that tells a URL from a local path."""
+_SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|file:)", re.IGNORECASE)
+"""The ``scheme://`` (or ``file:``, which urllib takes without ``//``) that tells
+a URL from a local path."""
 
 
 def install_dir() -> Path:
@@ -86,8 +87,8 @@ def installed_executable() -> Optional[Path]:
 def package_url(url: str) -> str:
     """*url* itself, or the ``file://`` URL of a local path given instead.
 
-    A value without a ``scheme://`` is a path: ``~`` expands and a relative
-    path is taken from the current directory.
+    A value without a ``scheme://`` (or ``file:``) is a path: ``~`` expands
+    and a relative path is taken from the current directory.
     """
     if _SCHEME.match(url):
         return url
