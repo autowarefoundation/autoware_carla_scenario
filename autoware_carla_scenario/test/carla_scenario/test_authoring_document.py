@@ -292,6 +292,67 @@ class TestValidation:
         report = validate_document(document)
         assert any("ego" in i.message for i in report.errors)
 
+    @pytest.mark.parametrize("timeout", [float("nan"), float("inf"), 0.0, -1.0])
+    def test_a_timeout_that_is_not_positive_and_finite_is_an_error(
+        self, timeout: float
+    ) -> None:
+        """A NaN timeout fails every comparison, so it would never fire (#934)."""
+        document = new_document()
+        document.timeout_seconds = timeout
+        assert any(
+            i.path == "timeout_seconds" for i in validate_document(document).errors
+        )
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), "nan", "-inf"])
+    def test_a_non_finite_number_parameter_is_an_error(self, value: object) -> None:
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                type="set_speed",
+                actor="npc1",
+                params={"target_speed_kmh": value},
+            )
+        )
+        assert any(
+            i.path.endswith(".target_speed_kmh") and "must be a number" in i.message
+            for i in validate_document(document).errors
+        )
+
+    def test_a_finite_number_parameter_is_not_an_error(self) -> None:
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                type="set_speed", actor="npc1", params={"target_speed_kmh": 30.0}
+            )
+        )
+        assert not [
+            i
+            for i in validate_document(document).errors
+            if i.path.endswith(".target_speed_kmh")
+        ]
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    @pytest.mark.parametrize(
+        "field", ["initial_speed_kmh", "spawn.s.value", "spawn.t", "spawn.heading"]
+    )
+    def test_a_non_finite_entity_number_is_an_error(
+        self, field: str, value: float
+    ) -> None:
+        document = new_document()
+        npc = next(e for e in document.entities if e.id == "npc1")
+        if field == "initial_speed_kmh":
+            npc.initial_speed_kmh = value
+        elif field == "spawn.s.value":
+            npc.spawn.s.value = value
+        elif field == "spawn.t":
+            npc.spawn.t = value
+        else:
+            npc.spawn.heading = value
+        assert any(
+            i.path.endswith(f".{field}") and "finite" in i.message
+            for i in validate_document(document).errors
+        )
+
     def test_an_override_on_an_action_on_no_entity_is_an_error(self) -> None:
         document = new_document()
         document.actions.append(ActionNode(type="environment", overrides=True))
@@ -869,6 +930,26 @@ class TestSignalControllerValidation:
         report = validate_document(self._with_controllers(controller))
         assert report.ok
         assert any("only spends time" in i.message for i in report.warnings)
+
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf")])
+    def test_a_non_finite_duration_is_an_error(self, duration: float) -> None:
+        """A NaN duration would hold its phase for ever (#934)."""
+        controller = self._crossing()
+        controller.phases[0].duration_seconds = duration
+        assert any(
+            i.path.endswith("phases[0].duration_seconds")
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
+
+    @pytest.mark.parametrize("delay", [float("nan"), float("inf"), -1.0])
+    def test_a_negative_or_non_finite_delay_is_an_error(self, delay: float) -> None:
+        """A NaN delay is never over: the controller would never start (#934)."""
+        controller = self._crossing()
+        controller.delay_seconds = delay
+        assert any(
+            i.path.endswith(".delay_seconds") and "cannot be negative" in i.message
+            for i in validate_document(self._with_controllers(controller)).errors
+        )
 
     def test_a_delay_with_nothing_to_measure_from_is_an_error(self) -> None:
         """Not a controller that starts late: one whose offset silently is not."""

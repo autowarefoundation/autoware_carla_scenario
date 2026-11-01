@@ -10,6 +10,7 @@ neither CARLA nor lanelet2 -- the editor validates on every keystroke.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -271,11 +272,17 @@ def _coercible_int(value: Any) -> bool:
 
 
 def _coercible_float(value: Any) -> bool:
+    """Whether *value* reads as a finite float.
+
+    ``nan`` and ``inf`` parse, but no parameter means them: a speed, distance,
+    duration or probability that is not finite fails every comparison the
+    checks below make, and the run then never reaches what it waits for.
+    """
     try:
-        float(str(value).strip())
+        number = float(str(value).strip())
     except (TypeError, ValueError):
         return False
-    return True
+    return math.isfinite(number)
 
 
 def _is_int_list(value: Any) -> bool:
@@ -798,6 +805,7 @@ def _check_entity(
     spawn lanelet is only a placeholder; *routed_goal* that it gives the ego
     its goal as well.
     """
+    _check_entity_numbers(out, path, entity)
     _check_goal(out, path, entity, routed=routed_goal)
     _check_model(out, path, entity)
     spawn = entity.spawn
@@ -853,6 +861,28 @@ def _check_binding(
         return
     for field_spec in binding_spec.fields:
         _check_field(out, path, field_spec, binding.params, _NO_REFS, owner_id)
+
+
+def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
+    """Reject a NaN or infinite speed, offset, heading or size.
+
+    The model accepts them (a Pydantic float does), and the runtime would
+    place the actor at no position, or drive it at no speed.
+    """
+    numbers: list[tuple[str, float]] = [
+        ("initial_speed_kmh", entity.initial_speed_kmh),
+        ("spawn.s.value", entity.spawn.s.value),
+        ("spawn.t", entity.spawn.t),
+        ("spawn.heading", entity.spawn.heading),
+    ]
+    if entity.goal is not None:
+        numbers.append(("goal.s", entity.goal.s))
+    if entity.size is not None:
+        numbers.append(("size.length", entity.size.length))
+        numbers.append(("size.width", entity.size.width))
+    for key, number in numbers:
+        if not math.isfinite(number):
+            out.error(f"{path}.{key}", "This must be a finite number.", entity.id)
 
 
 def _check_model(out: _Collector, path: str, entity: Entity) -> None:
@@ -1154,8 +1184,11 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
             "No FAIL condition: without a timeout the scenario can run forever.",
         )
 
-    if document.timeout_seconds <= 0:
-        out.error("timeout_seconds", "The scenario timeout must be positive.")
+    if not math.isfinite(document.timeout_seconds) or document.timeout_seconds <= 0:
+        # NaN fails every comparison: a NaN timeout never fires.
+        out.error(
+            "timeout_seconds", "The scenario timeout must be positive and finite."
+        )
 
     _check_lanelet_slots(out, document)
     _check_sweep_shape(out, document)
@@ -1577,10 +1610,10 @@ def _check_signal_phases(
             )
         seen.add(name)
 
-        if phase.duration_seconds < 0:
+        if not math.isfinite(phase.duration_seconds) or phase.duration_seconds < 0:
             out.error(
                 f"{phase_path}.duration_seconds",
-                "A phase duration cannot be negative.",
+                "A phase duration cannot be negative, and must be finite.",
             )
 
         if not phase.states:
@@ -1748,10 +1781,10 @@ def _check_signal_offset(out: _Collector, path: str, controller: Any) -> None:
     nothing to measure from is not a controller that starts late -- it is one
     whose author expected an offset that silently does not exist.
     """
-    if controller.delay_seconds < 0:
+    if not math.isfinite(controller.delay_seconds) or controller.delay_seconds < 0:
         out.error(
             f"{path}.delay_seconds",
-            "A start delay cannot be negative.",
+            "A start delay cannot be negative, and must be finite.",
         )
     if controller.delay_seconds and controller.reference is None:
         out.error(

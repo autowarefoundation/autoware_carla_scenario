@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult
@@ -34,8 +35,14 @@ class TimeoutCondition(BaseCondition):
         Args:
             timeout_seconds: Number of seconds before failing. Defaults to 60.0.
             label: Human-readable label identifying this condition.
+
+        Raises:
+            ValueError: If *timeout_seconds* is not positive, or not finite:
+                NaN fails every comparison, so a NaN timeout would never fire.
         """
         super().__init__(label=label)
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive and finite")
         self.timeout_seconds = timeout_seconds
 
     def failure_category(self) -> Optional[FailureCategory]:

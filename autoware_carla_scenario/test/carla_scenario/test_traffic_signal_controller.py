@@ -592,6 +592,32 @@ class TestTheDeclaredSchedule:
         assert controller.current_phase.name == "all_red"
 
 
+class TestRefusedAtConstruction:
+    """A non-finite duration or delay is refused when the controller is built (#934).
+
+    NaN fails every comparison: a NaN duration would hold its phase for ever,
+    and a NaN delay would never let the controller start.
+    """
+
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), -1.0])
+    def test_a_phase_duration(self, duration: float) -> None:
+        with pytest.raises(ValueError, match="duration_seconds"):
+            Phase("green", duration, (PhaseState(_NORTH, "green"),))
+
+    @pytest.mark.parametrize("delay", [float("nan"), float("inf"), -1.0])
+    def test_a_start_delay(self, delay: float) -> None:
+        with pytest.raises(ValueError, match="delay_seconds"):
+            SignalController(
+                name="late",
+                phases=(Phase("green", 5.0, (PhaseState(_NORTH, "green"),)),),
+                delay_seconds=delay,
+                reference=_cycle(),
+            )
+
+    def test_a_zero_duration_passes_straight_through(self) -> None:
+        assert Phase("all_red", 0.0, ()).duration_seconds == 0.0
+
+
 class TestBuildingFromTheDocument:
     def test_the_declared_cycle_is_built_in_order(self) -> None:
         declared = [

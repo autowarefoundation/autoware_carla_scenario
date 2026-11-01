@@ -1112,6 +1112,47 @@ class TestTheDefaultTimeout:
         persistent = PersistentCondition(TimeoutCondition(1.0, label="t"), duration=0.1)
         assert all(persistent.check(MagicMock(), t) is None for t in (0.5, 1.0, 99.0))
 
+    @pytest.mark.parametrize("timeout", [float("nan"), float("inf")])
+    def test_a_non_finite_timeout_does_not_bound_the_run(self, timeout):
+        """It never fires, so the default timeout is still added (#934)."""
+        from autoware_carla_scenario import OrCondition, TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import (
+            _bounds_the_run,
+            _register_default_timeout,
+        )
+
+        # The constructor refuses one; a timeout changed afterwards is the
+        # case left.
+        own = TimeoutCondition(20.0, label="scenario_timeout")
+        own.timeout_seconds = timeout
+        assert _bounds_the_run(own) is False
+        assert _bounds_the_run(OrCondition([_never("other"), own])) is False
+        scenario = self._scenario(own)
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert scenario._fail_conditions[-1].label == "default_timeout"
+
+    @pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "0", "-1"])
+    def test_the_command_line_refuses_a_timeout_that_is_not_positive_and_finite(
+        self, timeout
+    ):
+        """Hydra reads ``scenario.timeout_seconds=nan`` as a float (#934)."""
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples.run import _run_timeout_seconds
+
+        cfg = OmegaConf.create({"scenario": {"timeout_seconds": float(timeout)}})
+        with pytest.raises(ValueError, match="scenario.timeout_seconds"):
+            _run_timeout_seconds(cfg)
+
+    def test_the_command_line_timeout_is_read_as_given(self):
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples.run import _run_timeout_seconds
+
+        assert _run_timeout_seconds(OmegaConf.create({"scenario": {}})) == 60.0
+        cfg = OmegaConf.create({"scenario": {"timeout_seconds": 15}})
+        assert _run_timeout_seconds(cfg) == 15.0
+
     def test_the_registered_conditions_fire_at_the_scenarios_own_limit(self):
         """What is left registered fails at 20.4 s, and not at 12 s."""
         from autoware_carla_scenario import TimeoutCondition
