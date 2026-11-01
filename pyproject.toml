@@ -15,6 +15,11 @@ exclude = [
 # The T4 dataset reader the tests load each written dataset with, at its
 # latest release (it is not on PyPI under this name).
 t4-devkit = { git = "https://github.com/tier4/t4-devkit", tag = "v0.8.0" }
+# TEMPORARY: rules version 2 (conditional distributions), which
+# weather_rules.yaml is written in, is not released yet. Replace this with the
+# release's lower bound in autoware_carla_scenario/pyproject.toml once openodd-py
+# publishes it.
+openodd-py = { git = "https://github.com/hakuturu583/openodd_py", rev = "fc9a6d3" }
 
 [dependency-groups]
 dev = [

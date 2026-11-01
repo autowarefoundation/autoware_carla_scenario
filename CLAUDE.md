@@ -257,10 +257,10 @@ If pre-commit hooks fail:
   `openodd.Backend` (the CARLA/Lanelet2 probes, the `measure:` reader, the
   knobs the sampler sets, where the ego is); the `odd/` and `coverage/`
   modules re-export openodd. OpenODD and coverage semantics belong in
-  openodd_py, not here. The weather rules -- the ranges of the road's grip
-  and of the drivers' visibility -- are the backend's fuzzy rules
-  (`CarlaBackend.rules`, `weather_rules.yaml`, docs/odd.md "Weather rules"),
-  which openodd infers (>=0.16.0) and a run replaces with
+  openodd_py, not here. The weather rules -- the distributions of the road's
+  grip and of the drivers' visibility -- are the backend's conditional
+  distributions (`CarlaBackend.rules`, `weather_rules.yaml`, docs/odd.md
+  "Weather rules"), which openodd reads (rules version 2) and a run replaces with
   `environment.rules`. Tune them there, not in code.
 - Python 3.10 through 3.14. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.15"` -- the comment on that line is the

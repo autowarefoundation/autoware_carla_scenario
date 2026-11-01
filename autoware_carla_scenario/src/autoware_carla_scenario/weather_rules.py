@@ -1,18 +1,19 @@
 """The rules the weather's effects follow: the road's grip and how far drivers see.
 
 A run sets the weather; what it does to the road and to the drivers' sight
-follows from it, as a range a run's quantile picks a point of
+follows from it, as a distribution a run's quantile picks the value of
 (:func:`~autoware_carla_scenario.actions.environment.tire_friction`,
-:func:`~autoware_carla_scenario.visibility.visibility`).  Which range is
-written as fuzzy rules (``weather_rules.yaml`` next to this module), which
-openodd reads and infers (:mod:`openodd.rules`, its docs/rules.md): they are
-the CARLA backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
+:func:`~autoware_carla_scenario.visibility.visibility`).  Which distribution
+is written as conditional distributions (``weather_rules.yaml`` next to this
+module), which openodd reads (:mod:`openodd.rules`, its docs/rules.md): they
+are the CARLA backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
 
-* a **quantity** (``tire_friction``, ``visibility``) is one or more rule
-  bases, whose ranges ``combine`` (``min`` or ``max``) joins;
-* a **rule base** reads some of the weather's fields (:data:`WEATHER_INPUTS`),
-  each sorted into fuzzy terms, and its rules give the ``low`` and ``high``
-  ends of the range per combination of terms.
+* a **quantity** (``tire_friction``, ``visibility``) is one or more parts;
+  at a run's quantile, each part gives its value and ``combine`` (``min`` or
+  ``max``) joins them;
+* a **part** reads some of the weather's fields (:data:`WEATHER_INPUTS`) and
+  gives a distribution (``uniform``, ``triangular`` or ``normal``) at points
+  of them, interpolated linearly between the points.
 
 A run reads other rules with ``environment.rules`` (:func:`use_weather_rules`):
 a file -- a path or an ``https://`` URL -- merged over the default rules (it
@@ -54,8 +55,10 @@ __all__ = [
     "default_rules",
     "rule_values",
     "use_weather_rules",
+    "vehicle_at",
     "vehicle_range",
     "vehicle_rules_in_use",
+    "weather_at",
     "weather_range",
     "weather_rule_files",
 ]
@@ -63,10 +66,10 @@ __all__ = [
 #: The rules a run follows unless it names others.
 DEFAULT_RULES: Path = Path(__file__).resolve().parent / "weather_rules.yaml"
 
-#: The quantities the framework reads a range of.
+#: The quantities the framework reads.
 QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility")
 
-#: The weather's fields a rule base may read, as CARLA's ``WeatherParameters``
+#: The weather's fields a part may read, as CARLA's ``WeatherParameters``
 #: name them, and ``water``: the larger of ``wetness`` and
 #: ``precipitation_deposits``, which the road's grip follows.
 WEATHER_INPUTS: tuple[str, ...] = (
@@ -187,6 +190,13 @@ def weather_range(quantity: str, inputs: dict[str, float]) -> tuple[float, float
     return _backend().derived_range(quantity, inputs)
 
 
+def weather_at(quantity: str, inputs: dict[str, float], quantile: float) -> float:
+    """The value of *quantity* at *quantile* (0-1, clamped) of its
+    distribution in the weather *inputs*, by the rules the run follows (every
+    vehicle's but those ``vehicles`` names)."""
+    return _backend().derived_at(quantity, inputs, quantile)
+
+
 def _rules_for(type_id: str, role: str) -> Optional[Rules]:
     for pattern, rules in _VEHICLE_RULES:
         if pattern.lower() == EGO_KEY:
@@ -208,3 +218,16 @@ def vehicle_range(
     if rules is None:
         return weather_range(quantity, inputs)
     return rules.range(quantity, rule_values(inputs))
+
+
+def vehicle_at(
+    quantity: str, inputs: dict[str, float], quantile: float, type_id: str, role: str
+) -> float:
+    """The value of *quantity* at *quantile* (0-1, clamped) in the weather
+    *inputs* for the vehicle of blueprint *type_id* and ``role_name`` *role*
+    (``""``: none): by the rules of the first ``vehicles`` entry it matches,
+    else :func:`weather_at`'s."""
+    rules = _rules_for(type_id, role)
+    if rules is None:
+        return weather_at(quantity, inputs, quantile)
+    return rules.quantile(quantity, rule_values(inputs), quantile)

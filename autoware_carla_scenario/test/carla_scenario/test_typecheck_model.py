@@ -949,7 +949,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # rules through.
     "weather_rules": (
         weather_rules,
-        ("vehicle_range", "vehicle_rules_in_use", "weather_range"),
+        ("vehicle_at", "vehicle_rules_in_use", "weather_at", "weather_range"),
     ),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (

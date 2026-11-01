@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from .weather_rules import weather_range
+from .weather_rules import weather_at, weather_range
 
 __all__ = [
     "DEFAULT_DECEL",
@@ -85,16 +85,27 @@ def visibility(
     sun_altitude_angle: float = 90.0,
     quantile: float = 0.5,
 ) -> float:
-    """The distance at *quantile* (0-1) of :func:`visibility_range`, metres.
+    """The distance at *quantile* (0-1) of the distribution of
+    :func:`visibility_range`, metres.
 
-    0.5, the default, is the middle of the range.
+    0.5, the default, is its median.  Each of the fog, the rain and the light
+    gives its distance at *quantile*, and the shortest holds.
     """
-    low, high = visibility_range(fog_density, precipitation, sun_altitude_angle)
-    return at_quantile(low, high, quantile)
+    return weather_at(
+        "visibility",
+        {
+            "fog_density": float(fog_density),
+            "precipitation": float(precipitation),
+            "sun_altitude_angle": float(sun_altitude_angle),
+        },
+        quantile,
+    )
 
 
 def at_quantile(low: float, high: float, quantile: float) -> float:
-    """The point *quantile* (clamped to 0-1) of the way from *low* to *high*."""
+    """The point *quantile* (clamped to 0-1) of the way from *low* to *high*:
+    the quantile of a uniform distribution.  The weather rules' quantities
+    take theirs from their own distributions (:func:`visibility`)."""
     q = min(max(float(quantile), 0.0), 1.0)
     return low + q * (high - low)
 
