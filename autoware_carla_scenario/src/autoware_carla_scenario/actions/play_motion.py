@@ -57,7 +57,8 @@ class PlayMotionAction(BaseAction):
     its legs frozen.
 
     The action runs until the motion has played (each loop of it, with
-    *loop*, until *duration_s*), then hands the walker back to its animation.
+    *loop*, until *duration_s*), then hands the walker back to its animation,
+    as it does when another action overrides it or the run ends mid-motion.
 
     Args:
         entity_name: ``role_name`` of the pedestrian.
@@ -154,12 +155,16 @@ class PlayMotionAction(BaseAction):
         return claims
 
     def reset(self) -> None:
-        """Forget the earlier runs' walker (:meth:`BaseAction.reset`)."""
+        """Forget the earlier runs' motion (:meth:`BaseAction.reset`)."""
         super().reset()
-        self._retarget = None
-        self._walker = None
         self._started_at = 0.0
         self._playing = False
+
+    def close(self) -> None:
+        """Hand the walker back to its animation if the run ends mid-motion,
+        and close the conditions (:meth:`BaseAction.close`)."""
+        self._stop()
+        super().close()
 
     def execute(self, world: carla.World) -> None:
         """Begin the motion on the trigger's call, then show its next frame on
@@ -193,7 +198,9 @@ class PlayMotionAction(BaseAction):
         if not self._playing:
             return
         elapsed = _now(world) - self._started_at
-        if self._duration_s is not None and elapsed >= self._duration_s:
+        # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
+        # can read 0.9999999999999998 s (ElapsedTimeCondition).
+        if self._duration_s is not None and elapsed >= self._duration_s - 1e-9:
             self._stop()
             return
         frame = int(math.floor(elapsed * self._motion.fps + 1e-9))
@@ -209,6 +216,10 @@ class PlayMotionAction(BaseAction):
         if not self._poser.show(self._motion.frame(frame)):
             # The walker was destroyed under the motion.
             self._playing = False
+
+    def _stopped(self, world: carla.World) -> None:
+        """Overridden mid-motion: hand the walker back, as at the motion's end."""
+        self._stop()
 
     def _stop(self) -> None:
         """Hand the walker back to its animation."""

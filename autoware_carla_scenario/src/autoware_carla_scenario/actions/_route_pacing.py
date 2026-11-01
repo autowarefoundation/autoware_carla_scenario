@@ -345,7 +345,8 @@ class RoutePacer:
             return False
         if self._let_go:
             return True  # still standing behind it: the next hold too
-        if elapsed - self._still_since < BLOCK_WAIT_S:
+        # With the clock's 1e-9 s tolerance, as ElapsedTimeCondition has.
+        if elapsed - self._still_since < BLOCK_WAIT_S - 1e-9:
             return False
         x, y = position
         try:
