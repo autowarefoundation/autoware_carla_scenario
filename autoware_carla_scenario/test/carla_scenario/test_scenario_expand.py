@@ -206,3 +206,65 @@ def test_the_cli_expands_a_packaged_logical_scenario(
         assert spawn_s.startswith("ego.spawn_s=")
     # The constraints exclude lanelet 222 explicitly.
     assert "ego.spawn_lanelet_id=222" not in {c[0] for c in cases}
+
+
+# A command line that does not compose (#993): a message and 2, as
+# `scenario-check` prints, never a traceback; stdout stays the JSON's.
+def test_the_cli_names_the_closest_scenario_configs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    assert main(["scenario=nonexistent/x"]) == 2
+    captured = capsys.readouterr()
+    assert "no scenario configs match pattern 'nonexistent/x'" in captured.err
+    assert "scenario configs: " in captured.err
+    assert "intersection_passing/straight" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+    assert main(["scenario=intersection_passing/straigth"]) == 2
+    assert "did you mean: intersection_passing/straight" in capsys.readouterr().err
+
+
+def test_the_cli_names_an_unknown_override_key_with_a_suggestion(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(["scenario=intersection_passing/straight", "foo.bar=1"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "could not override 'foo.bar'" in captured.err
+    assert "+foo.bar=1" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+    code = main(["scenario=intersection_passing/straight", "scenario.timout_seconds=3"])
+    assert code == 2
+    assert "did you mean 'scenario.timeout_seconds'?" in capsys.readouterr().err
+
+
+def test_hydra_full_error_shows_the_cli_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hydra.errors import HydraException
+
+    from autoware_carla_scenario.examples.expand import main
+
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    with pytest.raises(HydraException):
+        main(["scenario=intersection_passing/straight", "foo.bar=1"])
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_the_cli_help_is_the_usage_on_stdout(
+    flag: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import expand
+
+    assert expand.main([flag]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == (expand.__doc__ or "").strip()
+    assert "scenario-expand scenario=" in captured.out
+    assert captured.err == ""

@@ -26,10 +26,8 @@ itself").
 
 from __future__ import annotations
 
-import difflib
 import logging
 import os
-import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -39,45 +37,6 @@ from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
 __all__ = ["main"]
-
-_OVERRIDE_KEY = re.compile(r"Could not (?:override|delete) '([^']+)'")
-
-
-def _flatten(node: Any, prefix: str = "") -> list[str]:
-    """The dotted keys of the nested mapping *node*."""
-    if not isinstance(node, dict):
-        return []
-    keys: list[str] = []
-    for key, value in node.items():
-        path = f"{prefix}.{key}" if prefix else str(key)
-        keys.append(path)
-        keys += _flatten(value, path)
-    return keys
-
-
-def _suggest(word: str, known: list[str]) -> str:
-    close = difflib.get_close_matches(word, known, n=1, cutoff=0.6)
-    return f"did you mean {close[0]!r}? " if close else ""
-
-
-def _compose_error(exc: Exception, name: str, overrides: list[str], run: Any) -> str:
-    """One message for the composition error *exc* of config *name*."""
-    text = str(exc).strip()
-    found = _OVERRIDE_KEY.search(text)
-    if found is None:
-        return f"Error: {text.splitlines()[0] if text else type(exc).__name__}"
-    key = found.group(1)
-    try:
-        known = _flatten(run._to_dict(run._compose_config(name, [])), "")
-    except Exception:  # noqa: BLE001 - the suggestion is a courtesy
-        known = []
-    value = next(
-        (o.split("=", 1)[1] for o in overrides if o.split("=", 1)[0] == key), "..."
-    )
-    return (
-        f"Error: could not override {key!r}: the config has no such key\n"
-        f"  ({_suggest(key, known)}To add a new key, use +{key}={value})"
-    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.ok else 1
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
+    from ..examples.compose_errors import (  # noqa: PLC0415
+        compose_or_report,
+        resolve_scenarios,
+        suggest,
+    )
     from ..registry import (  # noqa: PLC0415
         get_scenario_builder,
         get_scenario_registry,
@@ -111,30 +75,15 @@ def main(argv: list[str] | None = None) -> int:
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
     if pattern in (None, "*"):
         pattern = "**/*"  # `*` alone matches no `group/name`
-    try:
-        names = run._resolve_scenario_glob(pattern)
-    except SystemExit:
-        # The runner's helper printed which pattern matched nothing.
-        known = run._resolve_scenario_glob("**/*")
-        close = difflib.get_close_matches(pattern, known, n=3, cutoff=0.5)
-        if close:
-            print(f"  did you mean: {', '.join(close)}?", file=sys.stderr)  # noqa: T201
-        print(f"  scenario configs: {', '.join(known)}", file=sys.stderr)  # noqa: T201
+    names = resolve_scenarios(pattern)
+    if names is None:
         return 2
-    from hydra.errors import HydraException  # noqa: PLC0415
-    from omegaconf.errors import OmegaConfBaseException  # noqa: PLC0415
-
     cfgs = []
     for name in names:
-        try:
-            cfgs.append(run._compose_config(name, overrides))
-        except (HydraException, OmegaConfBaseException) as exc:
-            # A key, a value: what the command line says, not a bug.  Hydra's
-            # own switch shows the traceback (and any other exception does).
-            if os.environ.get("HYDRA_FULL_ERROR") == "1":
-                raise
-            print(_compose_error(exc, name, overrides, run), file=sys.stderr)  # noqa: T201
+        cfg = compose_or_report(name, overrides)
+        if cfg is None:
             return 2
+        cfgs.append(cfg)
 
     # The sweep reads `controls:` only when it expands; a wrong one is an
     # authoring error, reported here with its config path (#546).
@@ -174,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if result is None and get_scenario_builder(scenario_name) is None:
             known = sorted(get_scenario_registry())
-            hint = _suggest(scenario_name, known)
+            hint = suggest(scenario_name, known)
             print(  # noqa: T201
                 f"[FAILED] {config_name}: unknown scenario name {scenario_name!r} "
                 f"({hint}known names: {', '.join(known)})"

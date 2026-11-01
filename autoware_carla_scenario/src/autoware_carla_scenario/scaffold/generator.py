@@ -36,6 +36,21 @@ class ScaffoldResult(NamedTuple):
     names: dict[str, str]
 
 
+class PackageExistsError(FileExistsError):
+    """The target directory of :func:`create_scenario_package` already exists.
+
+    Its message names the Python API's ``force=True``; :attr:`root` lets a
+    caller with another way to overwrite (``scenario-new --force``) say so.
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(
+            f"Target directory already exists: {root} (pass force=True to overwrite)."
+        )
+        #: The package directory that already exists.
+        self.root = root
+
+
 #: Directory holding the ``*.jinja`` templates shipped with this package.
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -307,8 +322,7 @@ def create_scenario_package(
     root = Path(output_dir) / names["package_name"]
 
     if root.exists() and not force:
-        msg = f"Target directory already exists: {root} (use force=True to overwrite)."
-        raise FileExistsError(msg)
+        raise PackageExistsError(root)
 
     env = code_environment(TEMPLATES_DIR)
     for template_name, out_template in _FILE_MANIFEST.items():
@@ -373,6 +387,13 @@ def main(argv: list[str] | None = None) -> int:
             description=args.description,
             force=args.force,
         )
+    except PackageExistsError as exc:
+        print(  # noqa: T201
+            f"Error: target directory already exists: {exc.root} "
+            "(use --force to overwrite).",
+            file=sys.stderr,
+        )
+        return 1
     except (ValueError, FileExistsError) as exc:
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         return 1

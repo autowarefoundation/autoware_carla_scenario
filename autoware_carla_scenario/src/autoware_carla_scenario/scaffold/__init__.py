@@ -14,10 +14,17 @@ Or via the ``scenario-new`` console script::
 from __future__ import annotations
 
 from .generator import (
+    PackageExistsError,
     ScaffoldResult,
     create_scenario_package,
     main,
     resolve_names,
 )
 
-__all__ = ["ScaffoldResult", "create_scenario_package", "main", "resolve_names"]
+__all__ = [
+    "PackageExistsError",
+    "ScaffoldResult",
+    "create_scenario_package",
+    "main",
+    "resolve_names",
+]
