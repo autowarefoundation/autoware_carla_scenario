@@ -24,6 +24,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 
 __all__ = [
     "DISTRIBUTION",
@@ -44,7 +45,12 @@ VERSION_ENV = "SCENARIO_EXPORT_FRAMEWORK_VERSION"
 REPOSITORY_ENV = "SCENARIO_EXPORT_FRAMEWORK_REPOSITORY"
 
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-_SCP_URL_PATTERN = re.compile(r"^(?:ssh://)?git@([^:/]+)[:/](.+?)(?:\.git)?/?$")
+#: The scp-like form ``git@host:owner/repo.git``, which has no scheme.  A
+#: ``scheme://`` URL is parsed with :func:`urllib.parse.urlsplit` instead.
+_SCP_URL_PATTERN = re.compile(r"^git@([^:/]+)[:/](.+?)(?:\.git)?/?$")
+
+#: Ports implied by an http(s) scheme, dropped when a URL spells them out.
+_DEFAULT_PORTS = {"http": "80", "https": "443"}
 
 
 class PinResolutionError(RuntimeError):
@@ -150,17 +156,59 @@ def _git(repo: Path, *args: str) -> Optional[str]:
     return result.stdout.strip()
 
 
+def _split_host_port(host_port: str) -> tuple[str, str]:
+    """Split ``host[:port]`` (or ``[v6]:port``) into its host and port."""
+    if host_port.startswith("["):
+        end = host_port.find("]")
+        if end >= 0:
+            rest = host_port[end + 1 :]
+            port = rest[1:] if rest.startswith(":") else ""
+            return host_port[: end + 1], port
+    host, _sep, port = host_port.partition(":")
+    return host, port
+
+
+def _strip_repo_path(path: str) -> str:
+    """Drop a trailing ``/`` and ``.git`` from a repository path."""
+    return path.removesuffix("/").removesuffix(".git")
+
+
 def normalize_repository_url(url: str) -> str:
     """Return *url* in a form ``uv`` (and anyone else) can clone.
 
-    ``git@host:owner/repo.git`` becomes ``https://host/owner/repo``; anything
-    already using a scheme is returned unchanged.
+    The result is written into an exported package that is meant to be shared,
+    so credentials never survive:
+
+    * ``git@host:owner/repo.git`` becomes ``https://host/owner/repo``;
+    * ``ssh://user@host:port/owner/repo.git`` becomes ``https://host/owner/repo``
+      -- the user and the SSH port mean nothing over HTTPS;
+    * ``http(s)://`` URLs lose their userinfo (a token or ``user:password``),
+      query and fragment, keep a non-default port, and lose a ``.git`` suffix;
+    * any other ``scheme://`` URL loses its userinfo and is otherwise kept.
+
+    Anything else (a local path) is returned stripped.
     """
-    match = _SCP_URL_PATTERN.match(url.strip())
+    stripped = url.strip()
+    match = _SCP_URL_PATTERN.match(stripped)
     if match:
         host, path = match.groups()
         return f"https://{host}/{path}"
-    return url.strip().removesuffix(".git") if url.startswith("http") else url.strip()
+    if "://" not in stripped:
+        return stripped
+
+    parts = urlsplit(stripped)
+    scheme = parts.scheme.lower()
+    host_port = parts.netloc.rpartition("@")[2]
+    host, port = _split_host_port(host_port)
+    if scheme in ("ssh", "git+ssh"):
+        path = _strip_repo_path(parts.path).lstrip("/")
+        return f"https://{host}/{path}"
+    if scheme in ("http", "https"):
+        netloc = host if port in ("", _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
+        return f"{scheme}://{netloc}{parts.path.removesuffix('.git')}"
+    if host_port == parts.netloc:
+        return stripped
+    return stripped.replace(parts.netloc, host_port, 1)
 
 
 def framework_source_root() -> Path:
