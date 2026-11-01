@@ -59,6 +59,15 @@ the cosine of the lane's own heading, which is its speed along the lane only
 where the lane runs along +x. Distances, times and areas do not change with the
 turn.
 
+CriMe's measures share each frame's scenario rather than each copying it,
+and the ego's reference path and a lanelet's smoothed bounds are built once a
+frame (`EvaluatorSettings.share_frame`; a test checks the values match CriMe's
+own copying run). On a frame of ten road users the eight measures take about
+95 ms together, against 520 ms as CriMe runs them. The drivable area is
+CommonRoad-Reach's C++ computation: about 155 ms over a 3 s horizon, 45 ms
+over 2 s (`horizon_steps`); its grid size changes neither the time nor the
+area.
+
 CriMe's TTS and TTR (time-to-steer, time-to-react) are left out: they simulate
 the ego's manoeuvres and take seconds a frame.
 

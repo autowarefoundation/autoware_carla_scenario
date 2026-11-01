@@ -26,11 +26,14 @@ moved so the ego is at the origin and turned so the lane under it runs along
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -119,12 +122,16 @@ class EvaluatorSettings:
         radius_m: How far from the ego the lanelets are kept (m).
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
             section and key (``{"planning": {"size_grid": 0.3}}``).
+        share_frame: Let CriMe's measures share the frame's scenario rather
+            than each copy it (:func:`_shared_frame`); the same values, in a
+            fifth of the time.  Off only to check that.
     """
 
     dt: float = 0.1
     horizon_steps: int = 30
     radius_m: float = 150.0
     reach_settings: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    share_frame: bool = True
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> EvaluatorSettings:
@@ -160,6 +167,7 @@ class Evaluator:
         from commonroad.common.file_reader import CommonRoadFileReader
 
         self.settings = settings or EvaluatorSettings()
+        self._config: Any = None
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             scenario, _ = CommonRoadFileReader(map_xml).open(lanelet_assignment=False)
@@ -186,7 +194,6 @@ class Evaluator:
     def _local_network(self, x: float, y: float, angle: float) -> Any:
         """The lanelets within the radius of ``(x, y)``, as a network of their
         own, moved so that ``(x, y)`` is the origin and turned by *angle*."""
-        import copy
 
         from commonroad.scenario.lanelet import LaneletNetwork
 
@@ -349,19 +356,30 @@ class Evaluator:
         errors: dict[str, str],
     ) -> None:
         import commonroad_crime.measure as crime_measure
-        from commonroad_crime.data_structure.configuration import CriMeConfiguration
 
-        for key in wanted:
+        config = self._crime_config()
+        config.update(ego_id=ego_id, sce=scenario)
+        with _shared_frame() if self.settings.share_frame else nullcontext():
+            for key in wanted:
+                try:
+                    measure = getattr(crime_measure, CRIME_MEASURES[key])(config)
+                    values[key] = _finite_or_none(measure.compute_criticality(0, verbose=False))
+                except Exception as exc:  # a measure undefined here, not a broken worker
+                    values[key] = None
+                    errors[key] = f"{type(exc).__name__}: {exc}"
+
+    def _crime_config(self) -> Any:
+        """CriMe's configuration, made once: making one builds the vehicle's
+        parameters through omegaconf, a third of a frame's time when it was
+        made for every measure."""
+        if self._config is None:
+            from commonroad_crime.data_structure.configuration import CriMeConfiguration
+
             config = CriMeConfiguration()
             config.debug.save_plots = False
             config.debug.draw_visualization = False
-            config.update(ego_id=ego_id, sce=scenario)
-            try:
-                measure = getattr(crime_measure, CRIME_MEASURES[key])(config)
-                values[key] = _finite_or_none(measure.compute_criticality(0, verbose=False))
-            except Exception as exc:  # a measure undefined here, not a broken worker
-                values[key] = None
-                errors[key] = f"{type(exc).__name__}: {exc}"
+            self._config = config
+        return self._config
 
     def _reach(
         self,
@@ -455,6 +473,62 @@ class Evaluator:
         return [float(compute_area_of_reach_nodes(interface.reachable_set[t])) for t in steps]
 
 
+@contextmanager
+def _shared_frame() -> Iterator[None]:
+    """Let CriMe's measures share one frame's scenario instead of copying it.
+
+    Every CriMe measure deep-copies the scenario as it is made, and every
+    other road user it measures against: half a frame's time.  A frame's
+    scenario is made for that frame alone and no measure the worker evaluates
+    changes it (CriMe fills in state fields the worker already sets), so
+    while this holds CriMe's base class copies nothing; the copies CriMe's
+    simulations make of the states they step stay.  The ego's reference path
+    and curvilinear frame, which each measure built anew, are built once per
+    ego lanelet, and a lanelet's bounds are smoothed once (CriMe smoothed them
+    every time it read a road user's heading on the lane, a third of what was
+    left).
+    """
+    import commonroad_crime.data_structure.base as base
+    import commonroad_crime.utility.solver as solver
+    from commonroad_clcs.pycrccosy import CurvilinearCoordinateSystem
+    from commonroad_crime.utility.general import generate_reference_path
+
+    frames: dict[tuple[int, int], Any] = {}
+
+    def update_clcs(self: Any) -> None:
+        ego = self.ego_vehicle
+        lanelet_id = next(
+            iter(ego.prediction.center_lanelet_assignment[ego.initial_state.time_step])
+        )
+        key = (id(self.sce), lanelet_id)
+        if key not in frames:
+            path = generate_reference_path(lanelet_id, self.sce.lanelet_network)
+            frames[key] = CurvilinearCoordinateSystem(path)
+        self.configuration.update(CLCS=frames[key])
+
+    smooth = solver.smoothing_reference_path
+    smoothed: dict[tuple[Any, ...], Any] = {}
+
+    def smoothing_reference_path(
+        path: Any, smooth_factor: Any = None, weight_coefficient: Any = None
+    ) -> Any:
+        points = np.ascontiguousarray(path, dtype=float)
+        key = (points.shape, points.tobytes(), smooth_factor, weight_coefficient)
+        if key not in smoothed:
+            smoothed[key] = smooth(points, smooth_factor, weight_coefficient)
+        return np.array(smoothed[key], copy=True)
+
+    module_copy, method = base.copy, base.CriMeBase._update_clcs
+    base.copy = SimpleNamespace(deepcopy=lambda value, memo=None: value, copy=copy.copy)
+    base.CriMeBase._update_clcs = update_clcs
+    solver.smoothing_reference_path = smoothing_reference_path
+    try:
+        yield
+    finally:
+        base.copy, base.CriMeBase._update_clcs = module_copy, method
+        solver.smoothing_reference_path = smooth
+
+
 def _moved(actor: Actor, x: float, y: float, angle: float) -> Actor:
     """*actor* in the frame whose origin is ``(x, y)``, turned by *angle*."""
     c, s = math.cos(angle), math.sin(angle)
@@ -482,7 +556,6 @@ def _best_lanelet(network: Any, lanelet_ids: list[int], yaw: float) -> int:
 def _without_dangling(lanelet: Any, kept: set[int]) -> Any:
     """*lanelet* with its links to lanelets not *kept* dropped, so a network of
     the kept ones refers to nothing it lacks."""
-    import copy
 
     copied = copy.deepcopy(lanelet)
     copied.predecessor = [i for i in lanelet.predecessor if i in kept]

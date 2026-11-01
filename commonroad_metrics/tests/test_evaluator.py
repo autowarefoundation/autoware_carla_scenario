@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from commonroad_metrics import MEASURES, Actor, Evaluator
+from commonroad_metrics import CRIME_MEASURES, MEASURES, Actor, Evaluator, EvaluatorSettings
 from commonroad_metrics.worker import serve
 
 MAP = Path(__file__).parent / "data" / "straight.xml"
@@ -128,3 +128,24 @@ def test_infinity_crosses_the_wire() -> None:
     last = stdout.getvalue().splitlines()[-1]
     # Alone on the road: no one to measure from.
     assert json.loads(last)["values"]["crime_ttc_s"] is None
+
+
+def test_sharing_the_frame_changes_no_value() -> None:
+    """CriMe's measures read the same values sharing a frame's scenario as
+    copying it for each, on frames of road users ahead, beside, behind,
+    braking and slower."""
+    shared = Evaluator(str(MAP))
+    copied = Evaluator(str(MAP), EvaluatorSettings(share_frame=False))
+    crime = list(CRIME_MEASURES)
+    frames = [
+        (on_road(50, 1.75, 15.0, 1), [on_road(80, 1.75, 5.0, 2)]),
+        (on_road(40, 5.25, 12.0, 1), [on_road(55, 5.25, 12.0, 2), on_road(60, 1.75, 2.0, 3)]),
+        (
+            on_road(100, 1.75, 20.0, 1),
+            [on_road(130, 1.75, 10.0, 2), on_road(90, 1.75, 25.0, 3), on_road(120, 5.25, 0.0, 4)],
+        ),
+    ]
+    braking = Actor(**{**on_road(70, 1.75, 10.0, 5).__dict__, "ax": -3.0 * COS, "ay": -3.0 * SIN})
+    frames.append((on_road(50, 1.75, 14.0, 1), [braking]))
+    for ego, others in frames:
+        assert shared.evaluate(ego, others, crime) == copied.evaluate(ego, others, crime)
