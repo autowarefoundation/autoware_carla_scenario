@@ -455,8 +455,9 @@ class ControlConfig:
         which does not read it, is warned about.
 
         Raises:
-            ValueError: If *mapping* holds a key this config does not define, or
-                names an unknown :attr:`longitudinal_controller`.
+            ValueError: If *mapping* holds a key this config does not define,
+                sets one to NaN, or names an unknown
+                :attr:`longitudinal_controller`.
         """
         # Imported here: the Codon check does not compile this method, and Codon's
         # dataclasses has no fields() (docs/typecheck.md).
@@ -479,6 +480,18 @@ class ControlConfig:
             raise ValueError(
                 f"Unknown ControlConfig key(s): {unknown}. "
                 f"Known keys: {sorted(known | set(aliases))}"
+            )
+        # Hydra reads ``=nan`` as a float, and a NaN gain or limit makes every
+        # command non-finite: the follower refuses each one and the ego brakes
+        # for the whole run.
+        not_a_number = sorted(
+            name
+            for name, value in values.items()
+            if isinstance(value, float) and math.isnan(value)
+        )
+        if not_a_number:
+            raise ValueError(
+                f"ControlConfig key(s) {not_a_number} must be numbers, got NaN"
             )
         config = cls(**values)
         if config.longitudinal_controller not in LONGITUDINAL_CONTROLLERS:

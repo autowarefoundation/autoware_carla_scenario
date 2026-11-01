@@ -8,6 +8,7 @@ and validated where none is installed.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
@@ -103,16 +104,29 @@ class CommandSourceConfig:
                 )
         elif not self.topic:
             raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
-        if self.stale_s <= 0.0:
+        # A NaN fails every comparison: a NaN stale_s would pass a `<= 0`
+        # check and then never count a command fresh, and a NaN gain makes
+        # every command non-finite, so the ego brakes for the whole run.
+        if not math.isfinite(self.stale_s) or self.stale_s <= 0.0:
             raise ValueError(
-                f"command source {self.name!r}: stale_s must be positive, "
-                f"got {self.stale_s}"
+                f"command source {self.name!r}: stale_s must be positive and "
+                f"finite, got {self.stale_s}"
             )
-        if self.pair_window_s is not None and self.pair_window_s < 0.0:
+        window = self.pair_window_s
+        if window is not None and (not math.isfinite(window) or window < 0.0):
             raise ValueError(
-                f"command source {self.name!r}: pair_window_s must not be "
-                f"negative, got {self.pair_window_s}"
+                f"command source {self.name!r}: pair_window_s must be finite and "
+                f"not negative, got {window}"
             )
+        for key, value in (
+            ("steering_sign", self.steering_sign),
+            ("speed_horizon_s", self.speed_horizon_s),
+            ("jerk_mps3", self.jerk_mps3),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"command source {self.name!r}: {key} must be finite, got {value}"
+                )
 
     @property
     def topics(self) -> Tuple[str, ...]:
@@ -180,6 +194,20 @@ class Ros2CameraConfig:
             raise ValueError(
                 f"camera {self.logical_id!r}: image size and fps must be positive"
             )
+        for key, value in (
+            ("fov", self.fov),
+            ("fps", self.fps),
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"camera {self.logical_id!r}: {key} must be finite, got {value}"
+                )
 
     @property
     def header_frame_id(self) -> str:
@@ -291,6 +319,9 @@ class Ros2EgoConfig:
             )
         if not self.sources:
             raise ValueError("the ego needs at least one command source")
+        offset = self.rear_axle_offset_m
+        if offset is not None and not math.isfinite(offset):
+            raise ValueError(f"rear_axle_offset_m must be finite, got {offset}")
         names = [source.name for source in self.sources]
         if len(set(names)) != len(names):
             raise ValueError(f"command source names must be unique, got {names}")

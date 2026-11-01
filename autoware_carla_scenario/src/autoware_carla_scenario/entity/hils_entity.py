@@ -25,6 +25,7 @@ buses are the bridge's.
 from __future__ import annotations
 
 import logging
+import math
 import socket
 import time
 from dataclasses import dataclass
@@ -89,10 +90,19 @@ class HilsEgoConfig:
                 f"hils.on_stale must be one of {', '.join(ON_STALE_ACTIONS)}, "
                 f"got {self.on_stale!r}"
             )
-        if min(self.connect_timeout_s, self.ready_timeout_s, self.end_timeout_s) <= 0:
-            raise ValueError("hils timeouts must be positive")
-        if self.stale_s <= 0.0:
-            raise ValueError("hils.stale_s must be positive")
+        # A NaN fails every comparison: a NaN timeout never fires (the run
+        # waits for the bridge forever) and a NaN stale_s makes every command
+        # stale (the ego brakes the whole run).  Hydra reads ``=nan`` as one.
+        for key, seconds in (
+            ("connect_timeout_s", self.connect_timeout_s),
+            ("ready_timeout_s", self.ready_timeout_s),
+            ("end_timeout_s", self.end_timeout_s),
+            ("stale_s", self.stale_s),
+        ):
+            if not math.isfinite(seconds) or seconds <= 0.0:
+                raise ValueError(
+                    f"hils.{key} must be positive and finite, got {seconds}"
+                )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> "HilsEgoConfig":

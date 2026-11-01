@@ -408,7 +408,9 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     its own :class:`EgoConfig`, so it has no reason to carry the group Hydra would.
 
     Raises:
-        ValueError: If ``cfg.ego.entity`` names an unknown entity.
+        ValueError: If ``cfg.ego.entity`` names an unknown entity, or a setting
+            of the entity's group is out of range (a NaN timeout, say), naming
+            the key.
     """
     ego_cfg = cfg.get("ego") or {}
     entity = str(ego_cfg.get("entity", "autopilot"))
@@ -434,15 +436,18 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         )
 
         autoware_cfg = cfg.get("autoware")
-        bridge_cfg = AutowareBridgeConfig(
-            **{
-                key: value
-                for key, value in (
-                    _to_dict(autoware_cfg) if autoware_cfg is not None else {}
-                ).items()
-                if key in AutowareBridgeConfig.__dataclass_fields__
-            }
-        )
+        try:
+            bridge_cfg = AutowareBridgeConfig(
+                **{
+                    key: value
+                    for key, value in (
+                        _to_dict(autoware_cfg) if autoware_cfg is not None else {}
+                    ).items()
+                    if key in AutowareBridgeConfig.__dataclass_fields__
+                }
+            )
+        except ValueError as exc:
+            raise ValueError(f"autoware.{exc}") from None
         # autostart=False: in a batch every scenario is built before the first
         # one runs, and two bridges cannot hold the same address at once.  The
         # entity starts this one when its own scenario starts.
@@ -487,9 +492,11 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             checked_options,
         )
 
-        bridge_cfg = AutowareBridgeConfig(
-            **checked_options(AutowareBridgeConfig, bridge_dict)
-        )
+        bridge_options = checked_options(AutowareBridgeConfig, bridge_dict)
+        try:
+            bridge_cfg = AutowareBridgeConfig(**bridge_options)
+        except ValueError as exc:
+            raise ValueError(f"driver.bridge.{exc}") from None
         scenario_cfg = cfg.get("scenario") or {}
         # autostart=False: the entity starts the bridge when its own scenario
         # starts, as AutowareEgoEntity does.

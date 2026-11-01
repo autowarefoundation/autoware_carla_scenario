@@ -13,6 +13,7 @@ abstracts the simulator behind the camera.
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -453,6 +454,44 @@ class DriverClientConfig:
             raise ValueError(
                 f"driver.t4_scene_history_s must not be negative, got {self.t4_scene_history_s}"
             )
+        self._check_numbers()
+
+    def _check_numbers(self) -> None:
+        """Refuse the numbers a NaN or an infinity would silently break.
+
+        Hydra reads ``=nan`` and ``=inf`` as floats, and a NaN fails every
+        comparison: a NaN deadline waits for the policy forever, a NaN step
+        fails mid-run, and an infinite run-up or route never ends.
+        """
+        for key, seconds in (
+            ("timeout_s", self.timeout_s),
+            ("policy_timestep_s", self.policy_timestep_s),
+        ):
+            if not math.isfinite(seconds) or seconds <= 0.0:
+                raise ValueError(
+                    f"driver.{key} must be positive and finite, got {seconds}"
+                )
+        for key, value in (
+            ("warmup_s", self.warmup_s),
+            ("route_horizon_m", self.route_horizon_m),
+            ("route_resolution_m", self.route_resolution_m),
+            ("t4_scene_history_s", self.t4_scene_history_s),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"driver.{key} must be finite, got {value}")
+        for key, optional in (
+            ("rear_axle_offset_m", self.rear_axle_offset_m),
+            ("t4_scene_wheel_base_m", self.t4_scene_wheel_base_m),
+        ):
+            if optional is not None and not math.isfinite(optional):
+                raise ValueError(f"driver.{key} must be finite, got {optional}")
+        # An infinite sight distance or actor horizon means "all of them".
+        for key, distance in (
+            ("traffic_light_sight_distance_m", self.traffic_light_sight_distance_m),
+            ("actor_horizon_m", self.actor_horizon_m),
+        ):
+            if math.isnan(distance):
+                raise ValueError(f"driver.{key} must be a number, got {distance}")
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverClientConfig":

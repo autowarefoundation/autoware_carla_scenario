@@ -65,6 +65,12 @@ class AutowareBridgeConfig:
             :func:`~autoware_carla_scenario.driver.observation.rear_axle_offset`);
             set it to the half wheelbase Autoware's vehicle model uses when the
             two must agree to the centimetre.
+
+    Raises:
+        ValueError: Naming the field, when ``ready_timeout_ticks`` is not a
+            positive whole number, ``timeout_s`` or ``boot_timeout_s`` is not
+            positive and finite, ``boot_tick_period_s`` is negative or not
+            finite, or ``base_link_offset_m`` is not finite.
     """
 
     address: str = "localhost:50052"
@@ -73,6 +79,35 @@ class AutowareBridgeConfig:
     base_link_offset_m: Optional[float] = None
     boot_timeout_s: float = 300.0
     boot_tick_period_s: float = 0.05
+
+    def __post_init__(self) -> None:
+        # Hydra reads ``=nan`` and ``=inf`` as floats, and a NaN fails every
+        # comparison: a NaN ready or boot timeout never fires, and the run
+        # waits for the stack forever.  The messages name the field; the
+        # caller prefixes the group it came from (``autoware.``).
+        ticks = float(self.ready_timeout_ticks)
+        if not math.isfinite(ticks) or ticks <= 0.0 or ticks != math.floor(ticks):
+            raise ValueError(
+                "ready_timeout_ticks must be a positive whole number, "
+                f"got {self.ready_timeout_ticks}"
+            )
+        if not math.isfinite(self.timeout_s) or self.timeout_s <= 0.0:
+            raise ValueError(
+                f"timeout_s must be positive and finite, got {self.timeout_s}"
+            )
+        if not math.isfinite(self.boot_timeout_s) or self.boot_timeout_s <= 0.0:
+            raise ValueError(
+                "boot_timeout_s must be positive and finite, "
+                f"got {self.boot_timeout_s}"
+            )
+        if not math.isfinite(self.boot_tick_period_s) or self.boot_tick_period_s < 0.0:
+            raise ValueError(
+                "boot_tick_period_s must be finite and not negative, "
+                f"got {self.boot_tick_period_s}"
+            )
+        offset = self.base_link_offset_m
+        if offset is not None and not math.isfinite(offset):
+            raise ValueError(f"base_link_offset_m must be finite, got {offset}")
 
 
 @dataclass(frozen=True)
