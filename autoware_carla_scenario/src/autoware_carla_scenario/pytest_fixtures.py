@@ -53,7 +53,7 @@ class CarlaScenarioFixture:
             if CarlaServerManager.executable() is None:
                 pytest.skip("no CARLA: CARLA_EXECUTABLE unset, scenario-setup not run")
             with _queue:
-                _queue.run_all()
+                _queue.run_all(continue_on_error=True)
                 yield _queue
 
         # tests/my_tests/test_my.py

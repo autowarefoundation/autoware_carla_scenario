@@ -718,8 +718,16 @@ class ScenarioQueue:
         """Return a session-scoped pytest fixture that manages this queue.
 
         The generated fixture automatically skips when there is no CARLA to
-        launch (``CARLA_EXECUTABLE`` unset and nothing installed), so callers do not need to
-        add a manual ``pytest.skip`` guard.
+        launch (``CARLA_EXECUTABLE`` unset and nothing installed) or when the
+        CARLA session cannot be started (:meth:`start` raises), so callers do
+        not need to add a manual ``pytest.skip`` guard.
+
+        Once started, it runs every scenario with
+        ``run_all(continue_on_error=True)``: a scenario that raises on every
+        attempt gets a failed :class:`ScenarioResult` naming the error, which
+        :meth:`result_for` returns like any other, so its own test fails while
+        the others still pass, rather than the whole session being skipped.
+        The queue is stopped when the session ends, however the run went.
 
         Args:
             fixture_name: Name under which the fixture is registered.
@@ -762,11 +770,17 @@ class ScenarioQueue:
                     "and no CARLA is installed. Skipping CARLA integration tests."
                 )
             try:
-                with queue:
-                    queue.run_all()
-                    yield queue
+                queue.start()
             except Exception as exc:
-                pytest.skip(f"CARLA session failed: {exc}")
+                # No CARLA session (start() has already stopped what it began).
+                pytest.skip(f"CARLA session failed to start: {exc}")
+            try:
+                # A scenario that raises on every attempt becomes a failed
+                # result, so its own test fails and the others still run.
+                queue.run_all(continue_on_error=True)
+                yield queue
+            finally:
+                queue.stop()
 
         return _queue_fixture
 
