@@ -3,6 +3,7 @@ run starts (#664)."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -197,15 +198,95 @@ def test_a_worker_that_raises_ends_its_run(
     unstarted_threads: list[_UnstartedThread],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    # Outside a job's launch and collection, which fail only their job.
+    def extract(overrides: list[str]) -> str:
         raise ValueError("boom")
 
-    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_extract_scenario_name", extract)
     assert runner.start_run([["scenario=a"], ["scenario=b"]]) is True
     with pytest.raises(ValueError):
         unstarted_threads[0].run()
     running, progress = runner.get_status()
     assert not running
     assert progress is not None
-    assert (progress.current, progress.total, progress.status) == (1, 2, "done")
+    assert (progress.current, progress.total, progress.status) == (0, 2, "done")
     assert runner.start_run([["scenario=b"]]) is True
+
+
+# ── Output that is not UTF-8 (#1073) ───────────────────────────────────────
+
+
+@pytest.fixture
+def fake_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A ``uv`` on PATH that prints bytes that are not UTF-8 and logs its jobs."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "launched.log"
+    script = bin_dir / "uv"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$3" >> "{log}"\n'
+        "printf 'out \\377\\376 end\\n'\n"
+        "printf 'err \\377\\n' >&2\n"
+        'case "$3" in scenario=b) exit 1;; esac\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+def _record_progress(monkeypatch: pytest.MonkeyPatch) -> list[RunProgress]:
+    published: list[RunProgress] = []
+    set_progress = runner._set_progress
+
+    def record(p: RunProgress) -> None:
+        published.append(p)
+        set_progress(p)
+
+    monkeypatch.setattr(runner, "_set_progress", record)
+    return published
+
+
+def test_output_that_is_not_utf8_runs_every_job(
+    fake_uv: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = _record_progress(monkeypatch)
+    base = tmp_path / "base"
+    base.mkdir()
+    runner._run_worker([["scenario=a"], ["scenario=b"], ["scenario=c"]], base, [], True)
+    launched = fake_uv.read_text(encoding="utf-8").splitlines()
+    assert launched == ["scenario=a", "scenario=b", "scenario=c"]
+    finished = [(p.scenario_name, p.status) for p in published if p.status != "running"]
+    assert finished == [
+        ("a", "passed"),
+        ("b", "failed"),
+        ("c", "passed"),
+        ("", "done"),
+    ]
+    assert not runner.is_running()
+    # The undecodable bytes are replaced in the raw output kept for each job.
+    logs = sorted((base / "multirun").glob(f"*/*/*/{runner.RAW_OUTPUT_LOG}"))
+    assert len(logs) == 3
+    assert logs[0].read_text(encoding="utf-8") == (
+        "out \ufffd\ufffd end\n\n\nerr \ufffd\n"
+    )
+
+
+def test_a_job_that_cannot_be_collected_fails_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = _record_progress(monkeypatch)
+    commands: list[list[str]] = []
+
+    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        if "scenario=a" in cmd:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    runner._run_worker([["scenario=a"], ["scenario=b"]], None, [], False)
+    assert len(commands) == 2
+    finished = [(p.scenario_name, p.status) for p in published if p.status != "running"]
+    assert finished == [("a", "failed"), ("b", "passed"), ("", "done")]
+    assert not runner.is_running()
