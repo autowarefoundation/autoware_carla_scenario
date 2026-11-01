@@ -1078,9 +1078,15 @@ def _resolve_scenario_glob(pattern: str) -> list[str]:
     from external scenario packages are included alongside the built-ins.  The
     viewer's launcher resolves its patterns with the same
     :func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`.
+    An invalid pattern (a ``**`` that is not a whole path component), like
+    one that matches nothing, is reported on stdout and exits with status 1.
     """
     conf_dirs = get_conf_dirs()
-    names = resolve_scenario_glob(pattern, conf_dirs)
+    try:
+        names = resolve_scenario_glob(pattern, conf_dirs)
+    except ValueError as exc:
+        print(f"Error: {exc}")  # noqa: T201
+        sys.exit(1)
     if not names:
         print(  # noqa: T201
             f"Error: no scenario configs match pattern '{pattern}' "

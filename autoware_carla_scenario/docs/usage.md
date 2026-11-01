@@ -76,7 +76,18 @@ uv run scenario scenario='lane_change/*'
 
 # Run everything
 uv run scenario scenario='*/*'
+
+# Run every lane-change scenario, however deep below lane_change/
+uv run scenario scenario='lane_change/**'
 ```
+
+The pattern is matched as `scenario/{pattern}.yaml` under each config
+directory: `*` stays within one path component, and a `**` component crosses
+them. A trailing `**` means everything below it and is read as `**/*`, so
+`lane_change/**` and `**` select every config below `lane_change/` and
+`scenario/`. A `**` inside a component (`lane_change/**left`) is refused with
+an error naming the pattern. The pattern means the same on every supported
+Python version, and the viewer's Run form reads it the same way.
 
 **Batch constraints:**
 
