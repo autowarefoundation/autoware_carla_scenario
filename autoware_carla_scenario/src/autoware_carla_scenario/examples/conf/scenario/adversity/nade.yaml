@@ -1,0 +1,30 @@
+# @package _global_
+# NADE (AdversarialTrafficAction) over the five phase-1 kinds among 40 of the
+# TrafficManager's background vehicles, for 45 s. It samples far more often
+# than TeraSim's numbers would -- p = 0.05, q = 0.5, a 2 s cooldown, NPCs
+# challenged too -- so that one run shows several adversities; the weight and
+# each sampled adversity are in the run's log. Placed on Town10HD_Opt:
+#
+#   scenario scenario=adversity/nade map=town10hd_opt
+scenario:
+  name: adversity
+  kind: nade
+  nade_seconds: 45.0
+  nade_probability: 0.05
+  nade_is_probability: 0.5
+  nade_cooldown: 2.0
+  nade_challenge_npcs: true
+  nade_seed: 7
+  timeout_seconds: 60.0
+
+ego:
+  initial_speed_kmh: 30.0
+  spawn_lanelet_id: 324
+  spawn_s: 5.0
+
+background_traffic:
+  enabled: true
+  source:
+    initial_vehicles: 40
+    vehicles_per_minute: 20.0
+    max_vehicles: 50

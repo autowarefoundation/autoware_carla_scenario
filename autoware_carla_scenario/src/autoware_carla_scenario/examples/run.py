@@ -125,8 +125,10 @@ from .configs import (
     TemporaryStopConfig,
     PedestrianDartOutConfig,
     CutInConfig,
+    AdversityConfig,
     TrafficLightComplianceConfig,
 )
+from .adversity import AdversityScenario
 from .intersection_passing import IntersectionPassingScenario
 from .lane_change import LaneChangeScenario
 from .temporary_stop import TemporaryStopScenario
@@ -167,6 +169,7 @@ register_scenario(
     "pedestrian_dart_out", PedestrianDartOutScenario, PedestrianDartOutConfig
 )
 register_scenario("cut_in", CutInScenario, CutInConfig)
+register_scenario("adversity", AdversityScenario, AdversityConfig)
 
 
 # ---------------------------------------------------------------------------

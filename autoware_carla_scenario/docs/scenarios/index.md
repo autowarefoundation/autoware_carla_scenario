@@ -16,6 +16,7 @@ scenario names follows from the lanelet the sweep picked.
 | [Lane Change](lane_change.md) | Changes lane -- or refuses where there is none | left, right, refused left, refused right |
 | [Pedestrian Dart-out](pedestrian_dart_out.md) | Does not hit a pedestrian who runs out | -- |
 | [Cut-in](cut_in.md) | Does not hit a vehicle cutting in | from the left, from the right |
+| [Adversities](adversity.md) | TeraSim's adversities carried out in CARLA (concrete, on Town10HD_Opt) | brake check, ignore leader, cut-in, traffic rule, jaywalking, NADE |
 
 ## How each page reads
 
