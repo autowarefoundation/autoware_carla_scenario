@@ -18,13 +18,13 @@ from typing import Any, Iterator, Optional
 import pytest
 
 from autoware_carla_scenario.actions import SpawnAction
-from autoware_carla_scenario.authoring import registry
+from autoware_carla_scenario.authoring import compiler, registry
 from autoware_carla_scenario.authoring.builders import (
     instantiate_action,
     instantiate_condition,
 )
 from autoware_carla_scenario.authoring.compiler import BuildContext, compile_document
-from autoware_carla_scenario.authoring.models import ScenarioDocument
+from autoware_carla_scenario.authoring.models import LaneletChoice, ScenarioDocument
 from autoware_carla_scenario.authoring.registry import FieldSpec
 from autoware_carla_scenario.authoring.validator import (
     ValidationReport,
@@ -112,6 +112,14 @@ def _build(document: ScenarioDocument) -> object:
     )
 
 
+@pytest.fixture
+def unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compile without the validator, which :func:`compile_document` runs
+    first: what a refused card does when built is then the action's or the
+    condition's own answer, not the validator's again."""
+    monkeypatch.setattr(compiler, "validate_document", lambda _: ValidationReport())
+
+
 # -- Spawn and Despawn: an entity or a prop ----------------------------------
 
 _TARGETS = [
@@ -128,7 +136,11 @@ _TARGETS = [
 @pytest.mark.parametrize("type_id", ["spawn", "despawn"])
 @pytest.mark.parametrize(("actor", "name", "accepted"), _TARGETS)
 def test_spawn_and_despawn_take_an_entity_or_a_prop(
-    type_id: str, actor: Optional[str], name: Optional[str], accepted: bool
+    type_id: str,
+    actor: Optional[str],
+    name: Optional[str],
+    accepted: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     params: dict[str, Any] = {"name": name}
     if type_id == "spawn":
@@ -143,7 +155,8 @@ def test_spawn_and_despawn_take_an_entity_or_a_prop(
             "entity" in issue.message and "prop" in issue.message
             for issue in report.errors
         ), _errors(report)
-        with pytest.raises(Exception):
+        monkeypatch.setattr(compiler, "validate_document", lambda _: ValidationReport())
+        with pytest.raises(ValueError, match="one of the two"):
             _build(document)
 
 
@@ -159,6 +172,39 @@ def test_a_prop_spawn_card_needs_a_lanelet(
     assert report.ok is accepted, _errors(report)
     if not accepted:
         assert [i.path for i in report.errors] == ["actions[0].lanelet_id"]
+
+
+@pytest.mark.usefixtures("unchecked")
+@pytest.mark.parametrize("lanelet_id", [0, -1, None])
+def test_a_prop_spawn_card_on_no_lanelet_does_not_build(
+    lanelet_id: Optional[int],
+) -> None:
+    with pytest.raises(ValueError, match="needs a lanelet"):
+        _build(_card("spawn", None, name="cone1", lanelet_id=lanelet_id))
+
+
+@pytest.mark.parametrize("type_id", ["spawn", "distance"])
+def test_a_searched_lanelet_is_a_place(type_id: str) -> None:
+    """The sweep fills a searched lanelet in: no default is a warning, as for
+    every other searched lanelet, not a missing place."""
+    choice = {"mode": "constraint_search", "constraints": [{"type": "is_junction"}]}
+    search = {"lanelet_id": choice}
+    if type_id == "spawn":
+        document = _card("spawn", None, name="cone1", lanelet_id=0)
+        document.actions[0].searches = {
+            "lanelet_id": LaneletChoice.model_validate(choice)
+        }
+    else:
+        document = _document(
+            trigger={
+                "type": "distance",
+                "params": {"entity": "car", "lanelet_id": 0},
+                "searches": search,
+            }
+        )
+    report = validate_document(document)
+    assert report.ok, _errors(report)
+    assert any("No default lanelet" in i.message for i in report.warnings)
 
 
 def test_a_prop_spawn_card_may_be_placed_by_a_route_pose_instead() -> None:
@@ -185,6 +231,7 @@ def test_an_entity_on_no_lanelet_still_waits_where_it_was_declared() -> None:
 # -- the other mismatches the generic check found -----------------------------
 
 
+@pytest.mark.usefixtures("unchecked")
 @pytest.mark.parametrize(
     ("type_id", "actor", "params", "path"),
     [
@@ -218,8 +265,6 @@ def test_an_entity_on_no_lanelet_still_waits_where_it_was_declared() -> None:
             {"lanelet_id": _LANELET, "end_time": 2.0e9},
             "actions[0].end_time",
         ),
-        ("construction_zone", None, {"lanelet_id": 0}, "a.lanelet_id"),
-        ("stalled_object", "car", {"lanelet_id": 0}, "a.lanelet_id"),
         ("traffic_parameters", None, {}, "actions[0]"),
         ("vehicle_parameters", "car", {}, "actions[0]"),
         (
@@ -248,8 +293,26 @@ def test_validator_refuses_what_the_action_refuses(
     document = _card(type_id, actor, **params)
     report = validate_document(document)
     assert path in [i.path for i in report.errors], _errors(report)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         _build(document)
+
+
+@pytest.mark.parametrize(
+    ("type_id", "actor"),
+    [
+        ("construction_zone", None),
+        ("urban_construction_zone", None),
+        ("stalled_object", "car"),
+    ],
+)
+def test_validator_refuses_an_action_on_lanelet_0(
+    type_id: str, actor: Optional[str], loaded_map: MapManager
+) -> None:
+    """These build on lanelet 0 and fail only when the run looks it up."""
+    report = validate_document(_card(type_id, actor, lanelet_id=0))
+    assert "a.lanelet_id" in [i.path for i in report.errors], _errors(report)
+    with pytest.raises(Exception, match="InvalId"):
+        loaded_map.lanelet_map.laneletLayer[0]
 
 
 @pytest.mark.parametrize(
@@ -280,6 +343,7 @@ def test_validator_refuses_what_the_action_refuses(
         ),
     ],
 )
+@pytest.mark.usefixtures("unchecked")
 def test_validator_refuses_what_the_condition_refuses(
     condition: dict[str, Any], field: str
 ) -> None:
@@ -287,7 +351,7 @@ def test_validator_refuses_what_the_condition_refuses(
     report = validate_document(document)
     paths = [i.path for i in report.errors]
     assert any(p.endswith(f".{field}") for p in paths), _errors(report)
-    with pytest.raises(Exception):
+    with pytest.raises((ValueError, RuntimeError)):
         compiled = compile_document(document.model_copy(deep=True))
         instantiate_condition(compiled.pass_conditions[0], BuildContext(scenario=None))
 

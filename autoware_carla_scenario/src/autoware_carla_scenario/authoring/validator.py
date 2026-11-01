@@ -812,7 +812,7 @@ def _check_spawn_target(out: _Collector, path: str, node: ActionNode) -> None:
         )
     if node.type != "spawn" or node.actor is not None or not named:
         return
-    if not _has_place(params):
+    if not _has_place(node):
         out.error(
             f"{path}.lanelet_id",
             "A prop needs a place: give it a lanelet (and s) or a route pose. "
@@ -822,11 +822,17 @@ def _check_spawn_target(out: _Collector, path: str, node: ActionNode) -> None:
         )
 
 
-def _has_place(params: dict[str, Any]) -> bool:
+def _has_place(node: ActionNode | ConditionNode) -> bool:
     """Whether a card's place fields (``route_pose``, ``lanelet_id``) name a
-    place: a route pose, or a lanelet above 0 (0 is the empty field)."""
+    place: a route pose, a lanelet above 0 (0 is the empty field), or a
+    lanelet the sweep searches for or derives (a missing default is
+    :func:`_check_lanelet_slots`'s warning)."""
+    params = node.params
     route = params.get("route_pose")
     if route and not _is_blank(route):
+        return True
+    choice = node.searches.get("lanelet_id")
+    if choice is not None and (choice.searching or choice.deriving):
         return True
     lanelet = params.get("lanelet_id")
     if _is_blank(lanelet) or not _coercible_float(lanelet):
@@ -863,7 +869,7 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
     if not end > start:
         out.error(
             f"{path}.end_time",
-            "The end time must be after the start time; leave it empty for " "never.",
+            "The end time must be after the start time; leave it empty for never.",
             node.id,
         )
     elif node.type == "stalled_object" and end > _stalled_forever_s():
@@ -942,7 +948,7 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
             "Temporary Stop needs at least one lanelet to stop on.",
             node.id,
         )
-    if node.type == "distance" and not _has_place(params):
+    if node.type == "distance" and not _has_place(node):
         out.error(
             f"{path}.lanelet_id",
             "A distance needs a place to measure to: give a lanelet (and s) "
