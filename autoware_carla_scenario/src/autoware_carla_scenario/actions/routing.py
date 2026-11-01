@@ -201,18 +201,28 @@ def _beside(
 
 
 def _finish_from(
-    path: ResolvedTrajectory, written: Optional[ResolvedTrajectory] = None
+    path: ResolvedTrajectory,
+    written: Optional[ResolvedTrajectory] = None,
+    change_within: Optional[float] = None,
 ) -> float:
     """How far (m) before *path*'s end a stop_at_goal vehicle is driven the
     rest of the way itself: :data:`_FINISH_M`, or from before the route's last
     change to the lane beside -- which its driver, keeping to its lane, would
-    leave to the last metres (vehicle_134, crossing behind a lorry)."""
+    leave to the last metres (vehicle_134, crossing behind a lorry) -- when
+    that is no more than *change_within* m (``None``: any distance) before
+    the end: a route to a goal, planned on the lanes, changes lanes wherever
+    the lanes do, and its driver makes a change far from the goal itself."""
     changes = lane_changes(list(path.xs), list(path.ys))
     last = changes[-1][0] if changes else -1
     finish = _FINISH_M
     if last >= 0:
-        before = path.length - path.vertex_distance(last) + _BEFORE_LANE_CHANGE_M
-        finish = max(finish, before)
+        left = path.length - path.vertex_distance(last)
+        near = True
+        if change_within is not None:
+            within: float = change_within
+            near = left <= within
+        if near:
+            finish = max(finish, left + _BEFORE_LANE_CHANGE_M)
     if written is not None:
         # And from before where its trajectory as written leaves its lanes'
         # middle (vehicle_96, moved over early to pass a bus's corner, which
@@ -928,7 +938,12 @@ class RoutingAction(TrajectoryRun):
     def _finish_distance(self, planned: ResolvedTrajectory) -> float:
         """:func:`_finish_from` for *planned*, worked out once."""
         if self._finish_m is None:
-            self._finish_m = _finish_from(planned, self._resolved)
+            within: Optional[float] = None
+            if self._resolved is None:
+                # A route to a goal: only a change near it, which its driver
+                # would leave to the last metres.
+                within = _OFF_LANE_WITHIN_M
+            self._finish_m = _finish_from(planned, self._resolved, within)
         finish: float = self._finish_m
         return finish
 
