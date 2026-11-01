@@ -657,6 +657,10 @@ def _is_literal_value(value: Any) -> bool:
     """*value* is one a model can write as a literal or an enum member."""
     if isinstance(value, (list, tuple, set)):
         return all(_is_literal_value(v) for v in value)
+    if isinstance(value, dict):
+        return all(
+            _is_literal_value(k) and _is_literal_value(v) for k, v in value.items()
+        )
     return value is None or isinstance(value, (str, int, float, enum.Enum, PurePath))
 
 
@@ -669,12 +673,16 @@ def _assert_default_as_in_python(
         isinstance(node, ast.Constant)
         and node.value is None
         and python is not None
-        and (isinstance(python, (list, dict, set)) or not _is_literal_value(python))
+        and (
+            (isinstance(python, (list, dict, set)) and not python)
+            or not _is_literal_value(python)
+        )
     ):
         # `None` stands in for an object Python builds (a dataclass instance,
-        # a default_factory's list or dict): the model leaves the parameter
-        # untyped, or the class is built by the framework alone, and its body
-        # never reads it.
+        # a default_factory's empty list or dict): the model leaves the
+        # parameter untyped, or the class is built by the framework alone, and
+        # its body never reads it.  A container of literals is no such object:
+        # the model spells it.
         return
     model = _model_value(node, python, module, root, where)
     assert _comparable(model) == _comparable(
