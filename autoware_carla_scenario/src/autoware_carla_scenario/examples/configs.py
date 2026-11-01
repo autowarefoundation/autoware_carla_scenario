@@ -221,6 +221,23 @@ class LaneChangeConfig:
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 10.0
 
+    def __post_init__(self) -> None:
+        """Refuse an unknown ``direction`` or ``expect``.
+
+        ``lane_change.py`` checks the failure outcome only for ``"fail"``, so
+        without this a typo (``"fial"``) would check the opposite outcome.
+        """
+        if self.direction not in ("left", "right"):
+            raise ValueError(
+                "lane_change direction must be 'left' or 'right', "
+                f"not {self.direction!r}"
+            )
+        if self.expect not in ("success", "fail"):
+            raise ValueError(
+                "lane_change expect must be 'success' or 'fail', "
+                f"not {self.expect!r}"
+            )
+
 
 @dataclass
 class PedestrianDartOutConfig:
