@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, List, Optional, Union
 
-from .scenario_runner import ScenarioRunner
+from .scenario_runner import ScenarioRunner, _run_file_stem
 from .conditions import ScenarioResult
 from .failure import Failure, FailureCategory
 from .constants import DEFAULT_TM_PORT
@@ -15,6 +15,7 @@ from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
+from .run_outputs import remove_run_outputs
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
@@ -399,6 +400,19 @@ class ScenarioQueue:
                     del self._cases[key]
                 if key in self._stems:
                     del self._stems[key]
+            # The stem every attempt writes under, settled before the first:
+            # the one given, or the one the runner names the first attempt by
+            # (the first free in the output directory).  Before a retry its
+            # outputs are removed, so the retry writes over the attempt it
+            # replaces -- a runner naming its own then takes the same stem
+            # again -- rather than taking the next stem and leaving that
+            # attempt's partial outputs under this one.  Only a queue that
+            # retries needs it.
+            run_stem = ""
+            if file_stem is not None:
+                run_stem = file_stem
+            elif max_attempts > 1:
+                run_stem = _run_file_stem(self._output_dir, type(scenario).__name__)
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
@@ -419,6 +433,12 @@ class ScenarioQueue:
                     # next scenario; after the last there is none, and a
                     # later run_all() resets it or a new queue loads it first.
                     reset_world = i < total - 1
+                    if attempt > 0 and run_stem:
+                        # What the failed attempt wrote under the stem (its
+                        # trajectory log, a partial T4 dataset the writer
+                        # would refuse to write over ...) makes way for this
+                        # one's.
+                        remove_run_outputs(self._output_dir, run_stem)
                     if file_stem is None:
                         result = self._runner.run_scenario(
                             scenario,

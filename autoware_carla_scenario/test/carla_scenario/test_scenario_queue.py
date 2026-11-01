@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import weakref
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import typesafe_carla.carla as carla
@@ -17,6 +18,9 @@ from autoware_carla_scenario import (
     ScenarioRunner,
     SpawnTransform,
 )
+from autoware_carla_scenario.run_outputs import run_output_paths
+from autoware_carla_scenario.scenario_runner import _run_file_stem
+from autoware_carla_scenario.slurm.stems import sequential_stems
 
 
 # ---------------------------------------------------------------------------
@@ -681,3 +685,94 @@ class TestScenarioQueueIntegration:
     ) -> None:
         for result in carla_queue._results:
             assert isinstance(result, ScenarioResult)
+
+
+# ---------------------------------------------------------------------------
+# Retries and the files a failed attempt left (issue #1028)
+# ---------------------------------------------------------------------------
+
+
+class _FirstAttemptFailsMidRun:
+    """A runner that names its files as ScenarioRunner does: it opens the
+    trajectory log and the T4 dataset under the stem, and its first attempt
+    then fails.  It records, per attempt, the stem and whether the T4 dataset
+    directory was already there (the T4 writer refuses to write over one)."""
+
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+        self.attempts: list[tuple[str, bool]] = []
+
+    def run_scenario(
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: float | None = None,
+        case: object = None,
+        reset_world: bool = True,
+        file_stem: str | None = None,
+    ) -> ScenarioResult:
+        stem = file_stem or _run_file_stem(self.output_dir, type(scenario).__name__)
+        dataset = self.output_dir / f"{stem}.t4" / "0" / "annotation"
+        self.attempts.append((stem, dataset.exists()))
+        dataset.mkdir(parents=True, exist_ok=True)
+        attempt = len(self.attempts)
+        (self.output_dir / f"{stem}.trajectory.jsonl").write_text(f"{attempt}\n")
+        if attempt == 1:
+            raise RuntimeError("CARLA went away")
+        (self.output_dir / f"{stem}_result.json").write_text(f"{attempt}\n")
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self) -> None:
+        pass
+
+
+def test_a_local_retry_keeps_its_stem_and_replaces_what_the_attempt_left(
+    tmp_path: Path,
+) -> None:
+    """A case named by its class keeps its stem when retried: the failed
+    attempt's partial outputs make way for the retry's, and the next run of
+    the class takes the next stem, as slurm.stems names them."""
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=1
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()))
+    queue.add(_NullScenario(_make_ego_config()))
+
+    results = queue.run_all(release=True, continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert queue.errored_indices() == []
+    first, second = "_NullScenario", "_NullScenario-1"
+    assert runner.attempts == [(first, False), (first, False), (second, False)]
+    assert sequential_stems(["_NullScenario", "_NullScenario"]) == [first, second]
+    # The retry's, not the failed attempt's.
+    assert (tmp_path / f"{first}.trajectory.jsonl").read_text() == "2\n"
+    assert (tmp_path / f"{first}_result.json").read_text() == "2\n"
+    assert (tmp_path / f"{second}_result.json").read_text() == "3\n"
+    assert not (tmp_path / "_NullScenario-2.trajectory.jsonl").exists()
+
+
+def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
+    tmp_path: Path,
+) -> None:
+    """A SLURM case (a stem given) retried after a failed attempt finds none
+    of that attempt's outputs, its T4 dataset included; the outputs of other
+    stems stay."""
+    stem = "_NullScenario-3"
+    neighbour = run_output_paths(tmp_path, "_NullScenario-4")
+    neighbour[0].write_text("other case\n")
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=2
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem=stem)
+
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert result.passed
+    assert runner.attempts == [(stem, False), (stem, False)]
+    assert (tmp_path / f"{stem}.trajectory.jsonl").read_text() == "2\n"
+    assert neighbour[0].read_text() == "other case\n"

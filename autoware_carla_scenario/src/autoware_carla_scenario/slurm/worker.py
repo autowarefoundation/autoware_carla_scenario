@@ -29,7 +29,6 @@ import json
 import logging
 import math
 import os
-import shutil
 import signal
 import socket
 import sys
@@ -40,7 +39,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..run_outputs import run_output_paths
+from ..run_outputs import remove_run_outputs
 from ..run_timeout import run_timeout_seconds
 from .manifest import (
     BatchLayout,
@@ -265,15 +264,11 @@ def _check_same_config(
 
 
 def _remove_outputs(batch_dir: Path, stem: str) -> None:
-    """Remove what an earlier run of the case left under *stem*: every output
-    of a run (``run_outputs``), its T4 dataset directory included -- the T4
-    writer refuses a directory already holding a dataset, so a case run again
-    would otherwise record none and keep the last attempt's."""
-    for path in run_output_paths(batch_dir, stem):
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink(missing_ok=True)
+    """Remove what an earlier run of the case left under *stem*
+    (``run_outputs.remove_run_outputs``): a case run again would otherwise
+    keep the last attempt's T4 dataset, which the T4 writer refuses to
+    write over."""
+    remove_run_outputs(batch_dir, stem)
 
 
 def _raise_interrupt(signum: int, _frame: object) -> None:
