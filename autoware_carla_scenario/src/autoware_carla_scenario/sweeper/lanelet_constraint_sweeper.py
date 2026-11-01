@@ -60,6 +60,7 @@ from tqdm import tqdm
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
+from ..ui.case_paths import result_path
 from .expand import (
     _config_seed,
     check_constraint_keys,
@@ -106,7 +107,9 @@ class SweepFailedError(CompactHydraException):
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
-    """The verdict of the scenario result JSON in a job's output directory.
+    """The verdict of the scenario result JSON in a job's output directory:
+    the one the viewer shows for it (:func:`..ui.case_paths.result_path`,
+    ``X``'s rather than ``X-1``'s).
 
     Returns:
         ``True`` if the scenario passed, ``False`` if it ran and failed, or
@@ -114,11 +117,11 @@ def _read_verdict(output_dir: Path) -> bool | None:
         before :class:`ScenarioRunner` could write it) or one that cannot be
         read.
     """
-    result_files = sorted(output_dir.glob("*_result.json"))
-    if not result_files:
+    result_file = result_path(output_dir)
+    if result_file is None:
         return None
     try:
-        data = json.loads(result_files[0].read_text(encoding="utf-8"))
+        data = json.loads(result_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):  # ValueError: not JSON, or not UTF-8
         return None
     if not isinstance(data, dict):
