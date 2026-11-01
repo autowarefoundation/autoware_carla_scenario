@@ -1898,3 +1898,178 @@ def test_a_scale_too_large_for_a_float_is_refused(dbc: Path) -> None:
     }
     with pytest.raises(HilsConfigError, match="float"):
         parse_config(document)
+
+
+# -- forwarding the ECUs' commands from several receiving threads ------------------
+
+
+def _two_device_bridge(world: _World, dbc: Path) -> Any:
+    """A bridge forwarding commands, and two devices' inputs: the steering on
+    one, the pedals on another, each received on a thread of its own."""
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+    from autoware_carla_scenario.hils.config import InputSource, InputSpec
+
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    bridge._forwarding = True
+    steering = types.SimpleNamespace(
+        inputs=[InputSpec("Steer", {"steer": InputSource(field="S")})]
+    )
+    pedals = types.SimpleNamespace(
+        inputs=[InputSpec("Pedal", {"throttle": InputSource(field="T")})]
+    )
+    return bridge, steering, pedals
+
+
+def _fields(message: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in message.items() if k not in ("type", "mode")}
+
+
+class _BlockingLink:
+    """A link whose first send blocks until :attr:`release` is set (and then
+    raises, with *fail*): that sender is preempted on a slow link."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.sent: List[dict[str, Any]] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._fail = fail
+        self._calls = 0
+        self._lock = threading.Lock()
+
+    def send(self, message: Any) -> bool:
+        with self._lock:
+            self._calls += 1
+            first = self._calls == 1
+        if first:
+            self.entered.set()
+            assert self.release.wait(5.0)
+            if self._fail:
+                raise OSError("the link broke")
+        self.sent.append(dict(message))
+        return True
+
+
+def _start(target: Callable[[], None]) -> threading.Thread:
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_the_last_command_forwarded_is_the_newest_merged(
+    world: _World, dbc: Path
+) -> None:
+    bridge, steering, pedals = _two_device_bridge(world, dbc)
+    link = _BlockingLink()
+    bridge._link = link
+    a = _start(
+        lambda: bridge._on_input(
+            steering, types.SimpleNamespace(name="Steer", fields={"S": 0.2})
+        )
+    )
+    assert link.entered.wait(5.0)
+    # A is sending; B merges its fields meanwhile and forwards them.
+    b = _start(
+        lambda: bridge._on_input(
+            pedals, types.SimpleNamespace(name="Pedal", fields={"T": 0.8})
+        )
+    )
+    assert _until(lambda: bridge.command == {"steer": 0.2, "throttle": 0.8})
+    link.release.set()
+    a.join(5.0)
+    b.join(5.0)
+    assert not a.is_alive() and not b.is_alive()
+    assert link.sent, "nothing forwarded"
+    assert _fields(link.sent[-1]) == {"steer": 0.2, "throttle": 0.8}
+    assert link.sent[-1]["type"] == "command"
+    assert link.sent[-1]["mode"] == "control"
+
+
+def test_a_failed_forward_does_not_block_the_next(world: _World, dbc: Path) -> None:
+    bridge, steering, pedals = _two_device_bridge(world, dbc)
+    link = _BlockingLink(fail=True)
+    bridge._link = link
+    errors: List[BaseException] = []
+
+    def first() -> None:
+        try:
+            bridge._on_input(
+                steering, types.SimpleNamespace(name="Steer", fields={"S": 0.2})
+            )
+        except OSError as exc:
+            errors.append(exc)
+
+    a = _start(first)
+    assert link.entered.wait(5.0)
+    b = _start(
+        lambda: bridge._on_input(
+            pedals, types.SimpleNamespace(name="Pedal", fields={"T": 0.8})
+        )
+    )
+    assert _until(lambda: bridge.command == {"steer": 0.2, "throttle": 0.8})
+    link.release.set()
+    a.join(5.0)
+    b.join(5.0)
+    assert not a.is_alive() and not b.is_alive()
+    assert len(errors) == 1
+    # The failed send's fields still reach the run, with the newer ones.
+    assert [_fields(m) for m in link.sent] == [{"steer": 0.2, "throttle": 0.8}]
+    # Nothing is left holding a lock: merging, reading and ending go on.
+    bridge._on_input(steering, types.SimpleNamespace(name="Steer", fields={"S": 0.1}))
+    assert _fields(link.sent[-1]) == {"steer": 0.1, "throttle": 0.8}
+    assert bridge.command == {"steer": 0.1, "throttle": 0.8}
+
+
+def test_forwarding_to_a_closed_link_does_not_block(world: _World, dbc: Path) -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils.link import RunnerLink
+
+    bridge, steering, pedals = _two_device_bridge(world, dbc)
+    link = RunnerLink("127.0.0.1:0", queue_module.Queue())
+    link.start()
+    link.close()
+    bridge._link = link
+    done = threading.Event()
+
+    def both() -> None:
+        bridge._on_input(
+            steering, types.SimpleNamespace(name="Steer", fields={"S": 0.2})
+        )
+        bridge._on_input(pedals, types.SimpleNamespace(name="Pedal", fields={"T": 0.8}))
+        done.set()
+
+    _start(both).join(5.0)
+    assert done.is_set()
+    assert bridge.command == {"steer": 0.2, "throttle": 0.8}
+
+
+def test_a_single_device_forwards_every_command_in_order(
+    world: _World, dbc: Path
+) -> None:
+    bridge, steering, _ = _two_device_bridge(world, dbc)
+    sent: List[dict[str, Any]] = []
+    bridge._link = types.SimpleNamespace(send=sent.append)
+    for steer in (0.1, 0.2, 0.3):
+        bridge._on_input(
+            steering, types.SimpleNamespace(name="Steer", fields={"S": steer})
+        )
+    assert [_fields(m) for m in sent] == [{"steer": s} for s in (0.1, 0.2, 0.3)]
+    # A message with none of the inputs forwards nothing.
+    bridge._on_input(steering, types.SimpleNamespace(name="Other", fields={"S": 1}))
+    assert len(sent) == 3
+
+
+def test_forwarding_starts_with_the_newest_command_once(
+    world: _World, dbc: Path
+) -> None:
+    bridge, steering, _ = _two_device_bridge(world, dbc)
+    sent: List[dict[str, Any]] = []
+    bridge._link = types.SimpleNamespace(send=sent.append)
+    bridge._forwarding = False
+    bridge._on_input(steering, types.SimpleNamespace(name="Steer", fields={"S": 0.2}))
+    assert sent == []
+    bridge._forward(start=True)
+    assert [_fields(m) for m in sent] == [{"steer": 0.2}]
+    bridge._forward()
+    assert len(sent) == 1
