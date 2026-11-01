@@ -375,7 +375,7 @@ class TestTimeoutConditionIntegration:
     def test_timeout_triggers_on_real_world(self, carla_queue) -> None:  # noqa: ANN001
         runner = carla_queue._runner
         world = runner._world or runner._client.get_world()
-        condition = TimeoutCondition(timeout_seconds=0.0, label="test_timeout")
+        condition = TimeoutCondition(timeout_seconds=0.5, label="test_timeout")
         result = condition.check(world, elapsed=1.0)
         assert result is not None
         assert result.passed is False
