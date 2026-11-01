@@ -414,14 +414,182 @@ class TestTheSummedClock:
         # now - started comes out just below 0.3 six ticks later.
         start = 2
         assert times[start + 6] - times[start] < 0.3
+        shown_at: float | None = None
         for now in times[start:]:
             world.now = now
             first.tick(world)
             second.tick(world)
             if second.current_phase is not None:
+                shown_at = now
                 break
 
-        assert second.started_at == times[start + 6]
+        assert shown_at == times[start + 6]
+        # Anchored to the schedule, not to the tick that noticed it (#935):
+        # the summed clock's float error must not carry into the cycle.
+        assert first.started_at == times[start]
+        assert second.started_at == times[start] + 0.3
+
+
+def _phase_starts(
+    controllers: list[SignalController], seconds: float
+) -> dict[str, list[tuple[float, str]]]:
+    """Tick *controllers* on the summed 0.05 s clock; log each phase change."""
+    world = _World()
+    log: dict[str, list[tuple[float, str]]] = {c.name: [] for c in controllers}
+    for now in _summed_clock(int(round(seconds / _TICK)) + 1):
+        world.now = now
+        for controller in controllers:
+            controller.tick(world)
+            phase = controller.current_phase
+            if phase is None:  # a referencing controller still waiting
+                continue
+            entries = log[controller.name]
+            if not entries or entries[-1][1] != phase.name:
+                entries.append((now, phase.name))
+    return log
+
+
+class TestTheDeclaredSchedule:
+    """Phase boundaries fall on the declared schedule, not on the tick (#935).
+
+    Each boundary used to be re-anchored to the tick that noticed it, and only
+    one phase could pass per tick, so a 0 s phase was shown for a tick, an
+    off-grid duration was rounded up every phase, and offsets drifted.
+    """
+
+    def test_a_zero_second_phase_is_never_shown(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller = SignalController(
+            name="j",
+            phases=(
+                Phase("green", 5.0, (PhaseState(_NORTH, "green"),)),
+                Phase("all_red", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("red", 5.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        log = _phase_starts([controller], 40.0)["j"]
+
+        assert "all_red" not in [name for _, name in log]
+        greens = [now for now, name in log if name == "green"]
+        assert greens == pytest.approx([0.0, 10.0, 20.0, 30.0, 40.0], abs=1e-6)
+
+    def test_a_referenced_controller_keeps_its_offset(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        first = SignalController(
+            name="A",
+            phases=(
+                Phase("g", 5.0, (PhaseState(_NORTH, "green"),)),
+                Phase("clear", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("r", 5.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        second = SignalController(
+            name="B",
+            phases=(
+                Phase("g", 5.0, (PhaseState(_EAST, "green"),)),
+                Phase("r", 5.0, (PhaseState(_EAST, "red"),)),
+            ),
+            delay_seconds=2.0,
+            reference=first,
+        )
+        log = _phase_starts([first, second], 410.0)
+        a_greens = [now for now, name in log["A"] if name == "g"]
+        b_greens = [now for now, name in log["B"] if name == "g"]
+
+        assert len(a_greens) > 40 and len(b_greens) > 40
+        for cycle in (0, 1, 12, 40):
+            assert b_greens[cycle] - a_greens[cycle] == pytest.approx(2.0, abs=1e-6)
+            assert a_greens[cycle] == pytest.approx(10.0 * cycle, abs=1e-6)
+
+    def test_an_off_grid_duration_does_not_drift(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("g", 2.02, (PhaseState(_NORTH, "green"),)),
+                Phase("r", 2.02, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        log = _phase_starts([controller], 120.0)["c"]
+        greens = [now for now, name in log if name == "g"]
+
+        # Each boundary shows on the first tick at or after its scheduled
+        # time, so the error stays under one tick instead of accumulating.
+        for cycle, shown in enumerate(greens):
+            scheduled = cycle * 4.04
+            assert scheduled - 1e-6 <= shown < scheduled + _TICK - 1e-6
+
+    def test_a_jump_is_anchored_at_the_tick_it_happens(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller, world = _cycle(), _World()
+        world.now = 0.0
+        controller.tick(world)
+        world.now = 1.23
+        controller.tick(world)
+
+        assert controller.change_phase_to("ew_green", world) is True
+        world.now = 1.23 + 4.9
+        controller.tick(world)
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "ew_green"
+        world.now = 1.23 + 5.0
+        controller.tick(world)
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "ns_green"
+
+    def test_passed_over_phases_do_not_touch_the_lights(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """Only the phase a tick ends in is applied."""
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("clear", 0.0, (PhaseState(_NORTH, "yellow"),)),
+                Phase("go", 5.0, (PhaseState(_NORTH, "green"),)),
+            ),
+        )
+        controller.tick(_World())
+
+        junction[_NORTH].set_state.assert_called_once_with(_GREEN)
+
+    def test_an_all_zero_cycle_does_not_hang(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """No schedule to keep, so it moves one phase per tick instead."""
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("a", 0.0, (PhaseState(_NORTH, "green"),)),
+                Phase("b", 0.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        world = _World()
+        seen: list[str] = []
+        for now in _summed_clock(4):
+            world.now = now
+            controller.tick(world)
+            phase = controller.current_phase
+            assert phase is not None
+            seen.append(phase.name)
+
+        assert seen == ["a", "b", "a", "b"]
+
+    def test_a_long_gap_between_ticks_lands_on_the_schedule(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller, world = _cycle(), _World()
+        controller.tick(world)
+        # 1000 cycles of 13 s, then 7.5 s in: past ns_green and ns_amber
+        # into all_red, two phases on from where the tick began.
+        world.now = 13000.0 + 7.5
+        controller.tick(world)
+
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "all_red"
 
 
 class TestBuildingFromTheDocument:
@@ -655,6 +823,41 @@ class TestCondition:
 
         _run_to(controller, world, 5.0)
         assert condition.check(world, 5.0) is not None
+
+    def test_a_passed_through_phase_fires_on_the_tick_it_passed(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """A 0 s phase is never current, but waiting for it is not forever (#935)."""
+        controller = SignalController(
+            name="crossing",
+            phases=(
+                Phase("go", 5.0, (PhaseState(_NORTH, "green"),)),
+                Phase("clear", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("stop", 5.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        register_signal_controller(controller)
+        world = _World()
+        clear = TrafficSignalControllerCondition(
+            controller="crossing", phase="clear", label="clear"
+        )
+        go = TrafficSignalControllerCondition(
+            controller="crossing", phase="go", label="go"
+        )
+
+        _run_to(controller, world, 4.5)
+        assert clear.check(world, 4.5) is None
+
+        _run_to(controller, world, 5.0)
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "stop"
+        assert clear.check(world, 5.0) is not None
+        # The phase the tick began in was shown already; it is not counted
+        # again for the tick that ended it.
+        assert go.check(world, 5.0) is None
+
+        _run_to(controller, world, 5.5)
+        assert clear.check(world, 5.5) is None
 
     def test_details_name_the_controller_and_the_phase(self) -> None:
         condition = TrafficSignalControllerCondition(
