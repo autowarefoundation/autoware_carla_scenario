@@ -1005,38 +1005,47 @@ Detects lanelets that do not have a matching 3D ground model in CARLA. Useful fo
 
 ### How It Works
 
-1. Reads the map configuration YAML to resolve `xodr_path` and `lanelet2_path`
-2. Connects to the CARLA server
+1. Reads the map configuration YAML and resolves its map files the way `uv run scenario` does (see [Input YAML Requirements](#input-yaml-requirements))
+2. Connects to the CARLA server and loads the map -- installing the OpenDRIVE first when `map.overwrite_xodr` is set, by name otherwise -- and, for a map that carries no OpenDRIVE, reads it back out of the loaded world into the map cache, as a run does
 3. For each lanelet's center point, casts a vertical ray (upward and downward from estimated z) to detect ground geometry
 4. Reports lanelets where the ray does not hit any 3D surface
 5. Writes the detected IDs to the YAML configuration's `no_3d_model_lanelet_ids` field
 
-The IDs go into `no_3d_model_lanelet_ids` in the YAML's `map:` section when it has one, and at the top level otherwise (the same place `name`, `xodr_path` and `lanelet2_path` are read from). An existing value is replaced whatever its style (a block list, a flow list such as `[1, 2]`, an empty value, `null`); a missing key is added after the section's last entry. The file is edited as text, so comments, `${...}` interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. `map: {name: X}` -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.
+The IDs go into `no_3d_model_lanelet_ids` in the YAML's `map:` section when it has one, and at the top level otherwise (the same place the map settings are read from). An existing value is replaced whatever its style (a block list, a flow list such as `[1, 2]`, an empty value, `null`); a missing key is added after the section's last entry. The file is edited as text, so comments, `${...}` interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. `map: {name: X}` -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.
 
 ### Usage
 
+Run it from the repository root: the example map configs live under
+`autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/`, and `nishishinjuku.yaml` names its files relative to the root
+(`data/nishishinjuku.osm`).
+
 ```bash
+CONF=autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map
+
 # Basic detection using map config YAML
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml
+
+# A map named only by map.source (its OpenDRIVE is read back from CARLA)
+uv run detect-no-3d-model $CONF/town10hd_opt.yaml
 
 # Connect to a remote CARLA server
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml --host 192.168.1.100 --port 3000
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml --host 192.168.1.100 --port 3000
 
 # Increase ray search range for hilly terrain
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml --ray-upper 10.0 --ray-lower 10.0
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml --ray-upper 10.0 --ray-lower 10.0
 
 # Longer timeout for slow connections
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml --timeout 30.0
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml --timeout 30.0
 
 # Debug logging
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml -v
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml -v
 ```
 
 ### Command-Line Options
 
 | Option | Short | Required | Default | Description |
 |--------|-------|----------|---------|-------------|
-| `yaml_path` | - | Yes | - | Path to map configuration YAML (must contain `name`, `xodr_path`, `lanelet2_path`, at the top level or under `map:`) |
+| `yaml_path` | - | Yes | - | Path to map configuration YAML (map settings at the top level or under `map:`; see below) |
 | `--host` | - | No | `localhost` | CARLA server hostname |
 | `--port` | - | No | `2000` | CARLA server port |
 | `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters) |
@@ -1046,15 +1055,19 @@ uv run detect-no-3d-model conf/map/nishishinjuku.yaml -v
 
 ### Input YAML Requirements
 
-The YAML file must contain at minimum:
+The map settings are resolved exactly as the scenario runner resolves the `map` config group: `lanelet2_path` and `xodr_path` (`~` and `${oc.env:...}` work; a relative path is taken from the working directory), `directory`, `source`, `projector_type` and `overwrite_xodr` (see [Map Configuration](#map-configuration)). A map given by files needs at minimum:
 
 ```yaml
-name: NishishinjukuMap        # CARLA map name
-xodr_path: path/to/map.xodr  # Path to OpenDRIVE file
+name: NishishinjukuMap          # CARLA map name
+xodr_path: path/to/map.xodr     # Path to OpenDRIVE file
 lanelet2_path: path/to/map.osm  # Path to Lanelet2 file
 ```
 
-These keys may also sit under a `map:` section (as in `conf/map/nishishinjuku.yaml`, a `# @package _global_` config); `no_3d_model_lanelet_ids` is then written there too.
+A map given by `source` or `directory` needs only that key (`name` defaults to the map directory's name); when it ships no OpenDRIVE, the tool reads the road network back out of the loaded CARLA world and caches it, as a run does. With `overwrite_xodr: true` the OpenDRIVE is installed into the CARLA asset named by the `<MAP_NAME>_PATH` environment variable before the map is loaded; otherwise CARLA's own road network is kept.
+
+These keys may also sit under a `map:` section (as in the example `nishishinjuku.yaml`, a `# @package _global_` config); `no_3d_model_lanelet_ids` is then written there too.
+
+A config that cannot be read, is not valid YAML, or does not name a usable map is reported as a single `detect-no-3d-model: error: ...` line with exit status 1, before CARLA is contacted.
 
 ### Integration with Scenario Runner
 
@@ -1341,8 +1354,8 @@ uv run scenario scenario=intersection_passing/left_turn \
 ### Use Case 4: Detect Missing 3D Models Before Running Scenarios
 
 ```bash
-# 1. Detect lanelets without ground geometry
-uv run detect-no-3d-model conf/map/nishishinjuku.yaml
+# 1. Detect lanelets without ground geometry (from the repository root)
+uv run detect-no-3d-model autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/nishishinjuku.yaml
 
 # 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML
 # 3. Now run scenarios — sweep will skip these lanelets

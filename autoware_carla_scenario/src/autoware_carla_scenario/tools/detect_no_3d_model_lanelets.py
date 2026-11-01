@@ -12,18 +12,24 @@ under ``no_3d_model_lanelet_ids`` -- in its ``map:`` section when it has one,
 at the top level otherwise.  The file is edited as text, so comments and
 layout survive; when that cannot be done safely the file is left untouched.
 
-The map configuration YAML (e.g. ``nishishinjuku.yaml``) already contains
-``xodr_path`` and ``lanelet2_path``; they are resolved via OmegaConf so
-that ``${oc.env:...}`` interpolations work transparently.
+The map files are resolved from the configuration's ``map`` settings the
+way ``uv run scenario`` resolves them
+(:func:`~autoware_carla_scenario.maps.config.resolve_map_paths`):
+``lanelet2_path`` and ``xodr_path`` (``~`` and ``${oc.env:...}`` work),
+``directory``, ``source``, ``projector_type`` and ``overwrite_xodr``.  A map
+that carries no OpenDRIVE (e.g. ``town10hd_opt.yaml``, which has only
+``map.source``) has it read back out of the loaded world and cached, as a run
+does.
 
-Usage::
+Usage, from the repository root (where ``nishishinjuku.yaml``'s default
+``data/`` paths resolve)::
 
     uv run detect-no-3d-model \\
         autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/nishishinjuku.yaml
 
     # With verbose logging
     uv run detect-no-3d-model -v \\
-        autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/nishishinjuku.yaml
+        autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/map/town10hd_opt.yaml
 
 Coordinate systems
 ------------------
@@ -47,17 +53,26 @@ import os
 import shutil
 import tempfile
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import typesafe_carla.carla as carla
 import lanelet2.geometry
 import yaml
 from omegaconf import DictConfig, OmegaConf
+from omegaconf.errors import OmegaConfBaseException
 from tqdm import tqdm
 
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
+)
+from autoware_carla_scenario.maps import (
+    MapCacheError,
+    MapPaths,
+    MapResolutionError,
+    MapSourceError,
+    capture_opendrive,
+    resolve_map_paths,
 )
 from autoware_carla_scenario.maps.opendrive import map_asset_env_var
 
@@ -255,7 +270,7 @@ def _format_value(
 def _target_path(data: dict[Any, Any]) -> tuple[str, ...]:
     """Return where the key lives: under ``map:`` if present, else top level.
 
-    This mirrors ``_resolve_map_config``, which reads the map settings from
+    This mirrors ``_map_section``, which reads the map settings from
     ``raw.get("map", raw)``.
     """
     return ("map",) if "map" in data else ()
@@ -424,65 +439,153 @@ def _write_atomically(path: Path, data: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# YAML path resolution
+# Map resolution
 # ---------------------------------------------------------------------------
 
 
-def _resolve_map_config(yaml_path: Path) -> tuple[str, Path, Path]:
-    """Read ``name``, ``xodr_path``, and ``lanelet2_path`` from a map config YAML.
+class MapConfigError(ValueError):
+    """The map configuration cannot be read or does not name a usable map.
 
-    OmegaConf resolves ``${oc.env:VAR,default}`` interpolations automatically.
-
-    Returns
-    -------
-    tuple[str, Path, Path]
-        ``(map_name, xodr_path, lanelet2_path)``.
-
-    Raises
-    ------
-    ValueError
-        If the YAML structure is unexpected or required keys are missing.
-    FileNotFoundError
-        If either resolved file does not exist.
+    The message is a single line, which :func:`main` prints as it is.
     """
-    raw = OmegaConf.load(yaml_path)
-    if not isinstance(raw, DictConfig):
-        raise ValueError(f"Expected a YAML mapping in {yaml_path}, got a sequence")
 
-    # The YAML may have the paths nested under a ``map:`` key (Hydra
-    # package style) or at the top level.
-    map_cfg = raw.get("map", raw)
+
+def _one_line(exc: BaseException) -> str:
+    """Return *exc*'s message on one line (YAML errors span several)."""
+    return " ".join(str(exc).split()) or type(exc).__name__
+
+
+def _map_section(yaml_path: Path) -> DictConfig:
+    """Load *yaml_path* and return its ``map:`` section, or the whole file.
+
+    The YAML may have the settings nested under a ``map:`` key (Hydra package
+    style, as in ``examples/conf/map/*.yaml``) or at the top level.
+    """
+    try:
+        raw = OmegaConf.load(yaml_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        raise MapConfigError(f"{yaml_path}: cannot read: {_one_line(exc)}") from exc
+    except (yaml.YAMLError, OmegaConfBaseException) as exc:
+        raise MapConfigError(f"{yaml_path}: not valid YAML: {_one_line(exc)}") from exc
+    if not isinstance(raw, DictConfig):
+        raise MapConfigError(f"{yaml_path}: expected a YAML mapping, got a sequence")
+    try:
+        map_cfg = raw.get("map", raw)
+    except OmegaConfBaseException as exc:
+        raise MapConfigError(f"{yaml_path}: {_one_line(exc)}") from exc
     if not isinstance(map_cfg, DictConfig):
-        raise ValueError(
-            f"Expected 'map' to be a mapping in {yaml_path}, "
+        raise MapConfigError(
+            f"{yaml_path}: expected 'map' to be a mapping, "
             f"got {type(map_cfg).__name__}"
         )
+    return map_cfg
 
-    map_name = map_cfg.get("name")
-    if map_name is None:
-        raise ValueError(f"map.name not found in {yaml_path}")
 
-    xodr_raw = map_cfg.get("xodr_path")
-    ll2_raw = map_cfg.get("lanelet2_path")
+def _resolve_map_config(yaml_path: Path, *, allow_fetch: bool = True) -> MapPaths:
+    """Return the map files the config at *yaml_path* names, without CARLA.
 
-    if xodr_raw is None:
-        raise ValueError(f"xodr_path not found in {yaml_path}")
-    if ll2_raw is None:
-        raise ValueError(f"lanelet2_path not found in {yaml_path}")
+    The ``map`` settings are resolved by
+    :func:`~autoware_carla_scenario.maps.config.resolve_map_paths`, exactly as
+    ``uv run scenario`` resolves them: ``map.lanelet2_path`` and
+    ``map.xodr_path`` (``~`` expanded, ``${oc.env:...}`` interpolated),
+    ``map.directory``, ``map.source``, ``map.projector_type`` and
+    ``map.overwrite_xodr``.
 
-    xodr_path = Path(str(xodr_raw))
-    ll2_path = Path(str(ll2_raw))
+    A map with no OpenDRIVE of its own (a ``map.source`` or ``map.directory``
+    that ships none) is accepted: :func:`_opendrive_for` reads it back out of
+    the loaded world, as the runner does.
 
-    if not xodr_path.exists():
-        raise FileNotFoundError(
-            f"XODR file not found: {xodr_path} (resolved from {yaml_path})"
+    Args:
+        yaml_path: The map configuration YAML.
+        allow_fetch: Whether a ``map.source`` that is not cached yet may be
+            cloned.
+
+    Raises:
+        MapConfigError: If the file cannot be read or parsed, or does not name
+            a usable map.
+    """
+    map_cfg = _map_section(yaml_path)
+    try:
+        paths = resolve_map_paths(map_cfg, allow_fetch=allow_fetch)
+    except (
+        MapSourceError,
+        MapCacheError,
+        MapResolutionError,
+        OmegaConfBaseException,
+    ) as exc:
+        raise MapConfigError(f"{yaml_path}: {_one_line(exc)}") from exc
+
+    if not paths.name:
+        raise MapConfigError(f"{yaml_path}: map.name is not set")
+    if paths.lanelet2_path is None:
+        raise MapConfigError(
+            f"{yaml_path}: names no Lanelet2 map; set map.lanelet2_path, "
+            "map.directory or map.source"
         )
-    if not ll2_path.exists():
-        raise FileNotFoundError(
-            f"Lanelet2 file not found: {ll2_path} (resolved from {yaml_path})"
+    if not paths.lanelet2_path.is_file():
+        raise MapConfigError(
+            f"{yaml_path}: Lanelet2 file not found: {paths.lanelet2_path}"
         )
+    install = paths.install_xodr
+    if install is not None and not install.is_file():
+        raise MapConfigError(f"{yaml_path}: XODR file not found: {install}")
+    if install is None and paths.opendrive_path is None:
+        raise MapConfigError(
+            f"{yaml_path}: names no OpenDRIVE; set map.xodr_path, or "
+            "map.directory or map.source to read one back from CARLA"
+        )
+    if paths.overwrite_xodr and install is None:
+        raise MapConfigError(
+            f"{yaml_path}: map.overwrite_xodr needs an OpenDRIVE to install; "
+            "set map.xodr_path or leave overwrite_xodr off"
+        )
+    return paths
 
-    return str(map_name), xodr_path, ll2_path
+
+def _load_world(client: carla.Client, paths: MapPaths) -> carla.World:
+    """Load the map in CARLA the way the runner does.
+
+    With ``map.overwrite_xodr`` the OpenDRIVE is installed into the CARLA
+    asset first (``ScenarioRunner.load_map_by_overwriting_xodr``); otherwise
+    the map is loaded by name with the road network CARLA ships
+    (``ScenarioRunner.load_map_by_name``).
+
+    Raises:
+        MapConfigError: If the OpenDRIVE is to be installed and the
+            ``<MAP_NAME>_PATH`` variable naming its destination is not set.
+    """
+    install = paths.install_xodr
+    if paths.overwrite_xodr and install is not None:
+        env_var = map_asset_env_var(paths.name)
+        dest_str = os.environ.get(env_var)
+        if not dest_str:
+            raise MapConfigError(
+                f"map.overwrite_xodr is set but {env_var} is not; set it to the "
+                f"internal .xodr file of {paths.name} inside the CARLA installation"
+            )
+        logger.info("Overwriting CARLA XODR: %s -> %s", install, dest_str)
+        shutil.copy2(install, Path(dest_str))
+    logger.info("Loading CARLA map %s ...", paths.name)
+    return client.load_world(paths.name)
+
+
+def _opendrive_for(paths: MapPaths, world: carla.World) -> Path:
+    """Return the OpenDRIVE to read geometry from, once *world* is loaded.
+
+    The configured (or shipped) file when there is one; otherwise the one
+    read back out of CARLA into the map cache, written from *world* the first
+    time -- what ``ScenarioQueue`` does for a map that carries no OpenDRIVE.
+    """
+    if paths.install_xodr is not None:
+        return paths.install_xodr
+    destination = paths.opendrive_path
+    if destination is None:  # _resolve_map_config refuses such a config
+        raise MapConfigError(f"{paths.name}: no OpenDRIVE to read")
+    if destination.is_file():
+        return destination
+    written = capture_opendrive(world, destination)
+    logger.info("Wrote the loaded world's OpenDRIVE to %s", written)
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -490,20 +593,31 @@ def _resolve_map_config(yaml_path: Path) -> tuple[str, Path, Path]:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def _fail(message: str) -> NoReturn:
+    """Print *message* as one line on stderr and exit with status 1."""
+    print(f"detect-no-3d-model: error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for detecting lanelets without a CARLA 3D model."""
     parser = argparse.ArgumentParser(
+        prog="detect-no-3d-model",
         description=(
             "Detect lanelets without a matching 3D model in CARLA and "
             "write the IDs to a map configuration YAML file.  "
-            "The xodr_path and lanelet2_path are read from the YAML "
-            "config automatically."
+            "The map files are resolved from the config's map settings "
+            "(lanelet2_path, xodr_path, directory, source) as "
+            "`uv run scenario` resolves them."
         ),
     )
     parser.add_argument(
         "yaml_path",
         type=Path,
-        help="Path to the map configuration YAML (e.g. conf/map/nishishinjuku.yaml)",
+        help=(
+            "Path to the map configuration YAML (e.g. autoware_carla_scenario/"
+            "src/autoware_carla_scenario/examples/conf/map/nishishinjuku.yaml)"
+        ),
     )
     parser.add_argument(
         "--host",
@@ -540,7 +654,7 @@ def main() -> None:
         action="store_true",
         help="Enable verbose (DEBUG) logging",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -548,19 +662,18 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Resolve map file paths from YAML
+    # Resolve the map files from the YAML, before connecting to CARLA
     # ------------------------------------------------------------------
-    if not args.yaml_path.exists():
-        logger.error("YAML config not found: %s", args.yaml_path)
-        sys.exit(1)
-
+    if not args.yaml_path.is_file():
+        _fail(f"YAML config not found: {args.yaml_path}")
     try:
-        map_name, xodr_path, lanelet2_path = _resolve_map_config(args.yaml_path)
-    except (ValueError, FileNotFoundError) as exc:
-        logger.error("%s", exc)
-        sys.exit(1)
-    logger.info("Map name: %s", map_name)
-    logger.info("XODR:     %s", xodr_path)
+        paths = _resolve_map_config(args.yaml_path)
+    except MapConfigError as exc:
+        _fail(str(exc))
+    lanelet2_path = paths.lanelet2_path
+    assert lanelet2_path is not None  # _resolve_map_config checked it
+    logger.info("Map name: %s", paths.name)
+    logger.info("XODR:     %s", paths.install_xodr or paths.opendrive_path)
     logger.info("Lanelet2: %s", lanelet2_path)
 
     # ------------------------------------------------------------------
@@ -573,25 +686,15 @@ def main() -> None:
         version = client.get_server_version()
         logger.info("Connected to CARLA server version %s", version)
     except RuntimeError as exc:
-        logger.error("Cannot connect to CARLA server: %s", exc)
-        sys.exit(1)
+        _fail(f"cannot connect to the CARLA server: {_one_line(exc)}")
 
-    # Overwrite the CARLA-internal XODR and load the map (same as
-    # ScenarioRunner.load_map_by_overwriting_xodr).
-    env_var = map_asset_env_var(map_name)
-    dest_str = os.environ.get(env_var)
-    if dest_str:
-        dest = Path(dest_str)
-        logger.info("Overwriting CARLA XODR: %s -> %s", xodr_path, dest)
-        shutil.copy2(xodr_path, dest)
-    else:
-        logger.info(
-            "Environment variable %s not set; loading map without XODR overwrite",
-            env_var,
-        )
-
-    logger.info("Loading CARLA map %s ...", map_name)
-    world = client.load_world(map_name)
+    try:
+        world = _load_world(client, paths)
+        xodr_path = _opendrive_for(paths, world)
+    except MapConfigError as exc:
+        _fail(str(exc))
+    except (OSError, RuntimeError) as exc:
+        _fail(f"cannot load CARLA map {paths.name}: {_one_line(exc)}")
 
     # ------------------------------------------------------------------
     # Initialize MapManager (loads lanelet2, computes mgrs_offset & z_offset)
@@ -602,6 +705,7 @@ def main() -> None:
         xodr_path=xodr_path,
         lanelet2_path=lanelet2_path,
         carla_world=world,
+        projector_type=paths.projector_type,
     )
     logger.info(
         "Loaded Lanelet2 map with %d lanelets",
