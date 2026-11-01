@@ -191,8 +191,11 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
         gitlab_url = urlunsplit(
             (parts.scheme, parts.netloc, "/" + "/".join(segments[:marker]), "", "")
         )
-        gitlab_path = "/".join(segments[marker + 3 :])
-        return gitlab_url, segments[marker + 2], gitlab_path
+        # Decoded as the GitHub/HuggingFace ref and path below are, segment
+        # by segment after the split (#1052).
+        gitlab_ref = unquote(segments[marker + 2])
+        gitlab_path = "/".join([unquote(segment) for segment in segments[marker + 3 :]])
+        return gitlab_url, gitlab_ref, gitlab_path
 
     if len(segments) <= repo_len or segments[repo_len] not in _WEB_VIEW_SEGMENTS:
         return url, "", ""

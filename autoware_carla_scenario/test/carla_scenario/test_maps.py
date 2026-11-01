@@ -332,6 +332,20 @@ class TestMapSource:
                 "feature/x",
                 "maps/T",
             ),
+            # GitLab page URLs are decoded the same way, split first.
+            (
+                "https://gitlab.com/g/sub/maps/-/tree/feature%2Fx/maps/My%20Town",
+                "https://gitlab.com/g/sub/maps",
+                "feature/x",
+                "maps/My Town",
+            ),
+            # An already-decoded space is left as it is.
+            (
+                "https://github.com/o/maps/tree/main/maps/My Town",
+                "https://github.com/o/maps",
+                "main",
+                "maps/My Town",
+            ),
             # Plain GitHub and GitLab page URLs are unchanged.
             (
                 "https://github.com/o/maps/tree/main/maps/T",
