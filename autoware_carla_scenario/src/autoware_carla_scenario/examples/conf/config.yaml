@@ -252,7 +252,7 @@ background_traffic:
     stop_after_seconds: null
     # The most background vehicles on the road at once.
     max_vehicles: 30
-    # The speed they drive at, at most.
+    # The speed they drive at, at most; finite and at least 1 km/h.
     speed_kmh: 30.0
     min_gap_m: 20.0
     blueprint: null

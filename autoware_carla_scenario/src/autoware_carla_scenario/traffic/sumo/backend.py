@@ -96,7 +96,7 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
-from ...constants import EGO_ROLE_NAME
+from ...constants import BACKGROUND_MAX_LANE_OFFSET_M, EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
@@ -110,6 +110,7 @@ from ..base import (
     TrafficBackendUnavailable,
     TrafficContext,
     TurnDirection,
+    check_background_speed,
 )
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
@@ -275,8 +276,6 @@ _KEEP_ROUTE_ANYWHERE = 2 | 4
 #: exists, m, and how many junctions its route runs through.
 _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
-#: How far from a lane a background vehicle may be asked for and still be put on it, m.
-_BACKGROUND_MAX_OFFSET_M = 5.0
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
 
@@ -2210,8 +2209,10 @@ class SumoTrafficBackend(TrafficBackend):
     ) -> Optional[str]:
         """Add a SUMO vehicle at *transform*; it is mirrored into CARLA like
         the rest of SUMO's traffic, and wanders the network until its route
-        runs out."""
+        runs out.  Capped at exactly *speed_kmh*, as every backend caps it
+        (:meth:`TrafficBackend.spawn_background`)."""
         del world
+        speed_kmh = check_background_speed(speed_kmh)
         if not self._running:
             return None
         tc = self._traci
@@ -2236,7 +2237,7 @@ class SumoTrafficBackend(TrafficBackend):
         # convertRoad answers with the nearest lane however far away it is;
         # a background vehicle goes only where there is one.
         lane_x, lane_y = tc.simulation.convert2D(edge, pos, lane)
-        if math.hypot(lane_x - pose.x, lane_y - pose.y) > _BACKGROUND_MAX_OFFSET_M:
+        if math.hypot(lane_x - pose.x, lane_y - pose.y) > BACKGROUND_MAX_LANE_OFFSET_M:
             logger.debug("No lane for background vehicle %s near %s", sumo_id, pose)
             return None
         route_id = f"route:{sumo_id}"
@@ -2248,12 +2249,14 @@ class SumoTrafficBackend(TrafficBackend):
                 typeID="DEFAULT_VEHTYPE",
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
-                # The fastest it can safely enter at: a fixed speed near a
+                # The fastest it can safely enter at, under the cap set next
+                # (SUMO inserts it on a later step): a fixed speed near a
                 # junction is one SUMO refuses to insert the vehicle at.
-                departSpeed="max" if speed_kmh > 0 else "0",
+                departSpeed="max",
             )
-            if speed_kmh > 0:
-                tc.vehicle.setMaxSpeed(sumo_id, max(speed_kmh / 3.6, 1.0))
+            # Exactly the cap asked for, as the TrafficManager backend gives
+            # it: no floor of SUMO's own (#967).
+            tc.vehicle.setMaxSpeed(sumo_id, speed_kmh / 3.6)
         except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
             logger.warning(
                 "SUMO could not add %s on %s_%d: %s", sumo_id, edge, lane, exc
@@ -4158,8 +4161,10 @@ class SumoTrafficBackend(TrafficBackend):
             )
         own, decel, tau = held
         limit = sight_speed(seen, decel, tau)
-        # Never to a standstill: a car in thick fog still creeps on.
-        vehicle.setMaxSpeed(sumo_id, max(min(own, limit), 1.0))
+        # Never to a standstill: a car in thick fog still creeps on.  Nor
+        # above its own: a background vehicle capped below the creep keeps
+        # its cap (#967).
+        vehicle.setMaxSpeed(sumo_id, min(own, max(limit, 1.0)))
 
     # ------------------------------------------------------------------
     # Internals: traffic lights

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import math
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,6 +49,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ..constants import MIN_BACKGROUND_SPEED_KMH
 from .context import TrafficContext
 from .parameters import (
     BICYCLE_PARAMETER_BACKENDS,
@@ -105,6 +107,28 @@ class TrafficBackendUnavailable(TrafficBackendError):
     :class:`TrafficBackendError` because it is a setup problem, not a run
     problem, and it is raised before anything is spawned.
     """
+
+
+# ---------------------------------------------------------------------------
+# Background traffic: what every backend's spawn_background agrees on (#967)
+# ---------------------------------------------------------------------------
+
+
+def check_background_speed(speed_kmh: float) -> float:
+    """*speed_kmh* as a background vehicle's speed cap, in km/h.
+
+    Raises:
+        ValueError: If it is not finite or below
+            :data:`~autoware_carla_scenario.constants.MIN_BACKGROUND_SPEED_KMH`.
+    """
+    speed = float(speed_kmh)
+    if not math.isfinite(speed) or speed < MIN_BACKGROUND_SPEED_KMH:
+        raise ValueError(
+            f"speed_kmh must be a finite speed of at least "
+            f"{MIN_BACKGROUND_SPEED_KMH:g} km/h, not {speed_kmh!r}: it is the "
+            "most a background vehicle drives at"
+        )
+    return speed
 
 
 # ---------------------------------------------------------------------------
@@ -926,14 +950,26 @@ class TrafficBackend:
         Args:
             world: The CARLA world.
             transform: Where, as a ``carla.Transform`` on a driving lane.
-            speed_kmh: The speed it drives at, at most.
-            blueprint: A CARLA vehicle blueprint, or ``None`` for the backend's own.
+            speed_kmh: The speed it drives at, at most, in km/h: the cap is
+                exactly this on every backend.  It also enters at no more than
+                this.  Finite and at least
+                :data:`~autoware_carla_scenario.constants.MIN_BACKGROUND_SPEED_KMH`
+                (:func:`check_background_speed`).
+            blueprint: A CARLA vehicle blueprint, or ``None`` (or ``""``) for
+                the backend's own.
 
         Returns:
             A handle naming the vehicle for :meth:`remove_background`, or
-            ``None`` when it could not be placed (no lane there, the spot is
-            taken, the backend has no traffic model).
+            ``None`` when it could not be placed (no driving lane within
+            :data:`~autoware_carla_scenario.constants.BACKGROUND_MAX_LANE_OFFSET_M`
+            of *transform*, the spot is taken, the backend has no traffic
+            model).
+
+        Raises:
+            ValueError: If *speed_kmh* is not a speed a vehicle can be capped
+                at (:func:`check_background_speed`), on every backend alike.
         """
+        check_background_speed(speed_kmh)
         logger.warning(
             "%s: %r cannot create background traffic", type(self).__name__, self.name
         )

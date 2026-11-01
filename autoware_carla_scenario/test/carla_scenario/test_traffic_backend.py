@@ -814,9 +814,21 @@ class _BackgroundActor:
 
 
 class _BackgroundWorld:
-    def __init__(self, blueprints: List[_Blueprint]) -> None:
+    """A world whose driving lane runs along y = *lane_y*."""
+
+    def __init__(self, blueprints: List[_Blueprint], lane_y: float = 2.0) -> None:
         self.blueprints = blueprints
         self.spawned: List[_BackgroundActor] = []
+        self.lane_y = lane_y
+
+    def get_map(self) -> Any:
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        def get_waypoint(location: Any, project_to_road: bool = True) -> Any:
+            centre = carla.Location(location.x, self.lane_y, location.z)
+            return SimpleNamespace(transform=carla.Transform(centre, carla.Rotation()))
+
+        return SimpleNamespace(get_waypoint=get_waypoint)
 
     def get_blueprint_library(self) -> Any:
         return SimpleNamespace(filter=lambda pattern: list(self.blueprints))
@@ -856,6 +868,15 @@ class TestTrafficManagerBackground:
         backend.remove_background(world, handle)
         assert world.spawned[0].destroyed == 1
         assert backend.background_vehicles(world) == {}
+
+    def test_a_vehicle_far_from_a_lane_is_not_placed(self) -> None:
+        # #967: as SUMO's backend, no background vehicle off the road.
+        world: Any = _BackgroundWorld([_Blueprint()], lane_y=20.0)
+        backend = TrafficManagerBackend()
+        assert (
+            backend.spawn_background(world, _road_transform(), speed_kmh=30.0) is None
+        )
+        assert world.spawned == []
 
 
 # ---------------------------------------------------------------------------

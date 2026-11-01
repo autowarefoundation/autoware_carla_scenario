@@ -423,12 +423,14 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     **{
         name: ("constants", getattr(constants, name))
         for name in (
+            "BACKGROUND_MAX_LANE_OFFSET_M",
             "BUMPER_PROBE_ROLE_NAME",
             "DEFAULT_TM_PORT",
             "EGO_ROLES",
             "FIXED_DELTA_SECONDS",
             "LANE_CHANGE_CENTER_TOLERANCE_M",
             "LANE_CHANGE_HEADING_TOLERANCE_DEG",
+            "MIN_BACKGROUND_SPEED_KMH",
             "US_PER_S",
         )
     },

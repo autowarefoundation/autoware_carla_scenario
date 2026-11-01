@@ -20,6 +20,7 @@ import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
+    BACKGROUND_MAX_LANE_OFFSET_M,
     FIXED_DELTA_SECONDS,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
@@ -33,6 +34,7 @@ from .base import (
     TrafficContext,
     TurnDirection,
     _entity_name,
+    check_background_speed,
 )
 from .config import TrafficManagerBackendConfig
 from .final_approach import APPROACH_SPEED_MPS, FinalApproach, lane_changes
@@ -603,10 +605,29 @@ class TrafficManagerBackend(TrafficBackend):
         """Spawn a CARLA vehicle at *transform* and give it to the TrafficManager.
 
         One spawned before :meth:`start` is put on autopilot there, with every
-        other vehicle; one spawned during the run is put on it at once.
+        other vehicle; one spawned during the run is put on it at once.  It is
+        capped at exactly *speed_kmh* and starts at it, and goes only where a
+        driving lane is, as SUMO's do (:meth:`TrafficBackend.spawn_background`).
         """
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
+        speed_kmh = check_background_speed(speed_kmh)
+        # No vehicle off the road: SUMO places one only near a lane, and so
+        # does this backend (#967).  get_waypoint projects onto a driving
+        # lane's centre, so the distance to it is how far off the lane it is.
+        found = run_carla_map(world).get_waypoint(
+            transform.location, project_to_road=True
+        )
+        if found is None:
+            return None
+        lane_point: "carla.Waypoint" = found
+        centre = lane_point.transform.location
+        if (
+            math.hypot(centre.x - transform.location.x, centre.y - transform.location.y)
+            > BACKGROUND_MAX_LANE_OFFSET_M
+        ):
+            logger.debug("No lane for a background vehicle near %s", transform.location)
+            return None
         library = world.get_blueprint_library()
         found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)
         if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
@@ -627,7 +648,7 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return None  # The spot is taken; the caller tries elsewhere.
         self._background[handle] = actor
-        speed = max(speed_kmh, 0.0) / 3.6
+        speed = speed_kmh / 3.6
         forward = lifted.get_forward_vector()
         actor.set_target_velocity(
             carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
@@ -636,7 +657,8 @@ class TrafficManagerBackend(TrafficBackend):
             self._autopilot(actor, keep=False)
         tm = self._require_tm("spawn_background")
         if tm is not None:
-            self._give_speed(tm, actor, max(speed_kmh, 1.0))
+            # Exactly the cap asked for, as SUMO gives it: no floor (#967).
+            self._give_speed(tm, actor, speed_kmh)
         return handle
 
     def background_vehicles(
