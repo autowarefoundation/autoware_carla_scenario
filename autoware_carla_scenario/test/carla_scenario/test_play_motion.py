@@ -610,6 +610,22 @@ class TestPlayMotionAction:
         assert not action.playing
         assert scene.walker.blend == 0.0
 
+    def test_a_duration_ends_on_its_tick_whatever_tick_it_starts_on(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        # Started on tick 24, the summed clock reads 20 ticks later as
+        # 0.9999999999999998 s after the start: still 1.0 s, 20 frames.
+        action = PlayMotionAction(
+            "walker1",
+            wave,
+            condition=ElapsedTimeCondition(24 * DT, label="later"),
+            loop=True,
+            duration_s=1.0,
+        )
+        scene.run(action, 64 * DT)
+        assert not action.playing
+        assert len(scene.walker.poses) == 20
+
     def test_a_pedestrian_that_is_not_there_plays_nothing(self, wave: Path) -> None:
         action = PlayMotionAction("nobody", wave)
         world = MagicMock()
@@ -671,7 +687,32 @@ class TestPlayMotionAction:
         second = PlayMotionAction("walker1", wave, overrides=True)
         second.tick(scene.world, DT)
         assert first.state is ActionState.COMPLETE
+        assert not first.playing
         assert second.playing
+        assert scene.walker.blend == 1.0
+
+    def test_an_overriding_walk_hands_the_walker_back(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        scene.walker.apply_control = lambda control: None  # type: ignore[attr-defined]
+        motion = PlayMotionAction("walker1", wave, loop=True, upper_body_only=False)
+        motion.tick(scene.world, 0.0)
+        assert scene.walker.blend == 1.0
+        walk = WalkStraightAction("walker1", speed_ms=1.0, overrides=True)
+        walk.tick(scene.world, DT)
+        assert motion.state is ActionState.COMPLETE
+        assert not motion.playing
+        assert scene.walker.blend == 0.0
+
+    def test_a_run_that_ends_mid_motion_hands_the_walker_back(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        motion = PlayMotionAction("walker1", wave, loop=True)
+        scene.run(motion, 0.2)
+        assert motion.playing
+        motion.close()
+        assert not motion.playing
+        assert scene.walker.blend == 0.0
 
     def test_a_bad_file_fails_when_the_scenario_is_built(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):

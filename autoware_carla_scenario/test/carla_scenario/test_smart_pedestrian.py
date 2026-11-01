@@ -20,6 +20,7 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
+    ElapsedTimeCondition,
     PedestrianEntity,
     PedestrianEntityConfig,
     SmartPedestrianControllerAction,
@@ -329,6 +330,21 @@ class TestSmartPedestrianControllerAction:
         assert len(key.joints) == len(_NAMES)
         hips = key.joints[_NAMES.index("Hips")]
         assert (hips.x, hips.y, hips.z) == pytest.approx((10.0, -5.0, 1.0))
+
+    def test_a_duration_ends_on_its_tick_whatever_tick_it_starts_on(
+        self, scene: _Scene, generator: _Generator
+    ) -> None:
+        # Started on tick 24, the summed clock reads 20 ticks later as
+        # 0.9999999999999998 s after the start: still 1.0 s, 20 frames.
+        action = SmartPedestrianControllerAction(
+            "walker1",
+            "walks on",
+            condition=ElapsedTimeCondition(24 * DT, label="later"),
+            duration_s=1.0,
+        )
+        scene.run(action, 64 * DT)
+        assert not action.moving
+        assert len(scene.walker.poses) == 20
 
     def test_more_motion_is_asked_for_as_it_runs_out(
         self, scene: _Scene, generator: _Generator

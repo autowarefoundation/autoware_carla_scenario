@@ -282,7 +282,9 @@ class SmartPedestrianControllerAction(BaseAction):
 
     def _step(self, world: carla.World) -> None:
         elapsed = _now(world) - self._started_at
-        if self._end_s is not None and elapsed >= self._end_s:
+        # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
+        # can read 0.9999999999999998 s (ElapsedTimeCondition).
+        if self._end_s is not None and elapsed >= self._end_s - 1e-9:
             self._end()
             return
         frame = int(math.floor(elapsed * self._fps + 1e-9))
