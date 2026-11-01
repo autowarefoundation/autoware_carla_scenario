@@ -185,7 +185,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         _STACK_LAUNCHER,
     ),
     f"{_PACKAGE}.carla_install": _each(
-        "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main",
+        "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main "
+        "package_url",
         _CARLA_INSTALL,
     ),
     f"{_PACKAGE}.debug_markers": _each(

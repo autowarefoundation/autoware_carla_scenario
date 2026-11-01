@@ -226,6 +226,101 @@ def test_the_cli_reports_failures(home: Path, tmp_path: Path) -> None:
     assert installed_executable() is not None
 
 
+def test_a_missing_local_path_is_reported_on_one_line(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "missing.tar.gz"
+    assert carla_install.main(["--url", str(missing)]) == 1
+    err = capsys.readouterr().err
+    assert err == f"scenario-setup: {missing}: no such file\n"
+    assert installed_executable() is None
+
+
+def test_an_unknown_url_type_is_reported_on_one_line(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert carla_install.main(["--url", "nosuch://host/carla.tar.gz"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("scenario-setup: ") and err.count("\n") == 1
+    assert "nosuch" in err
+    # A malformed URL is a ValueError, not urllib's URLError.
+    assert carla_install.main(["--url", "http://[::1/carla.tar.gz"]) == 1
+    err = capsys.readouterr().err
+    assert err == "scenario-setup: Invalid IPv6 URL\n"
+
+
+def _local_carla(path: Path) -> None:
+    _package(path, {f"top/{LAUNCHER}": b"#!/bin/sh\n", "top/VERSION": b"local"})
+
+
+def test_it_installs_from_an_absolute_local_path(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archive = tmp_path / "CARLA.tar.gz"
+    _local_carla(archive)
+    assert carla_install.main(["--url", str(archive)]) == 0
+    assert installed_executable() == install_dir() / LAUNCHER
+    assert (install_dir() / "VERSION").read_bytes() == b"local"
+    stamp = json.loads((install_dir() / ".download.json").read_text())
+    assert stamp["url"] == archive.as_uri()
+    assert stamp["size"] == str(archive.stat().st_size)
+    # The same path again is the same download: kept, not unpacked anew.
+    (install_dir() / "VERSION").write_bytes(b"touched")
+    assert carla_install.main(["--url", str(archive)]) == 0
+    assert "up to date" in capsys.readouterr().out
+    assert (install_dir() / "VERSION").read_bytes() == b"touched"
+
+
+def test_it_installs_from_a_relative_local_path(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "downloads").mkdir()
+    _local_carla(tmp_path / "downloads" / "CARLA.tar.gz")
+    monkeypatch.chdir(tmp_path)
+    assert install("./downloads/CARLA.tar.gz") == install_dir() / LAUNCHER
+    assert (install_dir() / "VERSION").read_bytes() == b"local"
+    monkeypatch.chdir(tmp_path / "downloads")
+    assert carla_install.main(["--url", "CARLA.tar.gz", "--force"]) == 0
+    assert installed_executable() is not None
+
+
+def test_a_local_path_expands_the_home_directory(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _local_carla(tmp_path / "CARLA.tar.gz")
+    assert carla_install.package_url("~/CARLA.tar.gz") == (
+        (tmp_path / "CARLA.tar.gz").resolve().as_uri()
+    )
+    assert install("~/CARLA.tar.gz") == install_dir() / LAUNCHER
+
+
+def test_a_url_is_passed_on_unchanged(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.request
+
+    url = "http://downloads.invalid/Carla/CARLA.tar.gz?token=a b"
+    assert carla_install.package_url(url) == url
+    assert carla_install.package_url("HTTPS://x.invalid/c.tar.gz") == (
+        "HTTPS://x.invalid/c.tar.gz"
+    )
+    # urllib opens file: without the //; it is not a relative path "file:".
+    assert carla_install.package_url("file:/tmp/c.tar.gz") == "file:/tmp/c.tar.gz"
+    assert carla_install.package_url("C:/c.tar.gz").startswith("file:///")
+    assert carla_install.package_url("host:c.tar.gz").startswith("file:///")
+    asked: list[str] = []
+
+    def refused(request: urllib.request.Request, **_: object) -> None:
+        asked.append(request.full_url)
+        raise urllib.error.HTTPError(url, 404, "Not Found", Message(), None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    with pytest.raises(urllib.error.HTTPError):
+        install(url)
+    assert asked == [url]
+
+
 def test_the_nightly_is_refused_where_it_cannot_run(
     home: Path,
     tmp_path: Path,
