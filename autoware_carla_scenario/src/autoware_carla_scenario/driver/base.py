@@ -139,8 +139,12 @@ class DriverCameraConfig:
     camera parameters used to render it.  Defaults match alpasim's front-wide camera,
     which ``carla-driver-interface``'s reference policies look for.
 
-    Extrinsics are relative to the vehicle's ``base_link``, in CARLA's convention
-    (x forward, y right, z up, degrees).
+    Extrinsics are relative to the CARLA actor origin (the vehicle's centre, where
+    CARLA attaches the sensor), in CARLA's convention (x forward, y right, z up,
+    degrees), as a LiDAR's are.  The policy is told the mount in the rig, whose
+    origin is the rear axle (``base_link``): moved by the rear-axle offset
+    (:attr:`DriverClientConfig.rear_axle_offset_m`, else derived), the way
+    :func:`~autoware_carla_scenario.driver.observation.sensor_pose_in_rig` moves it.
     """
 
     logical_id: str = DEFAULT_CAMERA_LOGICAL_ID
@@ -602,12 +606,18 @@ class BaseEgoDriverClient(ABC):
         return self._config
 
     @abstractmethod
-    def start_session(self, session_uuid: str, scene_id: str) -> None:
+    def start_session(
+        self, session_uuid: str, scene_id: str, *, rear_axle_offset_m: float = 0.0
+    ) -> None:
         """Open a rollout session with the policy.
 
         Args:
             session_uuid: Identifier correlating every subsequent call.
             scene_id: Human-readable scene name for the policy's debug output.
+            rear_axle_offset_m: Where the rig origin (the rear axle) is from the
+                actor origin, along the actor's x axis (negative behind).  The
+                cameras are mounted relative to the actor origin, so the pose
+                each is declared at in the rig is its mount moved by this.
         """
         ...
 

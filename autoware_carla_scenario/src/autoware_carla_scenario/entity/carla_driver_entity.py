@@ -367,7 +367,11 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: What the run's T4Scenes are named: the session's.
         self._scene_id = session_uuid
         try:
-            self._client.start_session(session_uuid, str(self._map.name))
+            self._client.start_session(
+                session_uuid,
+                str(self._map.name),
+                rear_axle_offset_m=self._rear_axle_offset_m,
+            )
         except BaseException:
             # No session, so nothing feeds a dataset: do not leave the offer
             # standing for the next recording in this process.

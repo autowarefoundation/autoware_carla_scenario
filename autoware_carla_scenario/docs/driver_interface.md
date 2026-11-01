@@ -20,6 +20,14 @@ the framework declares its cameras in the policy's revision:
 | carla-driver-interface 2.x (revision 2) | the camera's optical frame in the rig (x right, y down, z along the optical axis), as alpasim declares it |
 | carla-driver-interface 1.x (declares no revision) | the camera body in the rig (x along the optical axis, y left, z up), as 1.x reads it |
 
+Either way the pose is in the rig, whose origin is the rear axle (see
+[Coordinate frames](#coordinate-frames) below), while a camera's `position_*` mount
+is relative to the CARLA actor origin, the vehicle's centre, where CARLA attaches
+it: the declared pose is the mount moved by the rear-axle offset, as the LiDAR's
+sweeps and a [T4 dataset](t4_dataset.md)'s camera calibration are. The default
+camera at `position_x: 1.5` on a car whose rear axle is 1.4 m behind its centre is
+declared at x = 2.9 in the rig.
+
 A 2.x policy is handed the optical frame either way, also by autoware_carla_scenario 4.x,
 whose cameras its server translates. A revision the framework does not know fails
 `start_session` with `ContractError`, before the scenario starts.
@@ -599,7 +607,9 @@ Two conversions sit between CARLA and the contract, both handled in
   negated, and angular velocity — a pseudovector — picks up an extra sign flip.
 * **Rig origin.** alpasim puts the rig origin at the rear-axle centre projected to the
   ground, while a CARLA actor's origin is at the vehicle centre. The offset is derived
-  from the vehicle's wheel physics and logged at session start.
+  from the vehicle's wheel physics and logged at session start. Sensor mounts
+  (`driver.cameras`, `driver.lidars`) are relative to the actor origin; the cameras'
+  `rig_to_camera` and the LiDAR sweeps are moved by the offset into the rig.
 
 !!! warning "Rear-axle offset on CARLA 0.9.x"
     CARLA 0.9.x reports wheel positions in world coordinates and centimetres, so the
