@@ -118,6 +118,11 @@ class Phase:
     states: "tuple[PhaseState, ...]"
 
 
+def _no_indices() -> "list[int]":
+    """An empty, typed index list (a bare ``list`` factory is untyped to Codon)."""
+    return []
+
+
 @dataclass
 class SignalController:
     """A junction's cycle, running on simulated time.
@@ -144,6 +149,10 @@ class SignalController:
     #: World time this controller's first phase began.  A controller that
     #: references this one measures its own delay from here.
     _started_at: Optional[float] = field(default=None, init=False, repr=False)
+    #: Indices of the phases the latest tick entered and left again -- a 0 s
+    #: phase, or any phase shorter than the gap between ticks.  Never shown,
+    #: but they did happen, and :meth:`showed` counts them.
+    _passed: "list[int]" = field(default_factory=_no_indices, init=False, repr=False)
 
     # ------------------------------------------------------------------
     # Observation
@@ -160,6 +169,23 @@ class SignalController:
     def started_at(self) -> Optional[float]:
         """Simulated time this controller began its first phase."""
         return self._started_at
+
+    def showed(self, phase_name: str) -> bool:
+        """Whether *phase_name* is showing, or the latest tick passed through it.
+
+        A phase the schedule enters and leaves within one tick -- a 0 s
+        clearance, or any phase after a long gap -- is never
+        :attr:`current_phase`, so a condition asking only that would wait
+        for it forever.  It did happen, though, on that tick, and this
+        counts it for that tick (#935).
+        """
+        current = self.current_phase
+        if current is not None and current.name == phase_name:
+            return True
+        for index in self._passed:
+            if self.phases[index].name == phase_name:
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Running
@@ -183,6 +209,7 @@ class SignalController:
         controls, so the ones passed over leave nothing behind.
         """
         now = _simulated_now(world)
+        self._passed = []
 
         entering = self._current is None
         if entering:
@@ -304,6 +331,11 @@ class SignalController:
             if now - started < self.phases[current].duration_seconds - tolerance:
                 break
             started += self.phases[current].duration_seconds
+            # The phase the tick began in was shown on earlier ticks, unless
+            # the cycle only starts now; every later one is entered and left
+            # within this tick.
+            if changed or entering:
+                self._passed.append(current)
             current = (current + 1) % count
             changed = True
         self._current = current

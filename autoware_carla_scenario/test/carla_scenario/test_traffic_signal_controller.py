@@ -583,12 +583,13 @@ class TestTheDeclaredSchedule:
     ) -> None:
         controller, world = _cycle(), _World()
         controller.tick(world)
-        # 1000 cycles of 13 s, then 6 s in: past ns_green into ns_amber.
-        world.now = 13000.0 + 6.0
+        # 1000 cycles of 13 s, then 7.5 s in: past ns_green and ns_amber
+        # into all_red, two phases on from where the tick began.
+        world.now = 13000.0 + 7.5
         controller.tick(world)
 
         assert controller.current_phase is not None
-        assert controller.current_phase.name == "ns_amber"
+        assert controller.current_phase.name == "all_red"
 
 
 class TestBuildingFromTheDocument:
@@ -822,6 +823,41 @@ class TestCondition:
 
         _run_to(controller, world, 5.0)
         assert condition.check(world, 5.0) is not None
+
+    def test_a_passed_through_phase_fires_on_the_tick_it_passed(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """A 0 s phase is never current, but waiting for it is not forever (#935)."""
+        controller = SignalController(
+            name="crossing",
+            phases=(
+                Phase("go", 5.0, (PhaseState(_NORTH, "green"),)),
+                Phase("clear", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("stop", 5.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        register_signal_controller(controller)
+        world = _World()
+        clear = TrafficSignalControllerCondition(
+            controller="crossing", phase="clear", label="clear"
+        )
+        go = TrafficSignalControllerCondition(
+            controller="crossing", phase="go", label="go"
+        )
+
+        _run_to(controller, world, 4.5)
+        assert clear.check(world, 4.5) is None
+
+        _run_to(controller, world, 5.0)
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "stop"
+        assert clear.check(world, 5.0) is not None
+        # The phase the tick began in was shown already; it is not counted
+        # again for the tick that ended it.
+        assert go.check(world, 5.0) is None
+
+        _run_to(controller, world, 5.5)
+        assert clear.check(world, 5.5) is None
 
     def test_details_name_the_controller_and_the_phase(self) -> None:
         condition = TrafficSignalControllerCondition(
