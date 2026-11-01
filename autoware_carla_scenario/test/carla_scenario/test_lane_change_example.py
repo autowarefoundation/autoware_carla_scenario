@@ -24,6 +24,7 @@ from autoware_carla_scenario.coordinate import (
     lanelet_length,
     on_lanelet,
     to_carla_world,
+    to_opendrive,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.examples import run
@@ -151,9 +152,10 @@ def _setup(direction: str, expect: str) -> tuple[list[Any], list[Any]]:
         config=LaneChangeConfig(direction=direction, expect=expect),
     )
     scenario.set_client(MagicMock(), 8000)
-    with unittest.mock.patch.object(
-        scenario, "_setup_ego_spawn", return_value=MagicMock(road_id="62", lane_id=2)
-    ):
+    # The OpenDRIVE pose the spawn reads as, as _setup_ego_spawn() returns it
+    # (road 62): a target derived from it fired on the spawn lanelet (#1081).
+    spawn = to_opendrive(to_carla_world(Lanelet2Pose(lanelet_id=SPAWN, s=5.0)))
+    with unittest.mock.patch.object(scenario, "_setup_ego_spawn", return_value=spawn):
         scenario.setup()
     return scenario._pass_conditions, scenario._fail_conditions
 
@@ -176,6 +178,20 @@ class TestLaneChangeTarget:
         beside = lane_beside(SPAWN, "right")
         assert beside is not None
         result = _first_result(lane_change_target(SPAWN, "right"), beside)
+        assert result is not None and result.passed
+
+    def test_a_lane_beside_across_a_line_not_to_cross_counts(
+        self, nishishinjuku: None
+    ) -> None:
+        # Lanelet 6 may not change into lanelet 5 on its left
+        # (``lane_change_fail/left``'s default spawn): the fail case must still
+        # notice the ego there.
+        graph = MapManager.get_instance().routing_graph
+        layer = MapManager.get_instance().lanelet_map.laneletLayer
+        assert graph.left(layer[6]) is None
+        assert lane_beside(6, "left") == 5
+        assert _first_result(lane_change_target(6, "left"), 6) is None
+        result = _first_result(lane_change_target(6, "left"), 5)
         assert result is not None and result.passed
 
     def test_no_lane_beside_never_holds(self, nishishinjuku: None) -> None:
