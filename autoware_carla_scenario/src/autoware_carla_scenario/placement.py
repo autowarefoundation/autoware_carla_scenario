@@ -200,20 +200,42 @@ _PROBE_HEIGHT_M = 500.0
 _BUMPERS: dict[str, Bumpers] = {}
 
 
-def _destroy_probe(world: carla.World, probe: carla.Actor) -> None:
-    """Destroy *probe*, ticking the world once first if CARLA does not know
-    it yet (:func:`vehicle_bumpers`)."""
-    if probe.destroy():
+def _destroy_probes(world: carla.World, probes: list[carla.Actor], what: str) -> None:
+    """Tick *world* once, then destroy every one of *probes*.
+
+    An actor the world has not ticked since it was spawned is one CARLA's
+    client does not know yet, and ``destroy()`` does nothing to it
+    (:func:`vehicle_bumpers`), so the world is ticked first: this client's
+    tick in synchronous mode, the server's waited for otherwise.  Every probe
+    is destroyed, or tried, before a failure is reported.  No probes, no tick.
+
+    Raises:
+        RuntimeError: When a probe cannot be destroyed even after the tick;
+            *what* names the caller.  It is then left in the world.
+    """
+    if len(probes) == 0:
         return
     if world.get_settings().synchronous_mode:
         world.tick()
     else:
         world.wait_for_tick()
-    if not probe.destroy():
+    left: list[int] = []
+    for probe in probes:
+        if not probe.destroy():
+            left.append(int(probe.id))
+    if len(left) > 0:
         raise RuntimeError(
-            f"vehicle_bumpers(): the probe vehicle {probe.id} could not be "
-            "destroyed; it is left in the world until the next run clears it"
+            f"{what}: the probe vehicle(s) {left} could not be destroyed; "
+            "left in the world until the next run clears them"
         )
+
+
+def _destroy_probe(world: carla.World, probe: carla.Actor) -> None:
+    """Destroy *probe*, ticking the world once first if CARLA does not know
+    it yet (:func:`vehicle_bumpers`, :func:`_destroy_probes`)."""
+    if probe.destroy():
+        return
+    _destroy_probes(world, [probe], "vehicle_bumpers()")
 
 
 def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
