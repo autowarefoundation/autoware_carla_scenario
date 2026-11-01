@@ -347,7 +347,9 @@ class TrajectoryRecorder:
                     "type": "world",
                     "schema_version": SCHEMA_VERSION,
                     "map": map_name,
-                    "episode": world.id,
+                    # A uint64, which CARLA's Python hands over signed: one
+                    # past 2^63 would be written negative.
+                    "episode": world.id & 0xFFFF_FFFF_FFFF_FFFF,
                 }
             )
             self._emit_map(map_name)
