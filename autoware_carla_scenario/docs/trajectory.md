@@ -349,6 +349,11 @@ starts (`Navigation::AddWalker`), so it is set to the walker's own just then
 and put back straight after. A map without a navigation mesh is said once, and its walkers are
 stepped along their routes as before. The navigation mesh comes with the map's
 import (roadgen's `<Name>Package.py` builds it with CARLA's RecastBuilder).
+The controller is stopped and destroyed however the walk ends: on arrival, when
+another action overrides the route (a `WalkStraightAction`, or a second route,
+which starts a controller of its own with its own targets), when the route's
+`until` condition ends it first (the walker stands where it is), and at the
+end of the run (`PedestrianEntity.stop_walk`).
 A vehicle driven by the framework's own controller (`follow` mode, a final
 approach), which the TrafficManager does not drive, brakes for a walker in its
 way within its stopping distance (`utils.clearance`). A walker that falls over all the same is taken out of the
