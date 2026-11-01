@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import unittest.mock
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -35,15 +36,22 @@ from autoware_carla_scenario.conditions import (
     NotCondition,
     PersistentCondition,
     ScenarioResult,
+    StickyCondition,
     TimeoutCondition,
 )
 from autoware_carla_scenario.coordinate import (
+    Lanelet2Pose,
     MapManager,
     OpenDrivePose,
     lanelets_ahead,
+    to_carla_world,
 )
 from autoware_carla_scenario.examples.configs import CutInConfig
-from autoware_carla_scenario.examples.cut_in import left_lanes_ahead
+from autoware_carla_scenario.examples.cut_in import (
+    CUT_IN_ROLE,
+    left_lanes_ahead,
+    npc_in_lanes_ahead,
+)
 
 A1, A2, A3, B1, B2, F = 1, 2, 3, 11, 12, 21
 
@@ -289,8 +297,10 @@ class TestLeftLanesAhead:
 # ---------------------------------------------------------------------------
 
 
-def _cut_in_fail_conditions(config: CutInConfig) -> list[BaseCondition]:
-    """``CutInScenario.setup()``'s fail conditions, with CARLA and the map stubbed."""
+def _cut_in_conditions(
+    config: CutInConfig,
+) -> tuple[list[BaseCondition], list[BaseCondition]]:
+    """``CutInScenario.setup()``'s pass and fail conditions, CARLA and the map stubbed."""
     from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
     from autoware_carla_scenario.examples import cut_in
 
@@ -320,11 +330,17 @@ def _cut_in_fail_conditions(config: CutInConfig) -> list[BaseCondition]:
         ) as ahead,
     ):
         scenario.setup()
-    if config.fail_on_leaving_lane:
-        ahead.assert_called_once_with(A1, config.lanes_ahead_m)
-    else:
-        ahead.assert_not_called()
-    return scenario._fail_conditions
+    # Once for the lanes the NPC cuts in on, once more for the ones the ego
+    # is to stay on.
+    calls = 2 if config.fail_on_leaving_lane else 1
+    assert (
+        ahead.call_args_list == [unittest.mock.call(A1, config.lanes_ahead_m)] * calls
+    )
+    return scenario._pass_conditions, scenario._fail_conditions
+
+
+def _cut_in_fail_conditions(config: CutInConfig) -> list[BaseCondition]:
+    return _cut_in_conditions(config)[1]
 
 
 class TestCutInFailConditions:
@@ -361,6 +377,89 @@ class TestCutInFailConditions:
             CutInConfig(npc_lanelet_id=B1, leaving_lane_seconds=0.5)
         )
         assert fails[1].get_details()["required_duration_seconds"] == 0.5
+
+
+class TestCutInPassCondition:
+    def test_the_npc_on_any_of_the_lanes_ahead_is_cut_in(self, loaded: None) -> None:
+        passes, _ = _cut_in_conditions(CutInConfig(npc_lanelet_id=B1))
+        assert [c.label for c in passes] == ["npc_cut_in_held"]
+        sticky = passes[0].get_details()["child"]
+        assert sticky["label"] == "npc_in_ego_lane_sticky"
+        on_any = sticky["child"]
+        assert on_any["condition_type"] == "OrCondition"
+        assert {c["lanelet_id"] for c in on_any["children"]} == {A1, A2, A3, F}
+
+    def test_one_lanelet_needs_no_or(self, loaded: None) -> None:
+        with unittest.mock.patch(
+            "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
+            return_value=OpenDrivePose(road_id="0", lane_id=-1, s=0.0),
+        ):
+            condition = npc_in_lanes_ahead(A1, 10.0)
+        assert isinstance(condition, StickyCondition)
+        assert condition.label == "npc_in_ego_lane_sticky"
+        child = condition.get_details()["child"]
+        assert child["condition_type"] == "EntityLanePositionCondition"
+        assert child["lanelet_id"] == A1
+
+
+# ---------------------------------------------------------------------------
+# cut_in's pass condition on the fixture map (#1078)
+# ---------------------------------------------------------------------------
+
+#: The nishishinjuku fixture map, kept at the repository root.
+_DATA = Path(__file__).resolve().parents[3] / "data"
+
+#: cut_in/left.yaml's fixed case: the ego on lanelet 20, the NPC beside it on
+#: lanelet 19.
+EGO_LANELET, NPC_LANELET = 20, 19
+
+
+@pytest.fixture(scope="class")
+def nishishinjuku() -> Iterator[None]:
+    saved = MapManager._instance
+    MapManager.reset()
+    manager = MapManager.get_instance()
+    manager.initialize(_DATA / "nishishinjuku_carla.xodr", _DATA / "nishishinjuku.osm")
+    yield
+    # Release lanelet2/pyxodr objects while the C++ runtime is still valid.
+    manager._routing_graph = None
+    manager._lanelet_map = None
+    manager._road_network = None
+    MapManager._instance = saved
+
+
+def _npc_at(pose: Lanelet2Pose) -> Any:
+    """A world holding the cut-in NPC at *pose*."""
+    where = to_carla_world(pose)
+    actor = MagicMock()
+    actor.attributes = {"role_name": str(CUT_IN_ROLE)}
+    actor.get_location.return_value = MagicMock(x=where.x, y=where.y, z=where.z)
+    world = MagicMock()
+    world.get_actors.return_value = [actor]
+    return world
+
+
+@pytest.mark.usefixtures("nishishinjuku")
+class TestCutInOnTheFixtureMap:
+    """The NPC that finishes its lane change past the ego's spawn lanelet."""
+
+    def _cut_in(self, pose: Lanelet2Pose) -> bool:
+        condition = npc_in_lanes_ahead(EGO_LANELET, CutInConfig().lanes_ahead_m)
+        return condition.check(_npc_at(pose), 3.0) is not None
+
+    def test_on_the_spawn_lanelet(self) -> None:
+        assert self._cut_in(Lanelet2Pose(lanelet_id=EGO_LANELET, s=30.0))
+
+    def test_on_the_lanelet_after_it(self) -> None:
+        successor = lanelets_ahead(EGO_LANELET, 1000.0)[1]
+        assert successor != EGO_LANELET
+        assert self._cut_in(Lanelet2Pose(lanelet_id=successor, s=10.0))
+
+    def test_not_in_the_lane_beside(self) -> None:
+        beside_next = lanelets_ahead(NPC_LANELET, 1000.0)[1]
+        assert beside_next not in lanelets_ahead(EGO_LANELET, 1000.0)
+        assert not self._cut_in(Lanelet2Pose(lanelet_id=NPC_LANELET, s=30.0))
+        assert not self._cut_in(Lanelet2Pose(lanelet_id=beside_next, s=10.0))
 
 
 # ---------------------------------------------------------------------------

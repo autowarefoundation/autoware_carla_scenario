@@ -18,7 +18,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **NPC1** | *Beside the matched lanelet*, on the cut-in side: the lane next to the ego's. 15 m along it, 30 km/h. |
 | **Initialization** | Every traffic light green. |
 | **NPC1, after 2 s** | Change lane towards the ego. |
-| **Pass** | 3 s have passed since NPC1 reached the ego's OpenDRIVE lane (*lane of a position*: the matched lanelet at the ego's spawn, the same lane), with no collision. |
+| **Pass** | 3 s have passed since NPC1 reached the ego's lane -- the matched lanelet or one of the lanelets that follow it, the same lanes ahead as below (`npc_in_lanes_ahead`) -- with no collision. |
 | **Fail** | The ego collides with anything -- NPC1, another actor, a static object, map geometry such as a wall or a kerb (`ego_collided`); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 1000 m from its start -- for 0.2 s: it changed lanes, turned onto a lanelet that does not follow it, or left the road (`ego_left_its_lane`); or 20 s pass. |
 
 ## Variants

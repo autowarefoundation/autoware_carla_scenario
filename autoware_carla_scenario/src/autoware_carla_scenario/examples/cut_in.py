@@ -2,7 +2,8 @@
 
 An NPC starts in the lane beside the ego, a little ahead, and after a moment
 changes into the ego's lane. The ego must not hit it: the run passes once the
-NPC has been in the ego's lane for ``hold_seconds`` without a collision. It
+NPC has been in the ego's lane -- on its spawn lanelet or one that follows it
+(:func:`npc_in_lanes_ahead`) -- for ``hold_seconds`` without a collision. It
 fails on any collision of the ego (``fail_on_any_collision``; off, only on one
 with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
 lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
@@ -125,6 +126,35 @@ def left_lanes_ahead(
     )
 
 
+def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
+    """The cut-in NPC is in the ego's lane: on one of the lanes ahead of *lanelet_id*.
+
+    The same lanelets :func:`left_lanes_ahead` keeps the ego on -- *lanelet_id*
+    and those :func:`lanelets_ahead` reaches from it, the lane beside never
+    among them -- so a lane change the NPC finishes on the lanelet after the
+    ego's spawn lanelet counts as a cut-in too.  An
+    ``EntityLanePositionCondition`` per lanelet, under an ``OrCondition`` when
+    there is more than one, latched by a ``StickyCondition``: the NPC has cut
+    in once it has been on any of them.
+    """
+    # Appended one by one, and chosen by if/else, as in left_lanes_ahead.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                CUT_IN_ROLE,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"npc_on_lanelet_{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="npc_in_ego_lane")
+    return StickyCondition(on_any, label="npc_in_ego_lane_sticky")
+
+
 class CutInScenario(BaseScenario):
     """Spawn the ego and an NPC beside it; the NPC changes into the ego's lane."""
 
@@ -152,7 +182,7 @@ class CutInScenario(BaseScenario):
         if cfg.side not in _CHANGE_TOWARDS_EGO:
             raise ValueError(f"cut_in side must be 'left' or 'right', got {cfg.side!r}")
 
-        ego_lane = self._setup_ego_spawn()
+        self._setup_ego_spawn()
         self.register_init(
             TrafficSignalAction(
                 state=carla.TrafficLightState.Green,
@@ -224,11 +254,10 @@ class CutInScenario(BaseScenario):
             )
         )
 
-        # Latched once the NPC is on the ego's OpenDRIVE lane, as lane_change
-        # checks its ego; then held for hold_seconds with no collision.
-        cut_in = StickyCondition(
-            EntityLanePositionCondition(CUT_IN_ROLE, ego_lane, label="npc_in_ego_lane")
-        )
+        # Latched once the NPC is on the ego's lane -- its spawn lanelet or one
+        # that follows it, wherever the NPC finishes its lane change; then
+        # held for hold_seconds with no collision.
+        cut_in = npc_in_lanes_ahead(spawn.lanelet_id, cfg.lanes_ahead_m)
         self.register_pass_condition(
             PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
         )
