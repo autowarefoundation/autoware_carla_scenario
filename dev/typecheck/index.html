@@ -6059,7 +6059,7 @@ the first:</p>
 <li><code>editor.service</code>: imports yaml, zipfile, <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports socket, and hils.protocol (socket), which is neither checked nor modelled</li>
-<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>, <code>unquote()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's</li>
+<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's</li>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it</li>
@@ -6901,7 +6901,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>sys.version</code> and <code>sys.hexversion</code> are not modelled, and refused with a
   hint: the check compiles every branch of a version test, so the code must
   be valid on every supported Python anyway. <code>urllib.parse</code>
-  declares <code>urlsplit()</code>, <code>urlunsplit()</code> and <code>SplitResult</code> (its five parts,
+  declares <code>urlsplit()</code>, <code>urlunsplit()</code>, <code>unquote()</code> and <code>SplitResult</code> (its five parts,
   as attributes and as a tuple, <code>hostname</code>, <code>port</code>, <code>username</code>, <code>password</code>
   and <code>geturl()</code>). A scenario sees the same shims: it may import <code>pathlib</code>,
   <code>hashlib</code>, <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>importlib.metadata</code>,
@@ -7959,7 +7959,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 12:49:04 UTC"><span class="timeago" datetime="2026-10-31T12:49:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 12:49:04 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 16:18:03 UTC"><span class="timeago" datetime="2026-11-01T16:18:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 16:18:03 UTC">2026-11-01</span>
   </span>
 
     
