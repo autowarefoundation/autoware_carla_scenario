@@ -2364,11 +2364,13 @@ scenario, a whole batch, for as long as it runs.</p>
 <ol>
 <li>The runner spawns the ego and connects to the bridge (<code>hils.host</code>,
    <code>hils.port</code>): <code>start</code>, with the ego's actor id.</li>
-<li>The bridge starts the devices' periodic messages, attaches its sensors to
-   the ego and runs the <code>scenario_start</code> steps (wake the ECUs, wait until they
-   say they are ready). The runner ticks the world meanwhile, holding every
-   vehicle still, until the bridge answers <code>ready</code> -- or fails the run when a
-   step fails or nothing comes within <code>hils.ready_timeout_s</code>.</li>
+<li>The bridge starts the devices' periodic messages, runs the
+   <code>scenario_start</code> steps (wake the ECUs, wait until they say they are ready)
+   and then attaches its sensors to the ego, so the ECUs get no sensor data
+   measured before the scenario is live. The runner ticks the world
+   meanwhile, holding every vehicle still, until the bridge answers <code>ready</code>
+   -- or fails the run when a step fails or nothing comes within
+   <code>hils.ready_timeout_s</code>.</li>
 <li>Every tick the ego's state goes to the ECUs; whenever an ECU sends a
    command message (<code>inputs</code>), the bridge forwards the command and the runner
    applies it to the ego.</li>
@@ -2814,7 +2816,7 @@ must be finite. The run clamps <code>gear</code> to a 32-bit integer.</p>
 </tr>
 <tr>
 <td><code>scenario_start</code></td>
-<td>a scenario starts (the run's <code>start</code>, or the ego appearing); the periodic messages and sensors are already running, and the run waits for the steps</td>
+<td>a scenario starts (the run's <code>start</code>, or the ego appearing); the periodic messages are already running, and the run waits for the steps; the sensors are attached after them (even when one fails), so no sensor data measured during the steps is sent</td>
 <td>the run fails, with the step's error</td>
 </tr>
 <tr>
@@ -3003,7 +3005,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 03:00:56 UTC"><span class="timeago" datetime="2026-10-31T03:00:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 03:00:56 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 06:50:15 UTC"><span class="timeago" datetime="2026-11-01T06:50:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 06:50:15 UTC">2026-11-01</span>
   </span>
 
     
