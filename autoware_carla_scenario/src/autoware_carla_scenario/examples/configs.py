@@ -232,10 +232,12 @@ class PedestrianDartOutConfig:
     #: waits at the kerb (m).
     pedestrian_ahead_m: float = 35.0
 
-    #: The pedestrian's offset from the lane's centreline (m, negative to the
-    #: right of the direction of travel): half a lane and a little more puts
-    #: it at the kerb of the rightmost lane.
-    pedestrian_offset_m: float = -3.0
+    #: The pedestrian's distance from the lane's centreline, on its kerb side
+    #: (m): the right of the direction of travel in right-hand traffic, the
+    #: left in left-hand traffic, by the OpenDRIVE road's ``rule``.  Half a
+    #: lane and a little more puts it at the kerb of a lane at the road's edge.
+    #: The sign is ignored (``-3.0``, the old right-hand value, is 3 m too).
+    pedestrian_offset_m: float = 3.0
 
     #: The pedestrian steps out once the ego is this close to it (m).
     trigger_distance_m: float = 20.0
