@@ -24,6 +24,7 @@ from autoware_carla_scenario.authoring.models import (
     ActionNode,
     ConditionNode,
     Entity,
+    EntitySize,
     ScenarioDocument,
 )
 from autoware_carla_scenario.authoring.persistence import Draft, DraftStore
@@ -2543,6 +2544,29 @@ class TestDerivedLanelets:
             f"/draft/{draft_id}/entity/{walker.id}", data={"initial_speed_kmh": "4"}
         )
         assert field in client.get(inspector).text
+
+    def test_naming_a_blueprint_drops_the_size_that_chose_one(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The validator refuses a size beside a named blueprint and the
+        inspector has no size field, so naming one clears it; ``auto`` keeps it."""
+        draft = _draft(store, draft_id)
+        npc = _present(draft.document.entity("npc1"), "npc1")
+        npc.vehicle_type = "auto"
+        npc.size = EntitySize(length=4.5, width=1.8)
+        store.save(draft)
+        client.post(f"/draft/{draft_id}/entity/npc1", data={"vehicle_type": "auto"})
+        assert _entity(store, draft_id, "npc1").size is not None
+        client.post(
+            f"/draft/{draft_id}/entity/npc1",
+            data={"vehicle_type": "vehicle.mini.cooper"},
+        )
+        assert _entity(store, draft_id, "npc1").size is None
+        assert not [
+            i
+            for i in validate_document(_document(store, draft_id)).errors
+            if i.path.endswith(".size")
+        ]
 
 
 class TestDraftsDoNotShareAnExport:

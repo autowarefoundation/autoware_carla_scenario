@@ -37,6 +37,7 @@ from typing import (
 
 from ..authoring._builders_generated import OVERRIDING_ACTIONS
 from ..authoring.models import (
+    AUTO_MODEL,
     ActionNode,
     BindingRef,
     ConditionNode,
@@ -990,6 +991,11 @@ class EditorService:
             entity.vehicle_type = (
                 str(form["vehicle_type"]).strip() or entity.vehicle_type
             )
+            if entity.vehicle_type != AUTO_MODEL:
+                # A size only chooses an ``auto`` vehicle, and the validator
+                # refuses one beside a named blueprint; the inspector has no
+                # size field to clear it from, so naming the blueprint does.
+                entity.size = None
         if "initial_speed_kmh" in form:
             entity.initial_speed_kmh = _as_float(
                 form["initial_speed_kmh"], "Initial speed", entity.initial_speed_kmh

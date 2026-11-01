@@ -416,9 +416,9 @@ class Entity(_Node):
     :attr:`role_name` is fixed to the framework's ego role by the compiler.
     Other entities map onto ``npc<N>`` roles in registration order.
 
-    :attr:`goal` and :attr:`driven_by` are the ego's alone; both are ignored on
-    any other entity, and a goal stored on one is a validation error rather than
-    something quietly dropped at export.
+    :attr:`goal` and :attr:`driven_by` are the ego's alone; nothing reads
+    either on any other entity, so one stored there is a validation error
+    rather than something quietly dropped at export.
 
     A ``pedestrian`` is not a vehicle with a different model.  It spawns from
     the ``walker`` blueprint family, no traffic model drives it, and the only
