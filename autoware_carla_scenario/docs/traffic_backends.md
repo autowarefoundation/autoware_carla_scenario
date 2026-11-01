@@ -718,6 +718,12 @@ self.register_pre_tick(
 )
 ```
 
+- **Where they act** is the lanelets vehicles drive on that the constraints
+  match. A crosswalk, walkway, stairs, road shoulder, bicycle lane or parking
+  lot is never part of a source or sink, whatever its constraints say (the
+  test vehicle routes use, `MapFeatures.is_road`): such a lanelet has no
+  vehicle successor, so "no successor" alone would remove a vehicle as it
+  drives over a crosswalk, and a source would place vehicles across the road.
 - **When they act** is the trigger (`condition`) and the end condition
   (`until`), as for every action. With no `until` a source or sink runs until
   the scenario ends, as OpenSCENARIO's do; with one, it stops on the first tick

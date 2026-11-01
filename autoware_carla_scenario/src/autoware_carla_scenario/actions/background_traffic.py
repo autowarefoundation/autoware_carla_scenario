@@ -87,7 +87,14 @@ def constraints_from_text(text: str) -> list[dict[str, Any]]:
 
 
 class LaneletRegion:
-    """The lanelets a list of sweep constraints matches on the run's map.
+    """The vehicle lanelets a list of sweep constraints matches on the run's map.
+
+    Only lanelets a vehicle drives on count: a crosswalk, walkway, stairs,
+    road shoulder, bicycle lane or parking lot is never part of a region, what
+    the constraints say (:meth:`~autoware_carla_scenario.route.geometry.MapFeatures.is_road`,
+    the test vehicle routes use).  Those have no vehicle successor, so "no
+    successor" alone would put every crosswalk in a sink and remove a vehicle
+    driving over it; and a source would place vehicles across the road.
 
     Resolved on first use, against the map the run loaded, so an action can be
     built before the map is -- from a Hydra config, for instance.
@@ -103,9 +110,10 @@ class LaneletRegion:
 
     @property
     def lanelet_ids(self) -> list[int]:
-        """The matching lanelet IDs, sorted."""
+        """The matching vehicle lanelet IDs, sorted."""
         if self._ids is None:
             from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+            from ..route.geometry import MapFeatures  # noqa: PLC0415
             from ..sweeper.constraints import (  # noqa: PLC0415
                 Constraint,
                 find_matching_lanelets,
@@ -123,9 +131,13 @@ class LaneletRegion:
                     for c in self._constraints
                 ]
             manager = MapManager.get_instance()
-            self._ids = find_matching_lanelets(
-                parsed, manager.lanelet_map, manager.routing_graph
-            )
+            lanelet_map = manager.lanelet_map
+            matched = find_matching_lanelets(parsed, lanelet_map, manager.routing_graph)
+            self._ids = [
+                lanelet_id
+                for lanelet_id in matched
+                if MapFeatures.is_road(lanelet_map.laneletLayer[lanelet_id])
+            ]
             logger.info("Background traffic region: %d lanelet(s)", len(self._ids))
         return self._ids
 
@@ -190,11 +202,13 @@ class _BackendAction(BaseAction):
 
 
 class TrafficSourceAction(_BackendAction):
-    """Create background vehicles on the lanelets *constraints* match.
+    """Create background vehicles on the vehicle lanelets *constraints* match.
 
     Args:
         constraints: Sweep constraints, as YAML mappings or parsed constraints.
-            Every one has to hold (an implicit ``and``).
+            Every one has to hold (an implicit ``and``), on a lanelet vehicles
+            drive on: crosswalks, walkways, road shoulders and the like are
+            never picked (:class:`LaneletRegion`).
         initial_vehicles: Vehicles placed at once on the first tick the action
             runs.
         vehicles_per_minute: Then, the rate at which more are added while it
@@ -379,13 +393,15 @@ class TrafficSourceAction(_BackendAction):
 
 
 class TrafficSinkAction(_BackendAction):
-    """Remove the background vehicles that are on the lanelets *constraints* match.
+    """Remove the background vehicles that are on the vehicle lanelets *constraints* match.
 
     Every background vehicle the run's backend has -- whichever source made it --
     is checked on each tick the sink runs.
 
     Args:
-        constraints: Sweep constraints, as for :class:`TrafficSourceAction`.
+        constraints: Sweep constraints, as for :class:`TrafficSourceAction`:
+            only vehicle lanelets count, so a vehicle crossing a crosswalk (a
+            lanelet with no vehicle successor) is not removed there.
         label, condition, timing, once, until, reissue: as for
             :class:`~autoware_carla_scenario.actions.base.BaseAction`, except
             that with no *until* it runs until the scenario ends.
