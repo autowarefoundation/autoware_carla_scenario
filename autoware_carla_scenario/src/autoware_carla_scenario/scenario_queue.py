@@ -725,8 +725,10 @@ class ScenarioQueue:
         Once started, it runs every scenario with
         ``run_all(continue_on_error=True)``: a scenario that raises on every
         attempt gets a failed :class:`ScenarioResult` naming the error, which
-        :meth:`result_for` returns like any other, so its own test fails while
-        the others still pass, rather than the whole session being skipped.
+        :meth:`result_for` returns like any other (and a
+        :class:`CarlaScenarioFixture` fails the tests that use it), so its own
+        tests fail while the others still run, rather than the whole session
+        being skipped.
         The queue is stopped when the session ends, however the run went.
 
         Args:

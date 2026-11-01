@@ -672,7 +672,12 @@ def test_a_fixture_whose_scenario_raises_fails_only_that_scenario(
     runner.failing = broken
 
     generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
-    assert next(generator) is queue
+    try:
+        yielded = next(generator)
+    except pytest.skip.Exception as exc:
+        # Raised in this test, a skip would skip it rather than fail it.
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    assert yielded is queue
     assert queue.result_for(good).passed
     errored = queue.result_for(broken)
     assert not errored.passed
@@ -683,6 +688,35 @@ def test_a_fixture_whose_scenario_raises_fails_only_that_scenario(
     with pytest.raises(StopIteration):
         next(generator)
     assert events == ["start", "stop"]
+
+
+def test_a_result_fixture_of_an_errored_scenario_fails_its_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A CarlaScenarioFixture whose scenario raised on every attempt fails the
+    tests that use it, naming the error, rather than hand them a result a
+    test reading only, say, elapsed_seconds would pass on (#1035)."""
+    from autoware_carla_scenario import CarlaScenarioFixture
+
+    runner = _SecondCaseRaises(RuntimeError("no ground under the spawn point"))
+    queue, _ = _fixture_queue(monkeypatch, tmp_path, runner)
+    ego = _make_ego_config()
+    good = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    broken = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    runner.failing = broken._scenario
+
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        next(generator)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    request = MagicMock()
+    good_fixture = good.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    broken_fixture = broken.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    assert good_fixture(request).passed
+    with pytest.raises(pytest.fail.Exception, match="no ground under"):
+        broken_fixture(request)
+    request.getfixturevalue.assert_called_with("carla_queue")
 
 
 def test_a_fixture_whose_queue_fails_to_start_skips_without_running(

@@ -67,6 +67,10 @@ class CarlaScenarioFixture:
     registered scenarios exactly once.  Individual result fixtures simply
     fetch their pre-computed :class:`~autoware_carla_scenario.ScenarioResult`
     from the queue — CARLA is never restarted between tests.
+
+    A scenario that raised on every attempt (``continue_on_error``) has no
+    result to assert on: its fixture fails each test that uses it, naming the
+    error, while the other scenarios' tests run as usual.
     """
 
     def __init__(
@@ -113,6 +117,23 @@ class CarlaScenarioFixture:
         def _fixture(request: pytest.FixtureRequest) -> ScenarioResult:
             # Trigger the queue fixture (starts server + run_all) if not yet done.
             request.getfixturevalue(queue_fixture)
-            return queue.result_for(scenario)
+            result = queue.result_for(scenario)
+            if _errored(queue, result):
+                # It never ran: fail its tests here, whatever they assert, so
+                # that one reading only, say, elapsed_seconds does not pass.
+                pytest.fail(
+                    f"{type(scenario).__name__} did not run: {result.message}",
+                    pytrace=False,
+                )
+            return result
 
         return _fixture
+
+
+def _errored(queue: ScenarioQueue, result: ScenarioResult) -> bool:
+    """Whether *result* is that of a scenario that raised on every attempt in
+    the queue's last ``run_all(continue_on_error=True)``."""
+    results = queue._results
+    return any(
+        results[i] is result for i in queue.errored_indices() if i < len(results)
+    )
