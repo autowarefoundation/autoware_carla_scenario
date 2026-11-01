@@ -101,12 +101,18 @@ def left_lanes_ahead(
     them, on a lanelet that turns off them, or on no lanelet at all -- off the
     road.  The position tested is the vehicle's centre, its CARLA location.
 
+    Not every lanelet :func:`lanelets_ahead` returns is kept: following every
+    branch, it can loop round a block into the lane beside the ego's, and
+    those lanelets would then count as its own (#1080).  So
+    :func:`ego_lanes_ahead` leaves out each lanelet beside one of
+    :func:`lanes_ahead_before_junction`.
+
     *seconds* of zero or less fails on the first tick off them.
     """
     # Appended one by one, and chosen by if/else: Codon gives neither a list
     # comprehension nor a conditional expression the base class's type.
     on_lanes: list[BaseCondition] = []
-    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
         on_lanes.append(
             EntityLanePositionCondition(
                 EGO_ROLE_NAME,
@@ -164,6 +170,53 @@ def lanes_ahead_before_junction(lanelet_id: int, distance_m: float) -> list[int]
         if candidate in kept:
             ordered.append(candidate)
     return ordered
+
+
+def _beside(lanelet_id: int) -> list[int]:
+    """The lanelets beside *lanelet_id*, either side, a lane change allowed
+    across the line between or not (the routing graph's neighbours)."""
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    found: list[int] = []
+    left = graph.left(lanelet)
+    if left is not None:
+        found.append(int(left.id))
+    right = graph.right(lanelet)
+    if right is not None:
+        found.append(int(right.id))
+    adjacent_left = graph.adjacentLeft(lanelet)
+    if adjacent_left is not None:
+        found.append(int(adjacent_left.id))
+    adjacent_right = graph.adjacentRight(lanelet)
+    if adjacent_right is not None:
+        found.append(int(adjacent_right.id))
+    return found
+
+
+def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
+    """The lanelets :func:`left_lanes_ahead` keeps the ego on.
+
+    :func:`lanelets_ahead` of *lanelet_id*, less every lanelet beside one of
+    :func:`lanes_ahead_before_junction` -- the routing graph's ``left`` and
+    ``right``, and ``adjacentLeft`` and ``adjacentRight`` across a solid
+    line.  Following every branch through junctions, :func:`lanelets_ahead`
+    can loop round a block and come back into the lane beside the ego's,
+    which a lane change reaches; it is never the ego's lane.  A lanelet of
+    :func:`lanes_ahead_before_junction` itself is always kept.  In the order
+    :func:`lanelets_ahead` gives, *lanelet_id* first.
+    """
+    own = lanes_ahead_before_junction(lanelet_id, distance_m)
+    beside: list[int] = []
+    for lanelet in own:
+        for neighbour in _beside(lanelet):
+            if neighbour not in own and neighbour not in beside:
+                beside.append(neighbour)
+    kept: list[int] = []
+    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+        if lanelet not in beside:
+            kept.append(lanelet)
+    return kept
 
 
 def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:

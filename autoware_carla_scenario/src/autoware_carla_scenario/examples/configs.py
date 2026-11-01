@@ -331,7 +331,8 @@ class CutInConfig:
 
     #: How far ahead of the start of the spawn lanelet the lanes ahead reach
     #: (m), the ones the ego is to stay on and the ones the NPC cuts in on
-    #: (those only up to the first junction).
+    #: (those only up to the first junction).  The ego's never include a
+    #: lanelet beside its lane, however far they loop round a block.
     #: Further than the ego can drive before the timeout.
     lanes_ahead_m: float = 1000.0
 
