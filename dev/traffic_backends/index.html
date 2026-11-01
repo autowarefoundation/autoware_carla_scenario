@@ -3530,6 +3530,15 @@ by roadgen's validation.</p>
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
 scenario's NPCs behave exactly as under the <code>traffic_manager</code> backend, while
 SUMO fills the rest of the road.</p>
+<p><strong>How much of SUMO's traffic reaches CARLA</strong>: an ambient vehicle is mirrored
+into CARLA while it is within <code>spawn_radius_m</code> of the ego, at most
+<code>max_vehicles</code> of them, the nearest first; the rest drive in SUMO only, where
+its traffic still sees them. <code>null</code> (the default) is no radius and no limit,
+and a limit of <code>0</code> mirrors none. A limit must be a whole number from 0, a
+radius positive and finite. Until there is an ego to measure from, the first
+<code>max_vehicles</code> SUMO lists are mirrored. SUMO's own pedestrians and bicycles
+have limits of their own (<code>pedestrians.max_persons</code>, <code>bicycles.max_bicycles</code>),
+read the same way.</p>
 <p>A published pedestrian is a SUMO person moved to its CARLA pose every tick
 with <code>moveToXY</code> and <code>keepRoute</code> 6: placed exactly there, on whichever lane is
 there, footway or road. A SUMO vehicle brakes for a person on its lane, on a
@@ -3556,7 +3565,7 @@ footways (<code>randomTrips.py --pedestrians</code>, unweighted, up to <code>max
 each) and are mirrored into CARLA as walkers (<code>blueprint</code>, with the role name
 <code>sumo:&lt;id&gt;</code>) while they are near the ego or a vehicle CARLA drives: within
 <code>radius_m</code>, kept until 1.25 times as far, at most <code>max_persons</code> of them, the
-nearest first. With <code>radius_m: null</code> the radii are <code>mesoscopic</code>'s when that is
+nearest first (<code>null</code>: no limit; <code>0</code>: none). With <code>radius_m: null</code> the radii are <code>mesoscopic</code>'s when that is
 enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
 SUMO's traffic still sees them. A walker is put where its person was at the
 start of the step and walked at its speed (<code>WalkerControl</code>), so CARLA animates
@@ -3601,8 +3610,8 @@ bicycle may use (<code>randomTrips.py --vclass bicycle</code>, unweighted, from
 bicycles, each one of <code>blueprints</code> (those the world lacks are left out; with
 none left, bicycles ride in SUMO only, where its traffic still sees them), with
 the role name <code>sumo:&lt;id&gt;</code>. They count against limits of their own:
-<code>radius_m</code> (the vehicles' <code>spawn_radius_m</code> when null) and <code>max_bicycles</code>,
-apart from <code>max_vehicles</code>. A mirror follows its bicycle as
+<code>radius_m</code> (the vehicles' <code>spawn_radius_m</code> when null) and <code>max_bicycles</code>
+(<code>null</code>: no limit; <code>0</code>: none), apart from <code>max_vehicles</code>. A mirror follows its bicycle as
 <code>bicycles.vehicle_control</code> says, <code>teleport</code> by default: a bicycle changing
 between sidewalk and road crosses the kerb, which CARLA's vehicle physics
 would trip on. Bicycles stay in SUMO when <code>mesoscopic</code> is enabled: the queue
@@ -3807,7 +3816,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 12:30:38 UTC"><span class="timeago" datetime="2026-10-31T12:30:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 12:30:38 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 03:35:15 UTC"><span class="timeago" datetime="2026-11-01T03:35:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 03:35:15 UTC">2026-11-01</span>
   </span>
 
     
