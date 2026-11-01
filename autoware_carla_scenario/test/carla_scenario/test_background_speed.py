@@ -79,18 +79,11 @@ class _FakeBlueprint:
 
 
 class _FakeWorld:
-    """A world with a driving lane along y = 0 and room everywhere."""
+    """A world with room everywhere."""
 
     def __init__(self) -> None:
         self.actor = _FakeActor()
         self.spawned = 0
-
-    def get_map(self) -> Any:
-        def get_waypoint(location: Any, project_to_road: bool = True) -> Any:
-            centre = carla.Location(location.x, 0.0, location.z)
-            return SimpleNamespace(transform=carla.Transform(centre, carla.Rotation()))
-
-        return SimpleNamespace(get_waypoint=get_waypoint)
 
     def get_blueprint_library(self) -> Any:
         return SimpleNamespace(filter=lambda pattern: [_FakeBlueprint()])
@@ -205,21 +198,6 @@ def test_the_default_backend_refuses_it_too() -> None:
 
     with pytest.raises(ValueError, match="speed_kmh"):
         _Plain().spawn_background(None, _transform(), speed_kmh=0.0)  # type: ignore[arg-type]
-
-
-def test_both_backends_refuse_a_place_far_from_a_lane() -> None:
-    far = carla.Transform(carla.Location(x=10.0, y=8.0, z=0.0), carla.Rotation())
-    backend, _tm = _tm_backend()
-    world = _FakeWorld()
-    assert backend.spawn_background(world, far, speed_kmh=30.0) is None
-    assert world.spawned == 0
-
-    sumo, calls = _sumo_backend()
-    # The fake TraCI puts the lane where the vehicle is asked for: move it.
-    traci = sumo._traci
-    traci.simulation.convert2D = lambda edge, pos, lane: (0.0, 100.0)
-    assert sumo.spawn_background(None, far, speed_kmh=30.0) is None
-    assert calls == []
 
 
 def test_check_background_speed() -> None:

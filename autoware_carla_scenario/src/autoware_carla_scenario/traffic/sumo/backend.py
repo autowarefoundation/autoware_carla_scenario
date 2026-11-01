@@ -96,7 +96,7 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
-from ...constants import BACKGROUND_MAX_LANE_OFFSET_M, EGO_ROLE_NAME
+from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
@@ -276,6 +276,8 @@ _KEEP_ROUTE_ANYWHERE = 2 | 4
 #: exists, m, and how many junctions its route runs through.
 _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
+#: How far from a lane a background vehicle may be asked for and still be put on it, m.
+_BACKGROUND_MAX_OFFSET_M = 5.0
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
 
@@ -2237,7 +2239,7 @@ class SumoTrafficBackend(TrafficBackend):
         # convertRoad answers with the nearest lane however far away it is;
         # a background vehicle goes only where there is one.
         lane_x, lane_y = tc.simulation.convert2D(edge, pos, lane)
-        if math.hypot(lane_x - pose.x, lane_y - pose.y) > BACKGROUND_MAX_LANE_OFFSET_M:
+        if math.hypot(lane_x - pose.x, lane_y - pose.y) > _BACKGROUND_MAX_OFFSET_M:
             logger.debug("No lane for background vehicle %s near %s", sumo_id, pose)
             return None
         route_id = f"route:{sumo_id}"

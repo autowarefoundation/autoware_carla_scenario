@@ -735,8 +735,7 @@ self.register_pre_tick(
   least 1 km/h; `0`, a negative speed, NaN or infinity is refused by
   `TrafficSourceAction`, by `background_traffic.source.speed_kmh` and by the
   editor's validator, because a vehicle that never moves is no traffic (a parked
-  car is an entity). A vehicle is placed only within 5 m of a driving lane, on
-  either backend. **`max_vehicles`** counts every background vehicle on the
+  car is an entity). **`max_vehicles`** counts every background vehicle on the
   road, whichever source made it.
 
 The examples take all of this from the config, for any scenario:

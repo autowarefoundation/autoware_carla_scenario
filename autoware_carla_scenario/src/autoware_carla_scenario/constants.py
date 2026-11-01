@@ -86,7 +86,3 @@ LANE_CHANGE_HEADING_TOLERANCE_DEG: float = 10.0
 # most a vehicle drives at, so a cap above the one asked for would break that,
 # and 0 would be a vehicle that never moves, which is no traffic.
 MIN_BACKGROUND_SPEED_KMH: float = 1.0
-# How far from a driving lane a background vehicle may be asked for and still
-# be put on it, m (horizontally).  Farther, there is no lane there, and
-# spawn_background places nothing, on every backend.
-BACKGROUND_MAX_LANE_OFFSET_M: float = 5.0

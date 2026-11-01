@@ -960,10 +960,8 @@ class TrafficBackend:
 
         Returns:
             A handle naming the vehicle for :meth:`remove_background`, or
-            ``None`` when it could not be placed (no driving lane within
-            :data:`~autoware_carla_scenario.constants.BACKGROUND_MAX_LANE_OFFSET_M`
-            of *transform*, the spot is taken, the backend has no traffic
-            model).
+            ``None`` when it could not be placed (no lane there, the spot is
+            taken, the backend has no traffic model).
 
         Raises:
             ValueError: If *speed_kmh* is not a speed a vehicle can be capped
