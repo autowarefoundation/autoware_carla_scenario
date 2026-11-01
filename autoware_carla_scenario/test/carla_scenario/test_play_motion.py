@@ -440,8 +440,10 @@ class TestRetarget:
         assert _close(_direction(positions, "crl_arm__R", "crl_foreArm__R"), (-1, 0, 0))
         assert _close(_direction(positions, "crl_leg__L", "crl_foot__L"), (0, 0, -1))
         assert _close(_direction(positions, "crl_foot__R", "crl_toe__R"), (0, 1, 0))
-        # The hips stay where the walker holds them.
-        assert _close(positions["crl_hips__C"], (0.0, 0.0, 1.0))
+        # The hips stay where the walker holds them, lowered with the body:
+        # the feet, flat, no longer reach down to where the toes pointed.
+        assert -0.1 < retarget.lift < 0.0
+        assert _close(positions["crl_hips__C"], (0.0, 0.0, 1.0 + retarget.lift))
 
     def test_upper_body_only_leaves_the_legs_to_the_animation(self) -> None:
         retarget = WalkerRetarget(_bones(), carla.Rotation())
@@ -459,31 +461,28 @@ class TestRetarget:
         retarget = WalkerRetarget(
             _bones(), carla.Rotation(yaw=40.0), upper_body_only=False
         )
-        retarget.pose(_LYING)
-        # The toes stood 1 m below the hips; lying, the thighs' heads are the
-        # lowest, 5 cm below them.
-        assert retarget.lift == pytest.approx(-0.95, abs=1e-6)
+        posed = dict(retarget.pose(_LYING))
+        # The soles (toes less 3 cm of foot) stood 1.03 m below the hips;
+        # lying, the backs of the thighs (5 cm below the hips, less 8 cm of
+        # thigh) are the lowest, 13 cm below them.
+        assert retarget.lift == pytest.approx(-0.90, abs=1e-6)
+        # The hips carry the body down, straight down in the world.
+        hips = _posed_positions(posed)["crl_hips__C"]
+        assert hips == pytest.approx((0.0, 0.0, 1.0 - 0.90), abs=1e-6)
         retarget.pose(_STANDING)
         assert retarget.lift == pytest.approx(0.0, abs=1e-6)
 
-    def test_a_lowered_walker_leaves_the_physics_until_it_stands(
-        self, scene: "_Scene"
-    ) -> None:
+    def test_lying_down_lowers_the_mesh_not_the_walker(self, scene: "_Scene") -> None:
         from autoware_carla_scenario.pedestrian.poser import WalkerPoser
 
-        walker = scene.walker
         poser = WalkerPoser("walker1", "test")
         assert poser.begin(upper_body_only=False)
-        poser.show(_LYING)
-        assert walker.simulated is False
-        assert walker.z == pytest.approx(-0.95, abs=1e-6)
-        poser.show(_STANDING)
-        assert walker.simulated is True
-        assert walker.z == pytest.approx(0.0, abs=1e-6)
-        poser.show(_LYING)
-        assert poser.end()
-        assert walker.simulated is True
-        assert walker.z == pytest.approx(0.0, abs=1e-6)
+        assert poser.show(_LYING)
+        hips = _posed_positions(scene.walker.poses[-1])["crl_hips__C"]
+        assert hips[2] == pytest.approx(1.0 - 0.90)
+        # The walker, its capsule and its physics stay where they were.
+        assert scene.walker.z == 0.0
+        assert not hasattr(scene.walker, "simulated")
 
     def test_with_the_legs_left_to_the_animation_the_feet_stay_down(self) -> None:
         retarget = WalkerRetarget(_bones(), carla.Rotation())
@@ -530,9 +529,6 @@ class _Walker:
 
     def set_location(self, location: carla.Location) -> None:
         self.x, self.z = location.x, location.z
-
-    def set_simulate_physics(self, enabled: bool) -> None:
-        self.simulated = enabled
 
     def get_velocity(self) -> carla.Vector3D:
         return carla.Vector3D(self.vx, 0.0, 0.0)

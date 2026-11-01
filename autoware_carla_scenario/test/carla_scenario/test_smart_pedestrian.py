@@ -190,9 +190,6 @@ class _Walker:
     def set_location(self, location: carla.Location) -> None:
         self.transform = carla.Transform(location, self.transform.rotation)
 
-    def set_simulate_physics(self, enabled: bool) -> None:
-        self.simulated = enabled
-
     def apply_control(self, control: Any) -> None:
         self.controls.append(control)
 
@@ -407,6 +404,7 @@ class TestSmartPedestrianControllerAction:
         assert poser.begin(upper_body_only=False)
         # A root drifting by a millimetre is not a way to turn to.
         poser.place(
+            directions_from_joints(_BODY, 0.0),
             carla.Location(x=10.0, y=5.0, z=1.0),
             90.0,
             carla.Vector3D(-0.001, -0.002, 0.0),

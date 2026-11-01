@@ -23,8 +23,6 @@ from .skeleton import Vector, WalkerRetarget
 
 logger = logging.getLogger(__name__)
 
-#: A change of the body's lift smaller than this does not move the walker.
-_LIFT_TOLERANCE_M = 0.005
 #: Slower than this (m/s), a placed walker stands still.
 _STILL_MS = 0.05
 
@@ -44,9 +42,6 @@ class WalkerPoser:
     _retarget: Optional[WalkerRetarget]
     _walker: Optional[carla.Actor]
     _blended: bool
-    _lifted: float
-    _placed: bool
-    _unsimulated: bool
 
     def __init__(self, entity_name: str, owner: str) -> None:
         self._entity_name = entity_name
@@ -54,14 +49,6 @@ class WalkerPoser:
         self._retarget = None
         self._walker = None
         self._blended = False
-        # How far the walker stands moved up (down: negative) to keep its
-        # posed body on the ground (WalkerRetarget.lift), and whether the
-        # caller placed it this tick (then place() applies it).
-        self._lifted = 0.0
-        self._placed = False
-        # Whether its physics is off: a lowered walker's capsule is in the
-        # ground, which the physics would push it out of.
-        self._unsimulated = False
 
     @property
     def actor(self) -> Optional[carla.Actor]:
@@ -134,73 +121,59 @@ class WalkerPoser:
         direction in the body frame (forward, right, up) of the way the
         walker faces.  The first frame shown also blends the pose in.
 
-        The walker is moved up or down so the posed body's lowest point stays
-        where its feet were (:attr:`WalkerRetarget.lift`): lying down, it
-        lies on the ground.  A walker :meth:`place` puts takes it with the
-        next place; any other walker is moved here.
+        The body is lowered so its lowest point stays where its feet were
+        (:attr:`WalkerRetarget.lift`): lying down, it lies on the ground.
+        Only the mesh is: the walker, its capsule and its physics stay where
+        CARLA has them, so it collides and moves as before.
 
         Returns:
             Whether it is still posed (``False``: the walker was destroyed
             under the motion).
         """
-        retarget = self._retarget
         actor = self._walker
-        if retarget is None or actor is None:
+        if actor is None:
             return False
-        walker = _as_walker(actor)
         try:
-            walker.set_bones(carla.WalkerBoneControlIn(retarget.pose(frame)))
-            if not self._blended:
-                walker.blend_pose(1.0)
-                self._blended = True
-            if self._placed:
-                self._placed = False
-            elif abs(retarget.lift - self._lifted) > _LIFT_TOLERANCE_M:
-                self._simulate(actor, retarget.lift)
-                self._raise(actor, retarget.lift - self._lifted)
-                self._lifted = retarget.lift
+            self._pose(actor, frame)
         except RuntimeError:
             self._forget()
             return False
         return True
 
     def place(
-        self, location: carla.Location, yaw_deg: float, velocity: carla.Vector3D
+        self,
+        frame: dict[str, Vector],
+        location: carla.Location,
+        yaw_deg: float,
+        velocity: carla.Vector3D,
     ) -> bool:
-        """Stand the walker at *location* facing *yaw_deg*, moving on the way
-        it faces at *velocity*'s (m/s) speed that way -- so what reads its
-        speed sees the motion's, and the tick the world takes carries it on
-        towards the next frame, without turning it.
+        """:meth:`show` *frame* with the walker stood at *location* facing
+        *yaw_deg*, moving on the way it faces
+        at *velocity*'s (m/s) speed that way -- so what reads its speed sees
+        the motion's, and the tick the world takes carries it on towards the
+        next frame, without turning it.
 
         Returns:
             Whether it is still posed (``False``: the walker is gone).
         """
         actor = self._walker
-        retarget = self._retarget
-        if actor is None or retarget is None:
+        if actor is None:
             return False
         try:
-            # On the ground as the last frame shown posed the body.
-            self._simulate(actor, retarget.lift)
-            lifted = carla.Location(
-                x=location.x, y=location.y, z=location.z + retarget.lift
-            )
+            self._pose(actor, frame)
             actor.set_transform(
                 carla.Transform(
-                    lifted, carla.Rotation(pitch=0.0, yaw=yaw_deg, roll=0.0)
+                    location, carla.Rotation(pitch=0.0, yaw=yaw_deg, roll=0.0)
                 )
             )
-            self._lifted = retarget.lift
-            self._placed = True
             # Told the way it faces, at the motion's speed that way: CARLA
             # turns a walker towards the way it is told to go, and a motion's
             # root drifts and steps sideways (sitting down, a replanned
             # frame), so any other way turns it from where the motion faces.
             yaw = math.radians(yaw_deg)
             direction = carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0)
-            speed = max(0.0, velocity.x * direction.x + velocity.y * direction.y)
-            if speed < _STILL_MS:
-                speed = 0.0
+            ahead = velocity.x * direction.x + velocity.y * direction.y
+            speed = ahead if ahead >= _STILL_MS else 0.0
             _as_walker(actor).apply_control(
                 carla.WalkerControl(
                     direction=direction, speed=walker_control_speed(speed)
@@ -218,41 +191,31 @@ class WalkerPoser:
             Whether a walker was posed and has been handed back.
         """
         actor = self._walker
-        lifted = self._lifted
-        unsimulated = self._unsimulated
         self._forget()
         if actor is None:
             return False
         try:
-            if abs(lifted) > _LIFT_TOLERANCE_M:
-                # Standing again, at the height it stood.
-                self._raise(actor, -lifted)
-            if unsimulated:
-                actor.set_simulate_physics(True)
             _as_walker(actor).blend_pose(0.0)
         except RuntimeError:
             return False
         return True
 
-    def _simulate(self, actor: carla.Actor, lift: float) -> None:
-        """Physics off while the walker is lowered (*lift* below 0), on
-        again once it stands."""
-        lowered = lift < -_LIFT_TOLERANCE_M
-        if lowered != self._unsimulated:
-            actor.set_simulate_physics(not lowered)
-            self._unsimulated = lowered
-
-    def _raise(self, actor: carla.Actor, by_m: float) -> None:
-        here = actor.get_location()
-        actor.set_location(carla.Location(x=here.x, y=here.y, z=here.z + by_m))
+    def _pose(self, actor: carla.Actor, frame: dict[str, Vector]) -> None:
+        """Set the walker's bones for *frame*, blending the pose in the
+        first time."""
+        retarget = self._retarget
+        if retarget is None:  # pragma: no cover - posed with a walker
+            return
+        walker = _as_walker(actor)
+        walker.set_bones(carla.WalkerBoneControlIn(retarget.pose(frame)))
+        if not self._blended:
+            walker.blend_pose(1.0)
+            self._blended = True
 
     def _forget(self) -> None:
         self._walker = None
         self._retarget = None
         self._blended = False
-        self._lifted = 0.0
-        self._placed = False
-        self._unsimulated = False
 
 
 def _as_walker(actor: carla.Actor) -> carla.Walker:

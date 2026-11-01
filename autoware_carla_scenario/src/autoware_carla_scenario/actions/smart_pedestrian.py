@@ -312,11 +312,11 @@ class SmartPedestrianControllerAction(BaseAction):
         velocity = carla.Vector3D(
             (nx - x) * self._fps / steps, (ny - y) * self._fps / steps, 0.0
         )
-        placed = self._poser.place(
-            carla.Location(x=x, y=y, z=self._ground_z), yaw, velocity
-        )
-        if not placed or not self._poser.show(
-            directions_from_joints(now.joints, now.heading)
+        if not self._poser.place(
+            directions_from_joints(now.joints, now.heading),
+            carla.Location(x=x, y=y, z=self._ground_z),
+            yaw,
+            velocity,
         ):
             # The walker was destroyed under the motion.
             self._end()

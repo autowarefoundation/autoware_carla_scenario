@@ -84,16 +84,17 @@ rather than replayed joint for joint:
 - The driven bones are the spine, the neck and the arms (with
   `upper_body_only=False`, the legs too). The hips never are: where the walker
   stands and faces stays CARLA's.
-- The walker is kept on the ground. From the walker's own bones and the
-  directions it was given, never from where a motion places its joints, the
-  pose's lowest point is worked out, and the walker is moved up or down so
-  that point stays where its feet stood (`WalkerRetarget.lift`). A crouch, a
-  sit or a fall lies on the ground rather than hanging from the hips.
-- While it is lowered, the walker's physics is off, or the physics would push
-  its capsule back out of the ground. It still collides: a vehicle that hits
-  it is seen by a collision sensor, and the Traffic Manager's vehicles still
-  stop for it. The physics is back on once it stands, and when the motion
-  ends.
+- The body is kept on the ground. The pose's lowest point is worked out from
+  the walker's own bones, the directions it was given and the flesh around
+  each bone (`CarlaBone.radius`), never from where a motion places its
+  joints. The hips are then lowered so that point stays where the soles stood
+  (`WalkerRetarget.lift`). A crouch, a sit or a fall lies on the ground
+  instead of hanging from the hips.
+- Only the mesh is lowered. The walker actor, its capsule and its physics
+  stay where CARLA has them, so it moves, reports its velocity and collides
+  as before. A vehicle that hits a pedestrian lying in its lane is seen by a
+  collision sensor, and the Traffic Manager's vehicles stop for it. Its
+  bounding box stays a standing one.
 
 When the motion ends (with `loop`, when `duration_s` is up) the walker is
 handed back to its animation (`blend_pose(0.0)`).
@@ -190,7 +191,10 @@ When the action fires:
 3. Every tick, it places the walker at the motion's root and poses all of its
    bones, on the ground as above. The walker is told to walk only the way it
    faces, at the motion's speed that way: CARLA turns a walker towards where
-   it is told to go, and a motion's root drifts and steps aside.
+   it is told to go, and a motion's root drifts and steps aside. A step
+   sideways or back therefore reads as standing in the walker's velocity,
+   though the walker goes where the motion takes it
+   ([#957](https://github.com/autowarefoundation/autoware_carla_scenario/issues/957)).
 4. Each time the motion it holds is about to run out, it asks for more,
    generated from the motion shown so far.
 

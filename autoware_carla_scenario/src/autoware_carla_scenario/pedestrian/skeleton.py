@@ -50,6 +50,8 @@ class CarlaBone:
             bone's direction is the one from it to that child.
         joint: The SOMA joint whose bone gives its direction.
         upper_body: Whether it is above the hips (driven by default).
+        radius: How far the body's surface is from the bone, in metres:
+            what lies on the ground is the skin, not the bone.
     """
 
     name: str
@@ -57,39 +59,48 @@ class CarlaBone:
     children: tuple[str, ...]
     joint: str
     upper_body: bool = True
+    radius: float = 0.05
 
 
 #: The CARLA walker bones a motion drives, parents first, and the SOMA joint
-#: each follows.  The hips are not driven: the walker stands and faces where
-#: CARLA puts it.
+#: each follows.  The hips are not turned: the walker stands and faces where
+#: CARLA puts it (they are only lowered with the body, WalkerRetarget.lift).
 CARLA_BONES: tuple[CarlaBone, ...] = (
-    CarlaBone("crl_spine__C", "crl_hips__C", ("crl_spine01__C",), "Spine1"),
-    CarlaBone("crl_spine01__C", "crl_spine__C", ("crl_neck__C",), "Chest"),
-    CarlaBone("crl_neck__C", "crl_spine01__C", ("crl_Head__C",), "Neck1"),
+    CarlaBone(
+        "crl_spine__C", "crl_hips__C", ("crl_spine01__C",), "Spine1", radius=0.12
+    ),
+    CarlaBone("crl_spine01__C", "crl_spine__C", ("crl_neck__C",), "Chest", radius=0.12),
+    CarlaBone("crl_neck__C", "crl_spine01__C", ("crl_Head__C",), "Neck1", radius=0.09),
     CarlaBone("crl_shoulder__L", "crl_spine01__C", ("crl_arm__L",), "LeftShoulder"),
     CarlaBone("crl_arm__L", "crl_shoulder__L", ("crl_foreArm__L",), "LeftArm"),
-    CarlaBone("crl_foreArm__L", "crl_arm__L", ("crl_hand__L",), "LeftForeArm"),
+    CarlaBone(
+        "crl_foreArm__L", "crl_arm__L", ("crl_hand__L",), "LeftForeArm", radius=0.04
+    ),
     CarlaBone(
         "crl_hand__L",
         "crl_foreArm__L",
         ("crl_handMiddle__L", "crl_handMiddle01__L", "crl_handIndex__L"),
         "LeftHand",
+        radius=0.03,
     ),
     CarlaBone("crl_shoulder__R", "crl_spine01__C", ("crl_arm__R",), "RightShoulder"),
     CarlaBone("crl_arm__R", "crl_shoulder__R", ("crl_foreArm__R",), "RightArm"),
-    CarlaBone("crl_foreArm__R", "crl_arm__R", ("crl_hand__R",), "RightForeArm"),
+    CarlaBone(
+        "crl_foreArm__R", "crl_arm__R", ("crl_hand__R",), "RightForeArm", radius=0.04
+    ),
     CarlaBone(
         "crl_hand__R",
         "crl_foreArm__R",
         ("crl_handMiddle__R", "crl_handMiddle01__R", "crl_handIndex__R"),
         "RightHand",
+        radius=0.03,
     ),
-    CarlaBone("crl_thigh__L", "crl_hips__C", ("crl_leg__L",), "LeftLeg", False),
+    CarlaBone("crl_thigh__L", "crl_hips__C", ("crl_leg__L",), "LeftLeg", False, 0.08),
     CarlaBone("crl_leg__L", "crl_thigh__L", ("crl_foot__L",), "LeftShin", False),
-    CarlaBone("crl_foot__L", "crl_leg__L", ("crl_toe__L",), "LeftFoot", False),
-    CarlaBone("crl_thigh__R", "crl_hips__C", ("crl_leg__R",), "RightLeg", False),
+    CarlaBone("crl_foot__L", "crl_leg__L", ("crl_toe__L",), "LeftFoot", False, 0.03),
+    CarlaBone("crl_thigh__R", "crl_hips__C", ("crl_leg__R",), "RightLeg", False, 0.08),
     CarlaBone("crl_leg__R", "crl_thigh__R", ("crl_foot__R",), "RightShin", False),
-    CarlaBone("crl_foot__R", "crl_leg__R", ("crl_toe__R",), "RightFoot", False),
+    CarlaBone("crl_foot__R", "crl_leg__R", ("crl_toe__R",), "RightFoot", False, 0.03),
 )
 
 
@@ -205,17 +216,26 @@ def swing(a: Vector, b: Vector) -> Matrix:
     )
 
 
+#: The bone the skeleton hangs from: the bones above and below it are placed
+#: from it, and it is where CARLA puts the walker.
+_HIPS = "crl_hips__C"
+
+
 @dataclass(frozen=True)
 class _Rest:
-    """A driven bone as the walker's animation held it when the motion began."""
+    """A bone of :data:`CARLA_BONES` as the walker's animation held it when
+    the motion began."""
 
     bone: CarlaBone
+    #: Whether a frame poses it; one that is not keeps the animation's pose.
+    driven: bool
     world: Matrix
     parent_world: Matrix
     direction: Vector
     location: "carla.Location"
-    #: From the parent's head to the bone's, and from the bone's head to the
-    #: child it points at, in the world as the animation held them.
+    #: From the parent's head to the bone's, in the parent's frame, and from
+    #: the bone's head to the child it points at, in its own: the bone's
+    #: length, which the pose turns but does not change.
     offset: Vector
     tip: Vector
 
@@ -235,16 +255,18 @@ class WalkerRetarget:
             the animation's pose.
 
     Attributes:
-        lift: How far the last posed frame moves the walker up (negative:
-            down) to keep its lowest point where the animation's was: about
-            -0.8 m lying down, 0 standing.
+        lift: How far the last posed frame lowers the body (negative) or
+            raises it to keep its lowest point where the animation's was:
+            about -0.8 m lying down, 0 standing.  The hips are moved by it
+            (only the mesh: the walker, its capsule and its physics stay
+            where CARLA has them).
     """
 
     _rests: list[_Rest]
     _body: Matrix
-    _hips: str
-    _still_lowest: float
     _rest_lowest: float
+    _hips: Optional["carla.Transform"]
+    _root: Matrix
     missing: tuple[str, ...]
     lift: float
 
@@ -257,74 +279,102 @@ class WalkerRetarget:
         by_name = {str(b.name): b for b in bones}
         self._body = rotation_matrix(facing)
         self._rests = []
-        self._hips = "crl_hips__C"
-        self.lift = 0.0
         missing: list[str] = []
-        hips = by_name[self._hips].world.location if self._hips in by_name else None
-        # The lowest point of the bones a frame leaves alone (the legs, with
-        # upper_body_only), relative to the hips: it does not move.
-        still: list[float] = []
-        if hips is not None and upper_body_only:
-            for b in bones:
-                if _is_leg(str(b.name)):
-                    still.append(float(b.world.location.z) - float(hips.z))
-        self._still_lowest = min(still) if still else math.inf
+        # The hips relative to the bone they hang from, and that bone's
+        # rotation in the world: the lift is a world height.
+        self._hips = None
+        self._root = rotation_matrix(carla.Rotation())
+        if _HIPS in by_name:
+            hips = by_name[_HIPS]
+            self._hips = carla.Transform(
+                carla.Location(
+                    x=hips.relative.location.x,
+                    y=hips.relative.location.y,
+                    z=hips.relative.location.z,
+                ),
+                hips.relative.rotation,
+            )
+            self._root = _mul(
+                rotation_matrix(hips.world.rotation),
+                _transposed(rotation_matrix(hips.relative.rotation)),
+            )
         for bone in CARLA_BONES:
-            if upper_body_only and not bone.upper_body:
-                continue
+            driven = bone.upper_body or not upper_body_only
             child = next((c for c in bone.children if c in by_name), None)
             if bone.name not in by_name or bone.parent not in by_name or child is None:
-                missing.append(bone.name)
+                if driven:
+                    missing.append(bone.name)
                 continue
             here = by_name[bone.name].world
             there = by_name[child].world.location
-            direction = _normalized(
-                (
-                    there.x - here.location.x,
-                    there.y - here.location.y,
-                    there.z - here.location.z,
-                )
-            )
-            if direction is None:
-                missing.append(bone.name)
-                continue
-            relative = by_name[bone.name].relative.location
             start = by_name[bone.parent].world.location
+            to_child = (
+                there.x - here.location.x,
+                there.y - here.location.y,
+                there.z - here.location.z,
+            )
+            direction = _normalized(to_child)
+            if direction is None:
+                if driven:
+                    missing.append(bone.name)
+                continue
+            world = rotation_matrix(here.rotation)
+            parent_world = rotation_matrix(by_name[bone.parent].world.rotation)
+            relative = by_name[bone.name].relative.location
+            offset = (
+                here.location.x - start.x,
+                here.location.y - start.y,
+                here.location.z - start.z,
+            )
             self._rests.append(
                 _Rest(
                     bone=bone,
-                    world=rotation_matrix(here.rotation),
-                    parent_world=rotation_matrix(by_name[bone.parent].world.rotation),
+                    driven=driven,
+                    world=world,
+                    parent_world=parent_world,
                     direction=direction,
                     location=carla.Location(x=relative.x, y=relative.y, z=relative.z),
-                    offset=(
-                        here.location.x - start.x,
-                        here.location.y - start.y,
-                        here.location.z - start.z,
-                    ),
-                    tip=(
-                        there.x - here.location.x,
-                        there.y - here.location.y,
-                        there.z - here.location.z,
-                    ),
+                    offset=_apply(_transposed(parent_world), offset),
+                    tip=_apply(_transposed(world), to_child),
                 )
             )
         self.missing = tuple(missing)
-        self._rest_lowest = self._lowest(
-            {rest.bone.name: rest.world for rest in self._rests}
-        )
+        # The animation's own pose: what the lift keeps the body's lowest
+        # point level with.
+        self._rest_lowest = self._pose({})[1]
+        self.lift = 0.0
 
     @property
     def driven(self) -> tuple[str, ...]:
         """The bones a frame poses."""
-        return tuple(rest.bone.name for rest in self._rests)
+        return tuple(rest.bone.name for rest in self._rests if rest.driven)
 
     def pose(self, frame: dict[str, Vector]) -> list[tuple[str, "carla.Transform"]]:
         """The driven bones' transforms, relative to their parents, for
         *frame*: each followed SOMA joint's bone direction in the body frame
         (forward, right, up) of the way the walker faces
-        (:meth:`~autoware_carla_scenario.pedestrian.soma.SomaMotion.frame`)."""
+        (:meth:`~autoware_carla_scenario.pedestrian.soma.SomaMotion.frame`).
+        Sets :attr:`lift` for it."""
+        result, lowest = self._pose(frame)
+        hips = self._hips
+        if hips is None or not math.isfinite(self._rest_lowest):
+            return result
+        self.lift = self._rest_lowest - lowest
+        down = _apply(_transposed(self._root), (0.0, 0.0, self.lift))
+        at = hips.location
+        lowered = carla.Location(x=at.x + down[0], y=at.y + down[1], z=at.z + down[2])
+        return [(_HIPS, carla.Transform(lowered, hips.rotation))] + result
+
+    def _pose(
+        self, frame: dict[str, Vector]
+    ) -> tuple[list[tuple[str, "carla.Transform"]], float]:
+        """:meth:`pose` without the hips, and the posed body's lowest point
+        relative to the hips (``inf`` without a bone): each bone's head is its
+        parent's plus the bone's offset, and its tip the head plus its length,
+        both turned as posed, less the flesh around the bone."""
         posed: dict[str, Matrix] = {}
+        heads: dict[str, Vector] = {_HIPS: (0.0, 0.0, 0.0)}
+        lowest = math.inf
         result: list[tuple[str, carla.Transform]] = []
         for rest in self._rests:
             parent = posed.get(rest.bone.parent, rest.parent_world)
@@ -332,46 +382,26 @@ class WalkerRetarget:
             carried = _mul(parent, _transposed(rest.parent_world))
             world = _mul(carried, rest.world)
             # ... and the bone swings from there onto the motion's direction.
-            target = frame.get(rest.bone.joint)
+            target = frame.get(rest.bone.joint) if rest.driven else None
             if target is not None:
                 world = _mul(
                     swing(_apply(carried, rest.direction), _apply(self._body, target)),
                     world,
                 )
             posed[rest.bone.name] = world
-            relative = rotator(_mul(_transposed(parent), world))
-            result.append((rest.bone.name, carla.Transform(rest.location, relative)))
-        lowest = self._lowest(posed)
-        if math.isfinite(lowest) and math.isfinite(self._rest_lowest):
-            self.lift = self._rest_lowest - lowest
-        return result
-
-    def _lowest(self, posed: dict[str, Matrix]) -> float:
-        """The lowest head or tip of the bones, posed as *posed* (each driven
-        bone's world rotation), relative to the hips; ``inf`` without any.
-
-        Each bone keeps its length: its head is its parent's head plus the
-        parent's offset to it, turned as the parent turned from its rest.
-        """
-        heads: dict[str, Vector] = {self._hips: (0.0, 0.0, 0.0)}
-        lowest = self._still_lowest
-        for rest in self._rests:
+            if rest.driven:
+                relative = rotator(_mul(_transposed(parent), world))
+                result.append(
+                    (rest.bone.name, carla.Transform(rest.location, relative))
+                )
             start = heads.get(rest.bone.parent)
-            if start is None:
-                continue
-            parent = posed.get(rest.bone.parent, rest.parent_world)
-            step = _apply(_mul(parent, _transposed(rest.parent_world)), rest.offset)
-            head = (start[0] + step[0], start[1] + step[1], start[2] + step[2])
-            heads[rest.bone.name] = head
-            world = posed.get(rest.bone.name, rest.world)
-            reach = _apply(_mul(world, _transposed(rest.world)), rest.tip)
-            lowest = min(lowest, head[2], head[2] + reach[2])
-        return lowest
-
-
-def _is_leg(name: str) -> bool:
-    """Whether bone *name* is of a leg (from the thigh down)."""
-    return any(part in name for part in ("thigh", "leg__", "foot", "toe", "ball"))
+            if start is not None:
+                step = _apply(parent, rest.offset)
+                head = (start[0] + step[0], start[1] + step[1], start[2] + step[2])
+                heads[rest.bone.name] = head
+                tip = head[2] + _apply(world, rest.tip)[2]
+                lowest = min(lowest, min(head[2], tip) - rest.bone.radius)
+        return result, lowest
 
 
 #: The joint each followed SOMA joint's bone runs to, the first a skeleton has
