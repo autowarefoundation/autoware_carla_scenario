@@ -512,8 +512,19 @@ class HilsBridge:
         self._run_ego: Optional[int] = None
         #: Whether the ECUs' commands go to the run (after its ``ready``).
         self._forwarding = False
+        #: The ECUs' command fields merged, and how many times they changed
+        #: (under :attr:`_command_lock`, which is never held while sending).
         self._command: Dict[str, float] = {}
+        self._command_version = 0
         self._command_lock = threading.Lock()
+        #: Serializes forwarding the command (:meth:`_forward`): whoever holds
+        #: it sends the newest merged command, so the last one the run gets is
+        #: the newest.  Taken before :attr:`_command_lock` and the link's own
+        #: lock, never while holding either.
+        self._forward_lock = threading.Lock()
+        #: The :attr:`_command_version` the run was last sent (under
+        #: :attr:`_forward_lock`).
+        self._forwarded_version = -1
         #: What the scenario stops (:meth:`disconnect`), by cut id.
         self._cuts: Dict[str, _Cut] = {}
         #: What each channel side was last set to stop (:meth:`_apply_cuts`):
@@ -723,7 +734,9 @@ class HilsBridge:
         """End the scenario: carry what its cuts stopped again, so that the
         ``scenario_end`` steps reach the ECUs (and hear back from them), run
         those steps, then stop the periodic messages and remove the sensors."""
-        self._forwarding = False
+        with self._forward_lock:
+            # A command being sent finishes first: none follows ``ended``.
+            self._forwarding = False
         try:
             self._reconnect_all()
         except Exception:  # noqa: BLE001 - the scenario must still end
@@ -735,6 +748,7 @@ class HilsBridge:
             sensor_device.detach()
         with self._command_lock:
             self._command = {}
+            self._command_version += 1
         self._ego = None
         self._active = False
         logger.info("scenario ended")
@@ -843,11 +857,34 @@ class HilsBridge:
             return
         with self._command_lock:
             self._command.update(values)
-            command = dict(self._command)
-        if self._forwarding and self._link is not None:
-            self._link.send(
-                {"type": "command", "mode": self.config.command_mode, **command}
-            )
+            self._command_version += 1
+        self._forward()
+
+    def _forward(self, start: bool = False) -> None:
+        """Send the run the newest merged command, unless it has it already;
+        with *start*, start forwarding first (after ``ready``).
+
+        The receiving threads of several devices call this at once: a thread
+        merged its fields, but another may send before it does.  So the
+        command is copied while :attr:`_forward_lock` is held, right before
+        the send, and a thread whose fields went out with another's newer copy
+        sends nothing -- the last command sent is always the newest.
+        :attr:`_command_lock` is not held while sending: a slow link must not
+        hold up merging, :attr:`command` or :meth:`_finish`.
+        """
+        with self._forward_lock:
+            if start:
+                self._forwarding = True
+            link = self._link
+            if not self._forwarding or link is None:
+                return
+            with self._command_lock:
+                version = self._command_version
+                if version == self._forwarded_version or not self._command:
+                    return
+                command = dict(self._command)
+            link.send({"type": "command", "mode": self.config.command_mode, **command})
+            self._forwarded_version = version
 
     @property
     def command(self) -> Dict[str, float]:
@@ -909,10 +946,9 @@ class HilsBridge:
             link.send({"type": "error", "message": str(exc)})
             return
         link.send({"type": "ready"})
-        self._forwarding = True
-        command = self.command
-        if command:
-            link.send({"type": "command", "mode": self.config.command_mode, **command})
+        # Through _forward, so that this command does not overtake a newer
+        # one a receiving thread forwards as soon as forwarding starts.
+        self._forward(start=True)
 
     def _find_ego(self) -> None:
         """Without a run connected, the ego appearing starts a scenario -- not
