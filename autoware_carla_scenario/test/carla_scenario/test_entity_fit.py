@@ -55,21 +55,67 @@ class _Library(list):
         return self
 
 
+class _Probe:
+    """A spawned vehicle as CARLA's client sees it (#231, #940): one the
+    world has not ticked since it was spawned is unknown, and ``destroy()``
+    returns False and does nothing."""
+
+    def __init__(self, world: "_World", actor_id: int, length: float, width: float):
+        self._world = world
+        self.id = actor_id
+        extent = SimpleNamespace(x=length / 2.0, y=width / 2.0, z=0.8)
+        self.bounding_box = SimpleNamespace(extent=extent)
+
+    def destroy(self) -> bool:
+        if self.id not in self._world.known or self.id in self._world.stuck:
+            return False
+        del self._world.alive[self.id]
+        return True
+
+
 class _World:
-    def __init__(self, world_id: int) -> None:
+    def __init__(self, world_id: int, *, synchronous: bool = True) -> None:
         self.id = world_id
         self.spawned: list[str] = []
+        self.roles: list[str] = []
+        self.ticks: list[str] = []
+        #: The probes in the world, by actor id.
+        self.alive: dict[int, str] = {}
+        #: The actor ids the client knows: ticked since they were spawned.
+        self.known: set[int] = set()
+        #: Actor ids whose destroy() fails even once known.
+        self.stuck: set[int] = set()
+        self._synchronous = synchronous
 
     def get_blueprint_library(self) -> _Library:
-        return _Library(_Blueprint(b) for b in _SERVER)
+        world = self
+
+        class _Recording(_Blueprint):
+            def set_attribute(self, name: str, value: str) -> None:
+                if name == "role_name":
+                    world.roles.append(value)
+
+        return _Library(_Recording(b) for b in _SERVER)
+
+    def get_settings(self) -> Any:
+        return SimpleNamespace(synchronous_mode=self._synchronous)
+
+    def tick(self) -> int:
+        self.ticks.append("tick")
+        self.known |= set(self.alive)
+        return len(self.ticks)
+
+    def wait_for_tick(self) -> Any:
+        self.ticks.append("wait_for_tick")
+        self.known |= set(self.alive)
+        return SimpleNamespace()
 
     def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> Any:
         self.spawned.append(blueprint.id)
         length, width, _kind = _SERVER[blueprint.id]
-        extent = SimpleNamespace(x=length / 2.0, y=width / 2.0, z=0.8)
-        return SimpleNamespace(
-            bounding_box=SimpleNamespace(extent=extent), destroy=lambda: None
-        )
+        actor_id = 100 + len(self.spawned)
+        self.alive[actor_id] = blueprint.id
+        return _Probe(self, actor_id, length, width)
 
 
 @pytest.fixture
@@ -109,6 +155,83 @@ class TestFitting:
 
     def test_no_size_no_choice(self, world: _World) -> None:
         assert fit.fitted_vehicle(world, 0.0, 1.8) is None
+
+
+class TestTheProbes:
+    """#940: the probes are gone once the boxes are read."""
+
+    _SIZES = {
+        "vehicle.small.car": (4.18, 1.99),
+        "vehicle.saloon.car": (4.67, 1.81),
+        "vehicle.box.truck": (8.0, 2.91),
+        "vehicle.city.bus": (11.5, 2.55),
+    }
+
+    def test_no_probe_survives(self, world: _World) -> None:
+        fit.vehicle_sizes(world)
+        assert len(world.spawned) == 4
+        assert world.alive == {}
+
+    def test_one_tick_for_all_the_probes(self, world: _World) -> None:
+        fit.vehicle_sizes(world)
+        assert world.ticks == ["tick"]
+        fit.vehicle_sizes(world)  # remembered: no probe, no tick
+        assert world.ticks == ["tick"]
+
+    def test_asynchronous_mode_waits_for_the_servers_tick(self) -> None:
+        fit._SIZES.clear()
+        world = _World(8, synchronous=False)
+        fit.vehicle_sizes(world)
+        assert world.ticks == ["wait_for_tick"]
+        assert world.alive == {}
+
+    def test_the_sizes_are_unchanged(self, world: _World) -> None:
+        sizes = fit.vehicle_sizes(world)
+        assert sizes.keys() == self._SIZES.keys()
+        for name, (length, width) in self._SIZES.items():
+            assert sizes[name] == pytest.approx((length, width))
+
+    def test_the_probes_carry_the_role_the_measures_skip(self, world: _World) -> None:
+        from autoware_carla_scenario.constants import BUMPER_PROBE_ROLE_NAME
+        from autoware_carla_scenario.measures import PROBE_ROLE
+
+        fit.vehicle_sizes(world)
+        assert world.roles == [BUMPER_PROBE_ROLE_NAME] * 4
+        assert BUMPER_PROBE_ROLE_NAME == PROBE_ROLE
+
+    def test_a_probe_that_cannot_be_destroyed_is_reported(self, world: _World) -> None:
+        world.stuck.add(102)
+        with pytest.raises(RuntimeError, match=r"vehicle_sizes\(\).*\[102\]"):
+            fit.vehicle_sizes(world)
+        # The others are destroyed all the same, after the one tick.
+        assert world.alive == {102: "vehicle.saloon.car"}
+        assert world.ticks == ["tick"]
+
+    def test_no_probe_no_tick(self, world: _World) -> None:
+        world.try_spawn_actor = lambda blueprint, transform: None  # type: ignore[method-assign]
+        assert fit.vehicle_sizes(world) == {}
+        assert world.ticks == []
+
+    def test_a_box_that_cannot_be_read_still_has_its_probes_destroyed(
+        self, world: _World
+    ) -> None:
+        spawn = world.try_spawn_actor
+        count = 0
+
+        def spawn_then_break(blueprint: _Blueprint, transform: Any) -> Any:
+            nonlocal count
+            count += 1
+            actor = spawn(blueprint, transform)
+            if count == 3:
+                actor.bounding_box = None
+            return actor
+
+        world.try_spawn_actor = spawn_then_break  # type: ignore[method-assign]
+        with pytest.raises(AttributeError):
+            fit.vehicle_sizes(world)
+        assert world.alive == {}
+        assert world.ticks == ["tick"]
+        assert 7 not in fit._SIZES
 
 
 def _document(entity: dict[str, Any]) -> ScenarioDocument:
