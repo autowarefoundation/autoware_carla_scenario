@@ -34,8 +34,11 @@ from autoware_carla_scenario.odd.probes import illumination_level, intensity_lev
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
     decode_case,
+    sample_seed,
     sampler_from_config,
+    search_from_config,
 )
+from autoware_carla_scenario.seed import DEFAULT_SEED
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
 
 
@@ -474,6 +477,61 @@ def test_refusals() -> None:
 # ---------------------------------------------------------------------------
 # A sweep that draws from the ODD
 # ---------------------------------------------------------------------------
+
+
+def test_a_null_seed_in_a_run_without_one_draws_from_the_default_seed() -> None:
+    sweep = {"odd_sample": {"count": 2, "seed": None}}
+
+    cases = expand_sweep(sweep, None, odd="default", seed=None)
+
+    assert cases == expand_sweep(sweep, None, odd="default", seed=DEFAULT_SEED)
+    assert cases == expand_sweep(
+        {"odd_sample": {"count": 2}}, None, odd="default", seed=None
+    )
+
+
+def test_a_null_seed_follows_the_runs() -> None:
+    sweep = {"odd_sample": {"count": 2, "seed": None}}
+
+    assert expand_sweep(sweep, None, odd="default", seed=5) == expand_sweep(
+        {"odd_sample": {"count": 2, "seed": 5}}, None, odd="default"
+    )
+
+
+def test_a_config_without_a_seed_expands_as_one_with_the_default_seed() -> None:
+    def cfg(seed: Any) -> Any:
+        return OmegaConf.create(
+            {
+                "odd": "default",
+                "seed": seed,
+                "sweep": {"odd_sample": {"count": 2, "seed": None}},
+            }
+        )
+
+    assert expand_config(cfg(None), []) == expand_config(cfg(DEFAULT_SEED), [])
+
+
+def test_a_null_or_missing_sample_seed_is_the_default_seed() -> None:
+    assert sample_seed({}) == DEFAULT_SEED
+    assert sample_seed({"seed": None}) == DEFAULT_SEED
+    assert sample_seed({"seed": 4}) == 4
+
+    def draws(raw: dict[str, Any]) -> list[list[str]]:
+        sampler, _ = sampler_from_config(raw, odd="default")
+        return [c.overrides for c in sampler.sample(3)]
+
+    expected = draws({"seed": DEFAULT_SEED})
+    assert draws({"seed": None}) == expected
+    assert draws({}) == expected
+
+
+def test_a_flaky_search_with_a_null_seed_is_built() -> None:
+    _sampler, search, count = search_from_config(
+        {"count": 2, "seed": None, "flaky": True}, odd="default"
+    )
+
+    assert search is not None
+    assert count == 2
 
 
 def test_a_sweep_of_samples_alone_needs_no_map() -> None:
