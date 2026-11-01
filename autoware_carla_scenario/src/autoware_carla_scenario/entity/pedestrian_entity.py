@@ -165,7 +165,7 @@ class PedestrianEntityConfig:
 
     role_name: str
     spawn_location: "SpawnTransform"
-    walker_type: str = "walker.pedestrian.0001"
+    walker_type: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
         # Stored as a string: CARLA's role_name is one, every reader converts

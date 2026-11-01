@@ -72,7 +72,7 @@ traffic:
       radius_m: null
       # The most mirrored at once, the nearest first (null: no limit; 0: none).
       max_persons: null
-      blueprint: walker.pedestrian.0001
+      blueprint: walker.pedestrian.0015
     # SUMO's own bicycles (randomTrips --vclass bicycle), mirrored into CARLA
     # as bicycles within radius_m of the ego (null: spawn_radius_m), at most
     # max_bicycles of them (apart from max_vehicles). How they ride is

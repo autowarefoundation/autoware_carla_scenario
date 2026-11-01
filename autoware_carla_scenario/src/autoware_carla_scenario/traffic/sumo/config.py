@@ -164,7 +164,7 @@ class PedestrianConfig:
     max_distance_m: float = 500.0
     radius_m: Optional[float] = None
     max_persons: Optional[int] = None
-    blueprint: str = "walker.pedestrian.0001"
+    blueprint: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
         _check_demand(

@@ -7,8 +7,10 @@ CARLA side faked: SUMO is the thing under test, not the simulator.
 
 from __future__ import annotations
 
+import dataclasses
 import fnmatch
 import importlib.util
+import logging
 import itertools
 import math
 from pathlib import Path
@@ -3761,3 +3763,63 @@ def test_max_persons_zero_mirrors_no_pedestrian(
         assert _mirrors(world) == []
     finally:
         backend.close()
+
+
+class _WalkerLibrary:
+    """A blueprint library with some walkers, as a CARLA build has them."""
+
+    def __init__(self, walkers: list[str]) -> None:
+        self.walkers = walkers
+
+    def find(self, name: str) -> _Blueprint:
+        if name not in self.walkers:
+            raise IndexError(
+                f"tsc_blueprint_library_find: no blueprint with id '{name}'"
+            )
+        return _Blueprint(name)
+
+    def filter(self, pattern: str) -> list[_Blueprint]:
+        return [_Blueprint(w) for w in self.walkers if fnmatch.fnmatch(w, pattern)]
+
+
+def _with_walker_blueprint(name: str) -> Any:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._config = SimpleNamespace(  # type: ignore[assignment]
+        pedestrians=SimpleNamespace(blueprint=name)
+    )
+    backend._walker_type = None
+    return backend
+
+
+def test_a_walker_blueprint_the_build_lacks_falls_back_to_one_it_has(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # CARLA 0.10 has none of 0.9's walker.pedestrian.0001 (#449): SUMO's
+    # persons are mirrored as a walker it has, said once.
+    library = _WalkerLibrary(["walker.pedestrian.0030", "walker.pedestrian.0015"])
+    backend = _with_walker_blueprint("walker.pedestrian.0001")
+    with caplog.at_level(logging.WARNING):
+        assert backend._walker_blueprint(library) == "walker.pedestrian.0015"
+        assert backend._walker_blueprint(library) == "walker.pedestrian.0015"
+    assert sum("no walker blueprint" in r.getMessage() for r in caplog.records) == 1
+    assert (
+        _with_walker_blueprint("walker.pedestrian.0030")._walker_blueprint(library)
+        == "walker.pedestrian.0030"
+    )
+    with pytest.raises(RuntimeError, match="no walker.pedestrian"):
+        _with_walker_blueprint("walker.pedestrian.0001")._walker_blueprint(
+            _WalkerLibrary([])
+        )
+
+
+def test_the_default_walker_blueprints_are_ones_carla_0_10_has() -> None:
+    from autoware_carla_scenario import PedestrianEntityConfig
+    from autoware_carla_scenario.traffic.sumo.config import PedestrianConfig
+
+    assert PedestrianConfig().blueprint == "walker.pedestrian.0015"
+    (walker_type,) = [
+        f for f in dataclasses.fields(PedestrianEntityConfig) if f.name == "walker_type"
+    ]
+    assert walker_type.default == "walker.pedestrian.0015"
