@@ -64,7 +64,7 @@ from .base import (
 )
 from ..seed import resolve_seed
 from .geometry import Trajectory, waypoints_to_proto
-from .observation import camera_extrinsics_to_rig
+from .observation import sensor_pose_in_rig
 
 
 logger = logging.getLogger(__name__)
@@ -132,11 +132,16 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         self._vehicle = carla_driver_pb2_grpc.CarlaVehicleServiceStub(self._channel)
         return self._stub
 
-    def _camera_specs(self) -> list:
+    def _camera_specs(self, rear_axle_offset_m: float = 0.0) -> list:
         """Return the ``AvailableCamera`` entries describing the configured rig.
 
         As contract revision 2 declares them: ``rig_to_camera`` is the camera's
         optical frame in the rig (x right, y down, z along the optical axis).
+
+        Args:
+            rear_axle_offset_m: Where the rig origin (the rear axle) is from the
+                actor origin the cameras are mounted relative to; the mount is
+                moved by it, as the LiDAR's and the T4 calibration's are.
         """
         cameras = []
         for camera in self._config.cameras:
@@ -162,15 +167,18 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                     intrinsics=spec,
                     # Without this the policy sees the protobuf-default (identity,
                     # origin) pose and reads every frame from the wrong viewpoint,
-                    # not even the configured (1.5, 0, 1.6) mount.
+                    # not even the configured (1.5, 0, 1.6) mount.  The mount is
+                    # relative to the actor origin, where CARLA attaches the
+                    # camera, so it moves to the rig origin (the rear axle).
                     rig_to_camera=body_to_optical(
-                        camera_extrinsics_to_rig(
+                        sensor_pose_in_rig(
                             camera.position_x,
                             camera.position_y,
                             camera.position_z,
                             camera.roll,
                             camera.pitch,
                             camera.yaw,
+                            rear_axle_offset_m,
                         )
                     ).to_proto(),
                     logical_id=camera.logical_id,
@@ -182,7 +190,9 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
     # BaseEgoDriverClient interface
     # ------------------------------------------------------------------
 
-    def start_session(self, session_uuid: str, scene_id: str) -> None:
+    def start_session(
+        self, session_uuid: str, scene_id: str, *, rear_axle_offset_m: float = 0.0
+    ) -> None:
         """Open a rollout session with the policy.
 
         Also calls ``get_version`` first so that an unreachable or mismatched policy
@@ -190,6 +200,13 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         Its answer says which contract revision the policy speaks
         (``carla_driver_interface.contract``); the cameras are declared in that
         revision, so a policy on carla-driver-interface 1.x still reads them right.
+
+        Args:
+            session_uuid: Identifier correlating every subsequent call.
+            scene_id: Human-readable scene name for the policy's debug output.
+            rear_axle_offset_m: Where the rig origin (the rear axle) is from the
+                actor origin, along the actor's x axis (negative behind); the
+                cameras' ``rig_to_camera`` is moved by it.
 
         Raises:
             grpc.RpcError: If the policy cannot be reached.
@@ -215,7 +232,9 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             rollout_spec=egodriver_pb2.DriveSessionRequest.RolloutSpec(
                 vehicle=egodriver_pb2.DriveSessionRequest.RolloutSpec.VehicleDefinition(
                     available_cameras=cameras_to_revision(
-                        self._camera_specs(), CONTRACT_REVISION, revision
+                        self._camera_specs(rear_axle_offset_m),
+                        CONTRACT_REVISION,
+                        revision,
                     )
                 )
             ),
