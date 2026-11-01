@@ -382,6 +382,12 @@ class RenderedBuilder:
         takes control domains of an entity)."""
         return any(name == "overrides" for name, _ in self.args)
 
+    @property
+    def once(self) -> bool:
+        """Whether the builder passes the card's *once* (the constructor can
+        fire more than once)."""
+        return any(name == "once" for name, _ in self.args)
+
 
 def _is_carla_type(annotation: type) -> bool:
     """Whether *annotation* comes from the CARLA client library,

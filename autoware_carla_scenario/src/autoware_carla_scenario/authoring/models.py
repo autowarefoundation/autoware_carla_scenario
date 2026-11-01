@@ -646,6 +646,8 @@ class ActionNode(_Node):
     phase: ActionPhaseName = Field(
         default="pre_tick", validation_alias=AliasChoices("phase", "timing")
     )
+    #: Whether the action fires only once (``BaseAction.once``).  ``False``
+    #: only for an action that can fire again: ``ONCE_ACTIONS``.
     once: bool = True
     #: Whether the action takes over a control domain of its entity another
     #: action holds, stopping that action, rather than end the run in error

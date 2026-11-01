@@ -254,6 +254,11 @@ Three rules make it readable:
   the second card's inspector to have it stop the first instead (the canvas
   marks it *overrides*; `overrides: true` in the document). Cards that command
   no entity do not offer it.
+* **A card fires once unless told otherwise.** Untick *Fire only once* to have
+  it fire again each time its trigger holds (`once: false` in the document).
+  Cards whose action cannot fire again (*Stalled Object*, *Construction Zone*,
+  *Urban Construction Zone*, *Adversarial Traffic (NADE)*) do not offer it, and the
+  validator refuses `once: false` on them.
 * **One actor reacting to another is a reference, not a coincidence.**
   "Swerve once NPC1 has cut in" is a `Lane Change` clip on the ego track whose
   trigger is an **Action state** condition naming NPC1's cut-in and the state

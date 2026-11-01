@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
     "build_and_condition",
     "build_or_condition",
@@ -122,6 +123,41 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "routing",
         "set_speed",
         "turn",
+    }
+)
+
+#: The action types whose constructor takes ``once``: those that can fire more
+#: than once, whose card offers *Fire only once*.  Any other fires once.
+ONCE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "adversarial_brake",
+        "adversarial_cut_in",
+        "adversarial_merge",
+        "head_on",
+        "ignore_leader",
+        "jaywalk",
+        "lane_change_abort",
+        "pedestrian_run_red_light",
+        "run_traffic_rule",
+        "stop_crossing",
+        "traffic_signal_controller",
+        "traffic_signal",
+        "environment",
+        "traffic_sink",
+        "traffic_source",
+        "play_motion",
+        "smart_pedestrian",
+        "walk_straight",
+        "traffic_parameters",
+        "communication_loss",
+        "turn_indicator",
+        "despawn",
+        "lane_change",
+        "routing",
+        "set_speed",
+        "spawn",
+        "turn",
+        "vehicle_parameters",
     }
 )
 

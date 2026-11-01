@@ -35,7 +35,7 @@ from typing import (
     get_args,
 )
 
-from ..authoring._builders_generated import OVERRIDING_ACTIONS
+from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from ..authoring.models import (
     AUTO_MODEL,
     ActionNode,
@@ -1272,7 +1272,9 @@ class EditorService:
                         "so nothing there can wait. Remove the trigger first."
                     )
                 action.phase = requested
-        action.once = "once" in form
+        # Only an action whose constructor takes ``once`` can fire again; any
+        # other offers no checkbox and always fires once.
+        action.once = action.type not in ONCE_ACTIONS or "once" in form
         # Only an action that commands an entity's control domains can take
         # one over; for any other, there is nothing to override.
         action.overrides = action.type in OVERRIDING_ACTIONS and "overrides" in form
