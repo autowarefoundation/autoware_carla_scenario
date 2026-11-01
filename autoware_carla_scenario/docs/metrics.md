@@ -110,6 +110,82 @@ self.register_fail_condition(
 )
 ```
 
+### CommonRoad metrics
+
+Ten more read how critical the frame is, with TU Munich's
+[CommonRoad](https://commonroad.in.tum.de/) tools:
+[CriMe](https://github.com/CommonRoad/CommonRoad-CriMe)'s criticality
+measures and [CommonRoad-Reach](https://github.com/CommonRoad/commonroad-reach)'s
+reachable set (`COMMONROAD_METRICS`). Each is read on the ego against the road
+users around it, every one going on as it goes -- its velocity and
+acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe
+measures against other road users are the most critical over them, as CriMe
+folds them.
+
+| Key | Unit | Reads | Folds with |
+|---|---|---|---|
+| `crime_ttc_s` | s | Until the ego hits a road user ahead in its lane, both holding their acceleration (CriMe TTC); `inf` when they never meet | min |
+| `crime_thw_s` | s | Until the ego reaches where the road user ahead is now (CriMe THW) | min |
+| `crime_hw_m` | m | From the ego's front to the rear of the road user ahead, along the lane (CriMe HW) | min |
+| `crime_ttb_s` | s | Left before the ego must brake at full to avoid a collision (CriMe TTB) | min |
+| `crime_ttce_s` | s | Until the ego and a road user come closest (CriMe TTCE) | min |
+| `crime_dce_m` | m | Between the ego and a road user when they come closest; `0` when they would collide (CriMe DCE) | min |
+| `crime_a_long_req_mps2` | m/s^2 | The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake (CriMe ALongReq) | min |
+| `crime_a_lat_req_mps2` | m/s^2 | The lateral acceleration the ego needs to steer clear of a road user (CriMe ALatReq) | max |
+| `reach_drivable_area_m2` | m^2 | The road the ego can still reach without a collision at the end of the horizon (CommonRoad-Reach); `0` when every way it can go meets a road user: a collision it can no longer avoid | min |
+| `reach_drivable_area_sum_m2` | m^2 | The same, summed over the horizon's steps (CriMe's DA) | min |
+
+A measure with no one to measure from (no road user ahead for TTC) reads
+nothing, and so does every one while the ego is on no lanelet. A run failed on
+one is a `safety_margin` failure. They are watched like any other metric:
+
+```python
+from autoware_carla_scenario import ComparisonRule, MetricCondition
+from autoware_carla_scenario.metrics import CRIME_TTC_S, REACH_DRIVABLE_AREA_M2
+
+self.register_fail_condition(
+    MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 1.5, label="TTC under 1.5 s")
+)
+self.register_fail_condition(
+    MetricCondition(
+        REACH_DRIVABLE_AREA_M2,
+        ComparisonRule.LESS_THAN_OR_EQUAL,
+        0.0,
+        label="no way out",
+    )
+)
+```
+
+**How they are read.** CommonRoad's packages cannot share the framework's
+environment: commonroad-io pins protobuf 3.20, where the framework's gRPC code
+needs 4 or later, and CommonRoad-Reach builds for CPython 3.10 and 3.11 only.
+They run in a worker process of their own, the `commonroad_metrics` project at
+the root of the repository (`commonroad_metrics/README.md`), which the runner
+speaks to in JSON lines. Every tick of a run that reads one -- a
+`MetricCondition` on one asks for it as it is built; code reading one with
+`read_metric()` calls `want_metric(key)` in `setup()` -- the runner sends the
+worker the ego and the road users within 100 m, and publishes what it answers
+before the conditions are checked. Only the metrics asked for are evaluated,
+every 0.2 s of simulated time; they hold their values in between. A run that
+reads none starts nothing.
+
+The worker reads the world's map as CommonRoad: roadgen (>= 0.42.0, the `map`
+extra) converts the world's OpenDRIVE once per machine, cached under
+`~/.cache/autoware_carla_scenario/commonroad`. The worker evaluates each frame
+in a frame of its own, moved to the ego and turned so the lane under it runs
+along +x: CriMe projects speeds onto a lane with the cosine of the lane's own
+heading, which is the speed along the lane only there.
+
+The runner starts the worker with, in order, the command in
+`$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on
+the `PATH`, or, in a checkout, `uv run --project commonroad_metrics
+commonroad-metrics-worker` (which builds its environment the first time). A run
+that reads a CommonRoad metric and cannot start the worker fails with
+`CommonRoadWorkerError` rather than let a fail condition that reads nothing
+pass it. `configure_commonroad_metrics()` (in
+`autoware_carla_scenario.commonroad`) changes the period, the horizon, the
+radius, CommonRoad-Reach's settings and the command.
+
 AlpaSim's other metrics need more than the world, and are not metrics here:
 
 | AlpaSim metric | Needs |

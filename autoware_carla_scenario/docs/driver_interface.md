@@ -507,7 +507,8 @@ alpasim's services read a scene's map from its artifact, never off the wire; thi
 CARLA counterpart. With `driver.map_dir` set (and the `map` extra installed), the world's
 OpenDRIVE is converted by [roadgen](https://pypi.org/project/roadgen/) at scenario start
 and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
-(Lanelet2 by default), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
+(Lanelet2 by default; `lanelet2`, `opendrive`, `osm`, `clipgt` and `commonroad`, a
+CommonRoad 2020a scenario), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
 is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
 once per map and a changed map gets a new id.
 

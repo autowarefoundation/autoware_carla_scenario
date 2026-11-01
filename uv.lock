@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -53,7 +53,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-testmon", specifier = ">=2.2.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "roadgen", specifier = ">=0.41.2" },
+    { name = "roadgen", specifier = ">=0.42.0" },
     { name = "sumolib", specifier = ">=1.23" },
     { name = "t4-devkit", marker = "python_full_version < '3.13'", git = "https://github.com/tier4/t4-devkit?tag=v0.8.0" },
     { name = "traci", specifier = ">=1.23" },
@@ -266,8 +266,8 @@ requires-dist = [
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rerun-sdk", marker = "extra == 'rerun-lidar'", specifier = ">=0.38.1,<0.39" },
-    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.41.2" },
-    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.41.2" },
+    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.42.0" },
+    { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.42.0" },
     { name = "simple-lanelet2", specifier = ">=1.2.3" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
@@ -3966,12 +3966,12 @@ wheels = [
 
 [[package]]
 name = "roadgen"
-version = "0.41.2"
+version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ef/f2/1da6f3191ab8c42419c80951df0b717378f692e3bdfafd41cbff9c279451/roadgen-0.41.2.tar.gz", hash = "sha256:53de19e6f64aba9dc5a56e7b856e6d9809bfa38d11b2886f2e008026ceff321a", size = 1034257, upload-time = "2026-10-24T02:43:09.852Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/80/e345d465a1073637a0d10eb9146f8822d6ab2064f71539538b92d04c7f68/roadgen-0.42.0.tar.gz", hash = "sha256:dc1cd6c2f444b3829bd32f8a719d9fa707b6342c8785e5a49d28c19a99be3767", size = 1087579, upload-time = "2026-11-01T10:57:27.812Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/a3/b33237e666cc2d612ef2983c6fcb08f748b9bf8af8f67fef62594399d345/roadgen-0.41.2-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2e71974728c5c70a7a9d55c0e1fe21e4f609aaf0cedc6a89a07ebcc6c3ef6f9d", size = 5509003, upload-time = "2026-10-24T02:43:05.893Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/c6/b616a1afe12bcdefab5e4ae7eb4bd80f0879b4b5372116b3423a2c09df4b/roadgen-0.41.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a570a4b5ac99c9c21fd98243d24c1364dc570dadc8a9966db863f5217b42dcad", size = 6026278, upload-time = "2026-10-24T02:43:07.965Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/07/29b507fec77bb9af76e79c154c0a4ae37f508f3c52410fc1492ea92089fe/roadgen-0.42.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0527c39e2735679d710948d3dd95bb82e5f6012691a25837ea08cb8672a2ddd6", size = 5654882, upload-time = "2026-11-01T10:57:23.352Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/29/bc922059fe1ecb280b8e63c632df91541df1246f3d49c27065487588d7d1/roadgen-0.42.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:71e5ea864e7e399ce0e740821d843e33f37cdcc5bc1f164d5141bbda28a57bd2", size = 6174326, upload-time = "2026-11-01T10:57:25.896Z" },
 ]
 
 [[package]]

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "commonroad-metrics"
+version = "0.1.0"
+description = "CriMe and CommonRoad-Reach criticality measures for autoware_carla_scenario, evaluated in a worker process of their own"
+readme = "README.md"
+# CommonRoad-Reach builds wheels for CPython 3.10 and 3.11 only.
+requires-python = ">=3.10,<3.12"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+  # The latest set that resolves together: CriMe 0.4.5 pins Reach ~=2025.2.0,
+  # whose 2025.2.1 needs a drivability checker CriMe does not take, and
+  # commonroad-io ~=2024.3, which pins protobuf 3.20 -- the reason this is a
+  # process of its own rather than an extra of the framework.
+  "commonroad-crime==0.4.5",
+  "commonroad-reach>=2025.2.0,<2025.2.1",
+  "commonroad-io~=2024.3",
+  "numpy>=1.24",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[project.scripts]
+commonroad-metrics-worker = "commonroad_metrics.worker:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/commonroad_metrics"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

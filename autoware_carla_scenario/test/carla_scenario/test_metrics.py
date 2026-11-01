@@ -239,6 +239,8 @@ def test_the_metrics_are_alpasim_s() -> None:
         "lateral_wobble_m",
         "steering_reversals",
         "turn_indicator_changes",
+        # Not AlpaSim's: CriMe's and CommonRoad-Reach's, by the worker.
+        *metrics.COMMONROAD_METRICS,
     }
     weight = BUILT_IN_METRICS["importance_sampling_weight"]
     assert (weight.unit, weight.aggregation) == ("ratio", "last")
@@ -251,6 +253,8 @@ def test_the_metrics_are_alpasim_s() -> None:
         )
     for key, metric in BUILT_IN_METRICS.items():
         assert metric.key == key
+        if key in metrics.COMMONROAD_METRICS:
+            continue  # test_commonroad_metrics.py
         if metric.unit not in ("ratio", "count") and metric is not wobble:
             assert metric.aggregation == ("min" if metric.unit == "m" else "max")
     assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]

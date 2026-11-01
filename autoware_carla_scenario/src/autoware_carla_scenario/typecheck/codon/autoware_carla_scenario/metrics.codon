@@ -30,6 +30,29 @@ LATERAL_REVERSALS: str = "lateral_reversals"
 LATERAL_WOBBLE_M: str = "lateral_wobble_m"
 STEERING_REVERSALS: str = "steering_reversals"
 TURN_INDICATOR_CHANGES: str = "turn_indicator_changes"
+CRIME_TTC_S: str = "crime_ttc_s"
+CRIME_THW_S: str = "crime_thw_s"
+CRIME_HW_M: str = "crime_hw_m"
+CRIME_TTB_S: str = "crime_ttb_s"
+CRIME_TTCE_S: str = "crime_ttce_s"
+CRIME_DCE_M: str = "crime_dce_m"
+CRIME_A_LONG_REQ_MPS2: str = "crime_a_long_req_mps2"
+CRIME_A_LAT_REQ_MPS2: str = "crime_a_lat_req_mps2"
+REACH_DRIVABLE_AREA_M2: str = "reach_drivable_area_m2"
+REACH_DRIVABLE_AREA_SUM_M2: str = "reach_drivable_area_sum_m2"
+
+COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str] = (
+    CRIME_TTC_S,
+    CRIME_THW_S,
+    CRIME_HW_M,
+    CRIME_TTB_S,
+    CRIME_TTCE_S,
+    CRIME_DCE_M,
+    CRIME_A_LONG_REQ_MPS2,
+    CRIME_A_LAT_REQ_MPS2,
+    REACH_DRIVABLE_AREA_M2,
+    REACH_DRIVABLE_AREA_SUM_M2,
+)
 
 
 def _acs_unread(world: carla.World) -> Optional[float]:
@@ -191,6 +214,98 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         "off, left, right or hazard",
         aggregation="last",
     ),
+    CRIME_TTC_S: Metric(
+        CRIME_TTC_S,
+        _acs_unread,
+        title="Time to collision (CriMe)",
+        unit="s",
+        text="Seconds until the ego hits a road user ahead in its lane, "
+        "both holding their acceleration; inf when they never meet "
+        "(CriMe TTC)",
+        aggregation="min",
+    ),
+    CRIME_THW_S: Metric(
+        CRIME_THW_S,
+        _acs_unread,
+        title="Time headway (CriMe)",
+        unit="s",
+        text="Seconds until the ego reaches where the road user ahead is "
+        "now (CriMe THW)",
+        aggregation="min",
+    ),
+    CRIME_HW_M: Metric(
+        CRIME_HW_M,
+        _acs_unread,
+        title="Headway (CriMe)",
+        unit="m",
+        text="From the ego's front to the rear of the road user ahead, "
+        "along the lane (CriMe HW)",
+        aggregation="min",
+    ),
+    CRIME_TTB_S: Metric(
+        CRIME_TTB_S,
+        _acs_unread,
+        title="Time to brake (CriMe)",
+        unit="s",
+        text="Seconds left before the ego must brake at full to avoid a "
+        "collision (CriMe TTB)",
+        aggregation="min",
+    ),
+    CRIME_TTCE_S: Metric(
+        CRIME_TTCE_S,
+        _acs_unread,
+        title="Time to closest encounter (CriMe)",
+        unit="s",
+        text="Seconds until the ego and a road user come closest, both "
+        "going on as they go (CriMe TTCE)",
+        aggregation="min",
+    ),
+    CRIME_DCE_M: Metric(
+        CRIME_DCE_M,
+        _acs_unread,
+        title="Distance of closest encounter (CriMe)",
+        unit="m",
+        text="Metres between the ego and a road user when they come "
+        "closest; 0 when they would collide (CriMe DCE)",
+        aggregation="min",
+    ),
+    CRIME_A_LONG_REQ_MPS2: Metric(
+        CRIME_A_LONG_REQ_MPS2,
+        _acs_unread,
+        title="Required deceleration (CriMe)",
+        unit="m/s^2",
+        text="The longitudinal acceleration the ego needs not to hit the "
+        "road user ahead, negative to brake (CriMe ALongReq)",
+        aggregation="min",
+    ),
+    CRIME_A_LAT_REQ_MPS2: Metric(
+        CRIME_A_LAT_REQ_MPS2,
+        _acs_unread,
+        title="Required lateral acceleration (CriMe)",
+        unit="m/s^2",
+        text="The lateral acceleration the ego needs to steer clear of a "
+        "road user (CriMe ALatReq)",
+        aggregation="max",
+    ),
+    REACH_DRIVABLE_AREA_M2: Metric(
+        REACH_DRIVABLE_AREA_M2,
+        _acs_unread,
+        title="Drivable area (CommonRoad-Reach)",
+        unit="m^2",
+        text="Road the ego can still reach without a collision at the end "
+        "of the horizon; 0 when a collision can no longer be avoided "
+        "(CommonRoad-Reach)",
+        aggregation="min",
+    ),
+    REACH_DRIVABLE_AREA_SUM_M2: Metric(
+        REACH_DRIVABLE_AREA_SUM_M2,
+        _acs_unread,
+        title="Drivable area over the horizon (CommonRoad-Reach)",
+        unit="m^2",
+        text="The ego's drivable area summed over the horizon's steps "
+        "(CriMe DA, by CommonRoad-Reach)",
+        aggregation="min",
+    ),
 }
 
 
@@ -203,6 +318,22 @@ def read_metric(key: str, world: carla.World) -> Optional[float]:
 
 
 def set_importance_sampling_weight(weight: Optional[float]) -> None:
+    raise NotImplementedError()
+
+
+def want_metric(key: str) -> None:
+    raise NotImplementedError()
+
+
+def commonroad_metrics_wanted() -> List[str]:
+    raise NotImplementedError()
+
+
+def set_commonroad_values(values: Dict[str, Optional[float]]) -> None:
+    raise NotImplementedError()
+
+
+def reset_commonroad_metrics() -> None:
     raise NotImplementedError()
 
 

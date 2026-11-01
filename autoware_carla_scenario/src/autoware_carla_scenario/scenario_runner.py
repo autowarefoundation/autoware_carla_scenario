@@ -41,9 +41,11 @@ from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .metrics import (
     ego_progress,
+    reset_commonroad_metrics,
     reset_ego_motion,
     set_importance_sampling_weight,
     track_ego_motion,
+    want_metric,
 )
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
@@ -358,6 +360,38 @@ def _npc_collision_monitor() -> "NpcCollisionMonitor":
     from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
 
     return NpcCollisionMonitor()
+
+
+def _want_commonroad(scenario: BaseScenario) -> None:
+    """Ask for the CommonRoad metrics the scenario's pass and fail conditions
+    watch: a condition built in ``__init__`` asked as it was built, and a run
+    of the same scenario object before this one forgot that as it ended.
+    """
+    from .conditions.metric import MetricCondition  # noqa: PLC0415
+
+    for condition in [*scenario._pass_conditions, *scenario._fail_conditions]:
+        if isinstance(condition, MetricCondition):
+            want_metric(condition.metric)
+
+
+def _track_commonroad(world: "carla.World", elapsed: float) -> None:
+    """Have the CommonRoad worker evaluate the CommonRoad metrics read in the
+    run (:mod:`~autoware_carla_scenario.commonroad`); nothing while none is.
+
+    The worker is a process spoken to in JSON, and the map is converted by
+    roadgen, neither of which the check (docs/typecheck.md) compiles.
+    """
+    from .commonroad.session import track_commonroad_metrics  # noqa: PLC0415
+
+    track_commonroad_metrics(world, elapsed)
+
+
+def _end_commonroad() -> None:
+    """Forget the run's CommonRoad evaluations; the worker stays up for the
+    next run on the map."""
+    from .commonroad.session import end_commonroad_run  # noqa: PLC0415
+
+    end_commonroad_run()
 
 
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
@@ -1612,6 +1646,12 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
+            if TYPE_CHECKING:
+                # isinstance() of a condition class (UNCALLED in
+                # typecheck/library.py).
+                pass
+            else:
+                _want_commonroad(scenario)
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
@@ -1713,6 +1753,14 @@ class ScenarioRunner:
                 set_importance_sampling_weight(scenario.importance_sampling_weight)
                 # The ego's motion, which the weaving metrics read.
                 track_ego_motion(world, elapsed)
+                if TYPE_CHECKING:
+                    # A worker process spoken to in JSON, and roadgen (UNCALLED
+                    # in typecheck/library.py).
+                    pass
+                else:
+                    # The CommonRoad metrics read in the run (CriMe's and
+                    # CommonRoad-Reach's), before the conditions read them.
+                    _track_commonroad(world, elapsed)
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1840,6 +1888,12 @@ class ScenarioRunner:
             set_measured_scenario(None)
             set_importance_sampling_weight(None)
             reset_ego_motion()
+            # The CommonRoad metrics read in this run are this run's.
+            reset_commonroad_metrics()
+            if TYPE_CHECKING:
+                pass
+            else:
+                _end_commonroad()
             # The walkers the trajectory runs and the vehicles led out of their
             # junctions measured were this run's.
             forget_walkers()

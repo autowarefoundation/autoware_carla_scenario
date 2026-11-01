@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..metrics import _FAILURE_CATEGORIES, BUILT_IN_METRICS, read_metric
+from ..metrics import _FAILURE_CATEGORIES, BUILT_IN_METRICS, read_metric, want_metric
 from .base import BaseCondition, ScenarioResult
 from .comparison import ComparisonRule, ScalarComparisonRule
 from ..failure import FailureCategory
@@ -34,6 +34,11 @@ class MetricCondition(BaseCondition):
 
     A frame the metric reads nothing in (no ego yet, no road user to measure
     from) does not satisfy it.
+
+    A CommonRoad metric (CriMe's, CommonRoad-Reach's:
+    :data:`~autoware_carla_scenario.metrics.COMMONROAD_METRICS`) is evaluated
+    by a worker process every tick of a run that watches one; building the
+    condition asks for it (:func:`~autoware_carla_scenario.metrics.want_metric`).
 
     Args:
         metric: The metric's key, e.g.
@@ -73,6 +78,8 @@ class MetricCondition(BaseCondition):
             raise ValueError("tolerance must be non-negative")
         self._metric = metric
         self._unit = BUILT_IN_METRICS[metric].unit
+        # A CommonRoad metric is evaluated only in a run that reads it.
+        want_metric(metric)
         self._comparison = ScalarComparisonRule(
             field=metric, rule=rule, value=value, tolerance=tolerance
         )
