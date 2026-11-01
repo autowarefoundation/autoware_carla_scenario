@@ -7,6 +7,7 @@ without SUMO installed.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -33,6 +34,50 @@ DEFAULT_BICYCLE_BLUEPRINTS = (
     "vehicle.diamondback.century",
     "vehicle.gazelle.omafiets",
 )
+
+
+def _check_count(key: str, value: Optional[int]) -> None:
+    """Refuse a limit on how many that is not a whole number >= 0 or null.
+
+    ``0`` is a limit like any other: none at all.  A negative one would slice
+    the farthest off a list, and a float or a bool is not a count.
+    """
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+    ):
+        raise ValueError(f"{key} must be an integer >= 0 or null (got {value!r})")
+
+
+def _check_positive(key: str, value: Optional[float]) -> None:
+    """Refuse a value that is not finite and > 0 (``None`` passes)."""
+    if value is not None and not (math.isfinite(value) and value > 0.0):
+        raise ValueError(f"{key} must be positive and finite or null (got {value!r})")
+
+
+def _check_positive_or_inf(key: str, value: Optional[float]) -> None:
+    """Refuse a value that is not > 0 (``None`` and ``inf`` pass).
+
+    For a distance where ``inf`` has a meaning -- no bound -- that SUMO's
+    tools and the backend read as such: NaN and 0 or below are refused.
+    """
+    if value is not None and not value > 0.0:
+        raise ValueError(f"{key} must be positive or null (got {value!r})")
+
+
+def _check_not_negative(key: str, value: float) -> None:
+    """Refuse a value that is not finite and >= 0."""
+    if not (math.isfinite(value) and value >= 0.0):
+        raise ValueError(f"{key} must be finite and not negative (got {value!r})")
+
+
+def _check_demand(
+    group: str, rate: str, per_hour: float, period_s: Optional[float], end_s: float
+) -> None:
+    """Refuse a generated demand's rate, period or end that is not a number
+    SUMO's ``randomTrips.py`` can use: a NaN rate would make a NaN period."""
+    _check_not_negative(f"{group}.{rate}", per_hour)
+    _check_positive(f"{group}.period_s", period_s)
+    _check_positive(f"{group}.end_s", end_s)
 
 
 @dataclass
@@ -62,6 +107,16 @@ class AmbientTrafficConfig:
     fringe_factor: float = 5.0
     use_safe_weights: bool = True
 
+    def __post_init__(self) -> None:
+        _check_demand(
+            "ambient",
+            "vehicles_per_hour",
+            self.vehicles_per_hour,
+            self.period_s,
+            self.end_s,
+        )
+        _check_not_negative("ambient.fringe_factor", self.fringe_factor)
+
     def period(self) -> float:
         """Seconds between two generated trips."""
         if self.period_s is not None:
@@ -90,14 +145,15 @@ class PedestrianConfig:
         persons_per_hour: Walks generated per hour of simulated time.
         period_s: Seconds between two walks; overrides ``persons_per_hour``.
         end_s: Seconds of demand to generate.
-        max_distance_m: The longest walk generated, metres.
+        max_distance_m: The longest walk generated, metres; ``.inf`` for no
+            limit.
         radius_m: Mirror only the pedestrians this close to the ego (or to a
             vehicle CARLA drives) into CARLA, and remove one that walks more
             than 1.25 times as far away; the rest walk on in SUMO only, where
             SUMO's traffic still sees them.  ``None``: the radii of
             ``mesoscopic`` when that is enabled, everywhere otherwise.
         max_persons: Most pedestrians mirrored into CARLA at once, the nearest
-            first; ``None`` for no limit.
+            first; ``None`` for no limit, ``0`` for none.
         blueprint: CARLA blueprint of a mirrored pedestrian.
     """
 
@@ -111,10 +167,16 @@ class PedestrianConfig:
     blueprint: str = "walker.pedestrian.0001"
 
     def __post_init__(self) -> None:
-        if self.radius_m is not None and not self.radius_m > 0.0:
-            raise ValueError(
-                f"radius_m must be positive or null (got {self.radius_m!r})"
-            )
+        _check_demand(
+            "pedestrians",
+            "persons_per_hour",
+            self.persons_per_hour,
+            self.period_s,
+            self.end_s,
+        )
+        _check_positive_or_inf("pedestrians.max_distance_m", self.max_distance_m)
+        _check_positive("pedestrians.radius_m", self.radius_m)
+        _check_count("pedestrians.max_persons", self.max_persons)
 
     def period(self) -> float:
         """Seconds between two generated walks."""
@@ -159,7 +221,8 @@ class BicycleConfig:
         radius_m: Mirror only the bicycles this close to the ego into CARLA;
             ``None``: ``spawn_radius_m``, the vehicles' radius.
         max_bicycles: Most bicycles mirrored into CARLA at once, the nearest
-            first, apart from ``max_vehicles``; ``None`` for no limit.
+            first, apart from ``max_vehicles``; ``None`` for no limit, ``0``
+            for none.
         blueprints: The CARLA blueprints a mirrored bicycle is one of, chosen
             per bicycle.  Those the world lacks are left out; with none left,
             bicycles ride in SUMO only, where its traffic still sees them.
@@ -186,16 +249,17 @@ class BicycleConfig:
                 "bicycles.vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        for name, value in (
-            ("radius_m", self.radius_m),
-            ("max_distance_m", self.max_distance_m),
-        ):
-            if value is not None and not value > 0.0:
-                raise ValueError(f"{name} must be positive or null (got {value!r})")
-        if not self.min_distance_m >= 0.0:
-            raise ValueError(
-                f"min_distance_m must not be negative (got {self.min_distance_m!r})"
-            )
+        _check_demand(
+            "bicycles",
+            "bicycles_per_hour",
+            self.bicycles_per_hour,
+            self.period_s,
+            self.end_s,
+        )
+        _check_not_negative("bicycles.min_distance_m", self.min_distance_m)
+        _check_positive_or_inf("bicycles.max_distance_m", self.max_distance_m)
+        _check_positive("bicycles.radius_m", self.radius_m)
+        _check_count("bicycles.max_bicycles", self.max_bicycles)
 
     def period(self) -> float:
         """Seconds between two generated rides."""
@@ -270,7 +334,8 @@ class SumoBackendConfig:
             step; inside a junction nothing is corrected.  ``0`` never
             corrects SUMO.
         resync_distance_m: With ``physics``, a car further than this from its
-            SUMO vehicle (after a collision, say) is put back on it in CARLA.
+            SUMO vehicle (after a collision, say) is put back on it in CARLA;
+            ``.inf`` never puts it back.
         traffic_light_authority: Which simulator's signals the other follows.
             ``carla``: SUMO's signals take the states of CARLA's lights every
             step, so SUMO traffic obeys the lights the ego sees and a scenario
@@ -342,9 +407,10 @@ class SumoBackendConfig:
             scenario clock, so ambient traffic is already on the road; the
             scenario's vehicles are held still meanwhile.
         spawn_radius_m: Mirror only SUMO vehicles this close to the ego into
-            CARLA; ``None`` mirrors them wherever they are.
+            CARLA (positive); ``None`` mirrors them wherever they are.
         max_vehicles: Most ambient vehicles mirrored into CARLA at once, the
-            nearest to the ego first; ``None`` for no limit.
+            nearest to the ego first; ``None`` for no limit, ``0`` for none
+            (they drive in SUMO only, where its traffic still sees them).
         mesoscopic: Simulate SUMO's vehicles far from the ego (and from every
             vehicle CARLA drives) in a mesoscopic queue model instead of in
             SUMO, with no actor in CARLA, and put them back into SUMO -- and
@@ -406,14 +472,23 @@ class SumoBackendConfig:
                 "vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        for name, value in (
-            ("curve_lateral_acceleration", self.curve_lateral_acceleration),
-            ("lateral_resolution_m", self.lateral_resolution_m),
-            ("lane_change_duration_s", self.lane_change_duration_s),
-            ("step_length_s", self.step_length_s),
+        if (
+            isinstance(self.tm_port, bool)
+            or not isinstance(self.tm_port, int)
+            or not 1 <= self.tm_port <= 65535
         ):
-            if value is not None and not value > 0.0:
-                raise ValueError(f"{name} must be positive or null (got {value!r})")
+            raise ValueError(
+                f"tm_port must be an integer within 1-65535 (got {self.tm_port!r})"
+            )
+        _check_not_negative("feedback_distance_m", self.feedback_distance_m)
+        _check_positive_or_inf("resync_distance_m", self.resync_distance_m)
+        _check_positive("curve_lateral_acceleration", self.curve_lateral_acceleration)
+        _check_positive("lateral_resolution_m", self.lateral_resolution_m)
+        _check_positive("lane_change_duration_s", self.lane_change_duration_s)
+        _check_positive("step_length_s", self.step_length_s)
+        _check_not_negative("warmup_s", self.warmup_s)
+        _check_positive("spawn_radius_m", self.spawn_radius_m)
+        _check_count("max_vehicles", self.max_vehicles)
         if (
             self.lane_change_duration_s is not None
             and self.lateral_resolution_m is not None
