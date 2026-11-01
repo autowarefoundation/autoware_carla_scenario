@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
 {% for b in builders %}
     "{{ b.name }}",
@@ -40,6 +41,16 @@ __all__ = [
 OVERRIDING_ACTIONS: frozenset[str] = frozenset(
     {
 {% for b in builders if b.overrides %}
+        "{{ b.type_id }}",
+{% endfor %}
+    }
+)
+
+#: The action types whose constructor takes ``once``: those that can fire more
+#: than once, whose card offers *Fire only once*.  Any other fires once.
+ONCE_ACTIONS: frozenset[str] = frozenset(
+    {
+{% for b in builders if b.node == "Action" and b.once %}
         "{{ b.type_id }}",
 {% endfor %}
     }

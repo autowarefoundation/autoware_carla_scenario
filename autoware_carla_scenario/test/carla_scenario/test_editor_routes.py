@@ -794,6 +794,32 @@ class TestActionEditing:
         client.post(f"/draft/{draft_id}/action/{action.id}", data={"direction": "left"})
         assert _action(store, draft_id, action.id).once is False
 
+    def test_an_action_that_cannot_repeat_offers_no_fire_only_once(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Its constructor takes no ``once`` (#966): the checkbox would be
+        dropped by the builder, and leaving it out of the form must not store
+        ``once: false`` either."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "stalled_object", "actor": "npc1"},
+        )
+        stalled = next(
+            a for a in _document(store, draft_id).actions if a.type == "stalled_object"
+        )
+        page = client.get(f"/draft/{draft_id}?selected={stalled.id}").text
+        assert "Fire only once" not in page
+        client.post(f"/draft/{draft_id}/action/{stalled.id}", data={"s": "5.0"})
+        assert _action(store, draft_id, stalled.id).once is True
+
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        turn = next(a for a in _document(store, draft_id).actions if a.type == "turn")
+        assert (
+            "Fire only once" in client.get(f"/draft/{draft_id}?selected={turn.id}").text
+        )
+
     def test_checking_overrides_is_stored_where_it_means_something(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

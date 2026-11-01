@@ -77,12 +77,14 @@
         </select>
         <p class="ed-help">{{ phase_help.get(target.phase, '') }}</p>
       </div>
+      {% if target.type in once_actions %}
       <div class="ed-field">
         <label class="ed-check">
           <input type="checkbox" name="once" value="on" {% if target.once %}checked{% endif %}>
           <span>Fire only once</span>
         </label>
       </div>
+      {% endif %}
       {% if target.type in overriding_actions %}
       <div class="ed-field">
         <label class="ed-check">
