@@ -200,6 +200,11 @@ class SmartPedestrianControllerAction(BaseAction):
         """Whether the generated motion moves the walker."""
         return self._moving
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the motion is played a frame every tick until it ends."""
+        return True
+
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The pedestrian's movement and its animation."""
         return [

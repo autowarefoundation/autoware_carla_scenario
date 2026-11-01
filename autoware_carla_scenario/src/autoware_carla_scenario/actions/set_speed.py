@@ -159,6 +159,13 @@ class SetSpeedAction(BaseAction):
     # BaseAction interface
     # ------------------------------------------------------------------
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """With an *until* -- a rate's arrival, or one given: the target is
+        walked to (or waited for) a tick at a time.  An immediate change with
+        none is one call, which the initialization phase can make."""
+        return self._until is not None
+
     def _reissues_by_default(self) -> bool:
         """A rate is walked towards, so its target has to be moved every tick.
 

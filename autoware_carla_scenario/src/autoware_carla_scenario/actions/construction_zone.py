@@ -162,6 +162,16 @@ class ConstructionZoneAction(_BackendAction):
         self._elapsed = 0.0
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """When a tick has to reach a time: a zone that appears after
+        *start_time* 0, or is cleared away at an *end_time*.  One that stands
+        from the start for the whole run is placed once, which the
+        initialization phase does before the ego is started -- so the ego
+        reads a world with the zone already in it."""
+        # The tolerance execute() places the zone with at elapsed 0.
+        return self._start_time > 1e-9 or self._end_time is not None
+
+    @property
     def cleared(self) -> bool:
         """Whether the zone has come and gone."""
         return self._cleared

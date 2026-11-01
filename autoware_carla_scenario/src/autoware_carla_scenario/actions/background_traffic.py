@@ -188,6 +188,13 @@ class _BackendAction(BaseAction):
         super().__init__(label, until=stop, **kwargs)
         self._backend: Optional["TrafficBackend"] = None
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """``False``: registered for initialization, a source places its
+        initial vehicles (a sink clears its lanelets) once and stops there,
+        as the module says; on the tick loop it runs until *until*."""
+        return False
+
     def set_traffic_backend(self, backend: "TrafficBackend") -> None:
         """Inject the run's traffic backend; the scenario does this on registration."""
         self._backend = backend

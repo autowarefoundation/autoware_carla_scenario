@@ -233,6 +233,26 @@ The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode.
 - **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
 - If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
 
+### The initialization phase
+
+`register_init` registers what runs once, after the warm-up and before the ego
+is asked to start: `run_init` performs each action a single time at
+`elapsed=0` and never ticks it again. That suits an action that is over once
+commanded (a light frozen, a speed handed over, a source's initial vehicles
+placed). An action that keeps acting after the tick it fired on, or whose run
+waits on an `until` the world has to reach, says so with
+`BaseAction.needs_tick_loop`, and `register_init` puts it on the pre-tick loop
+instead, where it fires on the first tick: a trajectory or a stalled object, a
+rate-limited (or `until`-bounded) `SetSpeedAction`, a lane change waiting to
+settle, a walk that may turn back, a played or generated pedestrian motion, an
+adversarial manoeuvre or NADE traffic, a construction zone that appears late
+or is cleared away, and a
+`RoutingAction` that moves its entity itself. Left in the phase, such an action
+would sit in `runningState` for the whole run with nothing driving it. A
+`TrafficSourceAction` or `TrafficSinkAction` stays in the phase on purpose:
+registered there it acts once and stops, as does a construction zone that
+stands from the start for the whole run, placed before the ego starts.
+
 ### The scenario clock
 
 `_ScenarioClock` supplies the `elapsed` every action, condition, entity and

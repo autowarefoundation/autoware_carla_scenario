@@ -147,6 +147,11 @@ class PlayMotionAction(BaseAction):
         """Whether the motion is showing on the walker."""
         return self._playing
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the motion is shown a frame every tick until it has played."""
+        return True
+
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The pedestrian's animation; its movement too for the whole body."""
         claims = [(self._entity_name, ControlDomain.ANIMATION)]

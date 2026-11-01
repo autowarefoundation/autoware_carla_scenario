@@ -380,38 +380,42 @@ class TestInitPhase:
             ],
         )
 
-    def test_a_rate_in_init_is_a_document_error(self) -> None:
-        """`init` performs each action once, so the walk would never advance."""
+    @staticmethod
+    def _phase_errors(document: "ScenarioDocument") -> list[str]:
         from autoware_carla_scenario.authoring.validator import validate_document
 
+        return [
+            issue.message
+            for issue in validate_document(document).errors
+            if issue.path.endswith(".phase")
+        ]
+
+    def test_a_rate_in_init_is_valid(self) -> None:
+        """`register_init` puts a rate-limited change on the tick loop, from
+        the first tick, so the walk advances: init no longer refuses it."""
         document = self._document({"target_speed_kmh": 10.0, "rate_kmh_s": 5.0})
 
-        assert any(
-            "never be walked to its target" in issue.message
-            for issue in validate_document(document).errors
-        )
+        assert self._phase_errors(document) == []
 
     def test_an_immediate_change_in_init_is_fine(self) -> None:
         """Setting a speed once, before anything moves, is what init is for."""
-        from autoware_carla_scenario.authoring.validator import validate_document
-
         document = self._document({"target_speed_kmh": 10.0, "rate_kmh_s": None})
 
-        assert not any(
-            "never be walked to its target" in issue.message
-            for issue in validate_document(document).errors
-        )
+        assert self._phase_errors(document) == []
 
     def test_a_blank_rate_in_init_is_fine(self) -> None:
         """The editor writes an empty field as `""`, not as `None`."""
-        from autoware_carla_scenario.authoring.validator import validate_document
-
         document = self._document({"target_speed_kmh": 10.0, "rate_kmh_s": ""})
 
-        assert not any(
-            "never be walked to its target" in issue.message
-            for issue in validate_document(document).errors
-        )
+        assert self._phase_errors(document) == []
+
+    def test_a_rate_registered_for_init_runs_on_the_tick_loop(self) -> None:
+        """What makes the rule above safe: the walk is ticked, not dropped."""
+        action = SetSpeedAction("npc1", 10.0, rate_kmh_s=5.0)
+        immediate = SetSpeedAction("npc1", 10.0)
+
+        assert action.needs_tick_loop
+        assert not immediate.needs_tick_loop
 
 
 class TestConstruction:

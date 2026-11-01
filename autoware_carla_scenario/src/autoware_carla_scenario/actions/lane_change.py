@@ -86,6 +86,12 @@ class LaneChangeAction(BaseAction):
         self._entity_name = str(entity_name)
         self._direction = direction
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the run waits on its *until*, the vehicle settling onto the
+        next lane, which only a tick can see."""
+        return True
+
     # ------------------------------------------------------------------
     # BaseAction interface
     # ------------------------------------------------------------------

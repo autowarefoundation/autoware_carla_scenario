@@ -177,6 +177,11 @@ class AdversarialAction(BaseAction):
         execution: AdversarialExecution = self._execution
         return execution.done
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the manoeuvre is driven a tick at a time until it is over."""
+        return True
+
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Remember the scenario time, which :meth:`execute` is not given."""
         self._elapsed = elapsed

@@ -156,6 +156,11 @@ class AdversarialTrafficAction(BaseAction):
         self._backend = backend
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """Always: it samples adversities every tick for the rest of the run."""
+        return True
+
+    @property
     def weight(self) -> float:
         """The run's importance-sampling weight so far: 1 until a challenger."""
         return self._sampler.weight
