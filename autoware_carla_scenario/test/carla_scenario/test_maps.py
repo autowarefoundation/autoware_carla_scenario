@@ -228,6 +228,78 @@ class TestMapSource:
             ),
             ("/srv/maps@main", "/srv/maps", "main", ""),
             ("/srv/maps", "/srv/maps", "", ""),
+            # GitLab's views sit behind a '-' segment (#1046).
+            (
+                "https://gitlab.com/o/maps/-/tree/main/nishishinjuku",
+                "https://gitlab.com/o/maps",
+                "main",
+                "nishishinjuku",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/blob/v1.0/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "v1.0",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/raw/dev/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "dev",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/tree/main",
+                "https://gitlab.com/o/maps",
+                "main",
+                "",
+            ),
+            # The '-' ends the repository, so a subgroup path is unambiguous.
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T",
+                "https://gitlab.com/group/sub/maps",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T@v2",
+                "https://gitlab.com/group/sub/maps",
+                "v2",
+                "maps/T",
+            ),
+            # GitHub's form is unchanged.
+            (
+                "https://github.com/o/maps/blob/main/m/lanelet2_map.osm",
+                "https://github.com/o/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
+            # A self-hosted GitLab, subgroups included.
+            (
+                "https://git.example.com/g/s/maps/-/raw/main/m/lanelet2_map.osm",
+                "https://git.example.com/g/s/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
+            # On GitHub and HuggingFace a '-' is a directory in the path.
+            (
+                "https://github.com/o/maps/tree/main/-/tree/x",
+                "https://github.com/o/maps",
+                "main",
+                "-/tree/x",
+            ),
+            (
+                "https://huggingface.co/datasets/o/maps/tree/main/-/raw/x",
+                "https://huggingface.co/datasets/o/maps",
+                "main",
+                "-/raw/x",
+            ),
+            # A GitHub-style view ahead of the '-' wins on any host.
+            (
+                "https://git.example.com/o/maps/tree/main/-/x",
+                "https://git.example.com/o/maps",
+                "main",
+                "-/x",
+            ),
         ],
     )
     def test_parses_the_urls_people_actually_have(
