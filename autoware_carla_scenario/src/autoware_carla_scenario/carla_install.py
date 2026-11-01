@@ -17,7 +17,8 @@ request, so a flaky link costs a retry rather than the whole transfer.
 CARLA publishes its server for Linux x86_64 only, so on any other machine
 (aarch64 included, where the framework and its client do run) the nightly is
 refused rather than downloaded: run the server on an x86_64 host and point
-``server.host`` at it. ``--url`` still installs a package of one's choosing.
+``server.host`` at it. ``--url`` still installs a package of one's choosing,
+from a URL or from a local path (``--url ~/Downloads/CARLA.tar.gz``).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import http.client
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tarfile
@@ -65,6 +67,9 @@ _RETRIES = 8
 _RETRY_DELAY = 2.0
 """Seconds before the first reconnection; each failed one doubles it, up to 60."""
 
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+"""The ``scheme://`` that tells a URL from a local path."""
+
 
 def install_dir() -> Path:
     """Where ``scenario-setup`` puts CARLA: ``<home>/bin/carla``."""
@@ -78,11 +83,23 @@ def installed_executable() -> Optional[Path]:
     return launcher if launcher.is_file() else None
 
 
+def package_url(url: str) -> str:
+    """*url* itself, or the ``file://`` URL of a local path given instead.
+
+    A value without a ``scheme://`` is a path: ``~`` expands and a relative
+    path is taken from the current directory.
+    """
+    if _SCHEME.match(url):
+        return url
+    return Path(url).expanduser().resolve().as_uri()
+
+
 def install(
     url: str = NIGHTLY_URL, target: Optional[Path] = None, force: bool = False
 ) -> Path:
     """Download the CARLA package at *url* into *target* and return its launcher.
 
+    *url* may also be a local path (see :func:`package_url`); it is read in place.
     An install already made from the same download (same ETag, or Last-Modified
     and size) is kept unless *force*. The package's single top-level directory
     is dropped, so the launcher is always ``<target>/Linux/CarlaUnreal.sh``.
@@ -91,15 +108,25 @@ def install(
         RuntimeError: There is not room for the package, it has no launcher, or
             *target* holds something other than a CARLA this function installed.
             A previous install is left as it was, and so is anything else.
+        FileNotFoundError: *url* is a local path or ``file://`` URL naming no file.
+        ValueError: *url* has a scheme urllib cannot open.
     """
     if not hasattr(tarfile, "data_filter"):  # added in 3.10.12 / 3.11.4
         raise RuntimeError("scenario-setup needs Python 3.10.12, 3.11.4 or later")
     # The runner imports this module for install_dir() alone; these it does not need.
     import urllib.error  # noqa: PLC0415
+    import urllib.parse  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
     from tqdm import tqdm  # noqa: PLC0415
 
+    url = package_url(url)
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme.lower() == "file" and parts.netloc in ("", "localhost"):
+        # Said plainly; urllib's own report is "<urlopen error [Errno 2] ...>".
+        local = Path(urllib.request.url2pathname(parts.path))
+        if not local.is_file():
+            raise FileNotFoundError(f"{local}: no such file")
     target = (target or install_dir()).expanduser().resolve()
     if target.exists() and not (target / _STAMP).is_file() and any(target.iterdir()):
         raise RuntimeError(
@@ -396,7 +423,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--url",
         default=NIGHTLY_URL,
-        help="CARLA Linux package (.tar.gz) to install (default: the nightly build)",
+        help="CARLA Linux package (.tar.gz) to install, as a URL or a local path "
+        "(default: the nightly build)",
     )
     parser.add_argument(
         "--dir",
@@ -422,8 +450,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
     try:
         launcher = install(args.url, args.dir, args.force)
-    except (OSError, RuntimeError, tarfile.TarError, http.client.HTTPException) as exc:
-        print(f"scenario-setup: {exc}", file=sys.stderr)
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        tarfile.TarError,
+        http.client.HTTPException,
+    ) as exc:
+        message = " ".join(str(exc).split())  # one line, whatever the exception says
+        print(f"scenario-setup: {message}", file=sys.stderr)
         return 1
     print(f"CARLA launcher: {launcher}")
     if args.dir is not None:

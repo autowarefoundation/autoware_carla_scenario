@@ -55,7 +55,7 @@ run fetches it whole) if the nightly was replaced in the meantime.
 | Option | Meaning |
 | --- | --- |
 | `--force` | Download again even if the install is current |
-| `--url URL` | Install another CARLA Linux package (`.tar.gz`), e.g. a release |
+| `--url URL` | Install another CARLA Linux package (`.tar.gz`), e.g. a release: a URL, or a local path (`~/Downloads/CARLA.tar.gz`, `./CARLA.tar.gz`) to install an archive already downloaded |
 | `--dir DIR` | Unpack into `DIR` (new or empty) instead; then point `CARLA_EXECUTABLE` at the launcher it prints |
 
 `AUTOWARE_CARLA_SCENARIO_HOME` moves `~/.autoware_carla_scenario` as a whole.
