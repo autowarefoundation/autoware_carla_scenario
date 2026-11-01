@@ -1059,9 +1059,12 @@ def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) ->
 
     The ego is routed to :attr:`~...models.Entity.goal` during initialization
     whether or not a card says so, so an init ``routing`` card owned by the ego
-    sends it a second destination in the same phase, and which of the two
-    survives is the order the two are registered in.  A warning rather than an
-    error: the run is well defined, it just says one thing twice.
+    sends it a second destination in the same phase.  The ego's own goal is
+    registered first (as the ego is spawned) and the document's cards after it,
+    and ``run_init`` performs them in that order, each giving the ego back
+    before the next fires: both are delivered and the card's goal is the one
+    the ego keeps.  A warning rather than an error: the run is well defined,
+    it just says one thing twice.
     """
     ego = document.ego
     if ego is None or ego.goal is None:
@@ -1072,8 +1075,9 @@ def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) ->
         out.warn(
             f"actions[{index}].phase",
             f"{action.title or 'Set Goal'} routes the ego during initialization, "
-            "where its own goal is already delivered. Move this card onto the "
-            "tick loop to change the destination mid-run.",
+            "where its own goal is already delivered; this card's goal replaces "
+            "it before the run starts. Move this card onto the tick loop to "
+            "change the destination mid-run.",
             action.id,
         )
 
