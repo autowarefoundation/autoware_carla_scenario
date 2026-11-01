@@ -1,7 +1,7 @@
 """CARLA ray-cast LiDAR: one full revolution per sweep, a sweep every so many ticks.
 
-Sweeps arrive asynchronously, like camera frames, into a queue the caller drains
-once per policy step; :meth:`CarlaLidarSensor.latest_sweep` hands back the newest
+Sweeps arrive asynchronously, like camera frames, into a small queue that drops
+its oldest sweep when full and that the caller drains once per policy step; :meth:`CarlaLidarSensor.latest_sweep` hands back the newest
 raw ``[N, 4]`` buffer in the sensor's own (left-handed) frame, with the frame it
 was taken on, and the conversion into the rig frame is left to whoever sends it
 -- only a sweep actually sent is worth converting.
@@ -40,6 +40,12 @@ __all__ = ["CarlaLidarSensor", "CarlaLidarSensorConfig"]
 #: How long :meth:`CarlaLidarSensor.latest_sweep` waits for a sweep that is due, in
 #: seconds.
 _SWEEP_TIMEOUT: float = 1.0
+
+#: How many sweeps the queue holds before the oldest is dropped.  Only the
+#: newest sweep is ever read (:meth:`CarlaLidarSensor._keep`), and the newest is
+#: always the last one put, so one would do; two also keeps the newest when a
+#: sweep is delivered a frame late, after a newer one.
+_SWEEP_QUEUE_SIZE: int = 2
 
 
 @dataclass(frozen=True)
@@ -111,8 +117,12 @@ class CarlaLidarSensor:
 
     _config: CarlaLidarSensorConfig
     _sensor: Optional["carla.Actor"]
-    #: ``(frame, raw [N, 4] float32)``, oldest first.  Unbounded: the listen
-    #: callback must never block, and :meth:`latest_sweep` drains it every call.
+    #: ``(frame, raw [N, 4] float32)``, oldest first.  Bounded
+    #: (:data:`_SWEEP_QUEUE_SIZE`): nothing drains it until the first
+    #: :meth:`latest_sweep`, which may be many sweeps after attaching (a bridged
+    #: stack still booting), so the listener drops the oldest sweep when it is
+    #: full rather than block or hold every sweep.  A sweep dropped is one older
+    #: than one kept, which :meth:`_keep` would have thrown away anyway.
     _sweeps: queue.Queue[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
     _interval_ticks: int
     #: The newest sweep received, kept until a newer one arrives.
@@ -132,7 +142,7 @@ class CarlaLidarSensor:
         ticks = tick_multiple(sweep_interval_s, "LiDAR sweep_interval_s")
         self._config = config
         self._sensor = None
-        self._sweeps = queue.Queue()
+        self._sweeps = queue.Queue(maxsize=_SWEEP_QUEUE_SIZE)
         self._interval_ticks = ticks
         self._newest = None
         self._world = None
@@ -210,7 +220,11 @@ class CarlaLidarSensor:
             self._receive(data)
 
     def _receive(self, measurement: "carla.LidarMeasurement") -> None:
-        """Queue the raw buffer; copying it is all the callback thread does."""
+        """Queue the raw buffer; copying it is all the callback thread does.
+
+        The queue is bounded: when it is full the oldest sweep is dropped, never
+        this one, and the callback never blocks.
+        """
         try:
             if TYPE_CHECKING:
                 # typesafe_carla's Codon raw_data is a view, and Codon's
@@ -218,7 +232,16 @@ class CarlaLidarSensor:
                 raw = np.frombuffer(measurement.raw_data.tobytes(), dtype=np.float32)
             else:
                 raw = np.frombuffer(measurement.raw_data, dtype=np.float32)
-            self._sweeps.put((int(measurement.frame), raw.reshape(-1, 4).copy()))
+            sweep = (int(measurement.frame), raw.reshape(-1, 4).copy())
+            while True:
+                try:
+                    self._sweeps.put_nowait(sweep)
+                    break
+                except queue.Full:
+                    try:
+                        self._sweeps.get_nowait()
+                    except queue.Empty:
+                        pass
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("failed to receive a LiDAR sweep")
 

@@ -163,6 +163,73 @@ def test_the_listener_hands_the_measurement_to_receive() -> None:
     assert [lidar._sweeps.get_nowait()[0] for _ in range(2)] == [7, 8]  # noqa: SLF001
 
 
+def test_sweeps_nobody_reads_stay_bounded_and_the_newest_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sweeps arriving before the first read drop the oldest, never the newest (#983)."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    for frame in range(1, 101):
+        lidar._receive(_measurement(frame))  # noqa: SLF001
+        assert lidar._sweeps.qsize() <= carla_lidar._SWEEP_QUEUE_SIZE  # noqa: SLF001
+    sweep = lidar.latest_sweep(100)
+    assert sweep is not None and sweep[0] == 100 and sweep[1][0, 0] == 100.0
+
+
+def test_a_sweep_due_survives_sweeps_faster_than_the_policy_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a sweep every tick read every fourth tick, each read gets the newest."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    for step in range(5):
+        for frame in range(4 * step + 1, 4 * step + 5):
+            lidar._receive(_measurement(frame))  # noqa: SLF001
+        sweep = lidar.latest_sweep(4 * step + 4)
+        assert sweep is not None and sweep[0] == 4 * step + 4
+
+
+def test_a_sweep_delivered_late_does_not_push_out_the_newest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    for frame in (10, 12, 11):
+        lidar._receive(_measurement(frame))  # noqa: SLF001
+    sweep = lidar.latest_sweep(12)
+    assert sweep is not None and sweep[0] == 12
+
+
+def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
+    """The driver entity attaches its LiDARs, then waits for the stack's handshake
+    without reading them; the sweeps of that wait must not pile up (#983)."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    lidar_cfg = DriverLidarConfig()
+    entity = cde.CarlaDriverEntity(
+        DriverClientConfig(send_renderer_data=True, lidars=(lidar_cfg,)),
+        client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    lidar = CarlaLidarSensor(lidar_cfg, sweep_interval_s=0.1)
+    mount = sensor_pose_in_rig(0, 0, 0, 0, 0, 0, rear_axle_offset_m=0.0)
+    entity._lidars = [(lidar_cfg.logical_id, lidar, mount)]
+    # The handshake is not ready yet and reports no failure.
+    entity._handshake = SimpleNamespace(ready=False, poll=lambda: None)  # type: ignore[assignment]
+    entity._session_open = True
+    entity._vehicle = SimpleNamespace(id=1)  # type: ignore[assignment]
+    world = SimpleNamespace(frame=100)
+    world.get_snapshot = lambda: SimpleNamespace(frame=world.frame)
+    for tick in range(200):
+        world.frame += 1
+        if tick % 2 == 0:
+            lidar._receive(_measurement(world.frame, n=1000))  # noqa: SLF001
+        entity.on_tick(world, 0.0)  # type: ignore[arg-type]
+        assert lidar._sweeps.qsize() <= carla_lidar._SWEEP_QUEUE_SIZE  # noqa: SLF001
+    assert entity._handshake is not None and not entity._handshake.ready
+    newest = max(frame for frame, _ in list(lidar._sweeps.queue))  # noqa: SLF001
+    assert newest == world.frame - 1
+
+
 def test_attach_pins_one_revolution_per_tick() -> None:
     blueprint = SimpleNamespace(attributes={}, has_attribute=lambda name: True)
     blueprint.set_attribute = blueprint.attributes.__setitem__
