@@ -53,6 +53,7 @@ __all__ = [
     "build_entity_distance_condition",
     "build_distance_condition",
     "build_relative_speed_condition",
+    "build_entity_count_condition",
     "build_ttc_condition",
     "build_ttc_to_position_condition",
     "build_time_headway_condition",
@@ -647,6 +648,38 @@ def build_relative_speed_condition(
         value=params["value"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         direction=SpeedDirection[str(params["direction"])],
+        label=compiled.label,
+    )
+
+
+def build_entity_count_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityCountCondition`."""
+    from ..conditions import EntityCountCondition  # noqa: PLC0415
+    from ..conditions import entity_filter_from_fields  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    entities = entity_filter_from_fields(
+        names=params["names"],
+        kind=params["kind"],
+        reference=params["reference"],
+        min_distance_m=params["min_distance_m"],
+        max_distance_m=params["max_distance_m"],
+        min_ahead_m=params["min_ahead_m"],
+        max_ahead_m=params["max_ahead_m"],
+        min_left_m=params["min_left_m"],
+        max_left_m=params["max_left_m"],
+        lanelet_ids=params["lanelet_ids"],
+        include_reference=params["include_reference"],
+    )
+    return EntityCountCondition(
+        entities=entities,
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        count=params["count"],
         label=compiled.label,
     )
 
