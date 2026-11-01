@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 
+import lanelet2.geometry
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
@@ -101,12 +102,18 @@ def left_lanes_ahead(
     them, on a lanelet that turns off them, or on no lanelet at all -- off the
     road.  The position tested is the vehicle's centre, its CARLA location.
 
+    Not every lanelet :func:`lanelets_ahead` returns is kept: following every
+    branch, it can loop round a block into the lane beside the ego's, and
+    those lanelets would then count as its own (#1080).  So
+    :func:`ego_lanes_ahead` leaves out each lanelet beside one of
+    :func:`lanes_ahead_before_junction` that it reaches only that way.
+
     *seconds* of zero or less fails on the first tick off them.
     """
     # Appended one by one, and chosen by if/else: Codon gives neither a list
     # comprehension nor a conditional expression the base class's type.
     on_lanes: list[BaseCondition] = []
-    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
         on_lanes.append(
             EntityLanePositionCondition(
                 EGO_ROLE_NAME,
@@ -164,6 +171,94 @@ def lanes_ahead_before_junction(lanelet_id: int, distance_m: float) -> list[int]
         if candidate in kept:
             ordered.append(candidate)
     return ordered
+
+
+def _beside(lanelet_id: int) -> list[int]:
+    """The lanelets beside *lanelet_id*, either side, a lane change allowed
+    across the line between or not (the routing graph's neighbours)."""
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    found: list[int] = []
+    left = graph.left(lanelet)
+    if left is not None:
+        found.append(int(left.id))
+    right = graph.right(lanelet)
+    if right is not None:
+        found.append(int(right.id))
+    adjacent_left = graph.adjacentLeft(lanelet)
+    if adjacent_left is not None:
+        found.append(int(adjacent_left.id))
+    adjacent_right = graph.adjacentRight(lanelet)
+    if adjacent_right is not None:
+        found.append(int(adjacent_right.id))
+    return found
+
+
+def _length(lanelet_id: int) -> float:
+    """The length of *lanelet_id*'s centerline (m), as :func:`lanelets_ahead`
+    measures it."""
+    lanelet = MapManager.get_instance().lanelet_map.laneletLayer[lanelet_id]
+    return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
+
+
+def _begins(ahead: list[int], distance_m: float) -> dict[int, float]:
+    """How far from the start of ``ahead[0]`` each lanelet of *ahead* begins
+    (m), by the shortest chain -- *ahead* as :func:`lanelets_ahead` gives it,
+    nearest first, so the predecessor on that chain always comes earlier."""
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    begins: dict[int, float] = {}
+    for candidate in ahead:
+        if len(begins) == 0:
+            begins[candidate] = 0.0
+            continue
+        nearest = distance_m
+        for previous in graph.previous(layer[candidate], False):
+            previous_id = int(previous.id)
+            if previous_id in begins:
+                ends_at = begins[previous_id] + _length(previous_id)
+                if ends_at < nearest:
+                    nearest = ends_at
+        begins[candidate] = nearest
+    return begins
+
+
+def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
+    """The lanelets :func:`left_lanes_ahead` keeps the ego on.
+
+    :func:`lanelets_ahead` of *lanelet_id*, less every lanelet beside one of
+    :func:`lanes_ahead_before_junction` -- the routing graph's ``left`` and
+    ``right``, and ``adjacentLeft`` and ``adjacentRight`` across a solid
+    line -- that it reaches only past the end of the lanelet it is beside.
+    Following every branch through junctions, :func:`lanelets_ahead` can loop
+    round a block and come back into the lane beside the ego's, which a lane
+    change reaches; it is never the ego's lane.  One it reaches before then
+    is a branch of the ego's own lanes -- a turn through the junction ahead
+    that ends beside one of them -- and is kept.  A lanelet of
+    :func:`lanes_ahead_before_junction` itself is always kept.  In the order
+    :func:`lanelets_ahead` gives, *lanelet_id* first.
+    """
+    own = lanes_ahead_before_junction(lanelet_id, distance_m)
+    ahead = lanelets_ahead(lanelet_id, distance_m)
+    begins = _begins(ahead, distance_m)
+    # Each lanelet beside the ego's, and the furthest any lanelet of the
+    # ego's it is beside ends: reached only past that, it is a loop.
+    beside_ends: dict[int, float] = {}
+    for lanelet in own:
+        ends_at = begins[lanelet] + _length(lanelet)
+        for neighbour in _beside(lanelet):
+            if neighbour in own:
+                continue
+            if neighbour not in beside_ends or beside_ends[neighbour] < ends_at:
+                beside_ends[neighbour] = ends_at
+    kept: list[int] = []
+    for lanelet in ahead:
+        if lanelet in beside_ends and begins[lanelet] >= beside_ends[lanelet]:
+            continue
+        kept.append(lanelet)
+    return kept
 
 
 def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
