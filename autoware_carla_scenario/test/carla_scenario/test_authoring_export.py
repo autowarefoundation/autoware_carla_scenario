@@ -224,6 +224,20 @@ class TestFrameworkPin:
     def test_a_plain_https_remote_is_unchanged(self, url: str) -> None:
         assert normalize_repository_url(url) == "https://github.com/owner/repo"
 
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://tok@[::1/o/r.git", "https://[::1/o/r"),
+            ("https://tok@host]/o/r", "https://host]/o/r"),
+            ("https://tok@[::1]:8443/o/r.git", "https://[::1]:8443/o/r"),
+        ],
+    )
+    def test_a_malformed_ipv6_remote_does_not_crash(
+        self, url: str, expected: str
+    ) -> None:
+        """``urlsplit`` raises on these; the export must not, nor keep the token."""
+        assert normalize_repository_url(url) == expected
+
     def test_a_credentialed_origin_never_reaches_the_pin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

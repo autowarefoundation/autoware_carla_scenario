@@ -24,7 +24,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
-from urllib.parse import urlsplit
 
 __all__ = [
     "DISTRIBUTION",
@@ -46,7 +45,7 @@ REPOSITORY_ENV = "SCENARIO_EXPORT_FRAMEWORK_REPOSITORY"
 
 _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 #: The scp-like form ``git@host:owner/repo.git``, which has no scheme.  A
-#: ``scheme://`` URL is parsed with :func:`urllib.parse.urlsplit` instead.
+#: ``scheme://`` URL is split by :func:`_split_url` instead.
 _SCP_URL_PATTERN = re.compile(r"^git@([^:/]+)[:/](.+?)(?:\.git)?/?$")
 
 #: Ports implied by an http(s) scheme, dropped when a URL spells them out.
@@ -156,6 +155,28 @@ def _git(repo: Path, *args: str) -> Optional[str]:
     return result.stdout.strip()
 
 
+def _split_url(url: str) -> tuple[str, str, str]:
+    """Split ``scheme://netloc/path?query#fragment`` into scheme, netloc, path.
+
+    By hand rather than with :func:`urllib.parse.urlsplit`, which raises
+    ``ValueError`` on a malformed IPv6 host (``https://[::1/x``): a remote
+    git accepted must not stop an export, nor reach its error message.
+    """
+    scheme, _sep, rest = url.partition("://")
+    end = len(rest)
+    for mark in "/?#":
+        index = rest.find(mark)
+        if 0 <= index < end:
+            end = index
+    netloc = rest[:end]
+    path = rest[end:]
+    for mark in "?#":
+        index = path.find(mark)
+        if index >= 0:
+            path = path[:index]
+    return scheme, netloc, path
+
+
 def _split_host_port(host_port: str) -> tuple[str, str]:
     """Split ``host[:port]`` (or ``[v6]:port``) into its host and port."""
     if host_port.startswith("["):
@@ -196,19 +217,19 @@ def normalize_repository_url(url: str) -> str:
     if "://" not in stripped:
         return stripped
 
-    parts = urlsplit(stripped)
-    scheme = parts.scheme.lower()
-    host_port = parts.netloc.rpartition("@")[2]
+    raw_scheme, raw_netloc, raw_path = _split_url(stripped)
+    scheme = raw_scheme.lower()
+    host_port = raw_netloc.rpartition("@")[2]
     host, port = _split_host_port(host_port)
     if scheme in ("ssh", "git+ssh"):
-        path = _strip_repo_path(parts.path).lstrip("/")
+        path = _strip_repo_path(raw_path).lstrip("/")
         return f"https://{host}/{path}"
     if scheme in ("http", "https"):
         netloc = host if port in ("", _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
-        return f"{scheme}://{netloc}{parts.path.removesuffix('.git')}"
-    if host_port == parts.netloc:
+        return f"{scheme}://{netloc}{raw_path.removesuffix('.git')}"
+    if host_port == raw_netloc:
         return stripped
-    return stripped.replace(parts.netloc, host_port, 1)
+    return stripped.replace(raw_netloc, host_port, 1)
 
 
 def framework_source_root() -> Path:
