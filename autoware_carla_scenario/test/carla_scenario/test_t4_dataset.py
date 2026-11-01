@@ -801,34 +801,69 @@ def test_a_driver_policys_ego_feeds_the_dataset(
     assert [a["num_lidar_pts"] for a in _table(root, "sample_annotation")] == [1] * 5
 
 
-def test_a_camera_frame_from_an_earlier_tick_is_not_written_on_this_ones(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A frame rendered a tick before the policy step it was fed on would sit
-    on the wrong ego pose and boxes: it is left out, the sweep kept (#951)."""
+def _fed_camera_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sweep_age: Optional[int],
+    camera_age: int,
+) -> Path:
+    """A driver policy's ego feeding, on its steps (odd frames), a camera frame
+    rendered *camera_age* ticks before, and a sweep taken *sweep_age* ticks
+    before (none when ``None``)."""
     world = _World()
+    jpeg = _jpeg()
     t4.offer_driver_sensors(-1.25)
     try:
         recording = _start(tmp_path, monkeypatch, world)
     finally:
         t4.withdraw_driver_sensors()
-    jpeg = _jpeg()
-    for frame in range(101, 105):
+    for frame in range(100, 111):
         world.frame = frame
-        if frame % 2 == 1:  # the policy's steps
-            recording.feed_lidar(
-                frame, np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
-            )
-            # 101: rendered on the step's own tick; 103: on the tick before.
+        if frame % 2 == 1:
+            if sweep_age is not None:
+                recording.feed_lidar(
+                    frame,
+                    np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                    taken_on=frame - sweep_age,
+                )
             recording.feed_camera_jpeg(
-                frame, "cam_front", jpeg, taken_on=101 if frame == 101 else frame - 1
+                frame, "cam_front", jpeg, taken_on=frame - camera_age
             )
         recording.record(world)  # type: ignore[arg-type]
     root = recording.close()
     assert root is not None
-    assert len(_table(root, "sample")) == 2
-    cameras = [s for s in _table(root, "sample_data") if s["fileformat"] == "jpg"]
-    assert len(cameras) == 1
+    return root
+
+
+def _jpg_timestamps(root: Path) -> list[int]:
+    return sorted(
+        s["timestamp"] for s in _table(root, "sample_data") if s["fileformat"] == "jpg"
+    )
+
+
+@pytest.mark.parametrize("sweep_age", [1, None])
+def test_a_fed_camera_frame_from_the_tick_before_is_on_that_ticks_sample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sweep_age: Optional[int]
+) -> None:
+    """A camera frame rendered a tick before the policy step is written on that
+    tick's sample, with the sweep taken then, or alone without a LiDAR (#951)."""
+    root = _fed_camera_run(tmp_path, monkeypatch, sweep_age=sweep_age, camera_age=1)
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    assert len(samples) == 5
+    # On frames 100, 102, ...: the frames the camera rendered on.
+    assert [t - samples[0] for t in samples] == [0, 100_000, 200_000, 300_000, 400_000]
+    assert _jpg_timestamps(root) == samples
+
+
+def test_a_fed_camera_frame_off_the_sweeps_tick_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A camera frame rendered on another tick than the key frame's sweep would
+    sit on the wrong ego pose and boxes: it is left out, the sweep kept."""
+    root = _fed_camera_run(tmp_path, monkeypatch, sweep_age=0, camera_age=1)
+    assert len(_table(root, "sample")) == 5
+    assert _jpg_timestamps(root) == []
 
 
 def test_the_camera_a_policy_is_told_of_is_the_one_the_dataset_calibrates(
@@ -909,6 +944,91 @@ def test_a_recording_after_a_driver_fed_one_is_not_fed_by_a_driver(
     recording = _start(tmp_path / "plain", monkeypatch, world)
     assert not recording.fed_by_driver
     assert len(world.sensors) == 2
+
+
+def _fed_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age: int
+) -> tuple[Path, _World]:
+    """A driver policy's ego feeding, on its steps (odd frames), a sweep taken
+    *age* ticks before, and a camera frame."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    for frame in range(100, 111):
+        world.frame = frame
+        if frame % 2 == 1:
+            recording.feed_lidar(
+                frame,
+                np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                taken_on=frame - age,
+            )
+            recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    return root, world
+
+
+def test_a_fed_sweep_from_the_tick_before_is_on_that_ticks_pose_and_boxes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The policy can be handed a sweep taken a tick before its step: the sample
+    is that tick's, as with the recorder's own LiDARs (#950)."""
+    root, world = _fed_run(tmp_path, monkeypatch, age=1)
+    samples = sorted(_table(root, "sample"), key=lambda s: s["timestamp"])
+    assert len(samples) == 5
+    steps = [s["timestamp"] - samples[0]["timestamp"] for s in samples]
+    assert steps == [0, 100_000, 200_000, 300_000, 400_000]
+    poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
+    for pose, frame in zip(poses, range(100, 110, 2)):
+        np.testing.assert_allclose(
+            pose["translation"][0], world.ego_x(frame) - 1.25 + OFFSETS[0], atol=1e-9
+        )
+    lidar = [s for s in _table(root, "sample_data") if s["fileformat"] != "jpg"]
+    assert len(lidar) == 5
+    cars = sorted(
+        (a for a in _table(root, "sample_annotation") if a["num_lidar_pts"]),
+        key=lambda a: a["translation"][0],
+    )
+    assert len(cars) == 5
+    for car, frame in zip(cars, range(100, 110, 2)):
+        # The car keeps 10 m ahead of the ego's origin: on the sweep's frame.
+        np.testing.assert_allclose(
+            car["translation"][0], world.ego_x(frame) + 10.0 + OFFSETS[0], atol=1e-6
+        )
+
+
+def test_a_fed_sweep_of_the_step_itself_is_on_the_steps_pose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, world = _fed_run(tmp_path, monkeypatch, age=0)
+    poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
+    assert len(poses) == 5
+    for pose, frame in zip(poses, range(101, 111, 2)):
+        np.testing.assert_allclose(
+            pose["translation"][0], world.ego_x(frame) - 1.25 + OFFSETS[0], atol=1e-9
+        )
+
+
+def test_a_fed_sweep_older_than_the_snapshots_kept_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A sweep whose frame has no snapshot -- older than those kept, or from
+    before the recording started -- is dropped with a debug log; the step's
+    frame is written without it."""
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        root, world = _fed_run(tmp_path, monkeypatch, age=50)
+    assert "no snapshot of frame 51 for a sweep fed on frame 101" in caplog.text
+    poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
+    assert len(poses) == 5
+    np.testing.assert_allclose(
+        poses[0]["translation"][0], world.ego_x(101) - 1.25 + OFFSETS[0], atol=1e-9
+    )
+    assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
 
 
 def _jpeg() -> bytes:

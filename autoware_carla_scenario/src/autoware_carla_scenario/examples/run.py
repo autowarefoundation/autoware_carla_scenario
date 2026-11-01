@@ -71,7 +71,7 @@ from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
-from autoware_carla_scenario.constants import DEFAULT_TM_PORT, FIXED_DELTA_SECONDS
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT, tick_multiple
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
@@ -916,12 +916,7 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
         if not t4scene_cfg.get("enabled", False):
             continue
         step_s = float(t4scene_cfg.get("step_s", 0.1))
-        ticks = round(step_s / FIXED_DELTA_SECONDS)
-        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - step_s) > 1e-9:
-            raise ValueError(
-                f"t4scene.step_s={step_s} is not a positive multiple of the "
-                f"{FIXED_DELTA_SECONDS} s tick"
-            )
+        tick_multiple(step_s, "t4scene.step_s")
         max_distance = t4scene_cfg.get("max_distance_m", 100.0)
         return T4SceneExporter(
             step_s=step_s,

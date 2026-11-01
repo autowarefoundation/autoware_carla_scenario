@@ -9,11 +9,10 @@ builds a message.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Optional
 
-from ..constants import EGO_ROLES, FIXED_DELTA_SECONDS
+from ..constants import EGO_ROLES, tick_multiple
 from ..rerun import TRAJECTORY_SUFFIX
 
 __all__ = ["indicator_at", "is_ego", "on_scene", "scene_stem", "step_frames"]
@@ -25,15 +24,7 @@ def step_frames(step_s: float) -> int:
     Raises:
         ValueError: If *step_s* is not a positive multiple of the tick.
     """
-    frames = int(round(step_s / FIXED_DELTA_SECONDS))
-    if frames < 1 or not math.isclose(
-        frames * FIXED_DELTA_SECONDS, step_s, rel_tol=0.0, abs_tol=1e-9
-    ):
-        raise ValueError(
-            f"step_s={step_s} is not a positive multiple of the "
-            f"{FIXED_DELTA_SECONDS} s tick"
-        )
-    return frames
+    return tick_multiple(step_s, "step_s")
 
 
 def scene_stem(name: str) -> str:

@@ -28,6 +28,34 @@ EGO_ROLES = ("ego", "hero")
 # Three private copies that must agree is exactly the coupling this avoids.
 FIXED_DELTA_SECONDS: float = 0.05
 
+
+def tick_multiple(seconds: float, key: str) -> int:
+    """The ticks in *seconds*, which must be a positive multiple of the tick.
+
+    Every setting the run can only honour on a tick boundary -- the driver
+    policy's step, a LiDAR's sweep, the T4 dataset's and the T4Scene's step --
+    goes through this one check, so a value between two ticks is refused when
+    the config is read instead of being rounded to the next tick at run time.
+    A value within 1e-9 s of a multiple counts as one (0.15 is not exact in
+    binary).
+
+    Args:
+        seconds: The interval.
+        key: The setting's name, which the error names (``driver.policy_timestep_s``).
+
+    Raises:
+        ValueError: If *seconds* is not a positive multiple of the tick (and
+            OverflowError for an infinite *seconds*, as ``round`` raises).
+    """
+    ticks = int(round(seconds / FIXED_DELTA_SECONDS))
+    if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - seconds) > 1e-9:
+        raise ValueError(
+            f"{key}={seconds} is not a positive multiple of the "
+            f"{FIXED_DELTA_SECONDS} s tick"
+        )
+    return ticks
+
+
 # Microseconds per second: simulation time as an integer, the clock the
 # trajectory follower, the ego observation and the ROS 2 command arbiter keep.
 US_PER_S: int = 1_000_000

@@ -171,6 +171,11 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
         #: The frame of the sweep last written into the LiDAR recording, by LiDAR.
         self._recorded_lidar: Dict[str, int] = {}
+        #: The ego's pose (the rig's, in the local frame) on the last ticks, by
+        #: simulator frame, kept while there are LiDARs and only as far back as
+        #: their longest sweep interval: a sweep is recorded on the pose of the
+        #: tick it was taken on, which can be before the policy step (#950).
+        self._pose_history: Dict[int, Pose] = {}
         #: Each camera's mount, for the run's recording (``rerun.cameras``).
         self._camera_mounts: Dict[str, CameraMount] = {}
         #: The frame each camera's image last sent to the policy was rendered on.
@@ -315,6 +320,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._drive_count = 0
         self._pending_egomotion = []
         self._recorded_lidar = {}
+        self._pose_history = {}
         self._camera_mounts = {}
         self._submitted_camera = {}
         self._plan_markers = DebugMarkers()
@@ -425,6 +431,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # policy step and the controller.
         observation = self._ego_observation(actor)
         self._pending_egomotion.append(observation)
+        self._remember_pose(world, observation.pose)
         if self._t4 is not None:
             self._record_t4(world, elapsed, actor, observation)
 
@@ -593,13 +600,27 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             ),
         )
 
+    def _remember_pose(self, world: "carla.World", pose: Pose) -> None:
+        """Keep the ego's *pose* on this tick, for the sweeps taken on it."""
+        if not self._lidars:
+            return
+        frame = int(world.get_snapshot().frame)
+        self._pose_history[frame] = pose
+        # A sweep is at most an interval old when it is read (latest_sweep).
+        oldest = frame - max(lidar.sweep_interval_ticks for _, lidar, _ in self._lidars)
+        for old in [f for f in self._pose_history if f < oldest]:
+            del self._pose_history[old]
+
     def _lidar_sweeps(self, pose: Optional[Pose] = None) -> List[LidarSweep]:
         """Every LiDAR's newest sweep, in the rig frame, stamped with when it was taken.
 
         A LiDAR sweeps once a policy step, which need not be this very tick: a
         sweep from an earlier tick carries that tick's time.  With *pose*, the
         ego's in the local frame, a run recording its LiDARs
-        (``rerun.lidar``) is handed each new sweep too.
+        (``rerun.lidar``) is handed each new sweep too, on the ego's pose of the
+        tick it was taken on, and a T4 dataset of the run is fed it as taken
+        on that tick (#950).  A sweep older than the poses kept is not
+        recorded (logged at debug level); the policy still gets it.
         """
         if not self._lidars or self._world is None:
             return []
@@ -625,9 +646,21 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 )
             )
             if recorder is not None and pose is not None:
-                self._record_lidar(recorder, logical_id, sweep[0], points, pose)
+                taken_pose = (
+                    pose if sweep[0] == frame else self._pose_history.get(sweep[0])
+                )
+                if taken_pose is None:
+                    logger.debug(
+                        "no ego pose of frame %d for LiDAR %s's sweep; not recorded",
+                        sweep[0],
+                        logical_id,
+                    )
+                else:
+                    self._record_lidar(
+                        recorder, logical_id, sweep[0], points, taken_pose
+                    )
             if dataset is not None:
-                dataset.feed_lidar(frame, points)
+                dataset.feed_lidar(frame, points, taken_on=sweep[0])
         return sweeps
 
     def _record_lidar(

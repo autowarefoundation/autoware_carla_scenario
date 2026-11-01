@@ -369,3 +369,114 @@ def test_a_ground_truth_failure_does_not_cost_the_sweep() -> None:
     message = carla_driver_pb2.CarlaRendererData()
     message.ParseFromString(builder.build(1_000, Pose.identity(), lidar=[_sweep()]))
     assert len(message.lidar) == 1 and message.snapshot_timestamp_us == 1_000
+
+
+# ---------------------------------------------------------------------------
+# A sweep taken before the policy step (#950)
+# ---------------------------------------------------------------------------
+
+_TICK_US = 50_000
+
+
+class _AgedLidar:
+    """A LiDAR whose newest sweep is from *taken_on*: one point 10 m ahead."""
+
+    sweep_interval_ticks = 2
+
+    def __init__(self, taken_on: int) -> None:
+        self.taken_on = taken_on
+
+    def latest_sweep(self, frame: int) -> tuple[int, np.ndarray]:
+        return self.taken_on, np.array([[10.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+
+
+def _pose_at(frame: int) -> Pose:
+    """The ego driving along +x at 15 m/s."""
+    return Pose.from_xyz_yaw(15.0 * 0.05 * frame, 0.0, 0.0, 0.0)
+
+
+def _aged_sweep(
+    monkeypatch: pytest.MonkeyPatch, taken_on: int, now: int, history: range
+) -> tuple[list[tuple[int, np.ndarray]], list[tuple[int, int]]]:
+    """Run the driver entity's LiDAR read on frame *now*, its poses kept on the
+    frames of *history*; what the Rerun recorder logged (frame, world point)
+    and what the T4 dataset was fed (frame fed on, frame taken on)."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    logged: list[tuple[int, np.ndarray]] = []
+    fed: list[tuple[int, int]] = []
+    recorder = SimpleNamespace(
+        records_lidar=True,
+        log_sweep=lambda _id, frame, points, rotation, position: logged.append(
+            (frame, (points[:, :3] @ np.asarray(rotation).T + position)[0])
+        ),
+    )
+    dataset = SimpleNamespace(
+        feed_lidar=lambda frame, points, *, taken_on: fed.append((frame, taken_on))
+    )
+    monkeypatch.setattr(cde, "active_recorder", lambda: recorder)
+    monkeypatch.setattr(cde, "active_recording", lambda: dataset)
+
+    entity = cde.CarlaDriverEntity(DriverClientConfig(), client=SimpleNamespace())  # type: ignore[arg-type]
+    mount = sensor_pose_in_rig(0, 0, 0, 0, 0, 0, rear_axle_offset_m=0.0)
+    entity._lidars = [("lidar_top", _AgedLidar(taken_on), mount)]  # type: ignore[list-item]
+    world = SimpleNamespace(frame=0)
+    world.get_snapshot = lambda: SimpleNamespace(frame=world.frame)
+    entity._world = world  # type: ignore[assignment]
+    for frame in history:
+        world.frame = frame
+        entity._remember_pose(world, _pose_at(frame))  # type: ignore[arg-type]
+    world.frame = now
+    entity._sim_time_us = now * _TICK_US
+    (sweep,) = entity._lidar_sweeps(_pose_at(now))
+    assert sweep.timestamp_us == taken_on * _TICK_US
+    return logged, fed
+
+
+def test_a_sweep_from_the_tick_before_is_recorded_on_that_ticks_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged, fed = _aged_sweep(monkeypatch, 100, 101, range(90, 102))
+    ((frame, point),) = logged
+    assert frame == 100
+    expected = _pose_at(100).transform_points(np.array([[10.0, 0.0, 0.0]]))[0]
+    np.testing.assert_allclose(point, expected, atol=1e-5)
+    np.testing.assert_allclose(point, [85.0, 0.0, 0.0], atol=1e-5)
+    assert fed == [(101, 100)]
+
+
+def test_a_sweep_of_the_policy_step_is_recorded_on_its_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged, fed = _aged_sweep(monkeypatch, 101, 101, range(90, 102))
+    ((frame, point),) = logged
+    assert frame == 101
+    np.testing.assert_allclose(point, [85.75, 0.0, 0.0], atol=1e-5)
+    assert fed == [(101, 101)]
+
+
+def test_the_pose_history_reaches_back_one_sweep_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    entity = cde.CarlaDriverEntity(DriverClientConfig(), client=SimpleNamespace())  # type: ignore[arg-type]
+    mount = sensor_pose_in_rig(0, 0, 0, 0, 0, 0, rear_axle_offset_m=0.0)
+    entity._lidars = [("lidar_top", _AgedLidar(0), mount)]  # type: ignore[list-item]
+    for frame in range(100, 110):
+        world = SimpleNamespace(get_snapshot=lambda f=frame: SimpleNamespace(frame=f))
+        entity._remember_pose(world, _pose_at(frame))  # type: ignore[arg-type]
+    assert sorted(entity._pose_history) == [107, 108, 109]
+
+
+def test_a_sweep_older_than_the_poses_kept_is_not_recorded(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The policy still gets it, stamped with its own time; the recording does
+    not place it on a pose it does not have, and the T4 dataset is told when it
+    was taken (and drops it there)."""
+    with caplog.at_level("DEBUG"):
+        logged, fed = _aged_sweep(monkeypatch, 90, 101, range(99, 102))
+    assert logged == []
+    assert fed == [(101, 90)]
+    assert "no ego pose of frame 90" in caplog.text

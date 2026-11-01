@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from .constants import FIXED_DELTA_SECONDS
+from .constants import tick_multiple
 from .driver.base import DriverCameraLens, DriverClientConfig
 from .sensor.carla_camera import CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensorConfig
@@ -106,14 +106,7 @@ class T4Settings:
     @property
     def interval_ticks(self) -> int:
         """World ticks from one key frame to the next."""
-        ticks = round(self.timestep_s / FIXED_DELTA_SECONDS)
-        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - self.timestep_s) > 1e-9:
-            raise ValueError(
-                f"t4: the key frames' step (driver.policy_timestep_s) must be a "
-                f"positive multiple of the {FIXED_DELTA_SECONDS} s tick, got "
-                f"{self.timestep_s}"
-            )
-        return int(ticks)
+        return tick_multiple(self.timestep_s, "driver.policy_timestep_s")
 
     @classmethod
     def from_driver(

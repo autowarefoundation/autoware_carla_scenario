@@ -21,7 +21,15 @@ Where the data comes from:
 - **An ego driven by a driver policy** (`ego.entity=carla_driver`) feeds the
   dataset what it sends the policy: the sweeps, already in the rig frame, and
   the camera frames, already JPEG (`driver.image_quality`). The dataset renders
-  and encodes nothing of its own.
+  and encodes nothing of its own. A sweep the policy gets can be from a tick
+  before its step (a LiDAR sweeps once a policy step); the key frame is then
+  that tick's, with its ego pose and boxes, as with the recorder's own LiDARs.
+  A sweep from before the recording started, or older than the ticks the
+  recorder keeps, is dropped (logged at debug level). A camera frame carries
+  the tick it was rendered on too (#951), and goes on the key frame of that
+  tick; one rendered on another tick than the key frame's sweep is dropped,
+  as with the recorder's own cameras. Without a LiDAR, the oldest camera
+  frame's tick is the key frame.
 - **Any other ego** (Autoware, the autopilot, ROS 2) gets the same sensors put
   on it by the recorder, at the same rate; the recorder's writer encodes their
   frames.
