@@ -14,7 +14,7 @@ from .actions import (ConstructionSettings, ConstructionZoneAction, URBAN_CONSTR
                       RunTrafficRuleAction, StopCrossingAction, RoutingAction, RoutingMode,
                       SetSpeedAction, StalledObjectAction, TickTiming, collision_objects, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
-                      WalkStraightAction, PlayMotionAction,
+                      WalkStraightAction, PlayMotionAction, SmartPedestrianControllerAction, TimedPrompt, WalkWaypoint,
                       TrafficParametersAction, TrafficSourceAction, TrafficSinkAction)
 from ._bridge_pose import BridgePose
 from .autoware_bridge.grpc_server import GrpcAutowareBridgeServer

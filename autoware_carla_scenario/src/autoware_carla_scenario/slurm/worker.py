@@ -528,6 +528,10 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
         task.update(state="running")
         with queue:
+            # The task's cases join the queue one at a time, after it starts:
+            # what they need (@need_prepare) is started now, before the first.
+            if queue.backends is not None:
+                queue.backends.prepare_scenarios(scenarios, log_dir=batch_dir)
             for position, (case, cfg) in enumerate(zip(cases, configs)):
                 if position > 0 and cooldown > 0:
                     # Between consecutive cases, as a local batch's queue waits.

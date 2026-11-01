@@ -13,14 +13,14 @@ A CARLA walker's mesh is the blueprint's, so the motion is retargeted onto its
 skeleton (``crl_*`` bones) by direction rather than replayed joint for joint:
 each SOMA joint's frame has its local X axis along the bone to its child (``-X``
 on the right side), which gives the bone's direction in every frame without
-the rig's bone lengths.  :class:`WalkerRetarget` swings each CARLA bone of
+the rig's bone lengths.  :class:`~autoware_carla_scenario.pedestrian.skeleton.WalkerRetarget` swings each CARLA bone of
 :data:`CARLA_BONES` from where the walker's own animation holds it onto that
 direction, parents first, and hands the result to ``Walker.set_bones()`` as
 transforms relative to the parent.  The swing is the shortest rotation, so a
 bone's twist about its own axis stays the animation's; the hips, and with
 them where the walker stands and faces, stay the walker's.  That half lives in
-:mod:`~autoware_carla_scenario.entity._walker_retarget` (no numpy, so Codon
-checks it) and is re-exported here.
+:mod:`~autoware_carla_scenario.pedestrian.skeleton` (no numpy, so Codon
+checks it).
 """
 
 from __future__ import annotations
@@ -33,18 +33,7 @@ from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 import numpy as np
 
-# The CARLA half lives in its own module, which Codon checks; its names are
-# re-exported here so callers keep importing them from this one.
-from ._walker_retarget import (
-    CARLA_BONES,
-    CarlaBone,
-    Matrix as Matrix,
-    Vector,
-    WalkerRetarget,
-    rotation_matrix as rotation_matrix,
-    rotator as rotator,
-    swing as swing,
-)
+from .skeleton import CARLA_BONES, Vector
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -52,12 +41,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CARLA_BONES",
     "DEFAULT_FPS",
     "SOMA_JOINTS",
-    "CarlaBone",
     "SomaMotion",
-    "WalkerRetarget",
     "load_soma_motion",
 ]
 

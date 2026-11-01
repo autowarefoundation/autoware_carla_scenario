@@ -31,17 +31,16 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.base import control_holder
 from autoware_carla_scenario.control_domain import ControlConflictError, ControlDomain
-from autoware_carla_scenario.entity._soma_motion import (
+from autoware_carla_scenario.pedestrian.skeleton import (
     CARLA_BONES,
-    SOMA_JOINTS,
     Matrix,
     Vector,
     WalkerRetarget,
-    load_soma_motion,
     rotation_matrix,
     rotator,
     swing,
 )
+from autoware_carla_scenario.pedestrian.soma import SOMA_JOINTS, load_soma_motion
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 FPS = 10.0
@@ -259,26 +258,6 @@ def test_a_swing_takes_one_direction_onto_the_other(a: Vector, b: Vector) -> Non
     m = swing(a, b)
     turned = tuple(sum(m[i][k] * a[k] for k in range(3)) for i in range(3))
     assert _close(turned, b)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "CARLA_BONES",
-        "CarlaBone",
-        "Matrix",
-        "Vector",
-        "WalkerRetarget",
-        "rotation_matrix",
-        "rotator",
-        "swing",
-    ],
-)
-def test_the_soma_motion_module_re_exports_the_walker_retarget(name: str) -> None:
-    from autoware_carla_scenario.entity import _soma_motion, _walker_retarget
-
-    assert name in _walker_retarget.__all__
-    assert getattr(_soma_motion, name) is getattr(_walker_retarget, name)
 
 
 # ----------------------------------------------------------------------

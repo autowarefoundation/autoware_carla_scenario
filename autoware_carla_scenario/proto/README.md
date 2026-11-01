@@ -12,6 +12,13 @@ byte from its `proto/t4_scene.proto`; its Python modules are generated into
 descriptor keeps the devkit's name, `t4_scene.proto`, and both bindings load into one
 process. Update it by copying the devkit's file again; do not edit it here.
 
+`pedestrian_motion/v0/pedestrian_motion.proto` is the `PedestrianMotion` contract
+between `SmartPedestrianControllerAction` (the client) and a pedestrian motion
+generator (the server, e.g. [carla_ardy_backend](https://github.com/hakuturu583/carla_ardy_backend)),
+authored in this repository; its Python modules are generated into
+`src/autoware_carla_scenario/pedestrian/_proto/`. A generator copies the file byte for
+byte; change its contract version with every change.
+
 The alpasim `egodriver` contract (vendored from NVlabs/alpasim) lives with the package
 that implements both of its ends,
 [carla-driver-interface](https://github.com/hakuturu583/carla_driver_interface).

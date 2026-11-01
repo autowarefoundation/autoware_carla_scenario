@@ -1,8 +1,21 @@
-# Pedestrian Motions (SOMA)
+# Pedestrian Motions (SOMA, ARDY)
 
-`PlayMotionAction` makes a pedestrian wave, beckon, or do anything else a
-motion file holds: it plays a [SOMA-X](https://github.com/NVlabs/SOMA-X) motion
-on the walker's skeleton.
+Two actions take over a pedestrian's skeleton:
+
+- `PlayMotionAction` plays a motion file. It makes a pedestrian wave, beckon,
+  or do anything else the file holds, using a
+  [SOMA-X](https://github.com/NVlabs/SOMA-X) motion on the walker's skeleton.
+- `SmartPedestrianControllerAction` has a model generate the motion while the
+  run plays. The model is [ARDY](https://github.com/nv-tlabs/ardy), and it
+  moves the whole body and where it goes, following text, waypoints and
+  keyframes ([below](#smartpedestriancontrolleraction-ardy)).
+
+Both share the core in `autoware_carla_scenario.pedestrian`:
+
+- `skeleton` holds the walker's bones and how bone directions pose them.
+- `soma` reads a SOMA file.
+- `poser` takes a walker over, poses it, places it, and hands it back to its
+  animation.
 
 ```python
 from autoware_carla_scenario import (
@@ -111,3 +124,114 @@ naming it; the bone names are those of CARLA's walkers (`crl_arm__L`,
 | `duration_s` | `None` | Stop after this long; `None`: when the motion ends, or, looping, at the scenario's end |
 | `upper_body_only` | `True` | Drive the spine, neck and arms only (animation domain); `False`: the whole body (animation and movement) |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
+
+## SmartPedestrianControllerAction (ARDY)
+
+`SmartPedestrianControllerAction` moves a pedestrian as
+[ARDY](https://github.com/nv-tlabs/ardy) generates it. ARDY is NVIDIA's
+autoregressive diffusion model of human motion. You tell it what the pedestrian
+does in any of three ways:
+
+- **Text.** The whole motion has a `prompt`. Each `TimedPrompt` takes over from
+  its time into the motion.
+- **Waypoints.** These are CARLA world points (`WalkWaypoint`) that the
+  pedestrian passes in order, walking at `speed_ms` from where it stands.
+- **Keyframes.** A JSON file of full-body poses that the motion passes through
+  ([format](#keyframes)).
+
+```python
+from autoware_carla_scenario import (
+    ElapsedTimeCondition,
+    SmartPedestrianControllerAction,
+    TimedPrompt,
+    WalkWaypoint,
+)
+
+scenario.register_pre_tick(
+    SmartPedestrianControllerAction(
+        "walker1",
+        "a man walks to the kerb and looks left and right",
+        condition=ElapsedTimeCondition(2.0),
+        prompts=[TimedPrompt(4.0, "he crosses the road in a hurry")],
+        waypoints=[WalkWaypoint(104.0, -12.5), WalkWaypoint(104.0, -4.0)],
+        speed_ms=1.4,
+        seed=3,
+    )
+)
+```
+
+In the Scenario Editor it is the *Smart Pedestrian* card, under *Pedestrian*.
+
+### How it runs
+
+ARDY runs in its own container,
+[`ghcr.io/hakuturu583/carla_ardy_backend`](https://github.com/hakuturu583/carla_ardy_backend),
+on a GPU of the host that runs the scenario. The action declares that it needs
+it (`@need_prepare(ArdyBackend)`). The queue then starts the container before
+the run, after checking that the host has room for it, and stops it when the
+batch ends. A host without room fails the run before it starts
+([Backends a Run Starts](backends.md)).
+
+When the action fires:
+
+1. It opens a session on the generator with the pedestrian's pose and every
+   condition.
+2. It asks the generator for the next couple of seconds of motion.
+3. Every tick, it places the walker at the motion's root and poses all of its
+   bones. The walker stays on the ground it stood on.
+4. Each time the motion it holds is about to run out, it asks for more,
+   generated from the motion shown so far.
+
+CARLA runs synchronously, so the simulation waits for each answer, and the same
+`seed` replays the same motion.
+
+The action takes the pedestrian's **movement and animation**
+[control domains](architecture.md) for as long as it moves the walker. It runs
+for `duration_s`. Without that, it runs until its last waypoint's time, and
+without waypoints, until the scenario ends.
+
+The generator and the action talk over
+`proto/pedestrian_motion/v0/pedestrian_motion.proto`, which uses a right-handed,
+z-up frame (CARLA's world with y negated). The generator receives joint
+positions, and the action turns them into bone directions
+(`pedestrian.skeleton.directions_from_joints`).
+
+### Keyframes
+
+A keyframes file lists full-body poses:
+
+```json
+{
+  "keyframes": [
+    {
+      "time_s": 3.0,
+      "x": 104.0, "y": -12.5, "yaw_deg": 90.0,
+      "joints": {"Hips": [0.0, 0.0, 0.95], "Head": [0.05, 0.0, 1.62], "...": [0, 0, 0]}
+    }
+  ]
+}
+```
+
+- `time_s` is the time into the motion.
+- `x`, `y` and `yaw_deg` place the pose in CARLA's world. Without them, the pose
+  is placed where the motion began and faces the way it did then.
+- `joints` gives each joint the generator places (the `joint_names` it answers
+  with; ARDY's SOMA model has 30) in metres. The axes are forward, left and up
+  from the root's ground point, as the body faces.
+
+### Parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `entity_name` | | The pedestrian |
+| `prompt` | `""` | What it does, in words, from the start |
+| `prompts` | `()` | `TimedPrompt(time_s, text)`: texts that take over later |
+| `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes |
+| `speed_ms` | `1.3` | Walking speed along the waypoints, m/s |
+| `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
+| `duration_s` | `None` | Stop after this long |
+| `seed` | `0` | The generator's draws |
+| `overrides` | `False` | Take over a domain another action holds, stopping it |
+
+The backend's own settings, including its image, GPU memory and Hugging Face
+cache, are `backends.ardy` of the config ([Backends a Run Starts](backends.md)).

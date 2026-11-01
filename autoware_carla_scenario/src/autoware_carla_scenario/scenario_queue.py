@@ -24,6 +24,7 @@ from .world_reset import RESET_RELOAD, check_world_reset
 
 if TYPE_CHECKING:
     from .autoware_stack.launcher import AutowareLauncher
+    from .prepare import BackendPreparer
 else:
     # tqdm has no Codon model: the check (docs/typecheck.md), which reads
     # TYPE_CHECKING as true, waits without the progress bar.
@@ -80,6 +81,7 @@ class ScenarioQueue:
     _traffic_backend: Optional[TrafficBackend]
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
+    _backends: Optional["BackendPreparer"]
     _map_source: Optional[str]
     _rerun: Optional[RerunConverter]
     _t4: Optional[T4Recorder]
@@ -131,6 +133,7 @@ class ScenarioQueue:
         world_reset: str = RESET_RELOAD,
         reload_every: int = 0,
         t4scene: Optional[T4SceneExporter] = None,
+        backends: Optional["BackendPreparer"] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -216,6 +219,13 @@ class ScenarioQueue:
                 soft reset cannot be done.
             t4scene: What writes each run's trajectory log as a T4Scene as the
                 run ends (``t4scene.enabled``); *None* writes none.
+            backends: What starts the backends the scenarios need
+                (``@need_prepare``, :mod:`~autoware_carla_scenario.prepare`):
+                what they declare before the CARLA server starts, refusing a
+                host without room for them; what a scenario's ``setup()``
+                registers, before its run ticks.  They run until the queue
+                stops.  *None*: none is started here (an action that needs
+                one starts it itself, with its defaults).
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
@@ -265,6 +275,7 @@ class ScenarioQueue:
         self._rerun = rerun
         self._t4 = t4
         self._t4scene = t4scene
+        self._backends = backends
 
         self._scenarios = []
         self._timeouts = {}
@@ -279,6 +290,11 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
     # Scenario registration
     # ------------------------------------------------------------------
+
+    @property
+    def backends(self) -> Optional["BackendPreparer"]:
+        """What starts the backends the scenarios need, if the queue has one."""
+        return self._backends
 
     def add(
         self,
@@ -549,6 +565,12 @@ class ScenarioQueue:
 
     def _start(self) -> None:
         """:meth:`start`, without the clean-up when it fails."""
+        if self._backends is not None:
+            # First of all: a backend the host has no room for refuses the
+            # batch before anything starts, and one that has to download a
+            # model takes longer than CARLA to come up.
+            preparer: BackendPreparer = self._backends
+            preparer.prepare_scenarios(self._scenarios, log_dir=self._output_dir)
         if self._autoware_launcher is not None:
             # First: a workspace that has to be built takes far longer than
             # CARLA to start, and one that cannot run a scenario at all is
@@ -596,6 +618,7 @@ class ScenarioQueue:
         self._runner.rerun = self._rerun
         self._runner.t4 = self._t4
         self._runner.t4scene = self._t4scene
+        self._runner.preparer = self._backends
         self._runner.lanelet2_path = self._lanelet2_path
         self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),
@@ -634,7 +657,8 @@ class ScenarioQueue:
         return written
 
     def stop(self) -> None:
-        """Stop any Autoware stack left running, and the server if owned."""
+        """Stop any Autoware stack left running, the backends, and the server
+        if owned."""
         self._runner = None
         # The map loaded for this queue's runs is not the next queue's: one
         # that loads no lanelet map would read this one's (run_carla_map).
@@ -642,6 +666,8 @@ class ScenarioQueue:
         try:
             if self._autoware_launcher is not None:
                 self._autoware_launcher.close()
+            if self._backends is not None:
+                self._backends.close()
         finally:
             # Even when the launcher's close() raises, against its contract.
             if self._owns_server:

@@ -1,0 +1,146 @@
+// gRPC wire contract between the scenario framework and a pedestrian motion
+// generator (the first one: ARDY, hakuturu583/carla_ardy_backend).
+//
+// The framework is the CLIENT: SmartPedestrianControllerAction opens a session
+// per pedestrian it drives, with every condition of the motion -- the text
+// timeline, the root waypoints, the full-body keyframes -- and then asks for
+// the motion ahead of the pedestrian as the run plays it (Step). The generator
+// is the SERVER, run in a container the framework starts before the run
+// (@need_prepare), and owns the model, its text encoder and the motion
+// history of each session.
+//
+// Time is in FRAMES of the generator's rate (NegotiateResponse.fps), counted
+// from the session's start: frame 0 is the pose the session opens at. The
+// framework never waits on the clock: CARLA runs synchronously, so a Step is
+// answered before the simulation moves on, and a run is replayed exactly from
+// the same seed and the same calls.
+//
+// Coordinates (the CONTRACT FRAME): right-handed, z up, metres. x and y are
+// the scenario world's ground plane (CARLA's world with its y negated, so
+// right-handed); z is the height above the ground the pedestrian stands on.
+// A heading is the yaw of the way the body faces, in radians,
+// counter-clockwise from +x.
+//
+// This file is the contract's single source. The generator vendors it byte
+// for byte; CONTRACT_VERSION below changes with every change to it, and
+// Negotiate refuses a version the other side does not speak.
+//
+// Contract version: 0.1.0
+
+syntax = "proto3";
+
+package pedestrian_motion.v0;
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message NegotiateRequest {
+  // The contract version the framework speaks ("0.1.0").
+  string contract_version = 1;
+}
+
+message NegotiateResponse {
+  // The contract version the generator speaks.
+  string contract_version = 1;
+  // The generator ("ardy") and its release ("0.1.0").
+  string backend = 2;
+  string backend_version = 3;
+  // The model it runs ("ARDY-SOMA-RP-30FPS-Horizon60").
+  string model = 4;
+  // Frames per second of every motion it generates.
+  double fps = 5;
+  // How many frames one Step generates at least.
+  uint32 horizon_frames = 6;
+  // The joints of MotionFrame.joints and PoseKeyframe, in order. SOMA joint
+  // names (Hips, Spine1, ..., LeftForeArm, LeftHand, ...).
+  repeated string joint_names = 7;
+}
+
+// The text the motion follows from start_frame on, until the next span. An
+// empty text is no text (the motion is generated unconditioned).
+message TextSpan {
+  int64 start_frame = 1;
+  string text = 2;
+}
+
+// Where the root (the pelvis' ground point) is at a frame.
+message RootWaypoint {
+  int64 frame = 1;
+  double x = 2;
+  double y = 3;
+  // The heading the body faces there, when has_heading.
+  bool has_heading = 4;
+  double heading = 5;
+}
+
+// The whole body at a frame: every joint of NegotiateResponse.joint_names, in
+// that order, in the contract frame.
+message PoseKeyframe {
+  int64 frame = 1;
+  repeated Vec3 joints = 2;
+}
+
+message OpenSessionRequest {
+  // The framework's name for the session, unique in the run
+  // ("<run>/<pedestrian>/<action>").
+  string session_id = 1;
+  // Where the root stands at frame 0 (z ignored) and the way it faces.
+  Vec3 root = 2;
+  double heading = 3;
+  // The seed of every draw the session makes.
+  uint64 seed = 4;
+  repeated TextSpan texts = 5;
+  repeated RootWaypoint waypoints = 6;
+  repeated PoseKeyframe keyframes = 7;
+}
+
+message OpenSessionResponse {}
+
+message StepRequest {
+  string session_id = 1;
+  // The frames up to and including this one are kept: they are the history
+  // the next frames are generated from. The frames after it that a previous
+  // Step generated are discarded and generated again. -1: none is kept (the
+  // first Step, from the pose the session opened at). A generator may keep a
+  // few frames more (it generates whole tokens): StepResponse.frames start
+  // after the last it kept.
+  int64 keep_until_frame = 2;
+}
+
+// One generated frame.
+message MotionFrame {
+  int64 frame = 1;
+  // The root's ground point and the way the body faces.
+  Vec3 root = 2;
+  double heading = 3;
+  // Every joint of NegotiateResponse.joint_names, in that order.
+  repeated Vec3 joints = 4;
+}
+
+message StepResponse {
+  // From the first frame after the history kept (keep_until_frame + 1, or a
+  // few frames later), in order: at least horizon_frames of them.
+  repeated MotionFrame frames = 1;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
+
+service PedestrianMotion {
+  // Agree on the contract version; answer what the generator produces.
+  rpc Negotiate(NegotiateRequest) returns (NegotiateResponse);
+  // Start a session at a pose, with its conditions. NOT_FOUND-free: opening a
+  // session_id again replaces it.
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  // Generate the motion after keep_until_frame. NOT_FOUND for a session that
+  // is not open.
+  rpc Step(StepRequest) returns (StepResponse);
+  // Forget a session. Closing one that is not open is not an error.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}

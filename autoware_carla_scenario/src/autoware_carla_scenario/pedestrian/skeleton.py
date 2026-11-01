@@ -1,4 +1,4 @@
-"""The CARLA half of replaying a SOMA motion: retargeting it onto a walker.
+"""A walker's skeleton, posed by the directions of a motion's bones.
 
 A CARLA walker's skeleton (``crl_*`` bones) is not the SOMA rig's, so a
 motion is retargeted onto it by direction: :class:`WalkerRetarget` swings
@@ -8,9 +8,10 @@ first, and hands the result to ``Walker.set_bones()`` as transforms relative
 to the parent.  The rotation helpers (:func:`rotation_matrix`,
 :func:`rotator`, :func:`swing`) follow Unreal's conventions.
 
-Reading the motion itself (numpy, ``.npz``) is
-:mod:`~autoware_carla_scenario.entity._soma_motion`'s, which re-exports
-these names; this half needs no numpy, so it is checked by Codon.
+Where the directions come from is the caller's: a SOMA ``.npz``
+(:mod:`~autoware_carla_scenario.pedestrian.soma`) or the joints a motion
+generator places (:func:`directions_from_joints`).
+This module needs no numpy, so it is checked by Codon.
 """
 
 from __future__ import annotations
@@ -22,11 +23,13 @@ from typing import Optional, Sequence
 import typesafe_carla.carla as carla
 
 __all__ = [
+    "BONE_CHILDREN",
     "CARLA_BONES",
     "CarlaBone",
     "Matrix",
     "Vector",
     "WalkerRetarget",
+    "directions_from_joints",
     "rotation_matrix",
     "rotator",
     "swing",
@@ -277,7 +280,9 @@ class WalkerRetarget:
 
     def pose(self, frame: dict[str, Vector]) -> list[tuple[str, "carla.Transform"]]:
         """The driven bones' transforms, relative to their parents, for
-        *frame* (:meth:`SomaMotion.frame`)."""
+        *frame*: each followed SOMA joint's bone direction in the body frame
+        (forward, right, up) of the way the walker faces
+        (:meth:`~autoware_carla_scenario.pedestrian.soma.SomaMotion.frame`)."""
         posed: dict[str, Matrix] = {}
         result: list[tuple[str, carla.Transform]] = []
         for rest in self._rests:
@@ -296,3 +301,68 @@ class WalkerRetarget:
             relative = rotator(_mul(_transposed(parent), world))
             result.append((rest.bone.name, carla.Transform(rest.location, relative)))
         return result
+
+
+#: The joint each followed SOMA joint's bone runs to, the first a skeleton has
+#: wins: a generator places joints, not their frames, so a bone's direction is
+#: the one from its joint to this child.
+BONE_CHILDREN: dict[str, list[str]] = {
+    "Spine1": ["Spine2", "Chest"],
+    "Chest": ["Neck1"],
+    "Neck1": ["Neck2", "Head"],
+    "LeftShoulder": ["LeftArm"],
+    "LeftArm": ["LeftForeArm"],
+    "LeftForeArm": ["LeftHand"],
+    "LeftHand": ["LeftHandMiddle1", "LeftHandMiddleEnd"],
+    "RightShoulder": ["RightArm"],
+    "RightArm": ["RightForeArm"],
+    "RightForeArm": ["RightHand"],
+    "RightHand": ["RightHandMiddle1", "RightHandMiddleEnd"],
+    "LeftLeg": ["LeftShin"],
+    "LeftShin": ["LeftFoot"],
+    "LeftFoot": ["LeftToeBase"],
+    "RightLeg": ["RightShin"],
+    "RightShin": ["RightFoot"],
+    "RightFoot": ["RightToeBase"],
+}
+
+
+def directions_from_joints(
+    joints: dict[str, Vector], heading: float
+) -> dict[str, Vector]:
+    """A frame of bone directions (:meth:`WalkerRetarget.pose`) from where a
+    generator places the joints.
+
+    Args:
+        joints: Each SOMA joint's position, by name, in a right-handed, z-up
+            frame (the pedestrian motion contract's).
+        heading: The way the body faces, in radians counter-clockwise from
+            ``+x`` of that frame.
+
+    Returns:
+        Each followed joint's bone direction in the body frame (forward,
+        right, up) of *heading*; a joint whose bone the frame lacks, or whose
+        bone has no length, is left out (the walker's animation keeps it).
+    """
+    cos, sin = math.cos(heading), math.sin(heading)
+    frame: dict[str, Vector] = {}
+    for joint, children in BONE_CHILDREN.items():
+        here = joints.get(joint)
+        if here is None:
+            continue
+        there: Optional[Vector] = None
+        for child in children:
+            if child in joints:
+                there = joints[child]
+                break
+        if there is None:
+            continue
+        bone = _normalized((there[0] - here[0], there[1] - here[1], there[2] - here[2]))
+        if bone is None:
+            continue
+        frame[joint] = (
+            bone[0] * cos + bone[1] * sin,
+            bone[0] * sin - bone[1] * cos,
+            bone[2],
+        )
+    return frame

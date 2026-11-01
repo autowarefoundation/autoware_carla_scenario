@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -13,10 +13,11 @@ from ..action_state import ActionState
 from ..conditions.and_condition import AndCondition
 from ..conditions.base import BaseCondition, ScenarioResult
 from ..control_domain import ControlDomain, movement_of
-from ..entity._soma_motion import SomaMotion, WalkerRetarget, load_soma_motion
-from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
+from ..entity.registry import find_pedestrian_entity
 from ..entity_role import EntityRole
 from ..kinematics.walker_motion import WalkerVelocities
+from ..pedestrian.poser import WalkerPoser
+from ..pedestrian.soma import SomaMotion, load_soma_motion
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class PlayMotionAction(BaseAction):
     (MHR, SOMA, Anny, SMPL) moves the same SOMA skeleton, so a motion is played
     the same whichever body it was made for.  The walker keeps its blueprint's
     mesh; the motion is retargeted onto its ``crl_*`` bones
-    (:mod:`~autoware_carla_scenario.entity._soma_motion`) and shown through
+    (:mod:`~autoware_carla_scenario.pedestrian`) and shown through
     CARLA's custom pose (``Walker.set_bones()`` / ``blend_pose()``), one frame
     every tick, at the motion's own rate in simulated time.
 
@@ -90,8 +91,7 @@ class PlayMotionAction(BaseAction):
     _loop: bool
     _duration_s: Optional[float]
     _upper_body_only: bool
-    _retarget: Optional[WalkerRetarget]
-    _walker: Optional[carla.Actor]
+    _poser: WalkerPoser
     _started_at: float
     _playing: bool
 
@@ -137,8 +137,7 @@ class PlayMotionAction(BaseAction):
         self._loop = loop
         self._duration_s = duration_s
         self._upper_body_only = upper_body_only
-        self._retarget = None
-        self._walker = None
+        self._poser = WalkerPoser(self._entity_name, "PlayMotionAction")
         self._started_at = 0.0
         self._playing = False
 
@@ -172,34 +171,13 @@ class PlayMotionAction(BaseAction):
 
     def _start(self, world: carla.World) -> None:
         self._playing = False
-        actor = self._find_actor()
-        if actor is None:
-            return
-        walker = _as_walker(actor)
-        retarget = WalkerRetarget(
-            walker.get_bones().bone_transforms,
-            walker.get_transform().rotation,
-            upper_body_only=self._upper_body_only,
-        )
-        if retarget.missing:
+        if not self._poser.begin(self._upper_body_only):
             logger.warning(
-                "PlayMotionAction: '%s' has no bones %s; they keep the animation",
-                self._entity_name,
-                list(retarget.missing),
-            )
-        if not retarget.driven:
-            logger.warning(
-                "PlayMotionAction: '%s' has none of the bones a motion drives; "
-                "not playing %s",
-                self._entity_name,
+                "PlayMotionAction: not playing %s on '%s'",
                 self._motion_path,
+                self._entity_name,
             )
             return
-        # The custom pose starts as the animation's frame, so the bones the
-        # motion does not drive stay where the walker held them.
-        walker.get_pose_from_animation()
-        self._retarget = retarget
-        self._walker = actor
         self._started_at = _now(world)
         self._playing = True
         logger.info(
@@ -210,7 +188,6 @@ class PlayMotionAction(BaseAction):
             self._motion.fps,
         )
         self._show(0)
-        walker.blend_pose(1.0)
 
     def _step(self, world: carla.World) -> None:
         if not self._playing:
@@ -229,60 +206,15 @@ class PlayMotionAction(BaseAction):
         self._show(frame)
 
     def _show(self, frame: int) -> None:
-        retarget = self._retarget
-        actor = self._walker
-        if retarget is None or actor is None:
-            return
-        bones = retarget.pose(self._motion.frame(frame))
-        try:
-            _as_walker(actor).set_bones(carla.WalkerBoneControlIn(bones))
-        except RuntimeError:
+        if not self._poser.show(self._motion.frame(frame)):
             # The walker was destroyed under the motion.
             self._playing = False
 
     def _stop(self) -> None:
         """Hand the walker back to its animation."""
         self._playing = False
-        actor = self._walker
-        self._walker = None
-        self._retarget = None
-        if actor is None:
-            return
-        try:
-            _as_walker(actor).blend_pose(0.0)
-        except RuntimeError:
-            return
-        logger.info("PlayMotionAction: '%s' finished its motion", self._entity_name)
-
-    def _find_actor(self) -> Optional[carla.Actor]:
-        """The pedestrian's actor, or ``None`` (warned) if there is none."""
-        entity = find_pedestrian_entity(self._entity_name)
-        if entity is None:
-            if find_vehicle_entity(self._entity_name) is None:
-                logger.warning(
-                    "PlayMotionAction: entity '%s' not found", self._entity_name
-                )
-            else:
-                logger.warning(
-                    "PlayMotionAction: '%s' is not a pedestrian and has no "
-                    "skeleton to pose",
-                    self._entity_name,
-                )
-            return None
-        actor = entity.actor
-        if actor is None:
-            logger.warning(
-                "PlayMotionAction: pedestrian '%s' is not spawned", self._entity_name
-            )
-        return actor
-
-
-def _as_walker(actor: carla.Actor) -> carla.Walker:
-    """*actor* as the walker whose bones are set (a spawned walker is one)."""
-    if TYPE_CHECKING:
-        return actor.as_walker()
-    else:
-        return actor
+        if self._poser.end():
+            logger.info("PlayMotionAction: '%s' finished its motion", self._entity_name)
 
 
 def _now(world: carla.World) -> float:

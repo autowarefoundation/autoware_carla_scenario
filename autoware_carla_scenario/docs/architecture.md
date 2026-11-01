@@ -538,6 +538,7 @@ classDiagram
     class TurnAction
     class WalkStraightAction
     class PlayMotionAction
+    class SmartPedestrianControllerAction
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
@@ -548,6 +549,7 @@ classDiagram
     BaseAction <|-- TurnAction
     BaseAction <|-- WalkStraightAction
     BaseAction <|-- PlayMotionAction
+    BaseAction <|-- SmartPedestrianControllerAction
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
@@ -627,6 +629,7 @@ lateral together are its movement (`MOVEMENT`).
 | `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |
 | The adversarial actions | longitudinal, lateral |
 | `PlayMotionAction` | animation; longitudinal and lateral too with `upper_body_only=False` |
+| `SmartPedestrianControllerAction` | longitudinal, lateral and animation |
 
 The domains are taken as the action fires, before `execute` runs. An action
 that runs on (it has an `until`, or reissues its command) holds them until its
