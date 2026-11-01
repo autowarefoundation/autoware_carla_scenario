@@ -2073,3 +2073,29 @@ def test_forwarding_starts_with_the_newest_command_once(
     assert [_fields(m) for m in sent] == [{"steer": 0.2}]
     bridge._forward()
     assert len(sent) == 1
+
+
+def test_no_command_follows_ended(world: _World, dbc: Path) -> None:
+    bridge, steering, _ = _two_device_bridge(world, dbc)
+    link = _BlockingLink()
+    bridge._link = link
+    bridge._active = True
+    # No device is open for the configuration's scenario_end steps.
+    bridge._run_steps = lambda phase, strict: None
+    a = _start(
+        lambda: bridge._on_input(
+            steering, types.SimpleNamespace(name="Steer", fields={"S": 0.2})
+        )
+    )
+    assert link.entered.wait(5.0)
+    # The run ends while the command is being sent: ``ended`` waits for it.
+    ending = _start(lambda: bridge._handle(("end", {})))
+    ending.join(0.2)
+    link.release.set()
+    a.join(5.0)
+    ending.join(5.0)
+    assert not a.is_alive() and not ending.is_alive()
+    assert [m["type"] for m in link.sent] == ["command", "ended"]
+    # A command merged after the end is not forwarded.
+    bridge._on_input(steering, types.SimpleNamespace(name="Steer", fields={"S": 0.3}))
+    assert [m["type"] for m in link.sent] == ["command", "ended"]
