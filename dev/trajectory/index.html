@@ -2578,7 +2578,9 @@ ending in a junction is carried on along the lane after it until it is clear
 of the junction, so it is never handed an empty path.</p>
 <p><strong>When it ends.</strong> A route given as a goal (and Lanelet2 waypoints) with
 nothing to time ends as soon as the vehicle has it (as an ego's initial goal
-always has); a route written out as waypoints, timed or not, runs until the
+always has), unless <code>stop_at_goal</code> asks for the vehicle to stop there: then
+it runs until the vehicle arrives, its last metres driven by the backend
+itself where it can (<code>finish_at</code>); a route written out as waypoints, timed or not, runs until the
 vehicle is within 1 m of its end along the planned path (a timed one then sets
 its driver's speed back to the cruise speed); a pedestrian's ends when it
 arrives.</p>
@@ -2596,6 +2598,10 @@ braking that stops a few metres on -- lasts its time in <code>FOLLOW</code> mode
 vehicle that reaches its end early stands there on the brake until the last
 vertex's time. Then a vehicle is braked to a stop and a walker stood still
 where the trajectory ended. Pass <code>until=</code> to end it on a condition of your own.
+One that ends the run before the entity reaches the end is OpenSCENARIO's stop
+transition, as an override is: a vehicle is braked where it is and handed back
+to its traffic backend (<code>resume_traffic</code>), a walker stood still; one that holds
+only after the end leaves the entity held there.
 <code>stop_at_end=False</code> (an extension) leaves a vehicle moving as it arrived instead
 -- in <code>POSITION</code> mode with the last segment's velocity -- for an action that
 hands it straight back to traffic, as the adversarial actions do
@@ -2971,7 +2977,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 09:41:57 UTC"><span class="timeago" datetime="2026-11-01T09:41:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 09:41:57 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 10:58:53 UTC"><span class="timeago" datetime="2026-11-01T10:58:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 10:58:53 UTC">2026-11-01</span>
   </span>
 
     
