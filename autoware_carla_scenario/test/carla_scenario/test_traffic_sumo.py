@@ -31,6 +31,7 @@ from autoware_carla_scenario.traffic import (
 from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
 from autoware_carla_scenario.traffic.sumo.config import (
     DEFAULT_BICYCLE_BLUEPRINTS,
+    AmbientTrafficConfig,
     BicycleConfig,
     PedestrianConfig,
     SumoBackendConfig,
@@ -3496,5 +3497,267 @@ def test_a_vehicle_stopping_at_its_goal_is_driven_there_in_carla(
         backend.tick(world, 0.1)
         assert stepped == [0.05, 0.1]
         assert sumo_id in backend._traci.vehicle.getIDList()
+    finally:
+        backend.close()
+
+
+# ---------------------------------------------------------------------------
+# Limits of 0 and the options' bounds (#959)
+# ---------------------------------------------------------------------------
+
+
+class _PositionsVehicle:
+    """TraCI's vehicle domain, as far as ``_nearest`` and ``_ambient_ids``
+    read it."""
+
+    def __init__(self, at: dict[str, tuple[float, float]], bikes: set[str]) -> None:
+        self._at = at
+        self._bikes = bikes
+
+    def getIDList(self) -> list[str]:  # noqa: N802 - TraCI's name
+        return list(self._at)
+
+    def getPosition(self, sumo_id: str) -> tuple[float, float]:  # noqa: N802
+        return self._at[sumo_id]
+
+    def getVehicleClass(self, sumo_id: str) -> str:  # noqa: N802
+        return "bicycle" if sumo_id in self._bikes else "passenger"
+
+
+def _measuring(config: Any = None, bikes: int = 0) -> Any:
+    """A backend, never prepared, whose SUMO holds five cars 10 m apart east
+    of the origin (and *bikes* bicycles 5 m further on each)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(config or SumoBackendConfig())
+    at = {f"car{i}": (10.0 * i, 0.0) for i in range(1, 6)}
+    at.update({f"bike{i}": (10.0 * i + 5.0, 0.0) for i in range(1, bikes + 1)})
+    backend._traci = SimpleNamespace(
+        vehicle=_PositionsVehicle(at, {i for i in at if i.startswith("bike")})
+    )
+    return backend
+
+
+_CARS = [f"car{i}" for i in range(1, 6)]
+_ORIGIN = Pose2D(0.0, 0.0, 0.0, 90.0)
+
+
+def test_a_limit_of_zero_keeps_no_vehicle() -> None:
+    backend = _measuring()
+    assert backend._nearest(_CARS, _ORIGIN, None, 0) == []
+    assert backend._nearest(_CARS, _ORIGIN, 25.0, 0) == []
+    # With no ego to measure from yet, still none: 0 is not "no limit".
+    assert backend._nearest(_CARS, None, None, 0) == []
+    assert backend._nearest(_CARS, None, 25.0, 0) == []
+
+
+def test_a_radius_of_zero_keeps_no_vehicle() -> None:
+    backend = _measuring()
+    assert backend._nearest(_CARS, _ORIGIN, 0.0, None) == []
+    assert backend._nearest(_CARS, _ORIGIN, 0.0, 3) == []
+    assert backend._nearest(_CARS, None, 0.0, None) == []
+
+
+def test_none_is_no_limit_and_no_radius() -> None:
+    backend = _measuring()
+    shuffled = ["car3", "car5", "car1", "car4", "car2"]
+    assert backend._nearest(shuffled, _ORIGIN, None, None) == shuffled
+    assert backend._nearest(shuffled, _ORIGIN, 25.0, None) == ["car1", "car2"]
+    assert backend._nearest(shuffled, _ORIGIN, None, 2) == ["car1", "car2"]
+    assert backend._nearest(shuffled, _ORIGIN, 35.0, 2) == ["car1", "car2"]
+    # No ego yet: the first ones SUMO lists, up to the limit.
+    assert backend._nearest(shuffled, None, None, 2) == ["car3", "car5"]
+    assert backend._nearest(shuffled, None, None, None) == shuffled
+
+
+def _ambient_ids(config: SumoBackendConfig) -> list[str]:
+    backend = _measuring(config, bikes=3)
+    backend._carla_pose_to_sumo = lambda _actor: _ORIGIN
+    backend._ego_actor = object()
+    return backend._ambient_ids()
+
+
+def test_each_mirror_limit_of_zero_mirrors_none_of_its_kind() -> None:
+    every = _CARS + ["bike1", "bike2", "bike3"]
+    assert sorted(_ambient_ids(SumoBackendConfig())) == sorted(every)
+    assert _ambient_ids(SumoBackendConfig(max_vehicles=0)) == [
+        "bike1",
+        "bike2",
+        "bike3",
+    ]
+    assert (
+        _ambient_ids(SumoBackendConfig(bicycles=BicycleConfig(max_bicycles=0))) == _CARS
+    )
+    assert (
+        _ambient_ids(
+            SumoBackendConfig(max_vehicles=0, bicycles=BicycleConfig(max_bicycles=0))
+        )
+        == []
+    )
+    # The bicycles' radius is the vehicles' when it is null, and its own else.
+    assert _ambient_ids(SumoBackendConfig(spawn_radius_m=20.0)) == [
+        "car1",
+        "car2",
+        "bike1",
+    ]
+    assert _ambient_ids(
+        SumoBackendConfig(spawn_radius_m=20.0, bicycles=BicycleConfig(radius_m=30.0))
+    ) == ["car1", "car2", "bike1", "bike2"]
+
+
+def test_the_mirror_limits_take_whole_numbers_from_zero() -> None:
+    assert SumoBackendConfig.from_mapping({"max_vehicles": 0}).max_vehicles == 0
+    assert BicycleConfig.from_mapping({"max_bicycles": 0}).max_bicycles == 0
+    assert PedestrianConfig.from_mapping({"max_persons": 0}).max_persons == 0
+    for bad in (-1, -2, 2.5, 3.0, True, "3"):
+        with pytest.raises(ValueError, match="^max_vehicles must be an integer"):
+            SumoBackendConfig.from_mapping({"max_vehicles": bad})
+        with pytest.raises(
+            ValueError, match="^bicycles.max_bicycles must be an integer"
+        ):
+            SumoBackendConfig.from_mapping({"bicycles": {"max_bicycles": bad}})
+        with pytest.raises(
+            ValueError, match="^pedestrians.max_persons must be an integer"
+        ):
+            SumoBackendConfig.from_mapping({"pedestrians": {"max_persons": bad}})
+
+
+def test_the_radii_must_be_positive_and_finite() -> None:
+    assert (
+        SumoBackendConfig.from_mapping({"spawn_radius_m": None}).spawn_radius_m is None
+    )
+    assert SumoBackendConfig(spawn_radius_m=50).spawn_radius_m == 50
+    for bad in (0.0, -5.0, math.nan, math.inf, -math.inf):
+        with pytest.raises(ValueError, match="^spawn_radius_m must be positive"):
+            SumoBackendConfig.from_mapping({"spawn_radius_m": bad})
+        with pytest.raises(ValueError, match="^bicycles.radius_m must be positive"):
+            BicycleConfig(radius_m=bad)
+        with pytest.raises(ValueError, match="^pedestrians.radius_m must be positive"):
+            PedestrianConfig(radius_m=bad)
+    for bad in (0.0, -5.0, math.nan, -math.inf):
+        with pytest.raises(
+            ValueError, match="^bicycles.max_distance_m must be positive"
+        ):
+            BicycleConfig(max_distance_m=bad)
+        with pytest.raises(
+            ValueError, match="^pedestrians.max_distance_m must be positive"
+        ):
+            PedestrianConfig(max_distance_m=bad)
+    # inf is no limit on how far a walk or a ride goes, as before.
+    assert BicycleConfig(max_distance_m=math.inf).max_distance_m == math.inf
+    assert PedestrianConfig(max_distance_m=math.inf).max_distance_m == math.inf
+
+
+def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
+    positive = (
+        "curve_lateral_acceleration",
+        "lateral_resolution_m",
+        "step_length_s",
+    )
+    not_negative = ("feedback_distance_m", "warmup_s")
+    for bad in (-1.0, math.nan, math.inf):
+        for key in positive:
+            with pytest.raises(ValueError, match=f"^{key} must be positive and finite"):
+                SumoBackendConfig.from_mapping({key: bad})
+        with pytest.raises(ValueError, match="^lane_change_duration_s must be"):
+            SumoBackendConfig.from_mapping(
+                {"lane_change_duration_s": bad, "lateral_resolution_m": None}
+            )
+        for key in not_negative:
+            with pytest.raises(ValueError, match=f"^{key} must be finite and not"):
+                SumoBackendConfig.from_mapping({key: bad})
+    for key in positive:
+        with pytest.raises(ValueError, match=f"^{key} must be positive"):
+            SumoBackendConfig.from_mapping({key: 0.0})
+    # resync_distance_m: inf never puts a car back, as before; NaN, 0 and
+    # below are refused.
+    assert SumoBackendConfig(resync_distance_m=math.inf).resync_distance_m == math.inf
+    for bad in (0.0, -1.0, math.nan, -math.inf):
+        with pytest.raises(ValueError, match="^resync_distance_m must be positive"):
+            SumoBackendConfig.from_mapping({"resync_distance_m": bad})
+    # 0 is meaningful for these: never correct SUMO, and no warm-up.
+    zero = SumoBackendConfig(feedback_distance_m=0.0, warmup_s=0.0)
+    assert zero.feedback_distance_m == 0.0 and zero.warmup_s == 0.0
+
+
+def test_the_tm_port_must_be_a_port() -> None:
+    assert SumoBackendConfig.from_mapping({"tm_port": 8200}).tm_port == 8200
+    for bad in (0, -1, 65536, 8000.0, True, "8000"):
+        with pytest.raises(ValueError, match="^tm_port must be an integer"):
+            SumoBackendConfig.from_mapping({"tm_port": bad})
+
+
+def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
+    groups = (
+        ("ambient", "vehicles_per_hour", AmbientTrafficConfig),
+        ("pedestrians", "persons_per_hour", PedestrianConfig),
+        ("bicycles", "bicycles_per_hour", BicycleConfig),
+    )
+    for group, rate, cls in groups:
+        # No demand per hour is allowed: as good as none generated.
+        assert cls.from_mapping({rate: 0}).period() > 1e9
+        for bad in (-1.0, math.nan, math.inf):
+            with pytest.raises(ValueError, match=f"^{group}.{rate} must be finite"):
+                cls.from_mapping({rate: bad})
+        for bad in (0.0, -1.0, math.nan, math.inf):
+            for key in ("period_s", "end_s"):
+                with pytest.raises(
+                    ValueError, match=f"^{group}.{key} must be positive"
+                ):
+                    SumoBackendConfig.from_mapping({group: {key: bad}})
+    for bad in (-1.0, math.nan, math.inf):
+        with pytest.raises(ValueError, match="^ambient.fringe_factor must be finite"):
+            AmbientTrafficConfig(fringe_factor=bad)
+        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be finite"):
+            BicycleConfig(min_distance_m=bad)
+
+
+@needs_sumo
+def test_max_vehicles_zero_mirrors_no_ambient_vehicle(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=0
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        assert backend._ambient == {}
+        # SUMO has its traffic all the same; none of it reaches CARLA.
+        assert len(backend._traci.vehicle.getIDList()) > 2
+        assert not any(
+            a.attributes["role_name"].startswith("sumo:") for a in world.spawned
+        )
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_max_bicycles_zero_mirrors_no_bicycle(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _riding(crossroads_with_sidewalks, tmp_path, max_bicycles=0)
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert _bikes(backend)
+        assert _bicycle_mirrors(world) == []
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_max_persons_zero_mirrors_no_pedestrian(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _walking(
+        crossroads_with_sidewalks, tmp_path, warmup_s=60.0, max_persons=0
+    )
+    try:
+        for i in range(20):
+            backend.tick(world, i * 0.05)
+        assert backend._traci.person.getIDCount() > 0
+        assert backend._persons == {}
+        assert _mirrors(world) == []
     finally:
         backend.close()

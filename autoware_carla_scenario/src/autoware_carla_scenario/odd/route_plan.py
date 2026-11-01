@@ -121,26 +121,24 @@ def plan_route(
 ) -> list[tuple[int, float]]:
     """The lanelets of *route*, in order, with the metres driven on each.
 
-    The lanelets are :func:`route_lanelets`'s.
+    The lanelets are :func:`route_lanelets`'s, and the metres those
+    :func:`route_poses` drives on each: a lane change splits the stretch the
+    two lanelets run side by side at the point it crosses.
 
     Raises:
         RouteError: if the route has no goal, names a lanelet the map does
             not have, or a leg has no path.
     """
-    path = route_lanelets(route, lanelet_map, routing_graph)
-    assert route.goal is not None  # route_lanelets() refuses a route without
-    goal: Lanelet2Pose = route.goal
-    lengths = _lengths(path)
-    spans = _spans(_Leg(route.start, goal, path), lengths)
     planned: list[tuple[int, float]] = []
-    # A lane change: the vehicle drives along the two lanelets side by side,
-    # so their length is split between them rather than counted twice.
-    for lanelet, (begin, end), (before, after) in zip(
-        path, spans, _lane_changes(path, routing_graph)
-    ):
-        planned.append(
-            (int(lanelet.id), (end - begin) / (1 + int(before) + int(after)))
-        )
+    for leg in _legs(route, lanelet_map, routing_graph, False, False):
+        spans = _driven(leg, _lengths(leg.lanelets), routing_graph)
+        for i, (lanelet, (begin, end)) in enumerate(zip(leg.lanelets, spans)):
+            if i == 0 and planned:
+                # Where the last leg ended: the same lanelet, driven on.
+                lanelet_id, metres = planned[-1]
+                planned[-1] = (lanelet_id, metres + (end - begin))
+            else:
+                planned.append((int(lanelet.id), end - begin))
     return planned
 
 
@@ -157,8 +155,10 @@ def route_poses(
 
     The centrelines of each leg's lanelets, sampled, each leg ending on its
     waypoint and the last on the goal.  A lane change is driven across the
-    middle of the two lanelets side by side: the poses leave the first at half
-    its length and join the second at half of its own.  With *straight_legs*
+    middle of the two lanelets side by side -- unless the leg begins past it,
+    when it crosses where the leg begins, or ends before it, when it crosses
+    abreast of where the leg ends: the poses leave the first lanelet there and
+    join the second abreast of it, so they never run back.  With *straight_legs*
     a leg *routing_graph* has no path for is its end pose alone, for whatever
     follows the poses to go straight there; without, it is a
     :class:`RouteError`.
@@ -172,16 +172,13 @@ def route_poses(
             _add(poses, leg.end)
             continue
         lengths = _lengths(leg.lanelets)
-        spans = _spans(leg, lengths)
-        changes = _lane_changes(leg.lanelets, routing_graph)
+        spans = _driven(leg, lengths, routing_graph)
         last = len(leg.lanelets) - 1
         for i, lanelet in enumerate(leg.lanelets):
             begin, end = spans[i]
-            before, after = changes[i]
-            if before:
-                begin = max(begin, lengths[i] / 2.0)
-            if after:
-                end = min(end, lengths[i] / 2.0)
+            if i == 0:
+                # Where the leg begins, even when it changes lanes right there.
+                _add(poses, _pose_at(lanelet, lengths[i], begin))
             u = begin
             while u < end:
                 _add(poses, _pose_at(lanelet, lengths[i], u))
@@ -343,6 +340,80 @@ def _spans(leg: _Leg, lengths: Sequence[float]) -> list[tuple[float, float]]:
         )
         spans.append((begin, max(begin, end)))
     return spans
+
+
+def _driven(
+    leg: _Leg, lengths: Sequence[float], routing_graph: RoutingGraph
+) -> list[tuple[float, float]]:
+    """``(begin, end)`` metres driven along each lanelet of *leg*, the way it
+    is travelled: its :func:`_spans`, cut where a lane change crosses.
+
+    A lanelet left by a lane change is left at its middle -- or where it is
+    entered (the leg's begin, or where a lane change joined it), when that
+    is past the middle, or abreast of where the leg ends, when that is
+    before it -- and the lanelet changed to is joined abreast of that point,
+    no further on than the leg ends on it.
+    """
+    spans = _spans(leg, lengths)
+    changes = _lane_changes(leg.lanelets, routing_graph)
+    last = len(leg.lanelets) - 1
+    # How far each lanelet may be driven: to its span's end, and on one left
+    # by a lane change no further than abreast of how far the next may be --
+    # back through a run of lane changes to where the leg ends.
+    limits = [end for _begin, end in spans]
+    for i in range(last - 1, -1, -1):
+        if changes[i][1]:
+            back = _abreast(
+                leg.lanelets[i + 1],
+                lengths[i + 1],
+                limits[i + 1],
+                leg.lanelets[i],
+                lengths[i],
+            )
+            limits[i] = min(limits[i], back)
+    driven: list[tuple[float, float]] = []
+    joined = 0.0
+    for i, lanelet in enumerate(leg.lanelets):
+        begin, end = spans[i]
+        before, after = changes[i]
+        if before:
+            begin = min(max(begin, joined), end)
+        if after:
+            # At the middle, though not behind where the lanelet is entered
+            # nor past how far it may be driven; joined abreast of that, even
+            # when it is the middle: half of a lanelet of another length is
+            # not beside it, and joining there would run back or skip ahead.
+            end = max(begin, min(limits[i], lengths[i] / 2.0))
+            joined = _abreast(
+                lanelet, lengths[i], end, leg.lanelets[i + 1], lengths[i + 1]
+            )
+            joined = min(joined, limits[i + 1])
+        driven.append((begin, end))
+    return driven
+
+
+def _abreast(
+    lanelet: ConstLanelet,
+    length: float,
+    u: float,
+    beside: ConstLanelet,
+    beside_length: float,
+) -> float:
+    """Metres along *beside*, the way it is travelled, abreast of *u* metres
+    along *lanelet*: where that centreline point projects onto its centreline."""
+    # Imported here, as _lengths imports.
+    from ..trajectory.relative_lane import (  # noqa: PLC0415
+        _arc,
+        _centreline,
+        _point_at,
+    )
+
+    # Measured on the lanelets as mapped, not inverted: ``s`` is.
+    mapped = lanelet.invert() if lanelet.inverted() else lanelet
+    x, y = _point_at(_centreline(mapped), _along(lanelet, length, u))
+    mapped_beside = beside.invert() if beside.inverted() else beside
+    s, _t = _arc(mapped_beside, x, y)
+    return _along(beside, beside_length, min(s, beside_length))
 
 
 def _lane_changes(

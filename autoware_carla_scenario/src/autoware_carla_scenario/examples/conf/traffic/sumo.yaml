@@ -70,6 +70,7 @@ traffic:
       persons_per_hour: 600
       max_distance_m: 500.0
       radius_m: null
+      # The most mirrored at once, the nearest first (null: no limit; 0: none).
       max_persons: null
       blueprint: walker.pedestrian.0001
     # SUMO's own bicycles (randomTrips --vclass bicycle), mirrored into CARLA
@@ -82,6 +83,7 @@ traffic:
       min_distance_m: 0.0
       max_distance_m: 2000.0
       radius_m: null
+      # The most mirrored at once, the nearest first (null: no limit; 0: none).
       max_bicycles: null
       # A mirrored bicycle is one of these; those the world lacks are left
       # out, and with none left bicycles ride in SUMO only.
@@ -95,7 +97,9 @@ traffic:
       vehicle_control: teleport
     # SUMO seconds simulated before the scenario clock starts.
     warmup_s: 30.0
-    # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).
+    # Mirror only the nearest SUMO vehicles into CARLA: those within
+    # spawn_radius_m (m, positive), at most max_vehicles of them (0: none).
+    # null: all of them.
     spawn_radius_m: null
     max_vehicles: null
     # Simulate traffic far from what CARLA drives (the ego, and the scenario's
