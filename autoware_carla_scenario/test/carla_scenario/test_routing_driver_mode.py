@@ -1560,13 +1560,19 @@ def test_a_walker_waits_at_the_kerb_for_the_light_and_a_threat(
     from autoware_carla_scenario.actions import _road_threat
     from autoware_carla_scenario.entity import _walker_ai
 
+    import typesafe_carla.carla as carla
+
+    # typesafe_carla's get_state() gives a plain int, not an enum member.
+    green = int(carla.TrafficLightState.Green)
+    red = int(carla.TrafficLightState.Red)
+
     class _Light:
         id = 3
 
         def __init__(self) -> None:
-            self.state = "TrafficLightState.Green"
+            self.state = green
 
-        def get_state(self) -> str:
+        def get_state(self) -> int:
             return self.state
 
     asked: list[tuple[Any, ...]] = []
@@ -1589,7 +1595,7 @@ def test_a_walker_waits_at_the_kerb_for_the_light_and_a_threat(
     here = SimpleNamespace(x=0.5, y=0.0, z=0.0)
     assert _walker_ai._kerb_wait(walker, driven, path, 0.5, here)  # green
     assert asked == []
-    light.state = "TrafficLightState.Red"
+    light.state = red
     assert _walker_ai._kerb_wait(walker, driven, path, 0.5, here)  # the threat
     assert asked == [(0.0, 0.0, 6.0, 3.0)]  # as standing at the kerb
     threat["on"] = False
@@ -1600,7 +1606,7 @@ def test_a_walker_waits_at_the_kerb_for_the_light_and_a_threat(
     assert not _walker_ai._kerb_wait(walker, driven, path, 0.5, here)
     # Bounded: past 60 s it steps whatever stands there.
     driven.kerb_waited = _walker_ai.KERB_WAIT_MAX_S
-    light.state = "TrafficLightState.Green"
+    light.state = green
     assert not _walker_ai._kerb_wait(walker, driven, path, 0.5, here)
 
 

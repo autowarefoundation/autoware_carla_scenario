@@ -84,6 +84,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..kinematics import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, simulated_seconds
+from ..utils.traffic_light import traffic_light_state_name
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -567,15 +568,14 @@ def _kerb_wait(
     why = ""
     light = driven.kerb_light
     if light is not None:
+        # typesafe_carla's get_state() is a plain int, whose str() is "2",
+        # not "Green": the name comes from the shared helper.
         try:
-            state = str(light.get_state())
+            state = traffic_light_state_name(light.get_state())
         except RuntimeError:
             state = ""
-        if state.endswith("Green") or state.endswith("Yellow"):
-            why = "the light (%d) %s for the vehicles" % (
-                int(light.id),
-                state.rsplit(".", 1)[-1],
-            )
+        if state == "Green" or state == "Yellow":
+            why = "the light (%d) %s for the vehicles" % (int(light.id), state)
     if not why:
         threat = _threat(walker, location, driven.turn_back, standing=True)
         if threat:
