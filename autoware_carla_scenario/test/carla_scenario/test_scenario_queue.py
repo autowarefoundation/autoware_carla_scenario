@@ -633,6 +633,113 @@ def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
     assert events == ["prepare", "start", "runner", "close", "stop"]
 
 
+def _fixture_queue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, runner: object
+) -> tuple[ScenarioQueue, list[str]]:
+    """A queue for as_fixture() whose start() hands it *runner* and whose
+    start() and stop() are recorded."""
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    monkeypatch.setattr(
+        CarlaServerManager, "executable", classmethod(lambda cls: tmp_path)
+    )
+    events: list[str] = []
+    queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=0)
+
+    def start() -> None:
+        events.append("start")
+        queue._runner = runner  # type: ignore[assignment]
+
+    monkeypatch.setattr(queue, "start", start)
+    monkeypatch.setattr(queue, "stop", lambda: events.append("stop"))
+    return queue, events
+
+
+def test_a_fixture_whose_scenario_raises_fails_only_that_scenario(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A scenario that raises on every attempt does not skip the session
+    (#1035): its result is a failed one, the others pass, and the queue is
+    stopped when the session ends."""
+    runner = _SecondCaseRaises(
+        AttributeError("'NoneType' object has no attribute 'lanelet_id'")
+    )
+    queue, events = _fixture_queue(monkeypatch, tmp_path, runner)
+    good = _NullScenario(_make_ego_config())
+    broken = _NullScenario(_make_ego_config())
+    queue.add(good)
+    queue.add(broken)
+    runner.failing = broken
+
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        yielded = next(generator)
+    except pytest.skip.Exception as exc:
+        # Raised in this test, a skip would skip it rather than fail it.
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    assert yielded is queue
+    assert queue.result_for(good).passed
+    errored = queue.result_for(broken)
+    assert not errored.passed
+    assert "lanelet_id" in errored.message
+    assert queue.errored_indices() == [1]
+    assert events == ["start"]
+
+    with pytest.raises(StopIteration):
+        next(generator)
+    assert events == ["start", "stop"]
+
+
+def test_a_result_fixture_of_an_errored_scenario_fails_its_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A CarlaScenarioFixture whose scenario raised on every attempt fails the
+    tests that use it, naming the error, rather than hand them a result a
+    test reading only, say, elapsed_seconds would pass on (#1035)."""
+    from autoware_carla_scenario import CarlaScenarioFixture
+
+    runner = _SecondCaseRaises(RuntimeError("no ground under the spawn point"))
+    queue, _ = _fixture_queue(monkeypatch, tmp_path, runner)
+    ego = _make_ego_config()
+    good = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    broken = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    runner.failing = broken._scenario
+
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        next(generator)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    request = MagicMock()
+    good_fixture = good.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    broken_fixture = broken.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    assert good_fixture(request).passed
+    with pytest.raises(pytest.fail.Exception, match="no ground under"):
+        broken_fixture(request)
+    request.getfixturevalue.assert_called_with("carla_queue")
+
+
+def test_a_fixture_whose_queue_fails_to_start_skips_without_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """Only a failed start() (no CARLA session) skips the session; nothing
+    runs and the fixture does not stop the queue a second time."""
+    runner = MagicMock()
+    queue, events = _fixture_queue(monkeypatch, tmp_path, runner)
+    queue.add(_NullScenario(_make_ego_config()))
+
+    def failing_start() -> None:
+        events.append("start")
+        raise ConnectionError("CARLA did not answer")
+
+    monkeypatch.setattr(queue, "start", failing_start)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    with pytest.raises(pytest.skip.Exception, match="CARLA did not answer"):
+        next(generator)
+    runner.run_scenario.assert_not_called()
+    assert events == ["start"]
+
+
 def test_a_failed_stop_does_not_hide_why_start_failed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: object
 ) -> None:
