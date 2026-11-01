@@ -190,6 +190,69 @@ class TestFrameworkPin:
             == "https://github.com/owner/repo"
         )
 
+    def test_a_token_in_an_https_remote_is_dropped(self) -> None:
+        """The pin lands in a package meant to be shared (#1045)."""
+        url = "https://oauth2:glpat-SECRET@gitlab.example.com/team/repo.git"
+        normalized = normalize_repository_url(url)
+        assert normalized == "https://gitlab.example.com/team/repo"
+        assert "SECRET" not in normalized
+
+    def test_user_and_password_in_an_https_remote_are_dropped(self) -> None:
+        normalized = normalize_repository_url(
+            "https://alice:hunter2@example.com:8443/o/r.git"
+        )
+        assert normalized == "https://example.com:8443/o/r"
+        assert "hunter2" not in normalized
+        assert "alice" not in normalized
+
+    def test_an_ssh_url_with_a_port_drops_user_and_port(self) -> None:
+        assert (
+            normalize_repository_url("ssh://git@gitlab.example.com:2222/team/repo.git")
+            == "https://gitlab.example.com/team/repo"
+        )
+
+    def test_an_scp_remote_is_normalised_as_before(self) -> None:
+        assert (
+            normalize_repository_url("git@gitlab.example.com:team/repo.git")
+            == "https://gitlab.example.com/team/repo"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://github.com/owner/repo", "https://github.com/owner/repo.git"],
+    )
+    def test_a_plain_https_remote_is_unchanged(self, url: str) -> None:
+        assert normalize_repository_url(url) == "https://github.com/owner/repo"
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://tok@[::1/o/r.git", "https://[::1/o/r"),
+            ("https://tok@host]/o/r", "https://host]/o/r"),
+            ("https://tok@[::1]:8443/o/r.git", "https://[::1]:8443/o/r"),
+        ],
+    )
+    def test_a_malformed_ipv6_remote_does_not_crash(
+        self, url: str, expected: str
+    ) -> None:
+        """``urlsplit`` raises on these; the export must not, nor keep the token."""
+        assert normalize_repository_url(url) == expected
+
+    def test_a_credentialed_origin_never_reaches_the_pin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        monkeypatch.setenv(
+            module.REPOSITORY_ENV, "https://user:TOKEN@example.com/o/r.git"
+        )
+        pin = module._resolve_git_pin(module.framework_source_root())
+        if pin is None:
+            pytest.skip("not a git checkout")
+        assert pin.repository == "https://example.com/o/r"
+        assert "TOKEN" not in repr(pin.uv_source())
+        assert "TOKEN" not in repr(pin.manifest())
+
     def test_an_explicit_version_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", "9.9.9")
         pin = resolve_framework_pin()
@@ -312,6 +375,90 @@ class TestGeneratedPackage:
     def test_skipping_the_lock_is_recorded_as_a_caveat(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert any("not reproducible" in note for note in manifest["notes"])
+
+
+#: Valid scenario ids, each with the Python package its export is named after.
+#: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
+#: so they are where the scenario id and the names derived from it could part.
+_SCENARIO_IDS = [
+    ("stop__line", "stop_line_scenario"),
+    ("stop_line_", "stop_line_scenario"),
+    ("stop_line", "stop_line_scenario"),
+]
+
+
+class TestScenarioIdAgreement:
+    """Every place an export names its scenario uses ``document.id`` (#1072)."""
+
+    @staticmethod
+    def _export(tmp_path: Path, scenario_id: str) -> Path:
+        return export_package(new_document(scenario_id), tmp_path, **OFFLINE).root
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_the_scenario_id_is_the_document_id(
+        self, scenario_id: str, package_name: str
+    ) -> None:
+        names = package_names(new_document(scenario_id))
+        assert names["scenario_id"] == scenario_id
+        assert names["package_name"] == package_name
+        assert names["distribution_name"] == package_name.replace("_", "-")
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_builder_conf_and_test_agree(
+        self, tmp_path: Path, scenario_id: str, package_name: str
+    ) -> None:
+        package = self._export(tmp_path, scenario_id)
+        module = package / "src" / package_name
+
+        conf_files = list((module / "conf" / "scenario").glob("*.yaml"))
+        assert [p.name for p in conf_files] == [f"{scenario_id}.yaml"]
+        conf = yaml.safe_load(conf_files[0].read_text())
+        assert conf["scenario"]["name"] == scenario_id
+
+        init = (module / "__init__.py").read_text()
+        assert f'register_scenario_builder("{scenario_id}", build_scenario)' in init
+
+        test = (package / "tests" / "test_scenario.py").read_text()
+        assert f'assert document.id == "{scenario_id}"' in test
+        assert f'get_scenario_builder("{scenario_id}")' in test
+
+        manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
+        assert manifest["scenario"]["id"] == scenario_id
+
+    @pytest.mark.parametrize("scenario_id", ["stop__line", "stop_line_"])
+    def test_the_exported_packages_own_tests_pass(
+        self, tmp_path: Path, scenario_id: str
+    ) -> None:
+        """Run the generated tests against this environment's framework.
+
+        The locked run (``uv sync`` from the package's own lock) needs the
+        network and is covered by the ``slow`` end-to-end test; putting the
+        package's ``src`` on the path checks the same assertions offline.
+        """
+        import subprocess
+
+        package = self._export(tmp_path, scenario_id)
+        env = {**os.environ, "PYTHONPATH": str(package / "src")}
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-o",
+                "addopts=",
+                "tests",
+            ],
+            cwd=package,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 class TestExportRefusals:

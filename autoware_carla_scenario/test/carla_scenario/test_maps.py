@@ -47,6 +47,7 @@ from autoware_carla_scenario.maps.opendrive import (
     ensure_xodr,
     installed_xodr,
     map_asset_env_var,
+    map_asset_path,
 )
 from autoware_carla_scenario.maps.resolver import MapResolutionError
 
@@ -227,6 +228,78 @@ class TestMapSource:
             ),
             ("/srv/maps@main", "/srv/maps", "main", ""),
             ("/srv/maps", "/srv/maps", "", ""),
+            # GitLab's views sit behind a '-' segment (#1046).
+            (
+                "https://gitlab.com/o/maps/-/tree/main/nishishinjuku",
+                "https://gitlab.com/o/maps",
+                "main",
+                "nishishinjuku",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/blob/v1.0/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "v1.0",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/raw/dev/m/lanelet2_map.osm",
+                "https://gitlab.com/o/maps",
+                "dev",
+                "m/lanelet2_map.osm",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/tree/main",
+                "https://gitlab.com/o/maps",
+                "main",
+                "",
+            ),
+            # The '-' ends the repository, so a subgroup path is unambiguous.
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T",
+                "https://gitlab.com/group/sub/maps",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitlab.com/group/sub/maps/-/tree/main/maps/T@v2",
+                "https://gitlab.com/group/sub/maps",
+                "v2",
+                "maps/T",
+            ),
+            # GitHub's form is unchanged.
+            (
+                "https://github.com/o/maps/blob/main/m/lanelet2_map.osm",
+                "https://github.com/o/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
+            # A self-hosted GitLab, subgroups included.
+            (
+                "https://git.example.com/g/s/maps/-/raw/main/m/lanelet2_map.osm",
+                "https://git.example.com/g/s/maps",
+                "main",
+                "m/lanelet2_map.osm",
+            ),
+            # On GitHub and HuggingFace a '-' is a directory in the path.
+            (
+                "https://github.com/o/maps/tree/main/-/tree/x",
+                "https://github.com/o/maps",
+                "main",
+                "-/tree/x",
+            ),
+            (
+                "https://huggingface.co/datasets/o/maps/tree/main/-/raw/x",
+                "https://huggingface.co/datasets/o/maps",
+                "main",
+                "-/raw/x",
+            ),
+            # A GitHub-style view ahead of the '-' wins on any host.
+            (
+                "https://git.example.com/o/maps/tree/main/-/x",
+                "https://git.example.com/o/maps",
+                "main",
+                "-/x",
+            ),
         ],
     )
     def test_parses_the_urls_people_actually_have(
@@ -234,6 +307,74 @@ class TestMapSource:
     ) -> None:
         source = MapSource.parse(uri)
         assert (source.repo_url, source.ref, source.path) == (repo_url, ref, path)
+
+    @pytest.mark.parametrize(
+        ("uri", "repo_url", "ref", "path"),
+        [
+            # A HuggingFace PR ref is percent-encoded in the page URL (#1052).
+            (
+                "https://huggingface.co/datasets/o/maps/tree/refs%2Fpr%2F3/m/T",
+                "https://huggingface.co/datasets/o/maps",
+                "refs/pr/3",
+                "m/T",
+            ),
+            # A space in the path.
+            (
+                "https://github.com/o/maps/tree/main/maps/My%20Town",
+                "https://github.com/o/maps",
+                "main",
+                "maps/My Town",
+            ),
+            # An encoded '/' in a ref stays in the ref: the split comes first.
+            (
+                "https://github.com/o/maps/tree/feature%2Fx/maps/T",
+                "https://github.com/o/maps",
+                "feature/x",
+                "maps/T",
+            ),
+            # GitLab page URLs are decoded the same way, split first.
+            (
+                "https://gitlab.com/g/sub/maps/-/tree/feature%2Fx/maps/My%20Town",
+                "https://gitlab.com/g/sub/maps",
+                "feature/x",
+                "maps/My Town",
+            ),
+            # An already-decoded space is left as it is.
+            (
+                "https://github.com/o/maps/tree/main/maps/My Town",
+                "https://github.com/o/maps",
+                "main",
+                "maps/My Town",
+            ),
+            # Plain GitHub and GitLab page URLs are unchanged.
+            (
+                "https://github.com/o/maps/tree/main/maps/T",
+                "https://github.com/o/maps",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitlab.com/o/maps/-/tree/main/maps/T",
+                "https://gitlab.com/o/maps",
+                "main",
+                "maps/T",
+            ),
+        ],
+    )
+    def test_decodes_the_ref_and_path_of_a_page_url(
+        self, uri: str, repo_url: str, ref: str, path: str
+    ) -> None:
+        source = MapSource.parse(uri)
+        assert (source.repo_url, source.ref, source.path) == (repo_url, ref, path)
+        assert MapSource.parse(source.uri) == source
+
+    def test_an_explicit_ref_and_a_plain_url_are_not_decoded(self) -> None:
+        source = MapSource.parse("https://example.com/o/a%20b@v%201#m%20T")
+        assert (source.repo_url, source.ref, source.path) == (
+            "https://example.com/o/a%20b",
+            "v%201",
+            "m%20T",
+        )
 
     def test_canonical_form_round_trips(self) -> None:
         uri = "https://huggingface.co/datasets/O/N/tree/dev/maps/T"
@@ -736,6 +877,19 @@ class TestLinksInAMapDirectory:
         assert resolved.xodr_path == derived / "TownA.xodr"
         assert resolved.xodr_is_derived
 
+    def test_a_stray_xodr_in_the_derived_directory_is_ignored(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Only the file :meth:`ResolvedMap.derived_xodr` names is the map's (#1050)."""
+        derived = resolve_map(_uri(origin_repo), cache=cache).derived
+        derived.mkdir(parents=True, exist_ok=True)
+        (derived / "Town01.xodr").write_text("<OpenDRIVE town='Town01'/>")
+
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_path is None
+        assert not resolved.xodr_is_derived
+        assert resolved.cached_derived_xodr("Town01") == derived / "Town01.xodr"
+
     def test_a_map_directory_linked_out_of_the_checkout_is_refused(
         self, tmp_path: Path, cache: GitMapCache, outside: Path
     ) -> None:
@@ -838,6 +992,90 @@ class TestPinning:
         assert resolve_map(_uri(origin_repo), cache=cache, refresh=True).commit != first
 
 
+class TestAtTip:
+    """Asking the remote which commit a ref names, exactly (#1044)."""
+
+    @pytest.fixture
+    def remote(self, origin_repo: Path, tmp_path: Path) -> Path:
+        """A bare remote whose refs share names and tails.
+
+        ``archive/main`` and the annotated ``v1.0`` are at the first commit,
+        ``main`` has moved on; ``dup`` is both a tag (first commit) and a
+        branch (second commit), and ``light`` a lightweight tag.
+        """
+        _git(origin_repo, "branch", "archive/main")
+        _git(origin_repo, "tag", "-a", "v1.0", "-m", "Release")
+        _git(origin_repo, "tag", "light")
+        _git(origin_repo, "tag", "-a", "dup", "-m", "Tag named like a branch")
+        _git(origin_repo, "commit", "--quiet", "--allow-empty", "-m", "Second")
+        _git(origin_repo, "branch", "dup")
+        bare = tmp_path / "remote.git"
+        _git(tmp_path, "clone", "--quiet", "--bare", str(origin_repo), str(bare))
+        return bare
+
+    @staticmethod
+    def _rev(repo: Path, rev: str) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", rev],
+            cwd=str(repo),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def _tip(self, cache: GitMapCache, remote: Path, ref: str) -> str:
+        return cache.at_tip(MapSource(repo_url=f"file://{remote}", ref=ref)).ref
+
+    def test_a_branch_is_not_another_ending_in_its_name(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        assert self._rev(remote, "archive/main") != self._rev(remote, "main")
+        assert self._tip(cache, remote, "main") == self._rev(remote, "refs/heads/main")
+
+    def test_an_annotated_tag_is_peeled_to_its_commit(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        tip = self._tip(cache, remote, "v1.0")
+        assert tip == self._rev(remote, "v1.0^{commit}")
+        assert tip != self._rev(remote, "refs/tags/v1.0")
+
+    def test_a_lightweight_tag(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "light") == self._rev(remote, "light")
+
+    def test_a_tag_wins_over_a_branch_of_the_same_name_as_in_git(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        tip = self._tip(cache, remote, "dup")
+        assert tip == self._rev(remote, "refs/tags/dup^{commit}")
+        assert tip != self._rev(remote, "refs/heads/dup")
+        # The same commit the checkout's `git fetch origin <ref>` gets.
+        scratch = tmp_path / "scratch"
+        _git(tmp_path, "init", "--quiet", str(scratch))
+        _git(scratch, "fetch", "--quiet", str(remote), "dup")
+        assert tip == self._rev(scratch, "FETCH_HEAD^{commit}")
+
+    def test_a_full_ref_names_itself(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "refs/heads/dup") == self._rev(
+            remote, "refs/heads/dup"
+        )
+
+    def test_head(self, remote: Path, cache: GitMapCache) -> None:
+        assert self._tip(cache, remote, "HEAD") == self._rev(remote, "HEAD")
+
+    def test_a_ref_only_matching_a_tail_is_not_found(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        source = MapSource(repo_url=f"file://{remote}", ref="archive")
+        assert cache.at_tip(source) == source
+        tail = MapSource(repo_url=f"file://{remote}", ref="ain")
+        assert cache.at_tip(tail) == tail
+        # `only` is the tail of `refs/heads/nested/only`, which ls-remote's
+        # pattern matches but git's own resolution (and the fetch) does not.
+        _git(remote, "branch", "nested/only", "main")
+        nested = MapSource(repo_url=f"file://{remote}", ref="only")
+        assert cache.at_tip(nested) == nested
+
+
 # ---------------------------------------------------------------------------
 # Browsing
 # ---------------------------------------------------------------------------
@@ -867,6 +1105,78 @@ class TestListMaps:
             f"git+file://{origin_repo}@main#autoware_maps/TownB", cache=cache
         )
         assert [entry.name for entry in entries] == ["TownB"]
+
+
+class TestListMapsAtTip:
+    """Listing a branch lists what it names now, from resolving's entry (#1051)."""
+
+    @pytest.fixture
+    def remote(self, origin_repo: Path, tmp_path: Path) -> Path:
+        """A bare clone of the map repository, pushed to like a real remote."""
+        bare = tmp_path / "remote.git"
+        _git(tmp_path, "clone", "--quiet", "--bare", str(origin_repo), str(bare))
+        return bare
+
+    @staticmethod
+    def _push_town_c(remote: Path, tmp_path: Path) -> None:
+        work = tmp_path / "work"
+        _git(tmp_path, "clone", "--quiet", str(remote), str(work))
+        (work / "autoware_maps" / "TownC").mkdir()
+        (work / "autoware_maps" / "TownC" / "lanelet2_map.osm").write_text(_OSM)
+        _git(work, "add", "-A")
+        _git(work, "commit", "--quiet", "-m", "Publish TownC")
+        _git(work, "push", "--quiet", "origin", "main")
+
+    @staticmethod
+    def _entries(cache: GitMapCache) -> list[str]:
+        return sorted(
+            path.name
+            for path in (cache.root / ".repos").iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        )
+
+    def test_a_new_commit_on_the_branch_is_listed(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        assert [e.name for e in list_maps(uri, cache=cache)] == ["TownA", "TownB"]
+
+        self._push_town_c(remote, tmp_path)
+
+        names = [e.name for e in list_maps(uri, cache=cache)]
+        assert names == ["TownA", "TownB", "TownC"]
+
+    def test_listing_and_resolving_share_one_entry(
+        self, remote: Path, cache: GitMapCache
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        entry = list_maps(uri, cache=cache)[0]
+        listed = self._entries(cache)
+        resolved = resolve_map(entry.uri, cache=cache)
+
+        assert len(listed) == 1
+        assert self._entries(cache) == listed
+        assert resolved.lanelet2_path.is_relative_to(cache.root / ".repos" / listed[0])
+
+    def test_an_unreachable_remote_still_lists_what_was_cached(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        uri = f"git+file://{remote}@main"
+        first = [e.name for e in list_maps(uri, cache=cache)]
+        remote.rename(tmp_path / "moved-away")
+
+        assert [e.name for e in list_maps(uri, cache=cache)] == first
+
+    def test_an_unreachable_remote_lists_an_entry_filed_under_the_branch(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        # A cache filled before listing asked for the tip: the entry is named
+        # after the branch and no tip was ever recorded.
+        uri = f"git+file://{remote}@main"
+        cache.list_files(MapSource.parse(uri))
+        remote.rename(tmp_path / "moved-away")
+
+        assert [e.name for e in list_maps(uri, cache=cache)] == ["TownA", "TownB"]
 
 
 # ---------------------------------------------------------------------------
@@ -928,6 +1238,35 @@ class TestResolveMapPaths:
         assert town_a.opendrive_path is not None
         assert town_a.opendrive_path.name == "TownA.xodr"
 
+    def test_an_opendrive_captured_under_the_carla_map_name_is_found(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run on ``map.name`` writes ``<map.name>.xodr``; the next read finds it."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        config = {"source": _uri(origin_repo), "name": "Town01"}
+        destination = resolve_map_paths(config).opendrive_path
+        assert destination is not None and destination.name == "Town01.xodr"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("<OpenDRIVE/>")
+
+        again = resolve_map_paths(config)
+        assert again.xodr_path == destination
+        assert again.xodr_is_derived and again.install_xodr is None
+
+    def test_an_opendrive_captured_under_another_name_is_not_used(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The directory's ``TownA.xodr`` is not the town ``map.name`` loads (#1050)."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        default = resolve_map_paths({"source": _uri(origin_repo)}).opendrive_path
+        assert default is not None and default.name == "TownA.xodr"
+        default.parent.mkdir(parents=True, exist_ok=True)
+        default.write_text("<OpenDRIVE town='TownA'/>")
+
+        renamed = resolve_map_paths({"source": _uri(origin_repo), "name": "Town01"})
+        assert renamed.xodr_path is None and not renamed.xodr_is_derived
+        assert renamed.opendrive_path == default.parent / "Town01.xodr"
+
     def test_the_opendrive_is_not_installed_into_carla_unless_asked(self) -> None:
         config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
 
@@ -935,6 +1274,56 @@ class TestResolveMapPaths:
         assert resolve_map_paths({**config, "overwrite_xodr": True}).overwrite_xodr
         off = resolve_map_paths({**config, "overwrite_xodr": False})
         assert off.overwrite_xodr is False
+
+
+def _map_repo(path: Path) -> Path:
+    """A repository holding one map at ``map/``, as many single-map repos do."""
+    (path / "map").mkdir(parents=True)
+    (path / "map" / "lanelet2_map.osm").write_text(_OSM)
+    _git(path, "init", "--quiet", "--initial-branch", "main", ".")
+    _git(path, "add", "-A")
+    _git(path, "commit", "--quiet", "-m", "Publish the map")
+    return path
+
+
+class TestDerivedDirectory:
+    """Where an OpenDRIVE taken from CARLA is kept, per repository (#1050)."""
+
+    def test_two_repositories_at_the_same_path_do_not_share_one(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        first = _map_repo(tmp_path / "town01_map")
+        second = _map_repo(tmp_path / "town10_map")
+
+        a = resolve_map(_uri(first, "map"), cache=cache)
+        captured = a.derived_xodr()
+        captured.parent.mkdir(parents=True, exist_ok=True)
+        captured.write_text("<OpenDRIVE town='Town01'/>")
+
+        b = resolve_map(_uri(second, "map"), cache=cache)
+        assert a.derived != b.derived
+        assert b.xodr_path is None and not b.xodr_is_derived
+        # The first repository still finds its own.
+        assert resolve_map(_uri(first, "map"), cache=cache).xodr_path == captured
+
+    def test_the_ref_is_not_part_of_the_key(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """The OpenDRIVE comes out of CARLA, so a new commit need not refetch it."""
+        on_branch = resolve_map(_uri(origin_repo), cache=cache)
+        pinned = resolve_map(_uri(origin_repo, ref=on_branch.commit), cache=cache)
+        assert on_branch.derived == pinned.derived
+
+    def test_two_maps_of_one_repository_do_not_share_one(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        town_a = cache.derived_dir(MapSource.parse(_uri(origin_repo)))
+        town_b = cache.derived_dir(
+            MapSource.parse(_uri(origin_repo, "autoware_maps/TownB"))
+        )
+        assert town_a != town_b
+        # Both under the one repository's directory.
+        assert town_a.parent == town_b.parent
 
 
 # ---------------------------------------------------------------------------
@@ -1228,6 +1617,24 @@ class TestOpenDrive:
         monkeypatch.delenv(map_asset_env_var("TownA"), raising=False)
         assert installed_xodr("TownA") is None
 
+    def test_a_blank_variable_names_no_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(map_asset_env_var("TownA"), "   ")
+        assert map_asset_path("TownA") is None
+        assert installed_xodr("TownA") is None
+
+    def test_the_variable_is_stripped_and_its_tilde_expanded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #1031: every reader of the variable resolves it the same way."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        asset = tmp_path / "TownA.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_asset_env_var("TownA"), " ~/TownA.xodr \n")
+        assert map_asset_path("TownA") == asset
+        assert installed_xodr("TownA") == asset
+
     def test_takes_the_file_from_a_carla_installation_when_there_is_one(
         self,
         origin_repo: Path,
@@ -1252,6 +1659,25 @@ class TestOpenDrive:
     ) -> None:
         resolved = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
         assert ensure_xodr(resolved, allow_server=False) == resolved.xodr_path
+
+    def test_another_carla_maps_cached_file_is_not_reused(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One captured under the directory's name is not ``map_name``'s (#1050)."""
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        resolved.derived.mkdir(parents=True, exist_ok=True)
+        resolved.derived_xodr().write_text("<OpenDRIVE town='TownA'/>")
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.xodr_is_derived
+
+        monkeypatch.delenv(map_asset_env_var("Town01"), raising=False)
+        with pytest.raises(OpenDriveUnavailable, match=map_asset_env_var("Town01")):
+            ensure_xodr(resolved, map_name="Town01", allow_server=False)
+
+        resolved.derived_xodr("Town01").write_text("<OpenDRIVE town='Town01'/>")
+        assert ensure_xodr(
+            resolved, map_name="Town01", allow_server=False
+        ) == resolved.derived_xodr("Town01")
 
     def test_says_what_is_missing_when_there_is_nowhere_to_get_one(
         self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch

@@ -5,7 +5,8 @@ session (:func:`session_dir`) or of a multirun job (:func:`job_dir`), both
 through :func:`contained`, which refuses a path that resolves outside the
 viewer's base; the files one case leaves (:class:`CaseFiles`), and the stems
 of the cases in a directory, in the order a runner hands them out
-(:func:`stem_order`), and the one case of a directory that holds one run.
+(:func:`stem_order`), and the one case of a directory that holds one run
+(whose result :func:`result_path` finds).
 
 Split out of ``ui.cases``, which re-exports every name here and keeps what
 reads the JSON documents of any type (``Any``) a batch leaves, so that the
@@ -25,6 +26,8 @@ __all__ = [
     "CaseFiles",
     "contained",
     "job_dir",
+    "last_result_path",
+    "result_path",
     "session_dir",
     "stem_order",
 ]
@@ -142,13 +145,39 @@ def _stems_in(directory: Path) -> list[str]:
     return sorted(stems, key=stem_order)
 
 
+def result_path(directory: Path) -> Optional[Path]:
+    """The ``_result.json`` of the run a directory that holds one run (a
+    multirun job, a single run) shows: the first, in :func:`stem_order`, so
+    ``X``'s rather than ``X-1``'s, which a plain sort puts first (``-`` sorts
+    before ``_``). ``None`` when it has none."""
+    for stem in _stems_in(directory):
+        path = directory / f"{stem}{_RESULT}"
+        if path.is_file():
+            return path
+    return None
+
+
+def last_result_path(directory: Path) -> Optional[Path]:
+    """The ``_result.json`` of the last run in *directory*: the last stem in
+    :func:`stem_order` (``X-1`` after ``X``, ``X-10`` after ``X-2``), which is
+    the newest, since a run takes the first stem no earlier run has taken
+    (``scenario_runner._run_file_stem``). ``None`` when that run left no
+    result, even if an earlier one did: an earlier run's verdict is not the
+    last run's."""
+    stems = _stems_in(directory)
+    if not stems:
+        return None
+    path = directory / f"{stems[-1]}{_RESULT}"
+    return path if path.is_file() else None
+
+
 def _only_case(directory: Path) -> CaseFiles | None:
     """The case of a directory that holds one run (a multirun job, a single
-    run): the first stem with a result, else the first with a log."""
+    run): the stem of its :func:`result_path`, else the first with a log."""
+    result = result_path(directory)
+    if result is not None:
+        return CaseFiles(directory, result.name[: -len(_RESULT)])
     stems = _stems_in(directory)
-    for stem in stems:
-        if (directory / f"{stem}{_RESULT}").is_file():
-            return CaseFiles(directory, stem)
     return CaseFiles(directory, stems[0]) if stems else None
 
 

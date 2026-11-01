@@ -51,6 +51,7 @@ import hydra
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.hydra_config import HydraConfig
+from hydra.types import RunMode
 from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario import (
@@ -1056,9 +1057,37 @@ def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
     return container
 
 
+def _is_multirun_mode_override(arg: str) -> bool:
+    """Return ``True`` for a ``hydra.mode=MULTIRUN`` override.
+
+    Hydra's documented alternative to ``--multirun``.  The value is matched as
+    Hydra matches it, by the enum member's name: Hydra refuses
+    ``hydra.mode=multirun``.
+    """
+    return arg.lstrip("+") == "hydra.mode=MULTIRUN"
+
+
+def _multirun_requested_in_argv(argv: list[str]) -> bool:
+    """Return ``True`` when *argv* asks Hydra for a multirun.
+
+    For use before Hydra composes, so a ``hydra.mode: MULTIRUN`` set only in
+    a config file is not seen here.
+    """
+    return any(
+        arg in ("--multirun", "-m") or _is_multirun_mode_override(arg) for arg in argv
+    )
+
+
 def _is_multirun() -> bool:
-    """Return ``True`` when running under Hydra ``--multirun``."""
-    return "--multirun" in sys.argv or "-m" in sys.argv
+    """Return ``True`` when the Hydra job running is one of a multirun.
+
+    The mode Hydra settled on, however it was set (``--multirun``, a
+    ``hydra.mode=MULTIRUN`` override or a config); what ``sys.argv`` asks for
+    when no Hydra job has set it.
+    """
+    if HydraConfig.initialized():
+        return HydraConfig.get().mode == RunMode.MULTIRUN
+    return _multirun_requested_in_argv(sys.argv)
 
 
 def _find_scenario_yaml(name: str) -> Path:
@@ -1082,7 +1111,8 @@ def _resolve_scenario_glob(pattern: str) -> list[str]:
     from external scenario packages are included alongside the built-ins.  The
     viewer's launcher resolves its patterns with the same
     :func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`.
-    An invalid pattern (a ``**`` that is not a whole path component), like
+    An invalid pattern (a ``**`` that is not a whole path component, a
+    leading ``/`` or a ``..`` component), like
     one that matches nothing, is reported on stdout and exits with status 1.
     """
     conf_dirs = get_conf_dirs()
@@ -2095,12 +2125,16 @@ def _dispatch(resume_from: int) -> None:
     slurm = launcher_requested_in_argv(remaining) == "slurm"
     if scenario_value is not None and (_is_glob_pattern(scenario_value) or slurm):
         # --multirun runs every case of each scenario's sweep in the batch's
-        # one queue; the sweeper it would pick is the batch itself.
-        expand = _is_multirun()
+        # one queue; the sweeper it would pick is the batch itself.  Read off
+        # argv: no Hydra job runs here (one an earlier main() left behind
+        # in this process is not this run's).
+        expand = _multirun_requested_in_argv(sys.argv)
         remaining = [
             arg
             for arg in remaining
-            if arg not in ("--multirun", "-m") and not arg.startswith("hydra/sweeper=")
+            if arg not in ("--multirun", "-m")
+            and not _is_multirun_mode_override(arg)
+            and not arg.startswith("hydra/sweeper=")
         ]
         logging.basicConfig(
             level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"

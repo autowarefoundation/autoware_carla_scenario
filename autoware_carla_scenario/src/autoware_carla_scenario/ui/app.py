@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .models import RunProgress
+from .models import RunProgress, SessionSummary
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,8 @@ def _resolve_scenario_names(scenario: str) -> list[str]:
 
     Raises:
         ValueError: *scenario* is not a valid pattern (a ``**`` that is not a
-            whole path component); :func:`run_scenarios` answers it with an
-            error response.
+            whole path component, a leading ``/`` or a ``..`` component);
+            :func:`run_scenarios` answers it with an error response.
     """
     if is_scenario_glob(scenario):
         return resolve_scenario_glob(scenario, scanner.scenario_conf_dirs())
@@ -477,6 +477,19 @@ def _family(results_: list[results.CaseResult]) -> set[str]:
     return {r.scenario for r in results_}
 
 
+def _scenarios(summary: SessionSummary) -> set[str]:
+    """The scenarios a session ran, named as :func:`_family` names them: a
+    batch's entries name them as its summary does; a multirun or single
+    session's are its ``scenario=`` override, which its summary (the result
+    file's stem) does not give, so they are read from its overrides
+    (:func:`results.session_scenarios`)."""
+    if summary.session_type == "batch":
+        return {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
+    return results.session_scenarios(
+        _base_path(), summary.session_type, summary.date, summary.time
+    )
+
+
 def _openodd() -> Any:
     import openodd  # noqa: PLC0415 -- a Rust extension, loaded on first use
 
@@ -562,18 +575,23 @@ async def compare_sessions(request: Request) -> HTMLResponse:
     family: set[str] = set()
     for _, found in loaded:
         family |= _family(found)
-    # The sessions offered: those that ran a scenario of the family (all when
-    # none is picked yet).
-    offered = []
-    for summary in scanner.scan_sessions(_base_path()):
-        names = {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
-        if not family or names & family:
-            offered.append(
-                (
-                    _session_ref(summary.session_type, summary.date, summary.time),
-                    summary,
-                )
-            )
+    # The sessions offered: those picked, and those that ran a scenario of the
+    # family (all when none is picked yet). Only scanned sessions are offered,
+    # so a picked ref is offered only when it names a real session. The scan
+    # stays on the event loop, as every other page's does (its cache is not
+    # locked); only the reading of the sessions' overrides is threaded.
+    selected = {ref for ref, _ in loaded}
+    sessions = scanner.scan_sessions(_base_path())
+
+    def offer() -> list[tuple[str, SessionSummary]]:
+        out = []
+        for summary in sessions:
+            ref = _session_ref(summary.session_type, summary.date, summary.time)
+            if not family or ref in selected or _scenarios(summary) & family:
+                out.append((ref, summary))
+        return out
+
+    offered = await asyncio.to_thread(offer)
     comparison = None
     matrices: list[tuple[str, str]] = []
     if len(loaded) >= 2:

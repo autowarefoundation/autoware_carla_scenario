@@ -18,6 +18,7 @@ import logging
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     AndCondition,
+    BaseCondition,
     BaseScenario,
     EgoConfig,
     EntityLanePositionCondition,
@@ -52,6 +53,10 @@ class ReachGoalScenario(BaseScenario):
     def setup(self) -> None:
         """Snap the ego spawn and register the pass/fail conditions."""
         cfg = self._config
+        # Nothing to reach is nothing to pass: refuse it before touching the
+        # world.
+        if len(cfg.goal_lanelet_ids) == 0:
+            raise ValueError("goal_lanelet_ids must name at least one lanelet")
 
         # 1. Every scenario says where its ego is going, and this one already
         #    has: the last road it asserts the ego reaches is the destination.
@@ -63,7 +68,10 @@ class ReachGoalScenario(BaseScenario):
         self._setup_ego_spawn()
 
         # 3. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
-        stickies = []
+        # Appended one by one and chosen by if/else below: Codon gives
+        # neither a list comprehension nor a conditional expression the
+        # base class's type.
+        stickies: list[BaseCondition] = []
         logger.info("Goal lanelets: %s", list(cfg.goal_lanelet_ids))
         for lanelet_id in cfg.goal_lanelet_ids:
             # The lanelet goes in whole: it names one lane, and the condition
@@ -79,7 +87,14 @@ class ReachGoalScenario(BaseScenario):
                     )
                 )
             )
-        self.register_pass_condition(AndCondition(stickies))
+        # AndCondition needs at least two children: one goal is its own
+        # pass condition.
+        reach_goals: BaseCondition
+        if len(stickies) == 1:
+            reach_goals = stickies[0]
+        else:
+            reach_goals = AndCondition(stickies)
+        self.register_pass_condition(reach_goals)
 
         # 4. Fail-safe timeout.
         self.register_fail_condition(

@@ -228,9 +228,27 @@ class GitMapCache:
         slug = _SLUG_UNSAFE.sub("-", f"{source.repo_name}-{source.ref or 'HEAD'}")
         return self.root / REPOS_SUBDIR / f"{slug.strip('-').lower()}-{digest}"
 
-    def derived_dir(self, path: str) -> Path:
-        """Return where artefacts generated from the map at *path* are kept."""
-        return self.root / DERIVED_SUBDIR / (path or "root")
+    def derived_dir(self, source: MapSource) -> Path:
+        """Return where artefacts generated from *source*'s map are kept.
+
+        Keyed on the repository as well as the map's path inside it, the way
+        :meth:`entry_dir` is: two repositories that both keep their map at
+        ``map/`` must not share an OpenDRIVE, or the second is handed the
+        first one's town.  The slug is for a person; the digest of the URL is
+        what keeps repositories apart.
+
+        The ref is deliberately *not* part of the key.  What lands here is read
+        back out of CARLA (:func:`~...maps.opendrive.ensure_xodr`,
+        ``ScenarioQueue._capture_opendrive``), so it is a function of the CARLA
+        town the map was recorded on, not of the repository's revision.  Keying
+        it on the commit would capture the town again every time a branch
+        moves, and would split a map Autoware's setup unpacked (no commit) from
+        the same map cloned here.  A stale file is replaced the way it always
+        was, by fetching again with ``refresh``.
+        """
+        digest = hashlib.sha256(source.repo_url.encode("utf-8")).hexdigest()[:10]
+        slug = _SLUG_UNSAFE.sub("-", source.repo_name).strip("-").lower() or "repo"
+        return self.root / DERIVED_SUBDIR / f"{slug}-{digest}" / (source.path or "root")
 
     def provisioned(self, source: MapSource) -> Optional[Path]:
         """Return *source*'s map directory if it is already on disk, unpacked.
@@ -274,7 +292,11 @@ class GitMapCache:
             return source
         ref = source.ref or "HEAD"
         try:
-            listing = self._git(None, "ls-remote", source.repo_url, ref, capture=True)
+            # `<ref>^{}` as well: ls-remote lists an annotated tag's peeled
+            # line only when a pattern names it.
+            listing = self._git(
+                None, "ls-remote", source.repo_url, ref, ref + "^{}", capture=True
+            )
         except MapCacheError:
             # Falling back to the *note* rather than to the branch: the entry
             # this cache holds is named after the commit the ref last resolved
@@ -289,8 +311,8 @@ class GitMapCache:
                 f"the cached {remembered[:10]}" if remembered else "what is cached",
             )
             return source.at(remembered) if remembered else source
-        fields = listing.split()
-        at_commit = source.at(fields[0]) if fields else source
+        commit = _exact_tip(listing, ref)
+        at_commit = source.at(commit) if commit else source
         if not at_commit.pinned:
             logger.warning("%s names no ref in %s.", ref, source.repo_url)
             return source
@@ -690,6 +712,50 @@ class GitMapCache:
             materialised = "[\n" + items + "\n  ]"
         fields.append(("materialised", materialised))
         (entry / "meta.json").write_text(_json_object(fields), encoding="utf-8")
+
+
+#: The full ref names a short ref can stand for, in the order git tries them
+#: (``ref_rev_parse_rules`` in git's refs.c, used by ``git rev-parse`` and by
+#: the ``git fetch origin <ref>`` the checkout runs): an exact name first, then
+#: a tag, then a branch.  ``%s`` is the ref as written.
+_REF_RULES = (
+    "%s",
+    "refs/%s",
+    "refs/tags/%s",
+    "refs/heads/%s",
+    "refs/remotes/%s",
+    "refs/remotes/%s/HEAD",
+)
+
+
+def _exact_tip(listing: str, ref: str) -> str:
+    """Return the commit *ref* names in a ``git ls-remote`` *listing*.
+
+    ``ls-remote <url> <ref>`` matches every ref whose name *ends* in
+    ``/<ref>``, so its first line can be ``refs/heads/archive/main`` for
+    ``main``, or an annotated tag's own object rather than the commit it tags.
+    The ref is resolved the way git itself resolves it, so that the commit
+    named here is the one the checkout's ``git fetch origin <ref>`` gets: the
+    first of :data:`_REF_RULES` the remote has wins -- a tag before a branch of
+    the same name, as ``git rev-parse`` would choose -- and a tag is peeled to
+    its commit (``<name>^{}``) when the listing carries the peeled line.
+
+    Returns ``""`` when no ref in the listing is *ref* exactly.
+    """
+    shas: dict[str, str] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            shas[fields[1]] = fields[0]
+    for rule in _REF_RULES:
+        name = rule.replace("%s", ref)
+        peeled = shas.get(name + "^{}", "")
+        if peeled:
+            return peeled
+        direct = shas.get(name, "")
+        if direct:
+            return direct
+    return ""
 
 
 def _json_field(raw: str, key: str) -> Optional[str]:

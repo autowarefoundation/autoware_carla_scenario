@@ -221,6 +221,23 @@ class LaneChangeConfig:
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 10.0
 
+    def __post_init__(self) -> None:
+        """Refuse an unknown ``direction`` or ``expect``.
+
+        ``lane_change.py`` checks the failure outcome only for ``"fail"``, so
+        without this a typo (``"fial"``) would check the opposite outcome.
+        """
+        if self.direction not in ("left", "right"):
+            raise ValueError(
+                "lane_change direction must be 'left' or 'right', "
+                f"not {self.direction!r}"
+            )
+        if self.expect not in ("success", "fail"):
+            raise ValueError(
+                "lane_change expect must be 'success' or 'fail', "
+                f"not {self.expect!r}"
+            )
+
 
 @dataclass
 class PedestrianDartOutConfig:
@@ -232,10 +249,12 @@ class PedestrianDartOutConfig:
     #: waits at the kerb (m).
     pedestrian_ahead_m: float = 35.0
 
-    #: The pedestrian's offset from the lane's centreline (m, negative to the
-    #: right of the direction of travel): half a lane and a little more puts
-    #: it at the kerb of the rightmost lane.
-    pedestrian_offset_m: float = -3.0
+    #: The pedestrian's distance from the lane's centreline, on its kerb side
+    #: (m): the right of the direction of travel in right-hand traffic, the
+    #: left in left-hand traffic, by the OpenDRIVE road's ``rule``.  Half a
+    #: lane and a little more puts it at the kerb of a lane at the road's edge.
+    #: The sign is ignored (``-3.0``, the old right-hand value, is 3 m too).
+    pedestrian_offset_m: float = 3.0
 
     #: The pedestrian steps out once the ego is this close to it (m).
     trigger_distance_m: float = 20.0
@@ -311,7 +330,9 @@ class CutInConfig:
     fail_on_leaving_lane: bool = True
 
     #: How far ahead of the start of the spawn lanelet the lanes ahead reach
-    #: (m).  Further than the ego can drive before the timeout.
+    #: (m), the ones the ego is to stay on and the ones the NPC cuts in on
+    #: (those only up to the first junction).
+    #: Further than the ego can drive before the timeout.
     lanes_ahead_m: float = 1000.0
 
     #: How long the ego has to be off those lanes before the run fails (s):

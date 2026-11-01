@@ -117,6 +117,16 @@ class ResolvedMap:
         """
         return self.derived / f"{name or self.name}.xodr"
 
+    def cached_derived_xodr(self, name: str = "") -> Optional[Path]:
+        """Return the OpenDRIVE already taken from CARLA as *name*, if any.
+
+        A map is resolved before anyone says which CARLA map it runs on, so
+        :attr:`xodr_path` only looks for one named after the map directory.
+        A scenario whose ``map.name`` differs captures it under that name;
+        this is how it is found again.
+        """
+        return _derived_file(self.derived, name or self.name)
+
     @property
     def local(self) -> bool:
         """Whether this map was read from a local directory, not a source."""
@@ -225,7 +235,9 @@ def _lanelet2_of(directory: Path, source: MapSource) -> Path:
     )
 
 
-def _find_xodr(directory: Path, derived: Path) -> tuple[Optional[Path], bool]:
+def _find_xodr(
+    directory: Path, derived: Path, name: str
+) -> tuple[Optional[Path], bool]:
     """Return the map's OpenDRIVE and whether it was derived rather than shipped.
 
     The difference decides what CARLA is asked to do with it.  An OpenDRIVE the
@@ -235,6 +247,11 @@ def _find_xodr(directory: Path, derived: Path) -> tuple[Optional[Path], bool]:
     for.  One derived into the cache came *out* of CARLA in the first place, so
     installing it back would be a no-op that also demands an environment
     variable pointing into the CARLA installation.
+
+    Of the derived directory only ``<name>.xodr`` -- what
+    :meth:`ResolvedMap.derived_xodr` names -- is taken, never any ``*.xodr``
+    that happens to be there: a file left by something else, or one a map
+    sharing the directory was captured as, is not this map's OpenDRIVE.
     """
     # Each through an annotated local: Codon types a tuple by its members, and
     # every return of the function is a tuple of an Optional[Path].
@@ -242,11 +259,19 @@ def _find_xodr(directory: Path, derived: Path) -> tuple[Optional[Path], bool]:
         if _is_map_file(directory, candidate):
             shipped: Optional[Path] = candidate
             return shipped, False
-    for candidate in sorted(derived.glob("*.xodr")):
-        if _is_map_file(derived, candidate):
-            fetched: Optional[Path] = candidate
-            return fetched, True
+    fetched: Optional[Path] = _derived_file(derived, name)
+    if fetched is not None:
+        return fetched, True
     return None, False
+
+
+def _derived_file(derived: Path, name: str) -> Optional[Path]:
+    """Return ``<name>.xodr`` in *derived* if it is a map file there."""
+    candidate = derived / f"{name}.xodr"
+    if _is_map_file(derived, candidate):
+        found: Optional[Path] = candidate
+        return found
+    return None
 
 
 def resolve_map(
@@ -277,7 +302,7 @@ def resolve_map(
         )
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
-    derived = store.derived_dir(parsed.directory)
+    derived = store.derived_dir(at_directory)
 
     directory = None if (refresh or parsed.pinned) else store.provisioned(at_directory)
     if directory is not None:
@@ -406,7 +431,7 @@ def cached_map(
         return None
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
-    derived = store.derived_dir(parsed.directory)
+    derived = store.derived_dir(at_directory)
 
     directory = None if parsed.pinned else store.provisioned(at_directory)
     provisioned = directory is not None
@@ -511,7 +536,7 @@ def _describe(
             else _lanelet2_of(directory, source)
         )
     projector_info = directory / "map_projector_info.yaml"
-    xodr_path, xodr_is_derived = _find_xodr(directory, derived)
+    xodr_path, xodr_is_derived = _find_xodr(directory, derived, directory.name)
     return ResolvedMap(
         source=source,
         name=directory.name,

@@ -6,12 +6,15 @@ must not hit them: it passes once it is past the point where they crossed, and
 fails on a collision with them.
 
 The pedestrian stands ``pedestrian_offset_m`` from the centre of the ego's
-lanelet (negative is to the right of the direction of travel, the kerb of the
-rightmost lane) and runs across it, towards the lane's centre and beyond.
+lanelet, on its kerb side -- the right of the direction of travel where the
+road is right-hand traffic, the left where it is left-hand traffic (the
+OpenDRIVE road's ``rule``) -- and runs across it, towards the lane's centre
+and beyond.
 
 Typical usage
 -------------
-On every lane at the road's edge of a map, one case each::
+On every lane at the kerb of a map, one case each (the sweep's kerb side is
+set for the shipped left-hand-traffic map; see its YAML)::
 
     uv run scenario --multirun hydra/sweeper=lanelet_constraint \\
         scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
@@ -44,6 +47,7 @@ from autoware_carla_scenario import (
     WalkStraightAction,
     to_carla_world,
 )
+from autoware_carla_scenario.coordinate import road_traffic_rule
 
 from .configs import PedestrianDartOutConfig
 
@@ -59,6 +63,42 @@ _PASS_RADIUS_M = 3.0
 #: walker by its middle; a point at the road's height puts its feet in a kerb
 #: that stands above the road, and the spawn is refused.
 _WALKER_SPAWN_HEIGHT_M = 1.0
+
+
+def kerb_offset_m(distance_m: float, traffic_rule: str) -> float:
+    """The lateral offset ``t`` (m, positive to the left of the direction of
+    travel) of a point *distance_m* from a lane's centre on its kerb side.
+
+    The kerb is on the right in right-hand traffic and on the left in
+    left-hand traffic.  The sign of *distance_m* is ignored, so the old
+    ``-3.0`` still means 3 m towards the kerb.
+
+    Raises:
+        ValueError: If *traffic_rule* is not ``"RHT"`` or ``"LHT"``.
+    """
+    if traffic_rule == "LHT":
+        return abs(distance_m)
+    if traffic_rule == "RHT":
+        return -abs(distance_m)
+    raise ValueError(f"traffic_rule must be 'RHT' or 'LHT', got {traffic_rule!r}")
+
+
+def kerb_pose(
+    spawn: Lanelet2Pose, config: PedestrianDartOutConfig, traffic_rule: str
+) -> Lanelet2Pose:
+    """Where the pedestrian waits: ``pedestrian_ahead_m`` along the ego's
+    lanelet from *spawn*, ``pedestrian_offset_m`` off its centre on the kerb
+    side of *traffic_rule*, facing across the lane."""
+    t = kerb_offset_m(config.pedestrian_offset_m, traffic_rule)
+    # A quarter turn to the left of the lane's direction from the right-hand
+    # kerb, to the right from the left one.
+    across = math.pi / 2 if t < 0 else -math.pi / 2
+    return Lanelet2Pose(
+        lanelet_id=spawn.lanelet_id,
+        s=spawn.s + config.pedestrian_ahead_m,
+        t=t,
+        heading=across,
+    )
 
 
 class PedestrianDartOutScenario(BaseScenario):
@@ -93,7 +133,7 @@ class PedestrianDartOutScenario(BaseScenario):
         # An ego that plans its own route is sent past the crossing.
         if self.goal_pose is None:
             self.goal_pose = beyond
-        self._setup_ego_spawn()
+        od_spawn = self._setup_ego_spawn()
 
         self.register_init(
             TrafficSignalAction(
@@ -103,15 +143,8 @@ class PedestrianDartOutScenario(BaseScenario):
             )
         )
 
-        # Facing across the lane: a quarter turn to the left of the lane's
-        # direction from the right-hand kerb, to the right from the left one.
-        across = math.pi / 2 if cfg.pedestrian_offset_m < 0 else -math.pi / 2
-        kerb = Lanelet2Pose(
-            lanelet_id=spawn.lanelet_id,
-            s=crossing_s,
-            t=cfg.pedestrian_offset_m,
-            heading=across,
-        )
+        # At the kerb on the side the road's traffic keeps to.
+        kerb = kerb_pose(spawn, cfg, road_traffic_rule(od_spawn.road_id))
         # Not snapped to the road: snapping would put it in the carriageway.
         at_kerb = to_carla_world(kerb).to_carla_transform()
         lifted = carla.Transform(
@@ -132,10 +165,10 @@ class PedestrianDartOutScenario(BaseScenario):
         pedestrian.spawn(world)
         self.register_pedestrian(pedestrian)
         logger.info(
-            "Pedestrian waits on lanelet %d at s=%.1f, %.1f m off its centre",
+            "Pedestrian waits on lanelet %d at s=%.1f, t=%.1f m off its centre",
             spawn.lanelet_id,
             crossing_s,
-            cfg.pedestrian_offset_m,
+            kerb.t,
         )
 
         self.register_pre_tick(

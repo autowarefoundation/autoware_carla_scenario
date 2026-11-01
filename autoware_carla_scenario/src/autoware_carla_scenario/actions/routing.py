@@ -58,7 +58,7 @@ from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
 from ..control_domain import ControlDomain, movement_of
-from .base import BaseAction, TickTiming
+from .base import TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -506,6 +506,21 @@ class RoutingAction(TrajectoryRun):
     def reset(self) -> None:
         """Forget the earlier runs' routes (:meth:`TrajectoryRun.reset`)."""
         super().reset()
+        self._clear_run()
+        self._arrivals = []
+        self._stop_vertices = []
+        self._mark_points = []
+        self._mark_lanes = []
+        self._start_pose = None
+
+    def _clear_run(self) -> None:
+        """Forget the last run's progress, as a new run starts: by
+        :meth:`reset` between scenario runs and by :meth:`execute` between
+        the runs of a repeating (``once=False``) action.  Its arrivals not
+        taken yet are kept apart, by :meth:`_keep`."""
+        # Raised to where the entity stood when a run began (_begin_route):
+        # the next run starts from the offset given, not from that.
+        self._initial_distance_offset = self._given_offset
         self._finishing = False
         self._finish_m = None
         self._from_where_it_stands = False
@@ -515,11 +530,6 @@ class RoutingAction(TrajectoryRun):
         self._path = None
         self._here = 0.0
         self._sent = -1.0
-        self._arrivals = []
-        self._stop_vertices = []
-        self._mark_points = []
-        self._mark_lanes = []
-        self._start_pose = None
         self._warned_off = False
         self._route_start = None
 
@@ -543,10 +553,10 @@ class RoutingAction(TrajectoryRun):
 
     def close(self) -> None:
         """Stop a pedestrian's walk the run ends in the middle of, and close
-        the conditions (:meth:`BaseAction.close`)."""
+        the conditions (:meth:`TrajectoryRun.close`)."""
         self._stop_walk()
-        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
-        BaseAction.close(self)
+        # Named, not super(), as _stopped is.
+        TrajectoryRun.close(self)
 
     def _stop_walk(self) -> None:
         """Stop the walk this action's ``driver`` run gave a pedestrian, if it
@@ -654,13 +664,7 @@ class RoutingAction(TrajectoryRun):
 
         if self.state is ActionState.STANDBY:
             self._keep(self._pacer)
-            self._pacer = None
-            self._path = None
-            self._stepping = False
-            self._walking = False
-            self._sent = -1.0
-            self._warned_off = False
-            self._route_start = None
+            self._clear_run()
         super().execute(world)
 
     def _drive_target(self, world: "carla.World") -> None:

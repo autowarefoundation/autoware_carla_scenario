@@ -910,6 +910,47 @@ class TestTheBatchMap:
         assert same_episode(-7, -7)
 
 
+class TestOverwritingTheOpenDrive:
+    """Issue #1031: the destination variable is read the way
+    ``maps.opendrive.installed_xodr`` reads it."""
+
+    def test_a_tilde_and_whitespace_in_the_destination_are_resolved(
+        self, tmp_path, monkeypatch
+    ):
+        xodr = tmp_path / "odaiba.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODAIBA_GENERATED_PATH", " ~/installed.xodr\n")
+        server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
+        runner = _runner_on(server)
+
+        runner.load_map_by_overwriting_xodr(xodr, "Odaiba_generated")
+
+        assert (home / "installed.xodr").read_text() == "<OpenDRIVE/>"
+        assert not (tmp_path / "~").exists()
+
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_an_unset_or_blank_destination_is_an_error(
+        self, tmp_path, monkeypatch, value
+    ):
+        monkeypatch.chdir(tmp_path)
+        if value is None:
+            monkeypatch.delenv("ODAIBA_GENERATED_PATH", raising=False)
+        else:
+            monkeypatch.setenv("ODAIBA_GENERATED_PATH", value)
+        server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
+        runner = _runner_on(server)
+
+        with pytest.raises(RuntimeError, match="ODAIBA_GENERATED_PATH"):
+            runner.load_map_by_overwriting_xodr(
+                tmp_path / "odaiba.xodr", "Odaiba_generated"
+            )
+        assert server.loads == []
+
+
 class TestTheResetReleasesTheRunsSensors:
     """The reset destroys the run's actors through the server, then reloads.
 

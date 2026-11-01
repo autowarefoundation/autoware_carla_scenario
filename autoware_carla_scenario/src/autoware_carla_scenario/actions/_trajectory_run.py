@@ -547,6 +547,16 @@ class TrajectoryRun(BaseAction):
             return  # the actor is gone from the world
         logger.info("%s: '%s' stopped and handed back to traffic", self.label, name)
 
+    def close(self) -> None:
+        """Close the conditions and give back the domains, as
+        :meth:`BaseAction.close` does.
+
+        Defined here, and not only inherited, because a subclass overrides it
+        (:meth:`RoutingAction.close`): Codon 0.19 dispatches a call on a
+        ``TrajectoryRun`` through a thunk typed for ``TrajectoryRun``, which
+        refuses ``BaseAction``'s method, two classes up from the override."""
+        super().close()
+
     def _advance(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Move *actor* one tick along the trajectory of the run begun."""
         if self._finished:
