@@ -179,7 +179,7 @@ class DriverControlSpec:
     max_position_correction_mps: float = 6.0
     speed_preview_s: float = 1.0
     stop_distance_m: float = 0.5
-    throttle_deadband: float = 0.0
+    throttle_deadband: float = 0.3
     standstill_speed_mps: float = 0.5
     stop_brake: float = 0.6
 
