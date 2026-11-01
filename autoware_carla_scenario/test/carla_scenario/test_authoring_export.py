@@ -190,6 +190,69 @@ class TestFrameworkPin:
             == "https://github.com/owner/repo"
         )
 
+    def test_a_token_in_an_https_remote_is_dropped(self) -> None:
+        """The pin lands in a package meant to be shared (#1045)."""
+        url = "https://oauth2:glpat-SECRET@gitlab.example.com/team/repo.git"
+        normalized = normalize_repository_url(url)
+        assert normalized == "https://gitlab.example.com/team/repo"
+        assert "SECRET" not in normalized
+
+    def test_user_and_password_in_an_https_remote_are_dropped(self) -> None:
+        normalized = normalize_repository_url(
+            "https://alice:hunter2@example.com:8443/o/r.git"
+        )
+        assert normalized == "https://example.com:8443/o/r"
+        assert "hunter2" not in normalized
+        assert "alice" not in normalized
+
+    def test_an_ssh_url_with_a_port_drops_user_and_port(self) -> None:
+        assert (
+            normalize_repository_url("ssh://git@gitlab.example.com:2222/team/repo.git")
+            == "https://gitlab.example.com/team/repo"
+        )
+
+    def test_an_scp_remote_is_normalised_as_before(self) -> None:
+        assert (
+            normalize_repository_url("git@gitlab.example.com:team/repo.git")
+            == "https://gitlab.example.com/team/repo"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://github.com/owner/repo", "https://github.com/owner/repo.git"],
+    )
+    def test_a_plain_https_remote_is_unchanged(self, url: str) -> None:
+        assert normalize_repository_url(url) == "https://github.com/owner/repo"
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://tok@[::1/o/r.git", "https://[::1/o/r"),
+            ("https://tok@host]/o/r", "https://host]/o/r"),
+            ("https://tok@[::1]:8443/o/r.git", "https://[::1]:8443/o/r"),
+        ],
+    )
+    def test_a_malformed_ipv6_remote_does_not_crash(
+        self, url: str, expected: str
+    ) -> None:
+        """``urlsplit`` raises on these; the export must not, nor keep the token."""
+        assert normalize_repository_url(url) == expected
+
+    def test_a_credentialed_origin_never_reaches_the_pin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        monkeypatch.setenv(
+            module.REPOSITORY_ENV, "https://user:TOKEN@example.com/o/r.git"
+        )
+        pin = module._resolve_git_pin(module.framework_source_root())
+        if pin is None:
+            pytest.skip("not a git checkout")
+        assert pin.repository == "https://example.com/o/r"
+        assert "TOKEN" not in repr(pin.uv_source())
+        assert "TOKEN" not in repr(pin.manifest())
+
     def test_an_explicit_version_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", "9.9.9")
         pin = resolve_framework_pin()
