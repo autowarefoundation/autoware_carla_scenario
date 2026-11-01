@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..constants import tick_multiple
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
@@ -264,7 +265,8 @@ class DriverClientConfig:
     """Interval between ``drive`` calls.
 
     Must be a positive integer multiple of the simulation step (0.05 s at CARLA's
-    20 Hz), matching ``RuntimeConfig.policy_timestep_s`` upstream.  Between policy
+    20 Hz), matching ``RuntimeConfig.policy_timestep_s`` upstream; any other value
+    is refused when the config is built (within 1e-9 s).  Between policy
     steps the cached plan keeps being tracked, so control is still applied every tick.
     """
 
@@ -465,7 +467,8 @@ class DriverClientConfig:
 
         Hydra reads ``=nan`` and ``=inf`` as floats, and a NaN fails every
         comparison: a NaN deadline waits for the policy forever, a NaN step
-        fails mid-run, and an infinite run-up or route never ends.
+        fails mid-run, and an infinite run-up or route never ends.  The policy
+        step must also be a positive multiple of the tick.
         """
         for key, seconds in (
             ("timeout_s", self.timeout_s),
@@ -475,6 +478,10 @@ class DriverClientConfig:
                 raise ValueError(
                     f"driver.{key} must be positive and finite, got {seconds}"
                 )
+        # The policy is asked on the first tick at or after each step, so a
+        # step between two ticks would run on the next one while each drive()
+        # still asked for a plan that far ahead (#952).
+        tick_multiple(self.policy_timestep_s, "driver.policy_timestep_s")
         for key, value in (
             ("warmup_s", self.warmup_s),
             ("route_horizon_m", self.route_horizon_m),

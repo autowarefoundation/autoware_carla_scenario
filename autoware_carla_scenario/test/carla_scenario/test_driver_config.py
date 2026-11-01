@@ -65,6 +65,26 @@ def test_shipped_policy_timestep_is_a_multiple_of_the_tick() -> None:
     assert ticks >= 1
 
 
+@pytest.mark.parametrize("seconds", [0.12, 0.07])
+def test_policy_timestep_between_ticks_is_refused(seconds: float) -> None:
+    """The policy is asked on tick boundaries only: 0.12 would run every 0.15 s
+    while asking for plans 0.12 s ahead, so it is refused up front (#952)."""
+    with pytest.raises(ValueError, match=r"driver\.policy_timestep_s"):
+        DriverClientConfig(policy_timestep_s=seconds)
+
+
+@pytest.mark.parametrize("seconds", [0.05, 0.1, 0.15, 0.2, 0.05 * 3, 0.1 + 0.2])
+def test_policy_timestep_on_a_tick_is_accepted(seconds: float) -> None:
+    """Multiples of the tick pass, floats not exact in binary (0.15) included."""
+    assert DriverClientConfig(policy_timestep_s=seconds).policy_timestep_s == seconds
+
+
+def test_from_mapping_refuses_a_policy_timestep_between_ticks() -> None:
+    mapping = dict(_shipped_driver_config(), policy_timestep_s=0.07)
+    with pytest.raises(ValueError, match=r"driver\.policy_timestep_s=0\.07"):
+        DriverClientConfig.from_mapping(mapping)
+
+
 def test_ego_default_yaml_selects_the_autopilot_entity() -> None:
     document = yaml.safe_load((_CONF / "ego" / "default.yaml").read_text())
     assert document["ego"]["entity"] == "autopilot"

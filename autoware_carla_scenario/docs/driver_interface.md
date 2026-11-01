@@ -142,7 +142,7 @@ driver:
   policy: null               # e.g. route_follower: served by the run itself
   transport: tcp             # tcp | unix | direct; see "How the run reaches the policy"
   timeout_s: 60.0
-  policy_timestep_s: 0.1     # must be a multiple of the 0.05 s simulation step
+  policy_timestep_s: 0.1     # a positive multiple of the 0.05 s tick; others are refused
   image_quality: 90
   warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
