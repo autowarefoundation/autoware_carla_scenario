@@ -1351,6 +1351,99 @@ register_action_spec(
     )
 )
 
+register_action_spec(
+    ActionSpec(
+        type_id="smart_pedestrian",
+        title="Smart Pedestrian",
+        category="Pedestrian",
+        builder="build_smart_pedestrian_action",
+        target="..actions:SmartPedestrianControllerAction",
+        argmap=(("poses", "keyframes"),),
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="prompt",
+                label="What it does",
+                kind="text",
+                default="",
+                required=False,
+                help=(
+                    "In words, for the whole motion: 'a man walks to the "
+                    "kerb, looks left and right, then crosses'.  Empty: no "
+                    "text."
+                ),
+            ),
+            FieldSpec(
+                name="prompts",
+                label="Then",
+                kind="record_list",
+                default=(),
+                help="Texts that take over at a time into the motion.",
+                item_fields=(
+                    FieldSpec("time_s", "From", "number", 0.0, unit="s"),
+                    FieldSpec("text", "What it does", "text", ""),
+                ),
+            ),
+            FieldSpec(
+                name="waypoints",
+                label="Waypoints",
+                kind="record_list",
+                default=(),
+                help="CARLA world points it passes, in order.",
+                item_fields=(
+                    FieldSpec("x", "x", "number", 0.0, unit="m"),
+                    FieldSpec("y", "y", "number", 0.0, unit="m"),
+                ),
+            ),
+            FieldSpec(
+                name="speed_ms",
+                label="Speed",
+                kind="number",
+                default=1.3,
+                unit="m/s",
+                help="How fast it walks along the waypoints.",
+            ),
+            FieldSpec(
+                name="poses",
+                label="Keyframes file",
+                kind="text",
+                default=None,
+                required=False,
+                help=(
+                    "A JSON file of full-body poses the motion passes "
+                    "through.  Relative to the working directory."
+                ),
+            ),
+            FieldSpec(
+                name="duration_s",
+                label="Duration",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help=(
+                    "Stop after this long.  Empty: at the last waypoint, or, "
+                    "without waypoints, at the scenario's end."
+                ),
+            ),
+            FieldSpec(
+                name="seed",
+                label="Seed",
+                kind="int",
+                default=0,
+                help="The motion generator's draws.",
+            ),
+        ),
+        description=(
+            "Move a pedestrian -- its whole body and where it goes -- as the "
+            "ARDY motion model generates it from words, waypoints and "
+            "keyframes.  The model runs in a container the run starts first "
+            "(backends.ardy), on this host's GPU."
+        ),
+    )
+)
+
 #: Mirrors ``TrajectoryFollowingMode``; ``test_authoring_registry`` keeps the
 #: two in step (the codegen refuses an option that names no member).
 _FOLLOWING_MODES: tuple[SelectOption, ...] = (

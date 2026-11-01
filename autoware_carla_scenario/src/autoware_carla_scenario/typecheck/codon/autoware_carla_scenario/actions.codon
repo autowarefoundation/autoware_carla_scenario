@@ -741,6 +741,47 @@ class PlayMotionAction(BaseAction):
         raise NotImplementedError()
 
 
+class TimedPrompt:
+    time_s: float
+    text: str
+
+    def __init__(self, time_s: float, text: str):
+        self.time_s = time_s
+        self.text = text
+
+
+class WalkWaypoint:
+    x: float
+    y: float
+
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+
+
+class SmartPedestrianControllerAction(BaseAction):
+    def __init__(self, label):
+        compile_error("SmartPedestrianControllerAction(): no constructor takes these "
+                      "arguments (required: entity_name)")
+
+    def __init__(self, entity_name, prompt: str = "", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "smart_pedestrian", once: bool = True,
+                 prompts: List[TimedPrompt] = List[TimedPrompt](),
+                 waypoints: List[WalkWaypoint] = List[WalkWaypoint](),
+                 speed_ms: float = 1.3, keyframes: Optional[str] = None,
+                 duration_s: Optional[float] = None, seed: int = 0,
+                 overrides: bool = False):
+        _keyword_only(_kw, "SmartPedestrianControllerAction(): label, once, prompts, "
+                      "waypoints, speed_ms, keyframes, duration_s, seed and overrides")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def moving(self) -> bool:
+        raise NotImplementedError()
+
+
 class AdversarialBrakeAction(BaseAction):
     def __init__(self, label):
         compile_error("AdversarialBrakeAction(): no constructor takes these arguments "

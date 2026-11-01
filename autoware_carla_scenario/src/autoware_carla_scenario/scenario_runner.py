@@ -77,6 +77,7 @@ from .trajectory_recorder import TrajectoryRecorder
 
 if TYPE_CHECKING:
     from .npc_collisions import NpcCollisionMonitor
+    from .prepare import BackendPreparer
 
 logger = logging.getLogger(__name__)
 
@@ -665,6 +666,9 @@ class ScenarioRunner:
     #: What writes each run's trajectory log as a T4Scene once the log is
     #: closed (``t4scene.enabled``), or None for none.  The queue sets it.
     t4scene: Optional[T4SceneExporter]
+    #: What starts the backends a run's actions need (``@need_prepare``) that
+    #: the queue did not start before it, or None.  The queue sets it.
+    preparer: Optional["BackendPreparer"]
 
     def __init__(
         self,
@@ -736,6 +740,7 @@ class ScenarioRunner:
         self.rerun = None
         self.t4 = None
         self.t4scene = None
+        self.preparer = None
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -1417,6 +1422,14 @@ class ScenarioRunner:
             # previous scenario that never finished holds nothing in this one.
             reset_control_slots()
             scenario.setup()
+            # What setup() registered may need a backend the queue could not
+            # see before (a Python scenario's actions): started now, before
+            # the run ticks, or the run is refused.
+            if self.preparer is not None:
+                preparer: BackendPreparer = self.preparer
+                preparer.prepare_actions(
+                    scenario.registered_actions(), log_dir=self.output_dir
+                )
             # Setup is where a scenario may still name a destination the config
             # did not, so an ego that cannot start without one is checked once
             # setup returns -- and here rather than inside `_setup_ego_spawn`,

@@ -527,6 +527,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "BaseScenario": {
         "close_conditions": _RUN_CLEANUP,
+        "registered_actions": (
+            "the runner's: what a run's backends are prepared from (prepare), "
+            "after setup(), not a scenario's to call"
+        ),
         **_members("set_traffic_backend traffic_backend", _SET_TRAFFIC_BACKEND),
         "ego_type": _EGO_TYPE,
     },

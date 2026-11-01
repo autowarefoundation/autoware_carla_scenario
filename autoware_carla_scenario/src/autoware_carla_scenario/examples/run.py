@@ -75,6 +75,7 @@ from autoware_carla_scenario.constants import DEFAULT_TM_PORT, tick_multiple
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
+from autoware_carla_scenario.prepare.pool import BackendPool
 from autoware_carla_scenario.rerun import (
     RerunConversion,
     RerunConverter,
@@ -703,6 +704,7 @@ def run_scenario_with_queue(
     world_reset: str = "reload",
     reload_every: int = 0,
     t4scene: T4SceneExporter | None = None,
+    backends: BackendPool | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -753,6 +755,7 @@ def run_scenario_with_queue(
         world_reset=world_reset,
         reload_every=reload_every,
         t4scene=t4scene,
+        backends=backends,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -917,6 +920,16 @@ def build_t4_recorder(*cfgs: DictConfig) -> T4Recorder | None:
         )
         return T4Recorder(settings)
     return None
+
+
+def build_backend_pool(cfg: DictConfig) -> BackendPool:
+    """What starts the backends the run's scenarios need, per ``backends``.
+
+    Each backend reads its own block (``backends.ardy``, ...); one a scenario
+    does not need is never started.
+    """
+    backends_cfg = cfg.get("backends")
+    return BackendPool(None if backends_cfg is None else _to_dict(backends_cfg))
 
 
 def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
@@ -1248,6 +1261,7 @@ def _batch_queue(
         world_reset=world_reset,
         reload_every=reload_every,
         t4scene=build_t4scene_exporter(first_cfg),
+        backends=build_backend_pool(first_cfg),
     )
 
 
@@ -1810,6 +1824,7 @@ def _run_scenario(
         world_reset=world_reset,
         reload_every=reload_every,
         t4scene=build_t4scene_exporter(cfg),
+        backends=build_backend_pool(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

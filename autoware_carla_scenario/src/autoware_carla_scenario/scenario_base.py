@@ -341,10 +341,7 @@ class BaseScenario(ABC):
             backend: The run's traffic backend.
         """
         self._traffic_backend = backend
-        # Concatenated rather than unpacked into a tuple, which Codon cannot.
-        for action in (
-            self._init_actions + self._pre_tick_actions + self._post_tick_actions
-        ):
+        for action in self.registered_actions():
             self._hand_backend_to(action)
 
     @property
@@ -808,6 +805,11 @@ class BaseScenario(ABC):
         else:
             _register_entity(entity.role_name, entity)
 
+    def registered_actions(self) -> List[BaseAction]:
+        """Every action the scenario registered: init, pre-tick and post-tick."""
+        # Concatenated rather than unpacked into a tuple, which Codon cannot.
+        return self._init_actions + self._pre_tick_actions + self._post_tick_actions
+
     def close_conditions(self) -> None:
         """Close every condition of the run: the pass and fail conditions and
         the actions' triggers (:meth:`BaseCondition.close`).
@@ -826,10 +828,7 @@ class BaseScenario(ABC):
                 logger.warning(
                     "Closing condition %s failed", condition.label, exc_info=True
                 )
-        # Concatenated rather than unpacked into a tuple, which Codon cannot.
-        for action in (
-            self._init_actions + self._pre_tick_actions + self._post_tick_actions
-        ):
+        for action in self.registered_actions():
             try:
                 action.close()
             except Exception:  # noqa: BLE001 - the rest must still be closed

@@ -85,6 +85,7 @@ __all__ = [
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_play_motion_action",
+    "build_smart_pedestrian_action",
     "build_walk_straight_action",
     "build_traffic_parameters_action",
     "build_communication_loss_action",
@@ -114,6 +115,7 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "stalled_object",
         "stop_crossing",
         "play_motion",
+        "smart_pedestrian",
         "walk_straight",
         "turn_indicator",
         "lane_change",
@@ -1407,6 +1409,52 @@ def build_play_motion_action(
         loop=params["loop"],
         duration_s=params["duration_s"],
         upper_body_only=params["upper_body_only"],
+        overrides=compiled.node.overrides,
+    )
+
+
+def build_smart_pedestrian_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SmartPedestrianControllerAction`."""
+    from ..actions import SmartPedestrianControllerAction  # noqa: PLC0415
+    from ..actions import TimedPrompt  # noqa: PLC0415
+    from ..actions import WalkWaypoint  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    prompts: list[Any] = []
+    for item in params["prompts"]:
+        prompts.append(
+            TimedPrompt(
+                time_s=item["time_s"],
+                text=str(item["text"]),
+            )
+        )
+    waypoints: list[Any] = []
+    for item in params["waypoints"]:
+        waypoints.append(
+            WalkWaypoint(
+                x=item["x"],
+                y=item["y"],
+            )
+        )
+    return SmartPedestrianControllerAction(
+        entity_name=compiled.actor_role,
+        prompt=str(params["prompt"]),
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        prompts=prompts,
+        waypoints=waypoints,
+        speed_ms=params["speed_ms"],
+        keyframes=(str(params["poses"]) if params["poses"] is not None else None),
+        duration_s=params["duration_s"],
+        seed=params["seed"],
         overrides=compiled.node.overrides,
     )
 

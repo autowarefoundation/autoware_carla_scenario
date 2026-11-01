@@ -31,17 +31,16 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.base import control_holder
 from autoware_carla_scenario.control_domain import ControlConflictError, ControlDomain
-from autoware_carla_scenario.entity._soma_motion import (
+from autoware_carla_scenario.pedestrian.skeleton import (
     CARLA_BONES,
-    SOMA_JOINTS,
     Matrix,
     Vector,
     WalkerRetarget,
-    load_soma_motion,
     rotation_matrix,
     rotator,
     swing,
 )
+from autoware_carla_scenario.pedestrian.soma import SOMA_JOINTS, load_soma_motion
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 FPS = 10.0
@@ -261,26 +260,6 @@ def test_a_swing_takes_one_direction_onto_the_other(a: Vector, b: Vector) -> Non
     assert _close(turned, b)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "CARLA_BONES",
-        "CarlaBone",
-        "Matrix",
-        "Vector",
-        "WalkerRetarget",
-        "rotation_matrix",
-        "rotator",
-        "swing",
-    ],
-)
-def test_the_soma_motion_module_re_exports_the_walker_retarget(name: str) -> None:
-    from autoware_carla_scenario.entity import _soma_motion, _walker_retarget
-
-    assert name in _walker_retarget.__all__
-    assert getattr(_soma_motion, name) is getattr(_walker_retarget, name)
-
-
 # ----------------------------------------------------------------------
 # A CARLA walker
 # ----------------------------------------------------------------------
@@ -392,6 +371,57 @@ def _direction(positions: dict[str, Vector], bone: str, child: str) -> Vector:
     return (d[0] / n, d[1] / n, d[2] / n)
 
 
+def _unit(v: Vector) -> Vector:
+    n = math.sqrt(sum(x * x for x in v))
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+#: Each followed joint's direction, in the body frame (forward, right, up):
+#: standing at attention, as _AT_ATTENTION holds the walker ...
+_STANDING: dict[str, Vector] = {
+    "Spine1": (0.0, 0.0, 1.0),
+    "Chest": (0.0, 0.0, 1.0),
+    "Neck1": (0.0, 0.0, 1.0),
+    "LeftShoulder": (0.0, -1.0, 0.0),
+    "LeftArm": (0.0, 0.0, -1.0),
+    "LeftForeArm": (0.0, 0.0, -1.0),
+    "LeftHand": (0.0, 0.0, -1.0),
+    "RightShoulder": (0.0, 1.0, 0.0),
+    "RightArm": (0.0, 0.0, -1.0),
+    "RightForeArm": (0.0, 0.0, -1.0),
+    "RightHand": (0.0, 0.0, -1.0),
+    "LeftLeg": (0.0, 0.0, -1.0),
+    "LeftShin": (0.0, 0.0, -1.0),
+    "LeftFoot": _unit((0.15, 0.0, -0.1)),
+    "RightLeg": (0.0, 0.0, -1.0),
+    "RightShin": (0.0, 0.0, -1.0),
+    "RightFoot": _unit((0.15, 0.0, -0.1)),
+}
+#: ... and lying on its back, the head ahead, the arms by its sides, the toes up.
+_LYING: dict[str, Vector] = {
+    **{joint: (1.0, 0.0, 0.0) for joint in ("Spine1", "Chest", "Neck1")},
+    "LeftShoulder": (0.0, -1.0, 0.0),
+    "RightShoulder": (0.0, 1.0, 0.0),
+    **{
+        joint: (-1.0, 0.0, 0.0)
+        for joint in (
+            "LeftArm",
+            "LeftForeArm",
+            "LeftHand",
+            "RightArm",
+            "RightForeArm",
+            "RightHand",
+            "LeftLeg",
+            "LeftShin",
+            "RightLeg",
+            "RightShin",
+        )
+    },
+    "LeftFoot": (0.0, 0.0, 1.0),
+    "RightFoot": (0.0, 0.0, 1.0),
+}
+
+
 class TestRetarget:
     def test_a_frame_points_each_driven_bone_where_the_motion_does(
         self, tmp_path: Path
@@ -410,8 +440,10 @@ class TestRetarget:
         assert _close(_direction(positions, "crl_arm__R", "crl_foreArm__R"), (-1, 0, 0))
         assert _close(_direction(positions, "crl_leg__L", "crl_foot__L"), (0, 0, -1))
         assert _close(_direction(positions, "crl_foot__R", "crl_toe__R"), (0, 1, 0))
-        # The hips stay where the walker holds them.
-        assert _close(positions["crl_hips__C"], (0.0, 0.0, 1.0))
+        # The hips stay where the walker holds them, lowered with the body:
+        # the feet, flat, no longer reach down to where the toes pointed.
+        assert -0.1 < retarget.lift < 0.0
+        assert _close(positions["crl_hips__C"], (0.0, 0.0, 1.0 + retarget.lift))
 
     def test_upper_body_only_leaves_the_legs_to_the_animation(self) -> None:
         retarget = WalkerRetarget(_bones(), carla.Rotation())
@@ -419,6 +451,43 @@ class TestRetarget:
         assert "crl_arm__L" in retarget.driven
         everything = WalkerRetarget(_bones(), carla.Rotation(), upper_body_only=False)
         assert set(everything.driven) == {bone.name for bone in CARLA_BONES}
+
+    def test_a_standing_frame_keeps_the_walker_where_it_stands(self) -> None:
+        retarget = WalkerRetarget(_bones(), carla.Rotation(), upper_body_only=False)
+        retarget.pose(_STANDING)
+        assert retarget.lift == pytest.approx(0.0, abs=1e-6)
+
+    def test_lying_down_lowers_the_walker_onto_the_ground(self) -> None:
+        retarget = WalkerRetarget(
+            _bones(), carla.Rotation(yaw=40.0), upper_body_only=False
+        )
+        posed = dict(retarget.pose(_LYING))
+        # The soles (toes less 3 cm of foot) stood 1.03 m below the hips;
+        # lying, the backs of the thighs (5 cm below the hips, less 8 cm of
+        # thigh) are the lowest, 13 cm below them.
+        assert retarget.lift == pytest.approx(-0.90, abs=1e-6)
+        # The hips carry the body down, straight down in the world.
+        hips = _posed_positions(posed)["crl_hips__C"]
+        assert hips == pytest.approx((0.0, 0.0, 1.0 - 0.90), abs=1e-6)
+        retarget.pose(_STANDING)
+        assert retarget.lift == pytest.approx(0.0, abs=1e-6)
+
+    def test_lying_down_lowers_the_mesh_not_the_walker(self, scene: "_Scene") -> None:
+        from autoware_carla_scenario.pedestrian.poser import WalkerPoser
+
+        poser = WalkerPoser("walker1", "test")
+        assert poser.begin(upper_body_only=False)
+        assert poser.show(_LYING)
+        hips = _posed_positions(scene.walker.poses[-1])["crl_hips__C"]
+        assert hips[2] == pytest.approx(1.0 - 0.90)
+        # The walker, its capsule and its physics stay where they were.
+        assert scene.walker.z == 0.0
+        assert not hasattr(scene.walker, "simulated")
+
+    def test_with_the_legs_left_to_the_animation_the_feet_stay_down(self) -> None:
+        retarget = WalkerRetarget(_bones(), carla.Rotation())
+        retarget.pose({**_STANDING, "LeftArm": (0.0, 0.0, 1.0)})
+        assert retarget.lift == pytest.approx(0.0, abs=1e-6)
 
     def test_a_bone_the_walker_lacks_is_left_out(self) -> None:
         bones = [b for b in _bones() if b.name != "crl_handMiddle__L"]
@@ -443,6 +512,7 @@ class _Walker:
         self.id = next(_WALKER_IDS)
         self.type_id = "walker.pedestrian.0001"
         self.x = 0.0
+        self.z = 0.0
         self.vx = 0.0
         self.blend: float = 0.0
         self.poses: list[dict[str, carla.Transform]] = []
@@ -455,7 +525,10 @@ class _Walker:
         return carla.Transform(self.get_location(), carla.Rotation())
 
     def get_location(self) -> carla.Location:
-        return carla.Location(x=self.x)
+        return carla.Location(x=self.x, z=self.z)
+
+    def set_location(self, location: carla.Location) -> None:
+        self.x, self.z = location.x, location.z
 
     def get_velocity(self) -> carla.Vector3D:
         return carla.Vector3D(self.vx, 0.0, 0.0)

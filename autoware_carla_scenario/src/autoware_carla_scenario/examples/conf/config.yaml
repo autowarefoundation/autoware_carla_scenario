@@ -100,6 +100,31 @@ t4scene:
 canvas:
   config: null
 
+# Backends a run needs started before it (docs/backends.md): containers the
+# queue starts when a scenario declares it needs them (@need_prepare), after
+# checking the host has the GPU and host memory they take, and stops when the
+# batch ends. Each backend reads its own block; every key is optional.
+backends:
+  # ARDY, the motion generator of SmartPedestrianControllerAction
+  # (docs/pedestrian_motion.md), from ghcr.io/hakuturu583/carla_ardy_backend.
+  ardy:
+    image: ghcr.io/hakuturu583/carla_ardy_backend:0.1.0
+    # The ARDY checkpoint: soma (ARDY-SOMA-RP-30FPS-Horizon60).
+    model: soma
+    # none, compile (torch.compile) or trt.
+    acceleration: none
+    # auto (the GPU the preparer chose for it), all, or device=N.
+    gpus: auto
+    # The host's Hugging Face cache: the token for the gated Llama-3-8B
+    # text encoder, and where the weights are downloaded once.
+    hf_home: ~/.cache/huggingface
+    gpu_memory_mb: 24000
+    memory_mb: 16000
+    startup_timeout_s: 1800
+    timeout_s: 120
+    pull: missing
+    docker_args: []
+
 # Removed in 15.0.0: runs no longer render a video. To see a run, make a Rerun
 # recording of it (rerun.enabled=true, above) and open it in the Rerun viewer;
 # the CARLA recording ({Scenario}.log) is still written, for CARLA's replayer.
