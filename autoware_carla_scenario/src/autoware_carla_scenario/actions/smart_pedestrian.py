@@ -96,7 +96,8 @@ class SmartPedestrianControllerAction(BaseAction):
     as long as the motion plays.
 
     The action runs for *duration_s*; without one, until the last waypoint's
-    time, and without waypoints either, until the scenario ends.
+    or keyframe's time, whichever is later, and without either, until the
+    scenario ends. A prompt that starts after that time never plays.
 
     Args:
         entity_name: ``role_name`` of the pedestrian.
@@ -228,7 +229,18 @@ class SmartPedestrianControllerAction(BaseAction):
         self._ground_z = float(here.location.z)
         backend = running_backend(ArdyBackend)
         timeout = backend.timeout_s if isinstance(backend, ArdyBackend) else 120.0
-        client = PedestrianMotionClient(backend.address(), timeout_s=timeout)
+        # Kept at once: a call below that fails still has _end() close it
+        # and hand the walker back.
+        self._client = PedestrianMotionClient(backend.address(), timeout_s=timeout)
+        try:
+            self._open(world, self._client, here)
+        except BaseException:
+            self._end()
+            raise
+
+    def _open(
+        self, world: carla.World, client: PedestrianMotionClient, here: carla.Transform
+    ) -> None:
         info = client.negotiate()
         self._fps = info.fps
         x, y, heading = to_contract(here.location.x, here.location.y, here.rotation.yaw)
@@ -249,15 +261,14 @@ class SmartPedestrianControllerAction(BaseAction):
                 for key in self._keyframes
             ],
         )
-        self._client = client
         self._frames = client.step(self._session, -1)
         self._started_at = _now(world)
+        ends = [waypoints[-1].frame / info.fps] if waypoints else []
+        ends += [key.time_s for key in self._keyframes]
         if self._duration_s is not None:
             self._end_s = self._duration_s
-        elif waypoints:
-            self._end_s = waypoints[-1].frame / info.fps
         else:
-            self._end_s = None
+            self._end_s = max(ends) if ends else None
         self._moving = True
         logger.info(
             "SmartPedestrianControllerAction: '%s' moves by %s %s (%s) at %.0f fps",
@@ -283,7 +294,8 @@ class SmartPedestrianControllerAction(BaseAction):
             # The generator may keep more history than asked (whole tokens):
             # its frames take over from the first it sends.
             start = fresh[0].frame if fresh else last + 1
-            self._frames = [f for f in self._frames if f.frame < start] + fresh
+            # Frames already shown are dropped: a long run keeps only the plan ahead.
+            self._frames = [f for f in self._frames if frame <= f.frame < start] + fresh
         self._show(frame)
 
     def _show(self, frame: int) -> None:
@@ -317,8 +329,10 @@ class SmartPedestrianControllerAction(BaseAction):
         client = self._client
         self._client = None
         if client is not None:
-            client.close_session(self._session)
+            if self._session:
+                client.close_session(self._session)
             client.close()
+        self._session = ""
         if was_moving:
             logger.info(
                 "SmartPedestrianControllerAction: '%s' finished its motion",
@@ -398,7 +412,13 @@ def _read_keyframes(path: Union[str, Path]) -> tuple[_Keyframe, ...]:
             )
             yaw = float(entry["yaw_deg"]) if "yaw_deg" in entry else None
             poses.append(_Keyframe(time_s, joints, root, yaw))
-    except (KeyError, TypeError, IndexError, json.JSONDecodeError) as error:
+    except (
+        KeyError,
+        TypeError,
+        IndexError,
+        AttributeError,
+        json.JSONDecodeError,
+    ) as error:
         raise ValueError(f"{file}: not a keyframes file ({error})") from None
     return tuple(sorted(poses, key=lambda pose: pose.time_s))
 

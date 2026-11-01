@@ -275,6 +275,17 @@ class TestAssignGpus:
                 host,
             )
 
+    def test_a_backend_set_to_a_gpu_is_checked_on_it(self) -> None:
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 50000), Gpu(1, "GPU-b", 1000)), memory_mb=1000
+        )
+        with pytest.raises(InsufficientResourcesError, match="set to .1."):
+            assign_gpus([("a", Resources(gpu_memory_mb=24000, gpu=1))], host)
+        with pytest.raises(InsufficientResourcesError, match="GPU 2, which is not"):
+            assign_gpus([("a", Resources(gpu_memory_mb=1, gpu=2))], host)
+        placed = assign_gpus([("a", Resources(gpu_memory_mb=24000, gpu=0))], host)
+        assert placed == {"a": host.gpus[0]}
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
@@ -332,8 +343,23 @@ class TestDockerBackend:
         # Passed on by name: the token never shows in the command line.
         assert "HF_TOKEN" in run and "secret" not in " ".join(run)
         assert run[-1] == DEFAULT_IMAGE
+        assert "--rm" not in run
         backend.close()
         assert ["docker", "stop", "--time", "10", "c0ffee"] in recorded.calls
+        assert ["docker", "rm", "--force", "c0ffee"] in recorded.calls
+
+    @pytest.mark.parametrize(
+        "gpus, expected",
+        [
+            ("none", Resources(memory_mb=16000)),
+            ("device=1", Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=1)),
+            ("auto", Resources(gpu_memory_mb=24000, memory_mb=16000)),
+        ],
+    )
+    def test_what_a_container_takes_follows_its_gpus(
+        self, gpus: str, expected: Resources
+    ) -> None:
+        assert ArdyBackend.from_settings({"gpus": gpus}).resources() == expected
 
     def test_a_missing_image_is_pulled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorded = _Docker(image_present=False)

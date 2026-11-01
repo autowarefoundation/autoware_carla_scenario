@@ -343,6 +343,54 @@ class TestSmartPedestrianControllerAction:
         assert scene.walker.blend == 0.0
         assert len(generator.closed) == 1
 
+    def test_it_runs_on_to_a_keyframe_after_its_last_waypoint(
+        self, scene: _Scene, generator: _Generator, tmp_path: Path
+    ) -> None:
+        keyframes = tmp_path / "poses.json"
+        keyframes.write_text(
+            json.dumps(
+                {
+                    "keyframes": [
+                        {
+                            "time_s": 2.0,
+                            "joints": {n: list(p) for n, p in _BODY.items()},
+                        }
+                    ]
+                }
+            )
+        )
+        action = SmartPedestrianControllerAction(
+            "walker1",
+            waypoints=[WalkWaypoint(10.0, 6.0)],
+            speed_ms=1.0,
+            keyframes=str(keyframes),
+        )
+        scene.run(action, 1.5)
+        assert action.moving
+        scene.run(action, 0.6)
+        assert not action.moving
+
+    def test_only_the_plan_ahead_is_kept(
+        self, scene: _Scene, generator: _Generator
+    ) -> None:
+        action = SmartPedestrianControllerAction("walker1", duration_s=30.0)
+        scene.run(action, 10.0)
+        assert len(action._frames) <= 2 * HORIZON
+
+    def test_a_generator_that_fails_to_open_hands_the_walker_back(
+        self, scene: _Scene, generator: _Generator, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*_: Any, **__: Any) -> None:
+            raise RuntimeError("out of memory")
+
+        monkeypatch.setattr(PedestrianMotionClient, "open_session", refuse)
+        action = SmartPedestrianControllerAction("walker1", duration_s=2.0)
+        with pytest.raises(RuntimeError, match="out of memory"):
+            scene.run(action, 0.05)
+        assert not action.moving
+        assert action._client is None
+        assert scene.walker.blend == 0.0
+
     def test_a_missing_pedestrian_moves_nothing(self, generator: _Generator) -> None:
         action = SmartPedestrianControllerAction("nobody", duration_s=1.0)
         scene = _Scene()
@@ -379,6 +427,9 @@ class TestSmartPedestrianControllerAction:
     def test_a_malformed_keyframes_file_is_refused(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"keyframes": [{"joints": {}}]}')
+        with pytest.raises(ValueError, match="not a keyframes file"):
+            SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+        bad.write_text('{"keyframes": [{"time_s": 1.0, "joints": [[0, 0, 1]]}]}')
         with pytest.raises(ValueError, match="not a keyframes file"):
             SmartPedestrianControllerAction("walker1", keyframes=str(bad))
         with pytest.raises(FileNotFoundError):

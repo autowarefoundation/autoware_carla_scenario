@@ -16,7 +16,7 @@ import os
 import socket
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import IO, ClassVar, Optional
 
@@ -101,7 +101,15 @@ class DockerBackend:
         return self._settings
 
     def resources(self) -> Resources:
-        return self._settings.resources
+        """The settings' resources, for the GPU ``gpus`` gives it: none for
+        ``none``, the one of ``device=N``."""
+        settings = self._settings
+        if settings.gpus == "none":
+            return replace(settings.resources, gpu_memory_mb=0)
+        device = settings.gpus.removeprefix("device=")
+        if settings.gpus.startswith("device=") and device.isdigit():
+            return replace(settings.resources, gpu=int(device))
+        return settings.resources
 
     def address(self) -> str:
         return f"127.0.0.1:{self._port}"
@@ -120,8 +128,9 @@ class DockerBackend:
         argv = [
             settings.docker,
             "run",
+            # Not --rm: one that exits while starting keeps its logs for the
+            # error; close() removes it.
             "--detach",
-            "--rm",
             "--name",
             name,
             "--label",
@@ -152,8 +161,15 @@ class DockerBackend:
         self._container = None
         if container is not None:
             try:
+                docker = self._settings.docker
                 subprocess.run(
-                    [self._settings.docker, "stop", "--time", "10", container],
+                    [docker, "stop", "--time", "10", container],
+                    capture_output=True,
+                    timeout=60,
+                    check=False,
+                )
+                subprocess.run(
+                    [docker, "rm", "--force", container],
                     capture_output=True,
                     timeout=60,
                     check=False,

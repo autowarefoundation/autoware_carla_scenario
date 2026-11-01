@@ -67,7 +67,20 @@ a backend is said to take (backends.<name>.gpu_memory_mb / memory_mb).
 ```
 
 Each backend is placed on the GPU with the most room left, and starts on that
-GPU.
+GPU. A container set to one GPU (`gpus: device=N`) is checked on that GPU, and
+one with `gpus: none` needs no GPU at all.
+
+The check is a snapshot of what is free when the backends start. It cannot see
+what others are about to take:
+
+- CARLA, when the queue starts it, starts after the backends. Its GPU memory
+  must be left free, beyond what the backends take.
+- Another run on the same host that has started a backend that is still
+  loading has not taken its GPU memory yet. Two runs that prepare at the same
+  time can both pass the check and run out of GPU memory when they load.
+- `CUDA_VISIBLE_DEVICES` is read as `nvidia-smi`'s indices or UUIDs. Where
+  SLURM renumbers a job's GPUs from 0, set `gpus: device=N` to the host's index
+  instead.
 
 ## Containers
 
@@ -81,6 +94,9 @@ GPU.
 - follows the container's log into the run's output directory
   (`backend_<name>.log`);
 - waits until the service answers, for up to `startup_timeout_s`.
+
+A container that exits while starting is kept until its logs are read into the
+error, and then removed; every container is removed when its run ends.
 
 It labels each container with the host and process that started it. A container
 left behind by a killed run is removed the next time a backend of its name

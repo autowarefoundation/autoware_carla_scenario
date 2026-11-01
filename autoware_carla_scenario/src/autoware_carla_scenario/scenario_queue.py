@@ -666,12 +666,14 @@ class ScenarioQueue:
         try:
             if self._autoware_launcher is not None:
                 self._autoware_launcher.close()
-            if self._backends is not None:
-                self._backends.close()
         finally:
             # Even when the launcher's close() raises, against its contract.
-            if self._owns_server:
-                self._server.stop()
+            try:
+                if self._backends is not None:
+                    self._backends.close()
+            finally:
+                if self._owns_server:
+                    self._server.stop()
 
     # ------------------------------------------------------------------
     # pytest fixture factory

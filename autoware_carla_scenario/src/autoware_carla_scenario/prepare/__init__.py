@@ -57,10 +57,12 @@ class Resources:
     Attributes:
         gpu_memory_mb: Memory on one GPU, MiB (0: no GPU).
         memory_mb: Host memory, MiB.
+        gpu: The GPU (``nvidia-smi`` index) it must run on; ``None``: any.
     """
 
     gpu_memory_mb: int = 0
     memory_mb: int = 0
+    gpu: Optional[int] = None
 
     def __add__(self, other: "Resources") -> "Resources":
         return Resources(

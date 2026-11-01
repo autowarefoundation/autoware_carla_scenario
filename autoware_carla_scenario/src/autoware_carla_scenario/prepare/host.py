@@ -88,14 +88,24 @@ def assign_gpus(
         if need.gpu_memory_mb <= 0:
             placed[name] = None
             continue
-        best = max(host.gpus, key=lambda gpu: free[gpu.index], default=None)
+        pinned = need.gpu
+        if pinned is None:
+            best = max(host.gpus, key=lambda gpu: free[gpu.index], default=None)
+            where = "the roomiest GPU"
+        else:
+            best = next((gpu for gpu in host.gpus if gpu.index == pinned), None)
+            where = "the GPU it is set to"
         if best is None:
-            shortfalls.append(f"{name}: needs a GPU, and none is visible")
+            shortfalls.append(
+                f"{name}: needs a GPU, and none is visible"
+                if pinned is None
+                else f"{name}: is set to GPU {pinned}, which is not visible"
+            )
             continue
         if free[best.index] < need.gpu_memory_mb:
             shortfalls.append(
                 f"{name}: {need.gpu_memory_mb} MiB of GPU memory needed, "
-                f"{free[best.index]} MiB free on the roomiest GPU ({best.index})"
+                f"{free[best.index]} MiB free on {where} ({best.index})"
             )
             continue
         free[best.index] -= need.gpu_memory_mb
