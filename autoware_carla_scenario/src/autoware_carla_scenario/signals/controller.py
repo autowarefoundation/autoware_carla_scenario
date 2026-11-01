@@ -125,6 +125,11 @@ class Phase:
             raise ValueError("phase duration_seconds must be finite and not negative")
 
 
+def _no_indices() -> "list[int]":
+    """An empty, typed index list (a bare ``list`` factory is untyped to Codon)."""
+    return []
+
+
 @dataclass
 class SignalController:
     """A junction's cycle, running on simulated time.
@@ -151,6 +156,10 @@ class SignalController:
     #: World time this controller's first phase began.  A controller that
     #: references this one measures its own delay from here.
     _started_at: Optional[float] = field(default=None, init=False, repr=False)
+    #: Indices of the phases the latest tick entered and left again -- a 0 s
+    #: phase, or any phase shorter than the gap between ticks.  Never shown,
+    #: but they did happen, and :meth:`showed` counts them.
+    _passed: "list[int]" = field(default_factory=_no_indices, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # A NaN delay is never over, so the controller would never start.
@@ -173,6 +182,23 @@ class SignalController:
         """Simulated time this controller began its first phase."""
         return self._started_at
 
+    def showed(self, phase_name: str) -> bool:
+        """Whether *phase_name* is showing, or the latest tick passed through it.
+
+        A phase the schedule enters and leaves within one tick -- a 0 s
+        clearance, or any phase after a long gap -- is never
+        :attr:`current_phase`, so a condition asking only that would wait
+        for it forever.  It did happen, though, on that tick, and this
+        counts it for that tick (#935).
+        """
+        current = self.current_phase
+        if current is not None and current.name == phase_name:
+            return True
+        for index in self._passed:
+            if self.phases[index].name == phase_name:
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Running
     # ------------------------------------------------------------------
@@ -184,20 +210,28 @@ class SignalController:
         anything observes the world.  It reads the world's own simulated time
         rather than being handed one: only differences are taken, so the run's
         start cancels out and there is nothing to keep in step.
+
+        Phase boundaries are kept on the declared schedule rather than on the
+        tick that noticed them (#935): each phase starts exactly *duration*
+        after the one before it, however late a tick saw that.  So a 0 s
+        phase is passed within the tick, a duration that is not a whole
+        number of ticks is not rounded up phase after phase, and controllers
+        offset from one another keep their offset.  The lights are set once,
+        for the phase the tick ends in: a phase states every signal it
+        controls, so the ones passed over leave nothing behind.
         """
         now = _simulated_now(world)
+        self._passed = []
 
-        if self._current is None:
-            if self._may_start(now):
-                self._enter(0, world, now)
-            return
+        entering = self._current is None
+        if entering:
+            start = self._scheduled_start(now)
+            if start is None:
+                return
+            self._enter(0, start)
 
-        # CARLA's elapsed_seconds is a running sum of the tick, so a duration
-        # that is a whole number of ticks can come out a hair short of it; the
-        # tolerance stops that from holding the phase one tick too long.
-        duration = self.phases[self._current].duration_seconds
-        if now - self._phase_started_at >= duration - 1e-9:
-            self._enter((self._current + 1) % len(self.phases), world, now)
+        if self._advance(now, entering) or entering:
+            _apply(self.phases[self._index()], world, self.name)
 
     def change_phase_to(self, phase_name: str, world: "carla.World") -> bool:
         """Jump to the named phase, restarting its duration from now.
@@ -212,7 +246,10 @@ class SignalController:
         """
         for index, phase in enumerate(self.phases):
             if phase.name == phase_name:
-                self._enter(index, world, _simulated_now(world))
+                # Anchored at now, not at the schedule: a jump is an explicit
+                # decision taken on this tick, and the cycle runs on from it.
+                self._enter(index, _simulated_now(world))
+                _apply(phase, world, self.name)
                 return True
         logger.warning(
             "SignalController '%s': no phase named '%s'; it has %s",
@@ -226,29 +263,107 @@ class SignalController:
     # Internals
     # ------------------------------------------------------------------
 
-    def _may_start(self, now: float) -> bool:
-        """Whether the cycle may begin, given any controller it waits on.
+    def _index(self) -> int:
+        """Index of the phase now showing; only called once the cycle runs."""
+        current = self._current
+        assert current is not None
+        return current
+
+    def _scheduled_start(self, now: float) -> Optional[float]:
+        """When the cycle begins, or ``None`` while it is not yet due.
 
         A controller with no reference starts as soon as it is first ticked.
         One with a reference starts *delay* seconds after that reference began
         its own first phase, so a corridor's junctions can be offset into a
         green wave by declaring the offsets rather than by timing actions.
+
+        The start returned for a referenced controller is the scheduled one,
+        ``reference.started_at + delay``, not the tick that noticed it is due:
+        a delay that is not a whole number of ticks would otherwise be rounded
+        up, and every later phase boundary with it (#935).
         """
         if self.reference is None:
-            return True
+            return now
         reference_started = self.reference.started_at
         if reference_started is None:
-            return False
-        # Tolerant of float error in the summed clock, as tick() is.
-        return now - reference_started >= self.delay_seconds - 1e-9
+            return None
+        # Tolerant of float error in the summed clock, as _advance() is.
+        if now - reference_started < self.delay_seconds - 1e-9:
+            return None
+        return reference_started + self.delay_seconds
 
-    def _enter(self, index: int, world: "carla.World", now: float) -> None:
-        """Show phase *index* and start its clock."""
+    def _advance(self, now: float, entering: bool) -> bool:
+        """Move to the phase the schedule says is showing at *now*.
+
+        Every boundary is the previous one plus the phase's duration, so the
+        cycle stays on its declared schedule however the ticks fall, and a run
+        of phases that has all elapsed -- a 0 s phase above all -- is passed
+        within the one tick.  Returns whether the phase changed.
+
+        A cycle whose phases add up to no time at all has no schedule to keep
+        (the validator rejects negative durations but allows every phase to be
+        zero), and walking it until it is due would never end.  It moves one
+        phase per tick instead, anchored to that tick.
+        """
+        current = self._index()
+        count = len(self.phases)
+        cycle = 0.0
+        for phase in self.phases:
+            cycle += phase.duration_seconds
+        # CARLA's elapsed_seconds is a running sum of the tick, so a duration
+        # that is a whole number of ticks can come out a hair short of it; the
+        # tolerance stops that from holding the phase one tick too long.
+        tolerance = 1e-9
+
+        if not cycle > tolerance:
+            # Also reached by a NaN cycle, which compares false everywhere and
+            # so simply holds.
+            if entering:
+                return False
+            if now - self._phase_started_at >= (
+                self.phases[current].duration_seconds - tolerance
+            ):
+                self._enter((current + 1) % count, now)
+                return True
+            return False
+
+        started = self._phase_started_at
+        # Whole cycles come back to the same phase, so they are skipped in one
+        # step; only a long gap between ticks has any, and a short cycle would
+        # otherwise walk every one of them.
+        elapsed = now - started
+        if elapsed >= cycle:
+            started += float(int(elapsed // cycle)) * cycle
+
+        changed = False
+        # Bounded rather than open: after the skip at most one cycle (and a
+        # tolerance) is left, so this is generous, and no duration -- negative,
+        # infinite or not a number -- can turn it into a hang.
+        for _ in range(2 * count + 1):
+            if now - started < self.phases[current].duration_seconds - tolerance:
+                break
+            started += self.phases[current].duration_seconds
+            # The phase the tick began in was shown on earlier ticks, unless
+            # the cycle only starts now; every later one is entered and left
+            # within this tick.
+            if changed or entering:
+                self._passed.append(current)
+            current = (current + 1) % count
+            changed = True
+        self._current = current
+        self._phase_started_at = started
+        return changed
+
+    def _enter(self, index: int, started_at: float) -> None:
+        """Make phase *index* the current one, begun at *started_at*.
+
+        Only the bookkeeping: the caller sets the lights, once it knows which
+        phase the tick ends in.
+        """
         self._current = index
-        self._phase_started_at = now
+        self._phase_started_at = started_at
         if self._started_at is None:
-            self._started_at = now
-        _apply(self.phases[index], world, self.name)
+            self._started_at = started_at
 
 
 def _apply(phase: Phase, world: "carla.World", controller_name: str) -> None:

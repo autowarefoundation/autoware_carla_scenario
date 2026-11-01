@@ -19,6 +19,10 @@ __all__ = ["TrafficSignalControllerCondition"]
 class TrafficSignalControllerCondition(BaseCondition):
     """Fire while a junction's controller is showing a named phase.
 
+    A phase the cycle passes straight through within one tick -- a 0 s
+    clearance -- counts as shown on that tick, so waiting for it fires once
+    a cycle rather than never.
+
     The counterpart of
     :class:`~autoware_carla_scenario.TrafficSignalControllerAction`, and the
     question it answers is about the whole junction rather than one light:
@@ -97,7 +101,9 @@ class TrafficSignalControllerCondition(BaseCondition):
         if current is None:
             return None
 
-        if current.name != self._phase:
+        # showed() also counts a phase the latest tick passed straight
+        # through (a 0 s clearance), which is never the current one (#935).
+        if not controller.showed(self._phase):
             logger.debug(
                 "TrafficSignalControllerCondition [%s]: '%s' is in phase "
                 "'%s', not '%s'",
