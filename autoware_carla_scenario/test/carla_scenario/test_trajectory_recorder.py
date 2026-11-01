@@ -263,6 +263,19 @@ def test_every_pointer_in_the_schema_resolves(path: Path) -> None:
         assert isinstance(_resolve(schema, pointer), dict), pointer
 
 
+def test_an_episode_id_carla_hands_over_signed_is_written_unsigned(
+    tmp_path: Path,
+) -> None:
+    # CARLA's episode id is a random uint64; its Python API gives one past
+    # 2^63 as a negative int, which a reader of the log rejects as a u64.
+    world = _World()
+    world.id = -6682850984959527471
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    recorder.close()
+    assert _lines(recorder.path)[0]["episode"] == 2**64 - 6682850984959527471
+
+
 def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     world = _World()
     recorder = TrajectoryRecorder(tmp_path / "out" / "s.trajectory.jsonl")
