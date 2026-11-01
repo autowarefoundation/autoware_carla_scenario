@@ -510,7 +510,9 @@ PHASE_HELP: dict[str, str] = {
     "init": (
         "Before the run: from the ego spawning until it reports ready. The "
         "world ticks and sensors publish, but the clock has not started and no "
-        "condition has been evaluated."
+        "condition has been evaluated. An action that keeps acting (a "
+        "trajectory, a rate-limited speed change, a lane change) starts with "
+        "the run instead, from its first tick."
     ),
     "pre_tick": "Each tick of the running scenario, before the world advances.",
     "post_tick": "Each tick of the running scenario, after the world advances.",

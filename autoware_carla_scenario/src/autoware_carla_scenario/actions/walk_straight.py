@@ -181,6 +181,12 @@ class WalkStraightAction(BaseAction):
         back and stands, or is past turning back."""
         return self._phase == _SETTLED
 
+    @property
+    def needs_tick_loop(self) -> bool:
+        """For a walk that may turn back: it is watched every tick of its run,
+        which waits on the walk settling.  A plain walk is one command."""
+        return self.turns_back
+
     def _reissues_by_default(self) -> bool:
         # A walk that may turn back is watched every tick of its run.
         return self.turns_back

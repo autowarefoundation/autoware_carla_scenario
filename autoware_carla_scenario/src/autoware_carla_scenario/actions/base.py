@@ -217,9 +217,13 @@ class BaseAction(ABC):
 
     @property
     def needs_tick_loop(self) -> bool:
-        """Whether the action has to run on the tick loop, because it keeps
-        acting: one registered for initialization is put on the loop instead
-        (:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`).
+        """Whether the action has to run on the tick loop: it keeps acting
+        after the tick it fired on (it reissues, or steps something along), or
+        its run waits on an *until* the world has to reach.  One registered for
+        initialization is put on the loop instead, from the first tick
+        (:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`):
+        the initialization phase performs an action once and never ticks it
+        again, so it would be left running with nothing driving it.
         ``False`` unless the action says."""
         return False
 

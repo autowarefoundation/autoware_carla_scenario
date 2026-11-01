@@ -367,6 +367,12 @@ class TrajectoryRun(BaseAction):
         return self._trajectory
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the entity is moved (or held, or hidden) a tick at a time
+        until the trajectory, or *until*, ends the run."""
+        return True
+
+    @property
     def finished(self) -> bool:
         """Whether the current run has reached the end of the trajectory."""
         return self._finished

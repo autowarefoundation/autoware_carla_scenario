@@ -162,6 +162,12 @@ class ConstructionZoneAction(_BackendAction):
         self._elapsed = 0.0
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the zone appears at *start_time* and is cleared away at
+        *end_time*, which only a tick reaches."""
+        return True
+
+    @property
     def cleared(self) -> bool:
         """Whether the zone has come and gone."""
         return self._cleared
