@@ -19,7 +19,7 @@ class Ros2EgoConfig:
                  speed_topic="/vehicle/speed", clock_topic=None,
                  turn_indicators_command_topic="/control/command/turn_indicators_cmd",
                  turn_indicators_report_topic="/vehicle/status/turn_indicators_status",
-                 rear_axle_offset_m=None, on_stale="hold", sources=(), cameras=()):
+                 rear_axle_offset_m=None, on_stale="hold", sources=None, cameras=()):
         compile_error("Ros2EgoConfig is not modelled: the static check of a "
                       "scenario cannot build one (typecheck/codon/"
                       "autoware_carla_scenario/_ros2.codon)")
