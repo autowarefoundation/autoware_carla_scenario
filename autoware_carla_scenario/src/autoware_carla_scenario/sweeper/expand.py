@@ -301,7 +301,6 @@ def _with_odd_samples(
     from ..odd.sampler import (  # noqa: PLC0415
         ODD_CASE_KEY,
         encode_case,
-        sample_seed,
         search_from_config,
         with_tire_friction,
         with_visibility,
@@ -349,12 +348,17 @@ def _with_odd_samples(
         cases = [base_cases[i % len(base_cases)] for i in range(len(samples))]
     if drawn is not None:
         drawn.add(sampler.odd, samples)
+    # expand_sweep() has filled a null seed in; the value as given (not int()
+    # of it) is what these draws have always hashed.
+    draw_seed = raw.get("seed")
+    if draw_seed is None:
+        draw_seed = DEFAULT_SEED
     if raw.get("tire_friction", True):
         # After the draws are recorded: the grip is no attribute of the ODD.
-        samples = with_tire_friction(samples, sample_seed(raw))
+        samples = with_tire_friction(samples, draw_seed)
     if raw.get("visibility", True):
         # Nor is how far drivers see.
-        samples = with_visibility(samples, sample_seed(raw))
+        samples = with_visibility(samples, draw_seed)
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),
