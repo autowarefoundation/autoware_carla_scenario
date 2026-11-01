@@ -26,6 +26,7 @@ __all__ = [
     "CaseFiles",
     "contained",
     "job_dir",
+    "last_result_path",
     "result_path",
     "session_dir",
     "stem_order",
@@ -154,6 +155,20 @@ def result_path(directory: Path) -> Optional[Path]:
         if path.is_file():
             return path
     return None
+
+
+def last_result_path(directory: Path) -> Optional[Path]:
+    """The ``_result.json`` of the last run in *directory*: the last stem in
+    :func:`stem_order` (``X-1`` after ``X``, ``X-10`` after ``X-2``), which is
+    the newest, since a run takes the first stem no earlier run has taken
+    (``scenario_runner._run_file_stem``). ``None`` when that run left no
+    result, even if an earlier one did: an earlier run's verdict is not the
+    last run's."""
+    stems = _stems_in(directory)
+    if not stems:
+        return None
+    path = directory / f"{stems[-1]}{_RESULT}"
+    return path if path.is_file() else None
 
 
 def _only_case(directory: Path) -> CaseFiles | None:

@@ -1,10 +1,13 @@
-"""The scanner and the sweeper read the run the rest of the viewer shows (#1039).
+"""The scanner reads the run the rest of the viewer shows, and the sweeper the
+last run (#1039).
 
 A directory that holds runs ``X`` and ``X-1`` (a rerun into the same output
 directory) has its case picked in ``stem_order`` (``X`` first) by
-``cases.case_files`` and ``results.load_results``. The session list, the
-detail page and the sweeper's verdict must read ``X``'s result too, not
-``X-1``'s, which a plain sort puts first (``-`` sorts before ``_``).
+``cases.case_files`` and ``results.load_results``. The session list and the
+detail page must read ``X``'s result too, not ``X-1``'s, which a plain sort
+puts first (``-`` sorts before ``_``). The sweeper, which retries a case in
+the same job directory, needs the verdict of the attempt it just ran: the last
+stem in ``stem_order`` (``X-10`` after ``X-2``, which a plain sort reverses).
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import pytest
 
 from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import _read_verdict
 from autoware_carla_scenario.ui import cases, results, scanner
-from autoware_carla_scenario.ui.case_paths import result_path
+from autoware_carla_scenario.ui.case_paths import last_result_path, result_path
 
 DATE = "2026-11-01"
 TIME = "10-00-00"
@@ -88,9 +91,38 @@ def test_a_multirun_job_reads_the_case_the_viewer_shows(tmp_path: Path) -> None:
     assert (result.passed, result.message) == (True, "CutIn")
 
 
-def test_the_sweeper_reads_the_verdict_of_the_first_stem(tmp_path: Path) -> None:
-    _write_runs(tmp_path, RUNS)
-    assert _read_verdict(tmp_path) is True
+def test_last_result_path_takes_the_last_stem_in_stem_order(tmp_path: Path) -> None:
+    assert last_result_path(tmp_path) is None
+    _write_runs(tmp_path, {"X": True, "X-1": False})
+    assert last_result_path(tmp_path) == tmp_path / "X-1_result.json"
+    _write_runs(tmp_path, {"X-2": False, "X-10": True})
+    assert last_result_path(tmp_path) == tmp_path / "X-10_result.json"
+
+
+def test_last_result_path_is_none_when_the_last_run_left_no_result(
+    tmp_path: Path,
+) -> None:
+    _write_runs(tmp_path, {"X": True})
+    (tmp_path / "X-1.trajectory.jsonl").write_text("")
+    assert last_result_path(tmp_path) is None
+
+
+def test_the_sweeper_reads_the_verdict_of_the_last_attempt(tmp_path: Path) -> None:
+    # A retried case: the first attempt left a result, the retry X-1 another.
+    _write_runs(tmp_path, {"CutIn": True, "CutIn-1": False})
+    assert _read_verdict(tmp_path) is False
 
     _write_runs(tmp_path, {"CutIn": False, "CutIn-1": True})
+    assert _read_verdict(tmp_path) is True
+
+    # A third attempt: a plain sort still puts CutIn-1 first.
+    _write_runs(tmp_path, {"CutIn-1": True, "CutIn-2": False})
     assert _read_verdict(tmp_path) is False
+
+
+def test_the_sweeper_reads_no_stale_verdict(tmp_path: Path) -> None:
+    # The retry wrote its trajectory but no result: no verdict, not the
+    # first attempt's.
+    _write_runs(tmp_path, {"CutIn": True})
+    (tmp_path / "CutIn-1.trajectory.jsonl").write_text("")
+    assert _read_verdict(tmp_path) is None

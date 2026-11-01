@@ -60,7 +60,7 @@ from tqdm import tqdm
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError, require_converter
-from ..ui.case_paths import result_path
+from ..ui.case_paths import last_result_path
 from .expand import (
     _config_seed,
     check_constraint_keys,
@@ -107,9 +107,13 @@ class SweepFailedError(CompactHydraException):
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
-    """The verdict of the scenario result JSON in a job's output directory:
-    the one the viewer shows for it (:func:`..ui.case_paths.result_path`,
-    ``X``'s rather than ``X-1``'s).
+    """The verdict of the scenario result JSON the case just launched wrote in
+    its job's output directory: the last run's
+    (:func:`..ui.case_paths.last_result_path`).  A retry
+    (``server.cooldown_max_retries``) runs the case again in the same job
+    directory, after an attempt that may have left a result of its own, and
+    takes the next stem (``X-1`` after ``X``); its verdict is the one that
+    counts, not the stale ``X``'s the viewer shows first.
 
     Returns:
         ``True`` if the scenario passed, ``False`` if it ran and failed, or
@@ -117,7 +121,7 @@ def _read_verdict(output_dir: Path) -> bool | None:
         before :class:`ScenarioRunner` could write it) or one that cannot be
         read.
     """
-    result_file = result_path(output_dir)
+    result_file = last_result_path(output_dir)
     if result_file is None:
         return None
     try:
