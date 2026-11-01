@@ -50,6 +50,7 @@ __all__ = [
     "build_temporary_stop_condition",
     "build_temporary_stop_at_stop_lines_condition",
     "build_turn_indicator_condition",
+    "build_adversity_active_condition",
     "build_entity_distance_condition",
     "build_distance_condition",
     "build_relative_speed_condition",
@@ -577,6 +578,41 @@ def build_turn_indicator_condition(
     return TurnIndicatorCondition(
         entity_name=str(params["entity"]),
         state=TurnIndicatorState[str(params["state"])],
+        label=compiled.label,
+    )
+
+
+def build_adversity_active_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`AdversityActiveCondition`."""
+    from ..conditions.adversity_active import AdversityActiveCondition  # noqa: PLC0415
+    from ..conditions import entity_filter_from_fields  # noqa: PLC0415
+    from ..conditions.adversity_active import adversity_kinds_from_field  # noqa: PLC0415
+
+    params = compiled.params
+    entities = entity_filter_from_fields(
+        names=params["names"],
+        kind=params["kind"],
+        reference=params["reference"],
+        min_distance_m=params["min_distance_m"],
+        max_distance_m=params["max_distance_m"],
+        min_ahead_m=params["min_ahead_m"],
+        max_ahead_m=params["max_ahead_m"],
+        min_left_m=params["min_left_m"],
+        max_left_m=params["max_left_m"],
+        lanelet_ids=params["lanelet_ids"],
+        include_reference=params["include_reference"],
+    )
+    kinds = adversity_kinds_from_field(
+        kind=params["adversity"],
+    )
+    return AdversityActiveCondition(
+        entities=entities,
+        kinds=kinds,
+        include_responses=params["include_responses"],
         label=compiled.label,
     )
 

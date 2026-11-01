@@ -3463,6 +3463,73 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="adversity_active",
+        title="Adversity under way",
+        category="Relative",
+        builder="build_adversity_active_condition",
+        target="..conditions.adversity_active:AdversityActiveCondition",
+        builds=(
+            _ENTITY_FILTER,
+            BuiltArgument(
+                kwarg="kinds",
+                target="..conditions.adversity_active:adversity_kinds_from_field",
+                parts=(BuiltPart(args=(("kind", "adversity"),)),),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Adversity",
+            subject="reference",
+            value="adversity",
+            details=("names", "max_distance_m", "include_responses"),
+        ),
+        fields=(
+            FieldSpec(
+                name="adversity",
+                label="Adversity",
+                kind="select",
+                default="ANY",
+                options=(
+                    SelectOption("ANY", "Any"),
+                    SelectOption("BRAKE_CHECK", "Brake check"),
+                    SelectOption("IGNORE_LEADER", "Ignore leader"),
+                    SelectOption("CUT_IN", "Cut-in"),
+                    SelectOption("TRAFFIC_RULE", "Traffic rule (runs a light)"),
+                    SelectOption("JAYWALKING", "Jaywalking"),
+                    SelectOption("LANE_CHANGE_ABORT", "Lane-change abort"),
+                    SelectOption("HEAD_ON", "Head-on"),
+                    SelectOption("RUNNING_RED_LIGHT", "Pedestrian runs a red light"),
+                    SelectOption("STOP_CROSSING", "Pedestrian stops crossing"),
+                    SelectOption("MERGE", "Merge"),
+                ),
+                required=False,
+                help=(
+                    "The adversity that counts: carried out by its own "
+                    "adversarial action, or sampled by NADE."
+                ),
+            ),
+            *_entity_filter_fields(),
+            FieldSpec(
+                name="include_responses",
+                label="Count victims' responses",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "A victim's response to another's adversity (NADE's avoid "
+                    "or accept) counts too, as the adversity it responds to."
+                ),
+            ),
+        ),
+        description=(
+            "Holds while a road user the filter takes is carrying out an "
+            "adversity -- a named NPC's adversarial action, or a background "
+            "vehicle NADE sampled -- until it is handed back to traffic."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="distance",
         title="Distance to a place",
         category="Relative",
