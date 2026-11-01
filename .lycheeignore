@@ -41,9 +41,11 @@ file://.*
 ^https://huggingface\.co/datasets/OWNER/NAME
 # Placeholders in the tests: repositories and files that exist nowhere.
 ^https://github\.com/owner/repo$
-^https://github\.com/(OWNER/NAME|o/n)(/|$)
+^https://github\.com/(OWNER/NAME|o/n|o/r)(/|$)
 ^https://huggingface\.co/datasets/O/N(/|$)
 ^https?://x/
+# A URL inside a JSON string, kept by the JSONC comment stripper.
+^http://host/x$
 # The git-lfs pointer format's version line, not a page (and as a test writes
 # it, with its newline escaped).
 ^https://git-lfs\.github\.com/spec/v1(/n)?$
