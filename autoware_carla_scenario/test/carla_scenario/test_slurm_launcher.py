@@ -616,6 +616,20 @@ def test_slurm_checks_every_case_not_only_the_first(
     assert len(calls) == 2
 
 
+def test_slurm_checks_the_launcher_of_an_autoware_case_after_an_autopilot_one(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """The ego's entity decides whether the Autoware launcher is read at all, so
+    a case that differs from the one before only in it is checked again."""
+    run = fake_slurm.run
+    first = run._compose_config(_CONCRETE, ["autoware.launcher.type=bogus"])
+    second = run._compose_config(_CONCRETE, ["autoware.launcher.type=bogus"])
+    second.ego.entity = "autoware"
+    run._check_slurm_cases([first])
+    with pytest.raises(ValueError, match="autoware.launcher.type"):
+        run._check_slurm_cases([first, second])
+
+
 def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

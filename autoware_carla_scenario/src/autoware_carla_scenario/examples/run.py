@@ -1297,12 +1297,16 @@ def _check_slurm_cases(configs: list[DictConfig]) -> None:
     for cfg in configs:
         run_timeout_seconds(cfg)
         _odd_case(cfg)
-        # Once a distinct setting: a sweep's cases mostly share them.
+        # Once a distinct setting: a sweep's cases mostly share them.  The
+        # ego's entity too: build_autoware_launcher reads the launcher only
+        # for an ``ego.entity=autoware`` case.
+        settings: dict[str, Any] = {
+            name: _to_dict(cfg[name]) if cfg.get(name) is not None else None
+            for name in ("server", "traffic", "traffic_manager", "autoware")
+        }
+        settings["ego.entity"] = str((cfg.get("ego") or {}).get("entity", "autopilot"))
         key = json.dumps(
-            {
-                name: _to_dict(cfg[name]) if cfg.get(name) is not None else None
-                for name in ("server", "traffic", "traffic_manager", "autoware")
-            },
+            settings,
             sort_keys=True,
             default=str,
         )
