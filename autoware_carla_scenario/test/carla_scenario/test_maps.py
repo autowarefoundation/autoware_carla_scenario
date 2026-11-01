@@ -1086,6 +1086,17 @@ class TestListMapsAtTip:
 
         assert [e.name for e in list_maps(uri, cache=cache)] == first
 
+    def test_an_unreachable_remote_lists_an_entry_filed_under_the_branch(
+        self, remote: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        # A cache filled before listing asked for the tip: the entry is named
+        # after the branch and no tip was ever recorded.
+        uri = f"git+file://{remote}@main"
+        cache.list_files(MapSource.parse(uri))
+        remote.rename(tmp_path / "moved-away")
+
+        assert [e.name for e in list_maps(uri, cache=cache)] == ["TownA", "TownB"]
+
 
 # ---------------------------------------------------------------------------
 # Config resolution
