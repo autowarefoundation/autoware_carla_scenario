@@ -68,10 +68,12 @@ lanelet the ego spawns on and the ones that follow it in the routing graph
 (`lanelets_ahead`: `following` without lane changes, every branch, up to
 `lanes_ahead_m`); in none of them is in the lane beside, on a lanelet that
 turns off them, or in no lanelet at all. Following every branch, those can
-loop round a block into the lane beside the ego's, so every lanelet beside one
-of the lanes up to the first junction (`lanes_ahead_before_junction`; the
+loop round a block into the lane beside the ego's, so a lanelet beside one of
+the lanes up to the first junction (`lanes_ahead_before_junction`; the
 routing graph's `left`, `right`, `adjacentLeft` and `adjacentRight`) is left
-out, never one of those lanes itself (`ego_lanes_ahead`).
+out when they reach it only past the end of the lanelet it is beside -- never
+one of those lanes itself, nor a turn through the junction ahead that ends
+beside one of them (`ego_lanes_ahead`).
 
 It is not a condition of its own but a composition of the framework's,
 `left_lanes_ahead` in `examples/cut_in.py`, which any scenario can build the

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 
+import lanelet2.geometry
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
@@ -105,7 +106,7 @@ def left_lanes_ahead(
     branch, it can loop round a block into the lane beside the ego's, and
     those lanelets would then count as its own (#1080).  So
     :func:`ego_lanes_ahead` leaves out each lanelet beside one of
-    :func:`lanes_ahead_before_junction`.
+    :func:`lanes_ahead_before_junction` that it reaches only that way.
 
     *seconds* of zero or less fails on the first tick off them.
     """
@@ -194,28 +195,69 @@ def _beside(lanelet_id: int) -> list[int]:
     return found
 
 
+def _length(lanelet_id: int) -> float:
+    """The length of *lanelet_id*'s centerline (m), as :func:`lanelets_ahead`
+    measures it."""
+    lanelet = MapManager.get_instance().lanelet_map.laneletLayer[lanelet_id]
+    return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
+
+
+def _begins(ahead: list[int], distance_m: float) -> dict[int, float]:
+    """How far from the start of ``ahead[0]`` each lanelet of *ahead* begins
+    (m), by the shortest chain -- *ahead* as :func:`lanelets_ahead` gives it,
+    nearest first, so the predecessor on that chain always comes earlier."""
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    begins: dict[int, float] = {}
+    for candidate in ahead:
+        if len(begins) == 0:
+            begins[candidate] = 0.0
+            continue
+        nearest = distance_m
+        for previous in graph.previous(layer[candidate], False):
+            previous_id = int(previous.id)
+            if previous_id in begins:
+                ends_at = begins[previous_id] + _length(previous_id)
+                if ends_at < nearest:
+                    nearest = ends_at
+        begins[candidate] = nearest
+    return begins
+
+
 def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
     """The lanelets :func:`left_lanes_ahead` keeps the ego on.
 
     :func:`lanelets_ahead` of *lanelet_id*, less every lanelet beside one of
     :func:`lanes_ahead_before_junction` -- the routing graph's ``left`` and
     ``right``, and ``adjacentLeft`` and ``adjacentRight`` across a solid
-    line.  Following every branch through junctions, :func:`lanelets_ahead`
-    can loop round a block and come back into the lane beside the ego's,
-    which a lane change reaches; it is never the ego's lane.  A lanelet of
+    line -- that it reaches only past the end of the lanelet it is beside.
+    Following every branch through junctions, :func:`lanelets_ahead` can loop
+    round a block and come back into the lane beside the ego's, which a lane
+    change reaches; it is never the ego's lane.  One it reaches before then
+    is a branch of the ego's own lanes -- a turn through the junction ahead
+    that ends beside one of them -- and is kept.  A lanelet of
     :func:`lanes_ahead_before_junction` itself is always kept.  In the order
     :func:`lanelets_ahead` gives, *lanelet_id* first.
     """
     own = lanes_ahead_before_junction(lanelet_id, distance_m)
-    beside: list[int] = []
+    ahead = lanelets_ahead(lanelet_id, distance_m)
+    begins = _begins(ahead, distance_m)
+    # Each lanelet beside the ego's, and the furthest any lanelet of the
+    # ego's it is beside ends: reached only past that, it is a loop.
+    beside_ends: dict[int, float] = {}
     for lanelet in own:
+        ends_at = begins[lanelet] + _length(lanelet)
         for neighbour in _beside(lanelet):
-            if neighbour not in own and neighbour not in beside:
-                beside.append(neighbour)
+            if neighbour in own:
+                continue
+            if neighbour not in beside_ends or beside_ends[neighbour] < ends_at:
+                beside_ends[neighbour] = ends_at
     kept: list[int] = []
-    for lanelet in lanelets_ahead(lanelet_id, distance_m):
-        if lanelet not in beside:
-            kept.append(lanelet)
+    for lanelet in ahead:
+        if lanelet in beside_ends and begins[lanelet] >= beside_ends[lanelet]:
+            continue
+        kept.append(lanelet)
     return kept
 
 

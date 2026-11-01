@@ -548,6 +548,32 @@ class TestLeftLanesAheadOnTheFixtureMap:
         assert not self._left(self.SPAWN)
 
 
+@pytest.mark.usefixtures("nishishinjuku")
+class TestATurnBesideTheLaneOnTheFixtureMap:
+    """A turn through the junction ahead that ends beside the ego's lane is
+    one of its lanes, not the lane beside it."""
+
+    #: From lanelet 3002156, the right turn 3002162 -> 3002161 runs beside
+    #: 3002160, which follows 3002156 before the junction.
+    SPAWN, LANE, TURN = 3002156, 3002160, 3002161
+
+    def test_the_turn_is_beside_the_lane(self) -> None:
+        reach = CutInConfig().lanes_ahead_m
+        assert self.LANE in lanes_ahead_before_junction(self.SPAWN, reach)
+        assert self.TURN not in lanes_ahead_before_junction(self.SPAWN, reach)
+        mm = MapManager.get_instance()
+        lane = mm.lanelet_map.laneletLayer[self.LANE]
+        assert int(mm.routing_graph.adjacentRight(lane).id) == self.TURN
+
+    def test_the_turn_is_kept(self) -> None:
+        assert self.TURN in ego_lanes_ahead(self.SPAWN, CutInConfig().lanes_ahead_m)
+
+    def test_taking_the_turn_does_not_fail(self) -> None:
+        condition = left_lanes_ahead(self.SPAWN, CutInConfig().lanes_ahead_m, 0.0)
+        pose = Lanelet2Pose(lanelet_id=self.TURN, s=20.0)
+        assert condition.check(_ego_at(pose), 1.0) is None
+
+
 # ---------------------------------------------------------------------------
 # The same composition in a scenario document
 # ---------------------------------------------------------------------------
