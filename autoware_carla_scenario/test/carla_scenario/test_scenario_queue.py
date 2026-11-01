@@ -776,3 +776,28 @@ def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
     assert runner.attempts == [(stem, False), (stem, False)]
     assert (tmp_path / f"{stem}.trajectory.jsonl").read_text() == "2\n"
     assert neighbour[0].read_text() == "other case\n"
+
+
+def test_a_retry_waits_for_the_failed_attempts_recording_first(
+    tmp_path: Path,
+) -> None:
+    """The failed attempt's log is converted in the background: the queue
+    waits for that before it removes the attempt's outputs, so the
+    conversion neither reads the retry's log nor writes over its recording."""
+    rerun = MagicMock()
+    seen: list[bool] = []
+    rerun.wait.side_effect = lambda: seen.append(
+        (tmp_path / "_NullScenario.trajectory.jsonl").exists()
+    )
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=1, rerun=rerun
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()))
+
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert result.passed
+    # Once, between the attempts, with the failed attempt's log still there.
+    assert seen == [True]

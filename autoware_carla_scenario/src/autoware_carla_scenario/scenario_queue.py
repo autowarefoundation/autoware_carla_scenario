@@ -400,19 +400,17 @@ class ScenarioQueue:
                     del self._cases[key]
                 if key in self._stems:
                     del self._stems[key]
-            # The stem every attempt writes under, settled before the first:
-            # the one given, or the one the runner names the first attempt by
-            # (the first free in the output directory).  Before a retry its
-            # outputs are removed, so the retry writes over the attempt it
-            # replaces -- a runner naming its own then takes the same stem
-            # again -- rather than taking the next stem and leaving that
-            # attempt's partial outputs under this one.  Only a queue that
-            # retries needs it.
+            # The stem every attempt writes under: the one given, or the one
+            # the runner names the first attempt by (the first free in the
+            # output directory), settled right before that attempt runs, after
+            # its cooldown.  Before a retry its outputs are removed, so the
+            # retry writes over the attempt it replaces -- a runner naming its
+            # own then takes the same stem again -- rather than taking the
+            # next stem and leaving that attempt's partial outputs under this
+            # one.  Only a queue that retries needs it.
             run_stem = ""
             if file_stem is not None:
                 run_stem = file_stem
-            elif max_attempts > 1:
-                run_stem = _run_file_stem(self._output_dir, type(scenario).__name__)
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
@@ -433,7 +431,22 @@ class ScenarioQueue:
                     # next scenario; after the last there is none, and a
                     # later run_all() resets it or a new queue loads it first.
                     reset_world = i < total - 1
+                    if attempt == 0 and not run_stem and max_attempts > 1:
+                        run_stem = _run_file_stem(
+                            self._output_dir, type(scenario).__name__
+                        )
                     if attempt > 0 and run_stem:
+                        # The failed attempt handed its trajectory log to the
+                        # Rerun converter, which converts it in the
+                        # background: done before its outputs go, so that it
+                        # neither reads this attempt's log nor writes its
+                        # recording (or takes the sensors) over this one's.
+                        if TYPE_CHECKING:
+                            # wait() returns the RerunConversion records,
+                            # which rerun.codon does not model.
+                            pass
+                        elif self._rerun is not None:
+                            self._rerun.wait()
                         # What the failed attempt wrote under the stem (its
                         # trajectory log, a partial T4 dataset the writer
                         # would refuse to write over ...) makes way for this
