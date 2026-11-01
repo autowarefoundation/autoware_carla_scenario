@@ -59,7 +59,7 @@ class PedestrianEntityConfig:
     walker_type: str
 
     def __init__(self, role_name, spawn_location: SpawnTransform,
-                 walker_type: str = "walker.pedestrian.0001"):
+                 walker_type: str = "walker.pedestrian.0015"):
         self.role_name = _expect_role_name(role_name)
         self.spawn_location = spawn_location
         self.walker_type = walker_type

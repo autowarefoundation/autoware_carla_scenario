@@ -396,6 +396,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._traci: Any = None
         self._context: Optional[TrafficContext] = None
         self._network: Optional[SumoNetwork] = None
+        # The walker blueprint SUMO's persons are mirrored as, once resolved
+        # against the CARLA build (_walker_blueprint).
+        self._walker_type: Optional[str] = None
         self._net: Any = None  # sumolib's view of the network, for routes
         self._offset: tuple[float, float] = (0.0, 0.0)
         self._rng = random.Random(0)
@@ -3867,7 +3870,7 @@ class SumoTrafficBackend(TrafficBackend):
         (tried again next tick)."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
-        blueprint = library.find(self._config.pedestrians.blueprint)
+        blueprint = library.find(self._walker_blueprint(library))
         if blueprint.has_attribute("role_name"):
             blueprint.set_attribute("role_name", f"{_MIRROR_PREFIX}{person}")
         if blueprint.has_attribute("is_invincible"):
@@ -3880,6 +3883,32 @@ class SumoTrafficBackend(TrafficBackend):
                 carla.Rotation(yaw=pose.heading_deg),
             ),
         )
+
+    def _walker_blueprint(self, library: Any) -> str:
+        """The configured walker blueprint, or -- when this CARLA build has no
+        such blueprint (CARLA 0.10 has none of 0.9's ``walker.pedestrian.0001``
+        ...) -- the first ``walker.pedestrian.*`` it has, said once."""
+        if self._walker_type is not None:
+            return self._walker_type
+        wanted = self._config.pedestrians.blueprint
+        try:
+            library.find(wanted)
+            self._walker_type = wanted
+        except (IndexError, RuntimeError):
+            found = sorted(str(b.id) for b in library.filter("walker.pedestrian.*"))
+            if not found:
+                raise RuntimeError(
+                    f"SUMO's persons cannot be mirrored: CARLA has no {wanted!r} "
+                    "and no walker.pedestrian.* blueprint at all"
+                ) from None
+            self._walker_type = found[0]
+            logger.warning(
+                "SUMO: CARLA has no walker blueprint %r; mirroring persons as %r "
+                "(traffic.options.pedestrians.blueprint)",
+                wanted,
+                found[0],
+            )
+        return self._walker_type
 
     def _walk(self, walker: Any, pose: Pose2D, speed: float) -> None:
         """Put *walker* where its person was at the start of this step, facing
