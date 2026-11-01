@@ -228,10 +228,11 @@ class SmartPedestrianControllerAction(BaseAction):
         here = actor.get_transform()
         self._ground_z = float(here.location.z)
         backend = running_backend(ArdyBackend)
-        timeout = backend.timeout_s if isinstance(backend, ArdyBackend) else 120.0
         # Kept at once: a call below that fails still has _end() close it
         # and hand the walker back.
-        self._client = PedestrianMotionClient(backend.address(), timeout_s=timeout)
+        self._client = PedestrianMotionClient(
+            backend.address(), timeout_s=backend.timeout_s
+        )
         try:
             self._open(world, self._client, here)
         except BaseException:

@@ -382,3 +382,30 @@ class TestDockerBackend:
         _Answering.from_settings({}).start()
         removed = [c[-1] for c in recorded.calls if c[1] == "rm"]
         assert removed == ["dead"]
+
+
+class TestQueue:
+    def test_a_scenario_added_after_the_start_is_prepared_then(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from autoware_carla_scenario.scenario_queue import ScenarioQueue
+
+        prepared: list[list[object]] = []
+        preparer = SimpleNamespace(
+            prepare_scenarios=lambda scenarios, log_dir=None: prepared.append(
+                list(scenarios)
+            )
+        )
+        queue = ScenarioQueue(
+            server=MagicMock(),
+            output_dir=tmp_path,
+            backends=preparer,  # type: ignore[arg-type]
+        )
+        before, after = MagicMock(), MagicMock()
+        queue.add(before)
+        assert prepared == []  # the start prepares it, with the others
+        queue._runner = MagicMock()
+        queue.add(after)
+        assert prepared == [[after]]

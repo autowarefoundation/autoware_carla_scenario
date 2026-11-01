@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional
 
 import typesafe_carla.carla as carla
 
+from ..entity.pedestrian_entity import walker_control_speed
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from .skeleton import Vector, WalkerRetarget
 
@@ -44,11 +45,6 @@ class WalkerPoser:
         self._retarget = None
         self._walker = None
         self._blended = False
-
-    @property
-    def posing(self) -> bool:
-        """Whether the walker shows the motion's pose."""
-        return self._walker is not None
 
     @property
     def actor(self) -> Optional[carla.Actor]:
@@ -166,7 +162,9 @@ class WalkerPoser:
                 else carla.Vector3D(1.0, 0.0, 0.0)
             )
             _as_walker(actor).apply_control(
-                carla.WalkerControl(direction=direction, speed=speed)
+                carla.WalkerControl(
+                    direction=direction, speed=walker_control_speed(speed)
+                )
             )
         except RuntimeError:
             self._forget()

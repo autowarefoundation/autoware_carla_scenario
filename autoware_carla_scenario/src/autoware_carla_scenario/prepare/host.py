@@ -74,12 +74,12 @@ def assign_gpus(
             falls short, naming what each backend needs and what is free.
     """
     shortfalls: list[str] = []
-    total = Resources()
+    memory_mb = 0
     for _, need in needs:
-        total = total + need
-    if total.memory_mb > host.memory_mb:
+        memory_mb += need.memory_mb
+    if memory_mb > host.memory_mb:
         shortfalls.append(
-            f"host memory: {total.memory_mb} MiB needed, {host.memory_mb} MiB available"
+            f"host memory: {memory_mb} MiB needed, {host.memory_mb} MiB available"
         )
     free = {gpu.index: gpu.free_mb for gpu in host.gpus}
     placed: dict[str, Optional[Gpu]] = {}

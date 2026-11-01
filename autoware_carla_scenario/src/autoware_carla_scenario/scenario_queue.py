@@ -291,11 +291,6 @@ class ScenarioQueue:
     # Scenario registration
     # ------------------------------------------------------------------
 
-    @property
-    def backends(self) -> Optional["BackendPreparer"]:
-        """What starts the backends the scenarios need, if the queue has one."""
-        return self._backends
-
     def add(
         self,
         scenario: BaseScenario,
@@ -320,6 +315,11 @@ class ScenarioQueue:
                 output directory (:meth:`ScenarioRunner.run_scenario`).
         """
         self._scenarios.append(scenario)
+        if self._backends is not None and self._runner is not None:
+            # Added after the queue started (a SLURM task's cases join one at
+            # a time): what it needs starts now, before it runs.
+            preparer: BackendPreparer = self._backends
+            preparer.prepare_scenarios([scenario], log_dir=self._output_dir)
         if timeout_seconds is not None:
             self._timeouts[id(scenario)] = timeout_seconds
         if case is not None:

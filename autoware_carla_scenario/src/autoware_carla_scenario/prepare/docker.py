@@ -47,7 +47,6 @@ class DockerSettings:
         mounts: ``host:container[:ro]`` volumes; ``~`` in the host path is
             expanded.
         docker_args: More ``docker run`` arguments, before the image.
-        command: The container's command (``()``: the image's).
         pull: ``missing`` (pull when the host lacks the image), ``always``
             or ``never``.
         startup_timeout_s: How long it may take to answer -- a first start
@@ -63,7 +62,6 @@ class DockerSettings:
     pass_env: tuple[str, ...] = ()
     mounts: tuple[str, ...] = ()
     docker_args: tuple[str, ...] = ()
-    command: tuple[str, ...] = ()
     pull: str = "missing"
     startup_timeout_s: float = 600.0
     resources: Resources = Resources()
@@ -95,10 +93,6 @@ class DockerBackend:
     @property
     def name(self) -> str:
         return self.backend_name
-
-    @property
-    def settings(self) -> DockerSettings:
-        return self._settings
 
     def resources(self) -> Resources:
         """The settings' resources, for the GPU ``gpus`` gives it: none for
@@ -149,7 +143,7 @@ class DockerBackend:
         for mount in settings.mounts:
             host, _, rest = mount.partition(":")
             argv += ["--volume", f"{os.path.expanduser(host)}:{rest}"]
-        argv += [*settings.docker_args, settings.image, *settings.command]
+        argv += [*settings.docker_args, settings.image]
         logger.info("Starting backend '%s': %s", self.name, " ".join(argv))
         out = _docker(argv, f"start the '{self.name}' backend")
         self._container = out.strip() or name

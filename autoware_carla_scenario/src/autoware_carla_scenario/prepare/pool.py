@@ -19,7 +19,7 @@ import atexit
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, TypeVar, cast
 
 from . import Backend, BackendError
 from .declare import action_backends, scenario_backends
@@ -28,6 +28,8 @@ from .host import assign_gpus, probe_host
 logger = logging.getLogger(__name__)
 
 __all__ = ["BackendPool", "running_backend"]
+
+_B = TypeVar("_B")
 
 
 class BackendPool:
@@ -142,7 +144,7 @@ def _deactivate(pool: BackendPool) -> None:
         _ACTIVE = None
 
 
-def running_backend(cls: type) -> Backend:
+def running_backend(cls: type[_B]) -> _B:
     """The running backend of class *cls*, started now if none is.
 
     The active pool's (the queue's) when one is; otherwise one this process
@@ -171,4 +173,5 @@ def running_backend(cls: type) -> Backend:
         found = pool.backend(name)
     if found is None:  # pragma: no cover - _prepare raises instead
         raise BackendError(f"backend '{name}' did not start")
-    return found
+    # The pool builds a backend of a name from the class that declares it.
+    return cast(_B, found)

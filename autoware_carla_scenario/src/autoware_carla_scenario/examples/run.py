@@ -913,8 +913,7 @@ def build_backend_pool(cfg: DictConfig) -> BackendPool:
     does not need is never started.
     """
     backends_cfg = cfg.get("backends")
-    settings = {} if backends_cfg is None else _to_dict(backends_cfg)
-    return BackendPool({str(k): dict(v or {}) for k, v in settings.items()})
+    return BackendPool(None if backends_cfg is None else _to_dict(backends_cfg))
 
 
 def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:

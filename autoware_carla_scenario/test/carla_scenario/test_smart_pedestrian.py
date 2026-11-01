@@ -27,6 +27,7 @@ from autoware_carla_scenario import (
     TimedPrompt,
     WalkWaypoint,
 )
+from autoware_carla_scenario.entity.pedestrian_entity import walker_control_speed
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 from autoware_carla_scenario.pedestrian._proto import pedestrian_motion_pb2 as pb
 from autoware_carla_scenario.pedestrian._proto import (
@@ -278,7 +279,10 @@ class TestSmartPedestrianControllerAction:
         assert where.y == pytest.approx(5.0 + 0.95, abs=0.05)
         assert where.z == pytest.approx(1.0)
         assert scene.walker.transform.rotation.yaw == pytest.approx(90.0)
-        assert scene.walker.controls[-1].speed == pytest.approx(1.0, rel=1e-3)
+        # Commanded as every walk is, in CARLA's walker speed units.
+        assert scene.walker.controls[-1].speed == pytest.approx(
+            walker_control_speed(1.0), rel=1e-3
+        )
         assert scene.walker.poses
 
     def test_the_session_carries_the_conditions(

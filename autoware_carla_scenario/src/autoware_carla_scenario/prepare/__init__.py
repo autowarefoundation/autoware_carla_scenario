@@ -64,12 +64,6 @@ class Resources:
     memory_mb: int = 0
     gpu: Optional[int] = None
 
-    def __add__(self, other: "Resources") -> "Resources":
-        return Resources(
-            gpu_memory_mb=self.gpu_memory_mb + other.gpu_memory_mb,
-            memory_mb=self.memory_mb + other.memory_mb,
-        )
-
 
 @runtime_checkable
 class Backend(Protocol):

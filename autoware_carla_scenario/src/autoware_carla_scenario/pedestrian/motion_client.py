@@ -128,7 +128,7 @@ class PedestrianMotionClient:
         self._stub = pb_grpc.PedestrianMotionStub(self._channel)
         self._joint_names: tuple[str, ...] = ()
 
-    def negotiate(self, timeout_s: Optional[float] = None) -> MotionGeneratorInfo:
+    def negotiate(self) -> MotionGeneratorInfo:
         """Agree on the contract; what the generator produces.
 
         Raises:
@@ -137,7 +137,7 @@ class PedestrianMotionClient:
         """
         reply = self._stub.Negotiate(
             pb.NegotiateRequest(contract_version=CONTRACT_VERSION),
-            timeout=self._timeout_s if timeout_s is None else timeout_s,
+            timeout=self._timeout_s,
         )
         if reply.contract_version != CONTRACT_VERSION:
             raise RuntimeError(
