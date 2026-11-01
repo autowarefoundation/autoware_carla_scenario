@@ -5,17 +5,14 @@ traffic lights to green, and registers a
 :class:`~autoware_carla_scenario.LaneChangeAction` to force a lane change
 via TrafficManager when the trigger condition is met.
 
-The pass condition is derived automatically from the spawn pose and the
-requested direction.  A lane change stays on the same OpenDRIVE road and
-shifts the lane ID by one (:func:`~autoware_carla_scenario.conditions.beside_lane_id`).
-Which way depends on whether the lane is driven along the road's reference
-line -- its negative lanes under right-hand traffic, its positive lanes under
-left-hand traffic (the road's ``rule``, as on the nishishinjuku map):
-
-- **LEFT**  → ``lane_id + 1`` on a lane driven along it, ``lane_id - 1`` against it
-- **RIGHT** → ``lane_id - 1`` on a lane driven along it, ``lane_id + 1`` against it
-
-The scenario checks that the ego's lane ID changes as expected.
+The target lane is tested in the Lanelet2 frame
+(:func:`lane_change_target`): the lanelet beside the spawn lanelet on the
+requested side -- the routing graph's ``left`` / ``right``, the lane the
+sweep's ``has_adjacent`` asks about -- and the lanelets ahead of it before
+the next junction.  The ego has changed lanes once its centre is on one of
+them.  An OpenDRIVE road and a lane ID shifted by one is not used: matched
+through the nearest road, part of a lanelet's centreline can read as the lane
+beside it (#1081).
 
 Typical usage
 -------------
@@ -32,13 +29,14 @@ With pytest — see ``test/carla_scenario/test_examples.py``.
 
 from __future__ import annotations
 
-from dataclasses import replace
 import logging
 
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
+    AlwaysTrueCondition,
+    BaseCondition,
     BaseScenario,
     EgoConfig,
     EntityLanePositionCondition,
@@ -47,6 +45,7 @@ from autoware_carla_scenario import (
     LaneChangeDirection,
     Lanelet2Pose,
     NotCondition,
+    OrCondition,
     StickyCondition,
     TickTiming,
     TimeoutCondition,
@@ -55,10 +54,10 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.failure import FailureCategory
 
-from autoware_carla_scenario.conditions import beside_lane_id
-from autoware_carla_scenario.coordinate import road_traffic_rule
+from autoware_carla_scenario.coordinate import MapManager
 
 from .configs import LaneChangeConfig
+from .cut_in import lanes_ahead_before_junction
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,81 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.LEFT,
     "right": LaneChangeDirection.RIGHT,
 }
+
+#: How far ahead of the target lanelet the lanelets that also count as the
+#: target lane are looked for; :func:`lanes_ahead_before_junction` stops at
+#: the next junction well before it.
+TARGET_LANES_AHEAD_M = 1000.0
+
+
+def lane_beside(lanelet_id: int, direction: str) -> int | None:
+    """The lanelet beside *lanelet_id* on *direction*'s side, or ``None``.
+
+    The lane a vehicle may change into from it: the routing graph's ``left``
+    / ``right``, as the sweep's ``has_adjacent`` and ``adjacent`` binding pick
+    it.  Failing that, its ``adjacentLeft`` / ``adjacentRight``: a lane beside
+    it in the same direction that a lane change into crosses a line it may not
+    cross -- where a ``lane_change_fail`` case must still notice the ego.
+    """
+    mm = MapManager.get_instance()
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    graph = mm.routing_graph
+    # One call per side: Codon cannot type a bound method held in a variable.
+    if direction == "left":
+        beside = graph.left(lanelet)
+        if beside is None:
+            beside = graph.adjacentLeft(lanelet)
+    else:
+        beside = graph.right(lanelet)
+        if beside is None:
+            beside = graph.adjacentRight(lanelet)
+    if beside is None:
+        return None
+    return int(beside.id)
+
+
+def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
+    """The ego is on the lane beside *lanelet_id* on *direction*'s side, latched.
+
+    The lanelet :func:`lane_beside` gives, and the lanelets ahead of it before
+    the next junction (:func:`lanes_ahead_before_junction`), less any that
+    the ego's own lane also reaches -- a lane beside that merges into the
+    ego's.  An ``EntityLanePositionCondition`` per lanelet, under an
+    ``OrCondition`` when there is more than one, latched by a
+    ``StickyCondition``.  With no lane beside (a ``lane_change_fail`` case
+    with no lane on that side in its direction), a lane change has nowhere to
+    end: the condition never holds.
+    """
+    own = lanes_ahead_before_junction(lanelet_id, TARGET_LANES_AHEAD_M)
+    # Appended one by one, and chosen by if/else: Codon gives neither a list
+    # comprehension nor a conditional expression the base class's type.
+    on_lanes: list[BaseCondition] = []
+    beside = lane_beside(lanelet_id, direction)
+    if beside is not None:
+        found: int = beside
+        for lanelet in lanes_ahead_before_junction(found, TARGET_LANES_AHEAD_M):
+            if lanelet in own:
+                continue
+            on_lanes.append(
+                EntityLanePositionCondition(
+                    EGO_ROLE_NAME,
+                    Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                    label=f"ego_on_lanelet_{lanelet}",
+                )
+            )
+    on_any: BaseCondition
+    if not on_lanes:
+        # Pending on every check: a logical NOT of a condition that always holds.
+        on_any = NotCondition(
+            AlwaysTrueCondition(label="no_lane_beside"),
+            label="ego_target_lane",
+            holds_when_pending=True,
+        )
+    elif len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="ego_target_lane")
+    return StickyCondition(on_any, label="ego_target_lane_sticky")
 
 
 class LaneChangeScenario(BaseScenario):
@@ -76,8 +150,8 @@ class LaneChangeScenario(BaseScenario):
     1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn.
     2. Sets every traffic light in the world to green.
     3. Registers a :class:`LaneChangeAction` that fires immediately.
-    4. Derives the expected target lane from the spawn lane ID and direction,
-       then registers a pass condition checking both road ID and lane ID.
+    4. Finds the lanelet beside the spawn lanelet on the requested side, and
+       registers a condition on the ego reaching it (:func:`lane_change_target`).
     5. Registers a :class:`TimeoutCondition` as a fail-safe.
     """
 
@@ -122,26 +196,25 @@ class LaneChangeScenario(BaseScenario):
         logger.info("Registered LaneChangeAction: %s", cfg.direction)
 
         # --- Conditions based on expected outcome ---
-        # The lane beside the spawn lane, by the road's traffic rule.
-        target_lane_id = beside_lane_id(
-            od_pose.lane_id, cfg.direction, road_traffic_rule(od_pose.road_id)
-        )
+        # The lane beside the spawn lanelet, in the Lanelet2 frame.
+        spawn = self._spawn_pose
+        if spawn is None:
+            raise ValueError("lane_change needs an ego spawn pose")
+        spawn_pose: Lanelet2Pose = spawn
         expect_fail = cfg.expect == "fail"
         logger.info(
-            "Expecting lane change: road='%s' lane %d -> %d (%s) [expect=%s]",
-            od_pose.road_id,
-            od_pose.lane_id,
-            target_lane_id,
+            "Expecting lane change: lanelet %d -> %s (%s) [expect=%s]; "
+            "spawn on road '%s' lane %d",
+            spawn_pose.lanelet_id,
+            lane_beside(spawn_pose.lanelet_id, cfg.direction),
             cfg.direction,
             cfg.expect,
+            od_pose.road_id,
+            od_pose.lane_id,
         )
 
-        lane_position_condition = StickyCondition(
-            EntityLanePositionCondition(
-                EGO_ROLE_NAME,
-                replace(od_pose, lane_id=target_lane_id),
-                label="ego_target_lane",
-            )
+        lane_position_condition = lane_change_target(
+            spawn_pose.lanelet_id, cfg.direction
         )
         timeout_condition = TimeoutCondition(
             cfg.timeout_seconds, label="scenario_timeout"
