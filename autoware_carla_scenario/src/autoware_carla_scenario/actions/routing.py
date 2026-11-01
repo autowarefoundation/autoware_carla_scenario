@@ -58,7 +58,7 @@ from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
 from ..control_domain import ControlDomain, movement_of
-from .base import BaseAction, TickTiming
+from .base import TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -553,10 +553,10 @@ class RoutingAction(TrajectoryRun):
 
     def close(self) -> None:
         """Stop a pedestrian's walk the run ends in the middle of, and close
-        the conditions (:meth:`BaseAction.close`)."""
+        the conditions (:meth:`TrajectoryRun.close`)."""
         self._stop_walk()
-        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
-        BaseAction.close(self)
+        # Named, not super(), as _stopped is.
+        TrajectoryRun.close(self)
 
     def _stop_walk(self) -> None:
         """Stop the walk this action's ``driver`` run gave a pedestrian, if it
