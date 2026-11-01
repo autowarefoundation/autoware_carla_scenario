@@ -16,7 +16,7 @@
         <link rel="prev" href="../traffic_backends/">
       
       
-        <link rel="next" href="../trajectory/">
+        <link rel="next" href="../backends/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Pedestrian Motions (SOMA) - Autoware CARLA Scenario</title>
+        <title>Pedestrian Motions (SOMA, ARDY) - Autoware CARLA Scenario</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pedestrian-motions-soma" class="md-skip">
+        <a href="#pedestrian-motions-soma-ardy" class="md-skip">
           Skip to content
         </a>
       
@@ -131,7 +131,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Pedestrian Motions (SOMA)
+              Pedestrian Motions (SOMA, ARDY)
             
           </span>
         </div>
@@ -500,7 +500,26 @@
   
     
   
-  Pedestrian Motions (SOMA)
+  Pedestrian Motions (SOMA, ARDY)
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../backends/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Backends a Run Starts
 
       </a>
     </li>
@@ -1458,7 +1477,7 @@
   <span class="md-ellipsis">
     
   
-    Pedestrian Motions (SOMA)
+    Pedestrian Motions (SOMA, ARDY)
   
 
     
@@ -1476,7 +1495,7 @@
   <span class="md-ellipsis">
     
   
-    Pedestrian Motions (SOMA)
+    Pedestrian Motions (SOMA, ARDY)
   
 
     
@@ -1545,10 +1564,87 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#smartpedestriancontrolleraction-ardy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SmartPedestrianControllerAction (ARDY)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SmartPedestrianControllerAction (ARDY)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyframes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keyframes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameters_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends a Run Starts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -2055,6 +2151,56 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#smartpedestriancontrolleraction-ardy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SmartPedestrianControllerAction (ARDY)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SmartPedestrianControllerAction (ARDY)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyframes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keyframes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameters_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2075,10 +2221,24 @@
   
 
 
-<h1 id="pedestrian-motions-soma">Pedestrian Motions (SOMA)<a class="headerlink" href="#pedestrian-motions-soma" title="Permanent link">&para;</a></h1>
-<p><code>PlayMotionAction</code> makes a pedestrian wave, beckon, or do anything else a
-motion file holds: it plays a <a href="https://github.com/NVlabs/SOMA-X">SOMA-X</a> motion
-on the walker's skeleton.</p>
+<h1 id="pedestrian-motions-soma-ardy">Pedestrian Motions (SOMA, ARDY)<a class="headerlink" href="#pedestrian-motions-soma-ardy" title="Permanent link">&para;</a></h1>
+<p>Two actions take over a pedestrian's skeleton:</p>
+<ul>
+<li><code>PlayMotionAction</code> plays a motion file. It makes a pedestrian wave, beckon,
+  or do anything else the file holds, using a
+  <a href="https://github.com/NVlabs/SOMA-X">SOMA-X</a> motion on the walker's skeleton.</li>
+<li><code>SmartPedestrianControllerAction</code> has a model generate the motion while the
+  run plays. The model is <a href="https://github.com/nv-tlabs/ardy">ARDY</a>, and it
+  moves the whole body and where it goes, following text, waypoints and
+  keyframes (<a href="#smartpedestriancontrolleraction-ardy">below</a>).</li>
+</ul>
+<p>Both share the core in <code>autoware_carla_scenario.pedestrian</code>:</p>
+<ul>
+<li><code>skeleton</code> holds the walker's bones and how bone directions pose them.</li>
+<li><code>soma</code> reads a SOMA file.</li>
+<li><code>poser</code> takes a walker over, poses it, places it, and hands it back to its
+  animation.</li>
+</ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">PlayMotionAction</span><span class="p">,</span>
@@ -2156,6 +2316,17 @@ rather than replayed joint for joint:</p>
 <li>The driven bones are the spine, the neck and the arms (with
   <code>upper_body_only=False</code>, the legs too). The hips never are: where the walker
   stands and faces stays CARLA's.</li>
+<li>The body is kept on the ground. The pose's lowest point is worked out from
+  the walker's own bones, the directions it was given and the flesh around
+  each bone (<code>CarlaBone.radius</code>), never from where a motion places its
+  joints. The hips are then lowered so that point stays where the soles stood
+  (<code>WalkerRetarget.lift</code>). A crouch, a sit or a fall lies on the ground
+  instead of hanging from the hips.</li>
+<li>Only the mesh is lowered. The walker actor, its capsule and its physics
+  stay where CARLA has them, so it moves, reports its velocity and collides
+  as before. A vehicle that hits a pedestrian lying in its lane is seen by a
+  collision sensor, and the Traffic Manager's vehicles stop for it. Its
+  bounding box stays a standing one.</li>
 </ul>
 <p>When the motion ends (with <code>loop</code>, when <code>duration_s</code> is up) the walker is
 handed back to its animation (<code>blend_pose(0.0)</code>).</p>
@@ -2228,6 +2399,152 @@ naming it; the bone names are those of CARLA's walkers (<code>crl_arm__L</code>,
 </tr>
 </tbody>
 </table>
+<h2 id="smartpedestriancontrolleraction-ardy">SmartPedestrianControllerAction (ARDY)<a class="headerlink" href="#smartpedestriancontrolleraction-ardy" title="Permanent link">&para;</a></h2>
+<p><code>SmartPedestrianControllerAction</code> moves a pedestrian as
+<a href="https://github.com/nv-tlabs/ardy">ARDY</a> generates it. ARDY is NVIDIA's
+autoregressive diffusion model of human motion. You tell it what the pedestrian
+does in any of three ways:</p>
+<ul>
+<li><strong>Text.</strong> The whole motion has a <code>prompt</code>. Each <code>TimedPrompt</code> takes over from
+  its time into the motion.</li>
+<li><strong>Waypoints.</strong> These are CARLA world points (<code>WalkWaypoint</code>) that the
+  pedestrian passes in order, walking at <code>speed_ms</code> from where it stands.</li>
+<li><strong>Keyframes.</strong> A JSON file of full-body poses that the motion passes through
+  (<a href="#keyframes">format</a>).</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">SmartPedestrianControllerAction</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">TimedPrompt</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">WalkWaypoint</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">SmartPedestrianControllerAction</span><span class="p">(</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        <span class="s2">"walker1"</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        <span class="s2">"a man walks to the kerb and looks left and right"</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="n">condition</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">2.0</span><span class="p">),</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="n">TimedPrompt</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="s2">"he crosses the road in a hurry"</span><span class="p">)],</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="n">waypoints</span><span class="o">=</span><span class="p">[</span><span class="n">WalkWaypoint</span><span class="p">(</span><span class="mf">104.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">12.5</span><span class="p">),</span> <span class="n">WalkWaypoint</span><span class="p">(</span><span class="mf">104.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">4.0</span><span class="p">)],</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="n">speed_ms</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">seed</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="p">)</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="p">)</span>
+</code></pre></div>
+<p>In the Scenario Editor it is the <em>Smart Pedestrian</em> card, under <em>Pedestrian</em>.</p>
+<h3 id="how-it-runs">How it runs<a class="headerlink" href="#how-it-runs" title="Permanent link">&para;</a></h3>
+<p>ARDY runs in its own container,
+<a href="https://github.com/hakuturu583/carla_ardy_backend"><code>ghcr.io/hakuturu583/carla_ardy_backend</code></a>,
+on a GPU of the host that runs the scenario. The action declares that it needs
+it (<code>@need_prepare(ArdyBackend)</code>). The queue then starts the container before
+the run, after checking that the host has room for it, and stops it when the
+batch ends. A host without room fails the run before it starts
+(<a href="../backends/">Backends a Run Starts</a>).</p>
+<p>When the action fires:</p>
+<ol>
+<li>It opens a session on the generator with the pedestrian's pose and every
+   condition.</li>
+<li>It asks the generator for the next couple of seconds of motion.</li>
+<li>Every tick, it places the walker at the motion's root and poses all of its
+   bones, on the ground as above. The walker is told to walk only the way it
+   faces, at the motion's speed that way: CARLA turns a walker towards where
+   it is told to go, and a motion's root drifts and steps aside. A step
+   sideways or back therefore reads as standing in the walker's velocity,
+   though the walker goes where the motion takes it
+   (<a href="https://github.com/autowarefoundation/autoware_carla_scenario/issues/957">#957</a>).</li>
+<li>Each time the motion it holds is about to run out, it asks for more,
+   generated from the motion shown so far.</li>
+</ol>
+<p>CARLA runs synchronously, so the simulation waits for each answer, and the same
+<code>seed</code> replays the same motion.</p>
+<p>The action takes the pedestrian's <strong>movement and animation</strong>
+<a href="../architecture/">control domains</a> for as long as it moves the walker. It runs
+for <code>duration_s</code>. Without that, it runs until its last waypoint's time, and
+without waypoints, until the scenario ends.</p>
+<p>The generator and the action talk over
+<code>proto/pedestrian_motion/v0/pedestrian_motion.proto</code>, which uses a right-handed,
+z-up frame (CARLA's world with y negated). The generator receives joint
+positions, and the action turns them into bone directions
+(<code>pedestrian.skeleton.directions_from_joints</code>).</p>
+<h3 id="keyframes">Keyframes<a class="headerlink" href="#keyframes" title="Permanent link">&para;</a></h3>
+<p>A keyframes file lists full-body poses:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"keyframes"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">"time_s"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.0</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">"x"</span><span class="p">:</span><span class="w"> </span><span class="mf">104.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"y"</span><span class="p">:</span><span class="w"> </span><span class="mf">-12.5</span><span class="p">,</span><span class="w"> </span><span class="nt">"yaw_deg"</span><span class="p">:</span><span class="w"> </span><span class="mf">90.0</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">"joints"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"Hips"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.95</span><span class="p">],</span><span class="w"> </span><span class="nt">"Head"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.05</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">1.62</span><span class="p">],</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">]}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>time_s</code> is the time into the motion.</li>
+<li><code>x</code>, <code>y</code> and <code>yaw_deg</code> place the pose in CARLA's world. Without them, the pose
+  is placed where the motion began and faces the way it did then.</li>
+<li><code>joints</code> gives each joint the generator places (the <code>joint_names</code> it answers
+  with; ARDY's SOMA model has 30) in metres. The axes are forward, left and up
+  from the root's ground point, as the body faces.</li>
+</ul>
+<h3 id="parameters_1">Parameters<a class="headerlink" href="#parameters_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_name</code></td>
+<td></td>
+<td>The pedestrian</td>
+</tr>
+<tr>
+<td><code>prompt</code></td>
+<td><code>""</code></td>
+<td>What it does, in words, from the start</td>
+</tr>
+<tr>
+<td><code>prompts</code></td>
+<td><code>()</code></td>
+<td><code>TimedPrompt(time_s, text)</code>: texts that take over later</td>
+</tr>
+<tr>
+<td><code>waypoints</code></td>
+<td><code>()</code></td>
+<td><code>WalkWaypoint(x, y)</code>: CARLA world points it passes</td>
+</tr>
+<tr>
+<td><code>speed_ms</code></td>
+<td><code>1.3</code></td>
+<td>Walking speed along the waypoints, m/s</td>
+</tr>
+<tr>
+<td><code>keyframes</code></td>
+<td><code>None</code></td>
+<td>A keyframes file (relative paths are taken from the working directory)</td>
+</tr>
+<tr>
+<td><code>duration_s</code></td>
+<td><code>None</code></td>
+<td>Stop after this long</td>
+</tr>
+<tr>
+<td><code>seed</code></td>
+<td><code>0</code></td>
+<td>The generator's draws</td>
+</tr>
+<tr>
+<td><code>overrides</code></td>
+<td><code>False</code></td>
+<td>Take over a domain another action holds, stopping it</td>
+</tr>
+</tbody>
+</table>
+<p>The backend's own settings, including its image, GPU memory and Hugging Face
+cache, are <code>backends.ardy</code> of the config (<a href="../backends/">Backends a Run Starts</a>).</p>
 
 
 
@@ -2250,7 +2567,7 @@ naming it; the bone names are those of CARLA's walkers (<code>crl_arm__L</code>,
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 31, 2026 11:24:24 UTC"><span class="timeago" datetime="2026-10-31T11:24:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 31, 2026 11:24:24 UTC">2026-10-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 03:48:02 UTC"><span class="timeago" datetime="2026-11-01T03:48:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 03:48:02 UTC">2026-11-01</span>
   </span>
 
     
