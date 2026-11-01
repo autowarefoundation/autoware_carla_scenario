@@ -1323,9 +1323,11 @@ class TestScenarioMetadata:
         store: DraftStore,
         draft_id: str,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         # A handler that stores a form value unchecked reaches the model's own
-        # validation; that must come back as a message, not a 500.
+        # validation; that must come back as a message, not a 500 -- and, as
+        # it may be a handler's bug, still be logged.
         def _unchecked(
             self: EditorService, document: ScenarioDocument, form: Any
         ) -> None:
@@ -1341,6 +1343,17 @@ class TestScenarioMetadata:
         assert "timeout_seconds" in response.text
         assert "soon" in response.text
         assert _document(store, draft_id).timeout_seconds == before
+        assert any(
+            record.exc_info and "timeout_seconds" in str(record.exc_info[1])
+            for record in caplog.records
+        )
+        # A long value is cut short rather than echoed whole.
+        response = client.post(
+            f"/draft/{draft_id}/scenario", data={"timeout_seconds": "x" * 500}
+        )
+        assert response.status_code == 200
+        assert "x" * 500 not in response.text
+        assert "xxx..." in response.text
 
 
 class TestValidateSaveExport:

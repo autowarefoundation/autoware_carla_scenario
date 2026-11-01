@@ -136,17 +136,30 @@ def _body(request: Request, context: dict[str, Any]) -> HTMLResponse:
     )
 
 
+#: The longest rendering of a refused value an error message shows.
+_MAX_SHOWN_INPUT = 80
+
+
 def describe_validation_error(exc: ValidationError) -> str:
     """The sentence the editor shows for a value the document's models refused.
 
     One clause per refused field, naming the model and field it reached and
     the value it was given, so the author can tell which input to correct.
+    The value is cut short, so an unexpectedly large one cannot flood the page.
+
+    The handlers are meant to check a form value before storing it, so a
+    refusal that reaches here may equally be a bug in a handler: it is logged
+    with its traceback, so catching it does not also hide it.
     """
+    logger.warning("Edit refused by the document's validation", exc_info=exc)
     clauses = []
     for error in exc.errors():
         where = ".".join(str(part) for part in error.get("loc", ()))
         field = f"{exc.title}.{where}" if where else exc.title
-        clauses.append(f"{field}: {error['msg']} (got {error.get('input')!r})")
+        given = repr(error.get("input"))
+        if len(given) > _MAX_SHOWN_INPUT:
+            given = given[: _MAX_SHOWN_INPUT - 3] + "..."
+        clauses.append(f"{field}: {error['msg']} (got {given})")
     return "Invalid value -- " + "; ".join(clauses) + "."
 
 
