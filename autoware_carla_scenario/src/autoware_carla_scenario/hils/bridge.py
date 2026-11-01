@@ -13,8 +13,10 @@ for an ECU's message, sleep) run at four points:
   and waits for the steps -- the ECUs initialized -- before its clock starts;
   without one, the ego appearing starts it -- not the ego of a run that went
   away, which its failure or end can leave in the world a while.  The
-  periodic messages start and the sensors are attached first, so the ECUs
-  have their inputs;
+  periodic messages start first, so the ECUs have their inputs; the sensors
+  are attached after the steps, so that nothing they measured while the
+  steps waited (nothing is sent meanwhile) reaches the ECUs late, or piles
+  up in memory;
 * ``scenario_end`` -- when it ends: the run's ``end``, the run going away, or
   the ego disappearing; then the periodic messages stop and the sensors go;
 * ``shutdown`` -- when the bridge stops (Ctrl-C, SIGTERM).
@@ -775,8 +777,15 @@ class HilsBridge:
         return self._active
 
     def _begin(self, ego: "carla.Actor", scenario: str) -> None:
-        """Start a scenario for *ego*: periodic messages, sensors, then the
-        ``scenario_start`` steps.
+        """Start a scenario for *ego*: periodic messages, the
+        ``scenario_start`` steps, then the sensors.
+
+        The sensors are attached once the steps are over, failed or not:
+        nothing a sensor measures is sent until the scenario is live (the
+        next :meth:`step` flushes it), and the steps can wait for seconds.
+        A sensor attached before them would queue all it measured meanwhile
+        -- unbounded -- for the first flush to send stale.  Nothing in a step
+        needs a sensor.
 
         Raises:
             HilsStepError: A scenario_start step failed (the scenario is still
@@ -805,14 +814,17 @@ class HilsBridge:
         for message_device in self._messages:
             message_device.start(self._signals)
         dt = float(snapshot.delta_seconds) or 0.05
-        for sensor_device in self._sensors:
-            try:
-                sensor_device.attach(self._carla, self._world, ego, dt)
-            except Exception:
-                logger.exception(
-                    "%s: failed to attach the sensor", sensor_device.spec.name
-                )
-        self._run_steps("scenario_start", strict=True)
+        try:
+            self._run_steps("scenario_start", strict=True)
+        finally:
+            # A failed step leaves the scenario running: it needs its sensors.
+            for sensor_device in self._sensors:
+                try:
+                    sensor_device.attach(self._carla, self._world, ego, dt)
+                except Exception:
+                    logger.exception(
+                        "%s: failed to attach the sensor", sensor_device.spec.name
+                    )
 
     def _finish(self) -> None:
         """End the scenario: carry what its cuts stopped again, so that the

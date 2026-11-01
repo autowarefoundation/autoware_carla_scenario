@@ -5,8 +5,8 @@
 (:mod:`~autoware_carla_scenario.hils.protocol`):
 
 * :meth:`HilsEgoEntity.on_scenario_start` tells the bridge the scenario starts
-  and which actor the ego is; the bridge attaches its sensors, starts the
-  ECUs' periodic inputs and runs its ``scenario_start`` steps.  The runner
+  and which actor the ego is; the bridge starts the ECUs' periodic inputs,
+  runs its ``scenario_start`` steps and then attaches its sensors.  The runner
   ticks the world meanwhile, holding every vehicle still, until the bridge
   answers ``ready`` (:attr:`HilsEgoEntity.is_initialized`) -- or fails the
   run when it reports an error or does not answer within ``ready_timeout_s``;
