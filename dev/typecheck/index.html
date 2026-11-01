@@ -4768,8 +4768,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-264 of the package's 385
-modules (69%; about 77,200 of
+265 of the package's 385
+modules (69%; about 77,400 of
 134,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4782,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 264 CHECKED modules</summary>
+<summary>The 265 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5516,6 +5516,10 @@ first paragraph of its docstring:</p>
 <td>Backends a run needs started before it: declared, found, started, stopped.</td>
 </tr>
 <tr>
+<td><code>prepare.host</code></td>
+<td>What the host has free for backends: GPU memory and host memory.</td>
+</tr>
+<tr>
 <td><code>ros2</code></td>
 <td>drive the ego from ROS 2 nodes, over DDS, with no bridge in between.</td>
 </tr>
@@ -5987,7 +5991,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 121 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 120 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6016,7 +6020,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 121 EXCLUDED modules, and why</summary>
+<summary>The 120 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.play_motion</code>: imports pedestrian.soma, which is neither checked nor modelled</li>
@@ -6052,7 +6056,7 @@ the first:</p>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare, and numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; reads CARLA's traffic lights and their stop waypoints typed <code>Any</code>; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
 <li><code>editor</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
 <li><code>editor.app</code>: imports fastapi</li>
-<li><code>editor.forms</code>: imports authoring.registry, which is not checked and has no model; parses form values typed Any</li>
+<li><code>editor.forms</code>: imports trajectory.authoring and authoring.registry, which are not checked, and authoring.registry has no model; parses form values typed Any</li>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic), which is not checked and has no model</li>
 <li><code>editor.routes</code>: imports fastapi, starlette, anyio</li>
 <li><code>editor.scenario_map</code>: reaches pydantic models through authoring.models; imports editor.map_preview, which is not checked</li>
@@ -6092,7 +6096,6 @@ the first:</p>
 <li><code>pedestrian.soma</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks</li>
 <li><code>prepare.declare</code>: sets and reads a class attribute by name (setattr, <code>type.__dict__</code>, <code>__mro__</code>) and imports a module by name (importlib), which Codon cannot</li>
 <li><code>prepare.docker</code>: runs docker through subprocess.Popen with a file object for its output (<code>IO[bytes]</code>) and more of subprocess and socket than their shims declare</li>
-<li><code>prepare.host</code>: runs nvidia-smi through more of subprocess than its shim declares (<code>capture_output</code>, <code>text</code>, <code>timeout</code>) and sorts with a key lambda over tuples Codon types apart</li>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>, under <code>TYPE_CHECKING</code>) and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold</li>
@@ -6104,7 +6107,7 @@ the first:</p>
 <li><code>scaffold.generator</code>: imports argparse, ast, functools, keyword, templating (jinja2) and, inside a function, authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
-<li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON (<code>dict[str, Any]</code>)</li>
+<li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
 <li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
@@ -6137,7 +6140,7 @@ the first:</p>
 <li><code>ui.scanner</code>: imports yaml, the registry (omegaconf, importlib), which is not checked, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
-<li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), which Codon cannot express</li>
+<li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields) and takes the options as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it</li>
 </ul>
 </details>
