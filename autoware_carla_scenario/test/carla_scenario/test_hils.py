@@ -981,6 +981,41 @@ def test_on_the_wall_clock_no_frame_is_sent_after_the_sensor_goes(
         receiver.close()
 
 
+def test_a_send_that_hangs_does_not_keep_the_scenario_from_ending(
+    world: _World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.hils import bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "_SEND_WAIT_S", 0.05)
+    bridge, receiver = _camera(world, "wall")
+    [device] = bridge._sensors
+    entered, release = threading.Event(), threading.Event()
+
+    class _HungChannel:
+        def send(self, *args: Any) -> None:
+            entered.set()
+            assert release.wait(5.0)
+
+    device.channel = _HungChannel()
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        sensor.callback(_frame(bytes(16)))
+        world.tick()
+        bridge.step()
+        assert entered.wait(5.0)
+        with caplog.at_level("WARNING"):
+            bridge._finish()
+        assert not bridge.active
+        assert any("still under way" in r.getMessage() for r in caplog.records)
+    finally:
+        release.set()
+        bridge.close()
+        receiver.close()
+
+
 def test_run_waits_for_carla_and_returns_once_stopped(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

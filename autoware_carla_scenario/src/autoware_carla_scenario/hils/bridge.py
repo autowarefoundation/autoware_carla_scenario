@@ -108,6 +108,11 @@ _RECV_POLL_S = 0.2
 #: oldest is dropped: a device slower than its sensor gets the newest data.
 _WALL_QUEUE = 2
 
+#: How long a sensor's :meth:`_SensorDevice.detach` waits for a send under
+#: way, seconds: a device that hangs in a send must not keep the scenario
+#: from ending (nor the bridge from closing).
+_SEND_WAIT_S = 5.0
+
 #: A failing send is logged the first time and then once in this many.
 _LOG_EVERY = 100
 
@@ -307,8 +312,8 @@ class _SensorDevice:
     one a callback in flight queues after :meth:`detach` drained the queues
     (CARLA may still be inside the callback when ``stop()`` returns) is
     dropped, and a send already under way finishes before :meth:`detach`
-    returns.  A plain drain could not promise that: a callback can put after
-    it.  :attr:`_convert_lock` guards the conversion (a LiDAR's revolution)
+    returns, unless it hangs longer than :data:`_SEND_WAIT_S`.  A plain drain
+    could not promise that: a callback can put after it.  :attr:`_convert_lock` guards the conversion (a LiDAR's revolution)
     apart from the send, so that with the wall clock :meth:`flush` never
     waits for the device's thread.  The two locks are leaves, never held
     together nor while taking the bridge's locks (:meth:`HilsBridge._finish`
@@ -407,8 +412,14 @@ class _SensorDevice:
         # ... then wait for a conversion and a send that checked already.
         with self._convert_lock:
             self._revolution = None
-        with self._send_lock:
-            pass
+        if self._send_lock.acquire(timeout=_SEND_WAIT_S):
+            self._send_lock.release()
+        else:
+            logger.warning(
+                "%s: a send still under way after %.0f s; detaching anyway",
+                self.spec.name,
+                _SEND_WAIT_S,
+            )
         actor, self._actor = self._actor, None
         if actor is not None:
             try:
