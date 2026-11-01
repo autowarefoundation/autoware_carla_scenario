@@ -12,6 +12,7 @@ import yaml  # type: ignore[import-untyped]
 from ..registry import get_conf_dirs, load_scenario_plugins
 from ..scenario_glob import scenario_names
 from . import cases
+from .case_paths import result_path
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import RAW_OUTPUT_LOG
@@ -130,11 +131,10 @@ def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
     name = result.get("scenario") if result else None
     if isinstance(name, str) and name:
         return name
-    # Derive from *_result.json filename
-    for f in sorted(job_dir.glob("*_result.json")):
-        name = f.stem
-        if name.endswith("_result"):
-            return name[: -len("_result")]
+    # Derive from the *_result.json filename
+    path = result_path(job_dir)
+    if path is not None:
+        return path.name[: -len("_result.json")]
     return "unknown"
 
 
@@ -155,9 +155,9 @@ def _scan_multirun_session(
     scenario_names: set[str] = set()
 
     for job_dir in job_dirs:
-        result_files = sorted(job_dir.glob("*_result.json"))
-        if result_files:
-            data = _read_result_json(result_files[0])
+        result_file = result_path(job_dir)
+        if result_file is not None:
+            data = _read_result_json(result_file)
             if data and _passed(data.get("passed")):
                 passed_count += 1
             scenario_names.add(_extract_scenario_name(data, job_dir))
@@ -197,11 +197,11 @@ def _scan_outputs_session(
         )
 
     # Single run: look for *_result.json
-    result_files = sorted(session_dir.glob("*_result.json"))
-    if not result_files:
+    result_file = result_path(session_dir)
+    if result_file is None:
         return None  # Skip directories with no result
 
-    data = _read_result_json(result_files[0])
+    data = _read_result_json(result_file)
     passed = bool(_passed(data.get("passed"))) if data else False
     scenario_name = _extract_scenario_name(data, session_dir)
     return SessionSummary(
@@ -298,9 +298,9 @@ def load_session(
             if job is None:
                 continue
             overrides = _read_overrides(job)
-            result_files = sorted(job.glob("*_result.json"))
-            if result_files:
-                data = _read_result_json(result_files[0])
+            result_file = result_path(job)
+            if result_file is not None:
+                data = _read_result_json(result_file)
                 if data:
                     items.append(
                         SessionItem(
@@ -359,9 +359,9 @@ def load_session(
         if not directory.is_dir():
             return items
         overrides = _read_overrides(directory)
-        result_files = sorted(directory.glob("*_result.json"))
-        if result_files:
-            data = _read_result_json(result_files[0])
+        result_file = result_path(directory)
+        if result_file is not None:
+            data = _read_result_json(result_file)
             if data:
                 items.append(
                     SessionItem(
@@ -487,9 +487,9 @@ def load_scenario(
             return None
         job_path = job
         overrides = _read_overrides(job_path)
-        result_files = sorted(job_path.glob("*_result.json"))
-        if result_files:
-            data = _read_result_json(result_files[0])
+        result_file = result_path(job_path)
+        if result_file is not None:
+            data = _read_result_json(result_file)
 
     elif session_type == "batch":
         job_path = directory
@@ -506,9 +506,9 @@ def load_scenario(
     elif session_type == "single":
         job_path = directory
         overrides = _read_overrides(job_path)
-        result_files = sorted(job_path.glob("*_result.json"))
-        if result_files and index == 0:
-            data = _read_result_json(result_files[0])
+        result_file = result_path(job_path)
+        if result_file is not None and index == 0:
+            data = _read_result_json(result_file)
 
     if data is None:
         # No result JSON (e.g. spawn failed), but the job directory exists.
