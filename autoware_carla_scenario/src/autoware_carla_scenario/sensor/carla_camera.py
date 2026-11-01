@@ -9,19 +9,27 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import numpy as np
 
-from .base import CameraSensorBase, CameraSensorConfig
+from .base import (
+    CameraSensorBase,
+    CameraSensorConfig,
+    sensor_interval_ticks,
+    sensor_tick_s,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
-#: Timeout (seconds) for waiting on a single frame from the sensor queue.
+#: Timeout (seconds) for waiting on a single frame from the sensor queue: a
+#: frame :meth:`CarlaCameraSensor.latest_image` knows is due, or any frame for
+#: :meth:`CarlaCameraSensor.get_image`.
 _FRAME_TIMEOUT: float = 1.0
 
 
@@ -156,7 +164,9 @@ class CarlaCameraSensor(CameraSensorBase):
     Spawns the CARLA RGB camera blueprint with attributes driven by a
     :class:`CarlaCameraSensorConfig`.  Frames are delivered asynchronously
     via ``sensor.listen()`` into a :class:`queue.Queue` and retrieved with
-    :meth:`get_image`.
+    :meth:`latest_image`, which knows on which simulator frame each was
+    rendered, or :meth:`get_image`, the pixels alone.  A caller uses one of
+    the two: they take frames from the same queue.
 
     Args:
         config: CARLA camera sensor configuration.
@@ -169,6 +179,9 @@ class CarlaCameraSensor(CameraSensorBase):
     _sensor: Optional[carla.Actor]
     _frame_queue: queue.Queue[carla.Image]
     _on_frame: Optional[Callable[[carla.Image], None]]
+    _interval_ticks: int
+    _newest: Optional[carla.Image]
+    _anchor: int
 
     def __init__(
         self,
@@ -180,6 +193,12 @@ class CarlaCameraSensor(CameraSensorBase):
         self._on_frame = on_frame
         self._sensor = None
         self._frame_queue = queue.Queue(maxsize=2)
+        self._interval_ticks = sensor_interval_ticks(1.0 / config.fps)
+        #: The newest frame :meth:`latest_image` has taken from the queue.
+        self._newest = None
+        #: The simulator frame the next frame is counted from: the newest one's,
+        #: or the frame a frame due did not come by; -1 before the first call.
+        self._anchor = -1
 
     # ------------------------------------------------------------------
     # CameraSensorBase interface
@@ -208,7 +227,7 @@ class CarlaCameraSensor(CameraSensorBase):
         camera_bp.set_attribute("image_size_x", str(cfg.image_width))
         camera_bp.set_attribute("image_size_y", str(cfg.image_height))
         camera_bp.set_attribute("fov", str(cfg.fov))
-        camera_bp.set_attribute("sensor_tick", str(1.0 / cfg.fps))
+        camera_bp.set_attribute("sensor_tick", str(sensor_tick_s(1.0 / cfg.fps)))
 
         # -- Post-processing, exposure, lens: only what the config overrides, and
         # only what this server's camera has (CARLA versions add and drop them)
@@ -339,7 +358,74 @@ class CarlaCameraSensor(CameraSensorBase):
             self._sensor.destroy()
             self._sensor = None
         self._attached = False
+        self._newest = None
+        self._anchor = -1
         logger.info("CarlaCameraSensor destroyed")
+
+    @property
+    def frame_interval_ticks(self) -> int:
+        """The most ticks from one frame to the next: ``1 / fps`` in whole
+        ticks, rounded up."""
+        return self._interval_ticks
+
+    def latest_image(
+        self, frame: int
+    ) -> Optional[Tuple[int, np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]]]:
+        """The newest frame as of simulator frame *frame*: ``(the frame it was
+        rendered on, HxWx3 BGR pixels)``.
+
+        In synchronous mode no frame arrives while the world is not ticking,
+        so this waits, up to :data:`_FRAME_TIMEOUT` seconds, only when a frame
+        is due by *frame*: :attr:`frame_interval_ticks` after the newest one.
+        Otherwise it answers at once with the newest frame queued, which may
+        be from an earlier tick: its own frame says which.  ``None`` when
+        nothing rendered within the last interval arrived -- an older frame
+        would be a stale one.  The first call does not wait: where in its
+        interval the camera is, nothing yet says.
+        """
+        if self._anchor < 0:
+            self._anchor = frame
+        deadline = time.monotonic() + _FRAME_TIMEOUT
+        self._take_queued()
+        while self._anchor + self._interval_ticks <= frame:
+            remaining = deadline - time.monotonic()
+            try:
+                self._keep(
+                    self._frame_queue.get(timeout=remaining)
+                    if remaining > 0.0
+                    else self._frame_queue.get_nowait()
+                )
+            except queue.Empty:
+                logger.warning("no camera frame for frame %d in time; skipped", frame)
+                # Count the next one from here, not wait for this one again.
+                self._anchor = frame
+                break
+            self._take_queued()
+        newest = self._newest
+        if newest is None:
+            return None
+        rendered = int(newest.frame)
+        if rendered <= frame - self._interval_ticks:
+            return None
+        return rendered, _bgr(newest)
+
+    def _keep(self, image: "carla.Image") -> None:
+        """Make *image* the newest frame, unless a later one already is."""
+        rendered = int(image.frame)
+        newest = self._newest
+        if newest is None or rendered >= int(newest.frame):
+            self._newest = image
+        if rendered > self._anchor:
+            self._anchor = rendered
+
+    def _take_queued(self) -> None:
+        """Move every frame already queued into :attr:`_newest`; never waits."""
+        while True:
+            try:
+                image = self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._keep(image)
 
     def get_image(
         self,
@@ -355,7 +441,8 @@ class CarlaCameraSensor(CameraSensorBase):
 
         Blocks for up to :data:`_FRAME_TIMEOUT` seconds for the first frame, then
         takes whatever else is already queued without waiting.  Returns ``None``
-        on timeout.
+        on timeout.  It cannot tell whether a frame is due, nor when the one it
+        returns was rendered: :meth:`latest_image` can.
         """
         try:
             image: carla.Image = self._frame_queue.get(timeout=_FRAME_TIMEOUT)
@@ -367,15 +454,7 @@ class CarlaCameraSensor(CameraSensorBase):
                 image = self._frame_queue.get_nowait()
             except queue.Empty:
                 break
-
-        if TYPE_CHECKING:
-            # typesafe_carla's Codon raw_data is a view, and Codon's frombuffer
-            # takes the bytes (a str).
-            array = np.frombuffer(image.raw_data.tobytes(), dtype=np.uint8)
-        else:
-            array = np.frombuffer(image.raw_data, dtype=np.uint8)
-        array = array.reshape((image.height, image.width, 4))  # BGRA
-        return np.ascontiguousarray(array[:, :, :3])  # BGR
+        return _bgr(image)
 
     # ------------------------------------------------------------------
     # CARLA-specific helpers
@@ -385,3 +464,17 @@ class CarlaCameraSensor(CameraSensorBase):
     def sensor_actor(self) -> Optional["carla.Actor"]:
         """Return the underlying CARLA sensor actor, or ``None``."""
         return self._sensor
+
+
+def _bgr(
+    image: "carla.Image",
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]:
+    """*image*'s pixels as an HxWx3 BGR array (CARLA's BGRA, alpha dropped)."""
+    if TYPE_CHECKING:
+        # typesafe_carla's Codon raw_data is a view, and Codon's frombuffer
+        # takes the bytes (a str).
+        array = np.frombuffer(image.raw_data.tobytes(), dtype=np.uint8)
+    else:
+        array = np.frombuffer(image.raw_data, dtype=np.uint8)
+    array = array.reshape((image.height, image.width, 4))  # BGRA
+    return np.ascontiguousarray(array[:, :, :3])  # BGR

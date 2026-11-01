@@ -15,8 +15,38 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
+from ..constants import FIXED_DELTA_SECONDS
+
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
+
+#: How far below its interval a sensor's ``sensor_tick`` is set.  CARLA sums the
+#: ticks' float deltas and fires the sensor once the sum reaches ``sensor_tick``;
+#: two 0.05 s ticks sum to a hair under 0.1 s, so a ``sensor_tick`` of exactly 0.1
+#: fires one tick late every time it is reached.  What is left over carries to
+#: the next firing, so the margin only adds up, a tick in every
+#: ``interval / margin`` firings -- one a tick early, which a reader taking the
+#: newest frame it has takes in its stride.
+SENSOR_TICK_MARGIN_S: float = 1e-6
+
+
+def sensor_tick_s(interval_s: float) -> float:
+    """The ``sensor_tick`` for a sensor meant to fire every *interval_s* seconds.
+
+    :data:`SENSOR_TICK_MARGIN_S` below *interval_s* when that is longer than
+    one tick; *interval_s* itself when the sensor fires on every tick anyway.
+    """
+    if interval_s > FIXED_DELTA_SECONDS + 1e-9:
+        return interval_s - SENSOR_TICK_MARGIN_S
+    return interval_s
+
+
+def sensor_interval_ticks(interval_s: float) -> int:
+    """The ticks a sensor set to fire every *interval_s* seconds waits at most
+    from one firing to the next (at least 1): its :func:`sensor_tick_s`, rounded
+    up to whole ticks."""
+    ticks = math.ceil(sensor_tick_s(interval_s) / FIXED_DELTA_SECONDS - 1e-9)
+    return max(1, int(ticks))
 
 
 @dataclass(frozen=True)

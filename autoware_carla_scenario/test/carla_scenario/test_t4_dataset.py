@@ -801,6 +801,36 @@ def test_a_driver_policys_ego_feeds_the_dataset(
     assert [a["num_lidar_pts"] for a in _table(root, "sample_annotation")] == [1] * 5
 
 
+def test_a_camera_frame_from_an_earlier_tick_is_not_written_on_this_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frame rendered a tick before the policy step it was fed on would sit
+    on the wrong ego pose and boxes: it is left out, the sweep kept (#951)."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    jpeg = _jpeg()
+    for frame in range(101, 105):
+        world.frame = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_lidar(
+                frame, np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
+            )
+            # 101: rendered on the step's own tick; 103: on the tick before.
+            recording.feed_camera_jpeg(
+                frame, "cam_front", jpeg, taken_on=101 if frame == 101 else frame - 1
+            )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert len(_table(root, "sample")) == 2
+    cameras = [s for s in _table(root, "sample_data") if s["fileformat"] == "jpg"]
+    assert len(cameras) == 1
+
+
 def test_the_camera_a_policy_is_told_of_is_the_one_the_dataset_calibrates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

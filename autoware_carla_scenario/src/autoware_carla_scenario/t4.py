@@ -61,6 +61,7 @@ from .driver.observation import (
 )
 from .ego_base_link import ego_base_link
 from .kinematics.walker_motion import WalkerVelocities, is_walker
+from .sensor.base import sensor_tick_s
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
@@ -106,9 +107,6 @@ _WRITER_MODULE = "autoware_carla_scenario_t4"
 _VERSION = "0"
 #: How long a key frame waits for a camera's image, in seconds.
 _FRAME_TIMEOUT_S = 1.0
-#: How far below the interval a sensor's ``sensor_tick`` is set; see
-#: ``sensor.carla_lidar._SENSOR_TICK_MARGIN_S``, which the LiDARs use.
-_SENSOR_TICK_MARGIN_S = 1e-6
 #: The actors annotated, by blueprint prefix.
 _ANNOTATED_KINDS = ("vehicle.", "walker.")
 
@@ -217,9 +215,7 @@ class _FrameCamera:
         blueprint.set_attribute("fov", str(cfg.fov))
         if self._interval_ticks > 1:
             interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
-            blueprint.set_attribute(
-                "sensor_tick", str(interval_s - _SENSOR_TICK_MARGIN_S)
-            )
+            blueprint.set_attribute("sensor_tick", str(sensor_tick_s(interval_s)))
         for name in BLUEPRINT_ATTRIBUTES:
             value = getattr(cfg, name)
             if value is not None and blueprint.has_attribute(name):
@@ -475,10 +471,34 @@ class T4Recording:
         if self._active:
             self._fed_for(frame)[1].append(points_in_rig)
 
-    def feed_camera_jpeg(self, frame: int, logical_id: str, jpeg: bytes) -> None:
-        """A camera frame the driver policy got on *frame*, as it got it."""
-        if self._active:
-            self._fed_for(frame)[2].append((logical_id, jpeg))
+    def feed_camera_jpeg(
+        self,
+        frame: int,
+        logical_id: str,
+        jpeg: bytes,
+        *,
+        taken_on: Optional[int] = None,
+    ) -> None:
+        """A camera frame the driver policy got on *frame*, as it got it.
+
+        *taken_on* is the frame it was rendered on (*frame* by default): a
+        camera slower than the policy, or one whose frames fall on the other
+        ticks, hands the policy a frame from a tick before (#951).  Such a
+        frame belongs on that frame's ego pose and boxes, not *frame*'s, and
+        what the driver feeds is written on *frame*'s: it is dropped.
+        """
+        if not self._active:
+            return
+        if taken_on is not None and int(taken_on) != frame:
+            logger.debug(
+                "T4 dataset: a %s frame rendered on frame %d, fed on frame %d; "
+                "dropped",
+                logical_id,
+                int(taken_on),
+                frame,
+            )
+            return
+        self._fed_for(frame)[2].append((logical_id, jpeg))
 
     # -- Every tick -----------------------------------------------------------
 

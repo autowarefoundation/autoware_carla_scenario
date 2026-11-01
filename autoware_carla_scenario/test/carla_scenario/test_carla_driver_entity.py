@@ -76,6 +76,8 @@ class _FakeDriverClient(BaseEgoDriverClient):
         self.started: List[Tuple[str, str]] = []
         self.routes: List[np.ndarray] = []
         self.images: List[Tuple[str, bytes]] = []
+        #: Each image's ``(logical_id, frame_start_us, frame_end_us)``.
+        self.image_stamps: List[Tuple[str, int, int]] = []
         self.egomotion: List[List[EgoObservation]] = []
         self.ground_truths: List[Tuple[int, Trajectory]] = []
         self.drives: List[Tuple[int, int]] = []
@@ -104,6 +106,7 @@ class _FakeDriverClient(BaseEgoDriverClient):
         image_bytes: bytes,
     ) -> None:
         self.images.append((logical_id, image_bytes))
+        self.image_stamps.append((logical_id, frame_start_us, frame_end_us))
 
     def submit_egomotion_observation(
         self, observations: Sequence[EgoObservation]
@@ -322,7 +325,7 @@ def test_cameras_are_attached_and_streamed(monkeypatch: pytest.MonkeyPatch) -> N
     from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensor
 
     frame = np.zeros((8, 8, 3), dtype=np.uint8)
-    monkeypatch.setattr(CarlaCameraSensor, "get_image", lambda self: frame)
+    monkeypatch.setattr(CarlaCameraSensor, "latest_image", lambda self, at: (at, frame))
 
     entity, client = _entity(cameras=(DriverCameraConfig(logical_id="front"),))
     world = _world_with_route()
@@ -339,7 +342,7 @@ def test_cameras_are_attached_and_streamed(monkeypatch: pytest.MonkeyPatch) -> N
 def test_a_camera_with_no_frame_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensor
 
-    monkeypatch.setattr(CarlaCameraSensor, "get_image", lambda self: None)
+    monkeypatch.setattr(CarlaCameraSensor, "latest_image", lambda self, at: None)
 
     entity, client = _entity(cameras=(DriverCameraConfig(logical_id="front"),))
     world = _world_with_route()
@@ -349,6 +352,121 @@ def test_a_camera_with_no_frame_is_skipped(monkeypatch: pytest.MonkeyPatch) -> N
     assert client.images == []
     # The policy is still asked to plan.
     assert len(client.drives) == 1
+
+
+class _FakeDataset:
+    """What a T4 recording is fed, by frame."""
+
+    def __init__(self) -> None:
+        #: ``(fed on, rendered on, logical_id)`` per frame.
+        self.cameras: List[Tuple[int, int, str]] = []
+
+    def feed_camera_jpeg(
+        self, frame: int, logical_id: str, jpeg: bytes, *, taken_on: int
+    ) -> None:
+        self.cameras.append((frame, taken_on, logical_id))
+
+
+class _FakeRecorder:
+    """What a Rerun recording is handed, by frame."""
+
+    records_cameras = True
+
+    def __init__(self) -> None:
+        self.cameras: List[Tuple[str, int]] = []
+
+    def log_camera_frame(
+        self, camera_id: str, frame: int, jpeg: bytes, mount: object
+    ) -> bool:
+        self.cameras.append((camera_id, frame))
+        return True
+
+
+def _run_camera(
+    monkeypatch: pytest.MonkeyPatch,
+    render_ticks: Sequence[int],
+    fps: float = 10.0,
+    ticks: int = 8,
+) -> Tuple[_FakeDriverClient, _FakeDataset, _FakeRecorder, dict]:
+    """A camera at *fps* under the 10 Hz policy (steps on ticks 1, 3, 5, ...),
+    rendering on *render_ticks*; the world's frame is ``100 + tick``.  No step
+    may wait for a frame: every one due has come.  Returns
+    the client, the dataset, the recording, and the simulation time of each
+    tick, by frame."""
+    from autoware_carla_scenario.entity import carla_driver_entity
+    from autoware_carla_scenario.sensor import carla_camera
+
+    # A frame waited for would fail the test rather than slow it.
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.0)
+
+    dataset, recorder = _FakeDataset(), _FakeRecorder()
+    monkeypatch.setattr(carla_driver_entity, "active_recording", lambda: dataset)
+    monkeypatch.setattr(carla_driver_entity, "active_recorder", lambda: recorder)
+    entity, client = _entity(
+        cameras=(DriverCameraConfig(logical_id="front", fps=fps),),
+        policy_timestep_s=0.1,
+    )
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    ((_, camera),) = entity._cameras
+    sim_time_us = {}
+    for tick in range(1, ticks + 1):
+        frame = 100 + tick
+        world.get_snapshot.return_value.frame = frame
+        if tick in render_ticks:
+            camera._on_sensor_data(
+                SimpleNamespace(frame=frame, width=4, height=2, raw_data=bytes(32))
+            )
+        entity.on_tick(world, tick * _TICK_S)
+        sim_time_us[frame] = entity._sim_time_us
+    return client, dataset, recorder, sim_time_us
+
+
+def test_a_frame_from_an_earlier_tick_carries_that_ticks_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frames on the other parity of ticks from the policy steps: each one is
+    stamped, recorded and fed to the dataset as of the tick it was rendered on
+    (#951)."""
+    client, dataset, recorder, sim_time_us = _run_camera(
+        monkeypatch, render_ticks=(2, 4, 6)
+    )
+    # Steps on ticks 3, 5, 7 send the frames of ticks 2, 4, 6.
+    rendered = [102, 104, 106]
+    assert client.image_stamps == [
+        ("front", sim_time_us[f], sim_time_us[f]) for f in rendered
+    ]
+    assert all(
+        sim_time_us[f] == sim_time_us[f + 1] - int(_TICK_S * 1e6) for f in rendered
+    )
+    assert recorder.cameras == [("front", f) for f in rendered]
+    assert dataset.cameras == [(f + 1, f, "front") for f in rendered]
+
+
+def test_a_frame_of_the_steps_own_tick_is_stamped_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, dataset, recorder, sim_time_us = _run_camera(
+        monkeypatch, render_ticks=(1, 3, 5, 7)
+    )
+    rendered = [101, 103, 105, 107]
+    assert client.image_stamps == [
+        ("front", sim_time_us[f], sim_time_us[f]) for f in rendered
+    ]
+    assert recorder.cameras == [("front", f) for f in rendered]
+    assert dataset.cameras == [(f, f, "front") for f in rendered]
+
+
+def test_a_frame_already_sent_is_not_sent_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5 fps camera under the 10 Hz policy: a new frame every other step,
+    and the steps between send nothing rather than the same frame twice."""
+    client, _, _, sim_time_us = _run_camera(monkeypatch, render_ticks=(2, 6), fps=5.0)
+    assert client.image_stamps == [
+        ("front", sim_time_us[102], sim_time_us[102]),
+        ("front", sim_time_us[106], sim_time_us[106]),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +812,7 @@ def test_teardown_closes_the_session_and_destroys_cameras(
     from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensor
 
     destroyed: List[int] = []
-    monkeypatch.setattr(CarlaCameraSensor, "get_image", lambda self: None)
+    monkeypatch.setattr(CarlaCameraSensor, "latest_image", lambda self, at: None)
     monkeypatch.setattr(
         CarlaCameraSensor, "destroy", lambda self: destroyed.append(id(self))
     )
