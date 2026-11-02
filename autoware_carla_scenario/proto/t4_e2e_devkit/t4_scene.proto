@@ -177,7 +177,7 @@ message T4Scene {
   TrafficLightSequence traffic_lights = 13;
   CameraSequence cameras = 14; // Already-loaded pixels only; no implicit IO.
   LidarSequence lidar = 15; // Already-loaded arrays only; no implicit IO.
-  // Python ModelData implementations are runtime behavior, not wire data.
+  ModelData model_data = 16; // Absent differs from a present empty dictionary.
 }
 
 // Registered separately, once per resource. SHA-256 covers the encoding,
@@ -267,3 +267,14 @@ message Lidar {
 }
 message LidarRow { Lidar value = 1; }
 message LidarSequence { repeated LidarRow rows = 1; } // [T]
+
+// Opaque model-owned keys. This contract does not prescribe a model schema.
+message ModelDataValue {
+  oneof value {
+    NumericArray tensor = 1;
+    string text = 2;
+  }
+}
+message ModelData {
+  map<string, ModelDataValue> entries = 1;
+}
