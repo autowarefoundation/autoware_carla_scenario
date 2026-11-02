@@ -61,7 +61,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 #: The Rerun version recordings are written with when the converter cannot be
-#: asked (it is not installed): the line ``autoware-carla-scenario-rerun`` 0.1
+#: asked (it is not installed): the line ``autoware-carla-scenario-rerun`` 0.2
 #: pins (rerun-sdk >=0.38.1,<0.39).
 DEFAULT_WEB_VIEWER_VERSION = "0.38.1"
 

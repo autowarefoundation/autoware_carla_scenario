@@ -140,14 +140,14 @@ ros2 = [
 # SDK of the minor version its recordings are written with, which puts the
 # metrics a run computed into its recording (rerun_metrics.py).
 rerun = [
-    "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "autoware-carla-scenario-rerun>=0.2,<0.3",
     "rerun-sdk>=0.38.1,<0.39",
 ]
 # The LiDAR sweeps of each run as a Rerun recording too (`rerun.lidar=true`):
 # the converter, and the Rerun SDK of the minor version its recordings are
 # written with, which writes the sweeps.
 rerun-lidar = [
-    "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "autoware-carla-scenario-rerun>=0.2,<0.3",
     "rerun-sdk>=0.38.1,<0.39",
 ]
 # A T4 dataset of each run (`t4.enabled=true`, docs/t4_dataset.md): the
@@ -169,7 +169,7 @@ hils = [
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.
 viewer = [
-    "autoware-carla-scenario-rerun[viewer]>=0.1,<0.2",
+    "autoware-carla-scenario-rerun[viewer]>=0.2,<0.3",
 ]
 
 [build-system]
