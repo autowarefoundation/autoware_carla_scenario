@@ -192,8 +192,13 @@ When the action fires:
    bones, on the ground as above. The walker is told to walk only the way it
    faces, at the motion's speed that way: CARLA turns a walker towards where
    it is told to go, and a motion's root drifts and steps aside. A step
-   sideways or back therefore reads as standing in the walker's velocity,
-   though the walker goes where the motion takes it
+   sideways or back therefore reads as standing in the walker's
+   `get_velocity()`, though the walker goes where the motion takes it. What
+   the framework reads a walker's velocity for -- the T4 dataset, the
+   trajectory log, the speed and time-to-collision conditions, the pedestrian
+   measures -- measures it from where the walker stands instead
+   (`WalkerVelocities`), so it sees the step. Only what reads CARLA's own
+   velocity directly, such as the TrafficManager, does not
    ([#957](https://github.com/autowarefoundation/autoware_carla_scenario/issues/957)).
 4. Each time the motion it holds is about to run out, it asks for more,
    generated from the motion shown so far.
