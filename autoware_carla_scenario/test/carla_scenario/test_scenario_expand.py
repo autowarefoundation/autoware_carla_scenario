@@ -196,7 +196,11 @@ def test_the_cli_expands_a_packaged_logical_scenario(
 
     assert main(["scenario=traffic_light_compliance/traffic_light_compliance"]) == 0
 
-    out = json.loads(capsys.readouterr().out)
+    raw = capsys.readouterr().out
+    # One scenario, one line: the JSON object and its newline.
+    assert raw.endswith("}\n")
+    assert raw.count("\n") == 1
+    out = json.loads(raw)
     cases = out["cases"]
     assert out["scenario"] == "traffic_light_compliance/traffic_light_compliance"
     assert cases, "the constraints match lanelets on this map"
@@ -206,6 +210,88 @@ def test_the_cli_expands_a_packaged_logical_scenario(
         assert spawn_s.startswith("ego.spawn_s=")
     # The constraints exclude lanelet 222 explicitly.
     assert "ego.spawn_lanelet_id=222" not in {c[0] for c in cases}
+
+
+# `scenario-expand` takes the same arguments as `scenario`, glob included
+# (#1160): it used to compose the glob as a config name and fail.
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_expands_every_scenario_a_glob_matches(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    assert main(["scenario=intersection_passing/*"]) == 0
+    captured = capsys.readouterr()
+    assert "Could not find" not in captured.err
+    listings = [json.loads(line) for line in captured.out.splitlines()]
+    # One listing per scenario, headed by its name, in the batch's order.
+    assert [listing["scenario"] for listing in listings] == [
+        "intersection_passing/left_turn",
+        "intersection_passing/right_turn",
+        "intersection_passing/right_turn_sweep",
+        "intersection_passing/straight",
+        "intersection_passing/straight_3npc",
+    ]
+    for listing in listings:
+        assert listing["cases"], listing["scenario"]
+    assert {"scenario": "intersection_passing/straight_3npc", "cases": [[]]} in (
+        listings
+    )
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_each_glob_listing_is_what_its_scenario_expands_to_alone(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    overrides = ["scenario.timeout_seconds=7"]
+    assert main(["scenario=intersection_passing/straight*", *overrides]) == 0
+    globbed = capsys.readouterr().out
+
+    alone = ""
+    for name in ("intersection_passing/straight", "intersection_passing/straight_3npc"):
+        assert main([f"scenario={name}", *overrides]) == 0
+        alone += capsys.readouterr().out
+    assert globbed == alone
+
+
+def test_a_bad_scenario_in_a_glob_prints_no_listing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every matched scenario's problem is reported, and stdout is all the
+    listings or none: never a fan-out that silently lacks a scenario."""
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(
+        [
+            "scenario=cut_in/*",
+            "+sweep.odd_sample.count=2",
+            "controls.vehicle_ahead_gap_m.range=[30,2]",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "cut_in/left: controls.vehicle_ahead_gap_m.range" in captured.err
+    assert "cut_in/right: controls.vehicle_ahead_gap_m.range" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_a_glob_that_does_not_compose_prints_no_listing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    assert main(["scenario=intersection_passing/*", "foo.bar=1"]) == 2
+    captured = capsys.readouterr()
+    # Each scenario's error names it, so the reader can tell them apart.
+    for name in ("left_turn", "straight_3npc"):
+        assert (
+            f"Error: intersection_passing/{name}: could not override 'foo.bar'"
+            in captured.err
+        )
+    assert captured.out == ""
 
 
 # A command line that does not compose (#993): a message and 2, as

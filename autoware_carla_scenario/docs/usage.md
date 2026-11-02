@@ -336,6 +336,23 @@ uv run scenario-expand scenario=traffic_light_compliance/traffic_light_complianc
 A scenario without a `sweep:` section is already concrete, so it expands to a
 single empty case. Only the Lanelet2 map is needed, not a CARLA server.
 
+As with `scenario`, `scenario=` may be a glob. Each scenario it matches is
+expanded with the same overrides and printed as its own JSON object, one per
+line (JSON Lines), in the order a batch runs them (sorted by name). Each object
+is the one that scenario prints on its own, `"scenario"` naming it:
+
+```bash
+uv run scenario-expand 'scenario=intersection_passing/*'
+# {"scenario": "intersection_passing/left_turn", "cases": [...]}
+# {"scenario": "intersection_passing/right_turn", "cases": [...]}
+# ...
+```
+
+Every matched scenario is expanded before anything is printed. If one of them
+fails (its `controls:` are invalid, or an override does not compose), each
+failure goes to stderr headed by that scenario's name, nothing goes to stdout,
+and the exit status is non-zero.
+
 A *logical* scenario -- a document with a route search, whose `sweep:` holds
 `route:` instead of `constraints:` -- expands to one case per route of the map
 that matches its pattern, each with the ego's spawn and goal and the match

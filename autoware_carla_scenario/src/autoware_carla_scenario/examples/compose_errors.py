@@ -94,13 +94,15 @@ def resolve_scenarios(pattern: str) -> list[str] | None:
     return None
 
 
-def compose_or_report(name: str, overrides: list[str]) -> Any:
+def compose_or_report(name: str, overrides: list[str], *, named: bool = False) -> Any:
     """Config *name* composed with *overrides* as a run composes it.
 
     None, once stderr says why, when the command line does not compose: a key,
-    a value, what the command line says rather than a bug.  Hydra's own
-    switch, ``HYDRA_FULL_ERROR=1``, raises it instead (as any other exception
-    is raised).
+    a value, what the command line says rather than a bug.  *named* heads the
+    message with the config's name (``Error: <name>: ...``), for a glob whose
+    scenarios are each composed and may each fail.  Hydra's own switch,
+    ``HYDRA_FULL_ERROR=1``, raises it instead (as any other exception is
+    raised).
     """
     from hydra.errors import HydraException  # noqa: PLC0415
     from omegaconf.errors import OmegaConfBaseException  # noqa: PLC0415
@@ -112,5 +114,8 @@ def compose_or_report(name: str, overrides: list[str]) -> Any:
     except (HydraException, OmegaConfBaseException) as exc:
         if os.environ.get("HYDRA_FULL_ERROR") == "1":
             raise
-        print(compose_error(exc, name, overrides), file=sys.stderr)  # noqa: T201
+        message = compose_error(exc, name, overrides)
+        if named:
+            message = message.replace("Error: ", f"Error: {name}: ", 1)
+        print(message, file=sys.stderr)  # noqa: T201
         return None
