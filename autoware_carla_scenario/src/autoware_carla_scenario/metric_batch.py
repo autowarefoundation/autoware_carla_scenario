@@ -14,8 +14,10 @@ CARLA map is still loaded, :func:`evaluate_metrics` replays those frames:
 * CriMe's and CommonRoad-Reach's (:data:`~autoware_carla_scenario.metrics.COMMONROAD_METRICS`)
   by the CommonRoad workers, every
   :attr:`~autoware_carla_scenario.commonroad.CommonRoadSettings.period_s` of
-  simulated time, the frames shared among several workers that run at
-  once (:func:`~autoware_carla_scenario.commonroad.session.evaluate_commonroad`).
+  simulated time -- a slow metric less often, at its own period
+  (:attr:`~autoware_carla_scenario.commonroad.CommonRoadSettings.metric_periods_s`)
+  -- the frames shared among several workers that run at once
+  (:func:`~autoware_carla_scenario.commonroad.session.evaluate_commonroad`).
 
 The simulation never waits on a metric, and the frames, being independent of
 one another, are evaluated in parallel.
@@ -379,9 +381,16 @@ def evaluate_metrics(
             evaluate_commonroad,
         )
 
-        picked = sampled(frames, commonroad_settings().period_s)
-        values = evaluate_commonroad(picked, carla_map, commonroad_keys)
+        # The metrics sampled alike are evaluated together: one request a
+        # frame for all of them.
+        settings = commonroad_settings()
+        by_period: dict[float, list[str]] = {}
         for key in commonroad_keys:
-            series[key].times = [frame.t for frame in picked]
-            series[key].values = [_finite(v) for v in values[key]]
+            by_period.setdefault(settings.period_for(key), []).append(key)
+        for period, keys_at in sorted(by_period.items()):
+            picked = sampled(frames, period)
+            values = evaluate_commonroad(picked, carla_map, keys_at)
+            for key in keys_at:
+                series[key].times = [frame.t for frame in picked]
+                series[key].values = [_finite(v) for v in values[key]]
     return series

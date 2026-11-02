@@ -10,6 +10,7 @@ run's recorded frames are shared out among them (:mod:`.session`).
 
 from .map import commonroad_map
 from .session import (
+    DEFAULT_METRIC_PERIODS_S,
     CommonRoadSettings,
     close_commonroad_workers,
     commonroad_settings,
@@ -19,6 +20,7 @@ from .session import (
 from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_command
 
 __all__ = [
+    "DEFAULT_METRIC_PERIODS_S",
     "WORKER_ENV",
     "CommonRoadSettings",
     "CommonRoadWorker",

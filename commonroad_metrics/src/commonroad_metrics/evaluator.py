@@ -11,7 +11,8 @@ ego at its first time step:
 * CriMe's (``commonroad_crime``) time, distance and acceleration measures --
   TTC, THW, TTB, the threat numbers BTN and STN and the rest -- each the most
   critical over the other road users, as CriMe folds them (the least TTC, the
-  greatest required deceleration);
+  greatest required deceleration) -- and the time-to-react TTR, which
+  simulates the ego's evasive manoeuvres (seconds a frame);
 * CommonRoad-Reach's (``commonroad_reach``) reachable set of the ego, its
   drivable area at the end of the horizon: what is left of the road the ego can
   still reach without hitting anyone.  ``0`` means none: a collision can no
@@ -56,7 +57,12 @@ CRIME_MEASURES: dict[str, str] = {
     "crime_a_lat_req_mps2": "ALatReq",
     "crime_btn": "BTN",
     "crime_stn": "STN",
+    "crime_ttr_s": "TTR",
 }
+#: CriMe's TTR: the latest time an evasive manoeuvre (braking, kick-down,
+#: steering left or right) still avoids the collision.  CriMe reads ``-inf``
+#: when none does even now, read ``0`` here as :data:`CRIME_WTTR_S` is.
+CRIME_TTR_S = "crime_ttr_s"
 #: CommonRoad-Reach's: the area of the ego's drivable area at the end of the
 #: horizon (m^2), and summed over the horizon's steps (CriMe's DA, m^2 * steps).
 REACH_DRIVABLE_AREA_M2 = "reach_drivable_area_m2"
@@ -376,7 +382,10 @@ class Evaluator:
             for key in wanted:
                 try:
                     measure = getattr(crime_measure, CRIME_MEASURES[key])(config)
-                    values[key] = _finite_or_none(measure.compute_criticality(0, verbose=False))
+                    value = _finite_or_none(measure.compute_criticality(0, verbose=False))
+                    if key == CRIME_TTR_S and value == -math.inf:
+                        value = 0.0
+                    values[key] = value
                 except Exception as exc:  # a measure undefined here, not a broken worker
                     values[key] = None
                     errors[key] = f"{type(exc).__name__}: {exc}"

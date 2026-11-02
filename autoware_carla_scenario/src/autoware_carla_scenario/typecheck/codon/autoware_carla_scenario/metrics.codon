@@ -40,11 +40,14 @@ CRIME_A_LONG_REQ_MPS2: str = "crime_a_long_req_mps2"
 CRIME_A_LAT_REQ_MPS2: str = "crime_a_lat_req_mps2"
 CRIME_BTN: str = "crime_btn"
 CRIME_STN: str = "crime_stn"
+CRIME_TTR_S: str = "crime_ttr_s"
 CRIME_WTTR_S: str = "crime_wttr_s"
 REACH_DRIVABLE_AREA_M2: str = "reach_drivable_area_m2"
 REACH_DRIVABLE_AREA_SUM_M2: str = "reach_drivable_area_sum_m2"
 
-COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str, str, str, str] = (
+COMMONROAD_METRICS: Tuple[
+    str, str, str, str, str, str, str, str, str, str, str, str, str, str
+] = (
     "crime_ttc_s",
     "crime_thw_s",
     "crime_hw_m",
@@ -55,6 +58,7 @@ COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str, str,
     "crime_a_lat_req_mps2",
     "crime_btn",
     "crime_stn",
+    "crime_ttr_s",
     "crime_wttr_s",
     "reach_drivable_area_m2",
     "reach_drivable_area_sum_m2",
@@ -322,6 +326,16 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         "road user over the most it can steer; above 1 steering alone no "
         "longer avoids it (CriMe STN)",
         aggregation="max",
+    ),
+    CRIME_TTR_S: Metric(
+        CRIME_TTR_S,
+        _acs_unread,
+        title="Time to react (CriMe)",
+        unit="s",
+        text="Seconds the ego can go on as it goes before no evasive "
+        "manoeuvre (braking, kick-down, steering) avoids the collision; 0 "
+        "when none does even now (CriMe TTR)",
+        aggregation="min",
     ),
     CRIME_WTTR_S: Metric(
         CRIME_WTTR_S,

@@ -114,7 +114,7 @@ self.register_fail_condition(
 
 ### CommonRoad metrics
 
-Thirteen more read how critical the frame is, with TU Munich's
+Fourteen more read how critical the frame is, with TU Munich's
 [CommonRoad](https://commonroad.in.tum.de/) tools:
 [CriMe](https://github.com/CommonRoad/CommonRoad-CriMe)'s criticality
 measures and [CommonRoad-Reach](https://github.com/CommonRoad/commonroad-reach)'s
@@ -136,6 +136,7 @@ folds them.
 | `crime_a_lat_req_mps2` | m/s^2 | The lateral acceleration the ego needs to steer clear of a road user (CriMe ALatReq) | max |
 | `crime_btn` | ratio | The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above `1` braking alone no longer avoids it (CriMe BTN) | max |
 | `crime_stn` | ratio | The lateral acceleration the ego needs to steer clear of a road user over the most it can steer (8 m/s^2); above `1` steering alone no longer avoids it (CriMe STN) | max |
+| `crime_ttr_s` | s | How long the ego can go on as it goes before no evasive manoeuvre -- braking, kick-down, steering left or right, each simulated -- avoids the collision (CriMe TTR); at or under WTTR; `inf` when it hits no one, `0` when none does even now. Evaluated every 0.5 s by default | min |
 | `crime_wttr_s` | s | How long the ego can go on as it goes before no way it can go is free of collisions to the end of the horizon, by CommonRoad-Reach's reachable set (CriMe WTTR); `inf` when it hits no one, `0` when no way is left even now | min |
 | `reach_drivable_area_m2` | m^2 | The road the ego can still reach without a collision at the end of the horizon (CommonRoad-Reach); `0` when every way it can go meets a road user: a collision it can no longer avoid | min |
 | `reach_drivable_area_sum_m2` | m^2 | The same, summed over the horizon's steps (CriMe's DA) | min |
@@ -178,7 +179,23 @@ the lane's own heading, which is the speed along the lane only there. On a
 frame of ten road users the eight CriMe measures from TTC to ALatReq take
 about 95 ms together, BTN and STN 170 ms more, the drivable area about 155 ms
 (over 2 s instead of 3, 45 ms), and WTTR about 110 ms on a frame with a
-collision ahead, next to nothing on one without.
+collision ahead, next to nothing on one without. TTR simulates the ego's
+manoeuvres: about 2 s a frame with a collision ahead.
+
+A slow metric is evaluated less often than every `period_s` (0.1 s): at its
+own period, `metric_periods_s`, by default 0.5 s for `crime_ttr_s`
+(`DEFAULT_METRIC_PERIODS_S`). A frame is asked only the metrics due on it, and
+a metric condition counts each NG sample until the next, so `max_ng_seconds`
+is still simulated time. Set the periods of any CommonRoad metric -- merged
+into those set so far, `None` going back to `period_s`:
+
+```python
+from autoware_carla_scenario.commonroad import configure_commonroad_metrics
+
+configure_commonroad_metrics(
+    metric_periods_s={"crime_ttr_s": 1.0, "crime_wttr_s": 0.3},
+)
+```
 
 The workers are started with, in order, the command in
 `$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on
@@ -187,8 +204,9 @@ commonroad-metrics-worker` (which builds its environment the first time). A run
 judged on a CommonRoad metric whose workers cannot be started fails with
 `CommonRoadWorkerError` rather than pass on a metric that read nothing.
 `configure_commonroad_metrics()` (in `autoware_carla_scenario.commonroad`)
-changes the period, the number of workers, the horizon, the radius,
-CommonRoad-Reach's settings and the command.
+changes the period (`period_s`, and `metric_periods_s` for each metric), the
+number of workers, the horizon, the radius, CommonRoad-Reach's settings and
+the command.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
 

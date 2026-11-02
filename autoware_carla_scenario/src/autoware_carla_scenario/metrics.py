@@ -37,9 +37,9 @@ ego weaves from side to side (:data:`LATERAL_REVERSALS`,
 indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
 runner hands this module every tick (:func:`track_ego_motion`).
 
-Thirteen read the criticality of the frame with TU Munich's CommonRoad tools:
-ten CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`, :data:`CRIME_BTN`,
-...), the area the ego can still reach by CommonRoad-Reach
+Fourteen read the criticality of the frame with TU Munich's CommonRoad tools:
+eleven CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`,
+:data:`CRIME_BTN`, :data:`CRIME_TTR_S`, ...), the area the ego can still reach by CommonRoad-Reach
 (:data:`REACH_DRIVABLE_AREA_M2`, :data:`REACH_DRIVABLE_AREA_SUM_M2`) and, by
 that reachable set, the worst-case time it has left to react
 (:data:`CRIME_WTTR_S`).  Those packages run in worker processes
@@ -87,6 +87,7 @@ __all__ = [
     "CRIME_TTB_S",
     "CRIME_TTCE_S",
     "CRIME_TTC_S",
+    "CRIME_TTR_S",
     "CRIME_WTTR_S",
     "IMPORTANCE_SAMPLING_WEIGHT",
     "LATERAL_REVERSALS",
@@ -179,6 +180,12 @@ CRIME_BTN = "crime_btn"
 #: most it can steer (CriMe's STN, steer threat number): above ``1`` steering
 #: alone no longer avoids it.
 CRIME_STN = "crime_stn"
+#: Seconds the ego can go on as it goes before no evasive manoeuvre -- braking,
+#: kick-down, steering left or right -- avoids the collision any more (CriMe's
+#: TTR, time-to-react, by simulating each); ``inf`` when it hits no one, ``0``
+#: when none does even now.  Seconds a frame: evaluated every 0.5 s by default
+#: (:attr:`~autoware_carla_scenario.commonroad.CommonRoadSettings.metric_periods_s`).
+CRIME_TTR_S = "crime_ttr_s"
 #: Seconds the ego can go on as it goes before no way it can go is free of
 #: collisions to the end of the horizon (CriMe's WTTR, worst-case
 #: time-to-react, by CommonRoad-Reach's reachable set); ``inf`` when it hits no
@@ -203,6 +210,7 @@ COMMONROAD_METRICS: tuple[str, ...] = (
     CRIME_A_LAT_REQ_MPS2,
     CRIME_BTN,
     CRIME_STN,
+    CRIME_TTR_S,
     CRIME_WTTR_S,
     REACH_DRIVABLE_AREA_M2,
     REACH_DRIVABLE_AREA_SUM_M2,
@@ -975,6 +983,10 @@ def _crime_stn(world: "carla.World") -> Optional[float]:
     return _commonroad(CRIME_STN)
 
 
+def _crime_ttr_s(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_TTR_S)
+
+
 def _crime_wttr_s(world: "carla.World") -> Optional[float]:
     return _commonroad(CRIME_WTTR_S)
 
@@ -1331,6 +1343,16 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             aggregation="max",
         ),
         Metric(
+            CRIME_TTR_S,
+            _crime_ttr_s,
+            title="Time to react (CriMe)",
+            unit="s",
+            text="Seconds the ego can go on as it goes before no evasive "
+            "manoeuvre (braking, kick-down, steering) avoids the collision; 0 "
+            "when none does even now (CriMe TTR)",
+            aggregation="min",
+        ),
+        Metric(
             CRIME_WTTR_S,
             _crime_wttr_s,
             title="Worst-case time to react (CriMe)",
@@ -1391,6 +1413,7 @@ _FAILURE_CATEGORIES: dict[str, FailureCategory] = {
     CRIME_A_LAT_REQ_MPS2: FailureCategory.SAFETY_MARGIN,
     CRIME_BTN: FailureCategory.SAFETY_MARGIN,
     CRIME_STN: FailureCategory.SAFETY_MARGIN,
+    CRIME_TTR_S: FailureCategory.SAFETY_MARGIN,
     CRIME_WTTR_S: FailureCategory.SAFETY_MARGIN,
     REACH_DRIVABLE_AREA_M2: FailureCategory.SAFETY_MARGIN,
     REACH_DRIVABLE_AREA_SUM_M2: FailureCategory.SAFETY_MARGIN,

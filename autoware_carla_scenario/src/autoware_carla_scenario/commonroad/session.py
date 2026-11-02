@@ -3,7 +3,9 @@ running at once.
 
 When a run that reads a CommonRoad metric is over,
 :func:`~autoware_carla_scenario.metric_batch.evaluate_metrics` hands
-:func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`.
+:func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`
+-- every :meth:`CommonRoadSettings.period_for` a metric, for the slow ones
+(:attr:`CommonRoadSettings.metric_periods_s`).
 It converts the world's map to CommonRoad (:mod:`.map`, once per machine),
 starts :attr:`CommonRoadSettings.workers` workers on it (:mod:`.worker`, kept
 for the next run on the map), and shares the frames out among them, each
@@ -18,12 +20,14 @@ from __future__ import annotations
 
 import atexit
 import logging
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..metrics import COMMONROAD_METRICS, CRIME_TTR_S
 from .frame import read_frame
 from .map import commonroad_map
 from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
@@ -46,12 +50,21 @@ def _default_workers() -> int:
     return max(1, min(4, os.cpu_count() or 1))
 
 
+#: The metrics evaluated less often than every :attr:`CommonRoadSettings.period_s`
+#: by default, and how often (simulated seconds): CriMe's TTR simulates the
+#: ego's evasive manoeuvres, about 2 s a frame with a collision ahead.
+DEFAULT_METRIC_PERIODS_S: dict[str, float] = {CRIME_TTR_S: 0.5}
+
+
 @dataclass(frozen=True)
 class CommonRoadSettings:
     """How the CommonRoad metrics are evaluated.
 
     Attributes:
         period_s: Simulated seconds between two frames evaluated.
+        metric_periods_s: The same, for each metric evaluated at a period of
+            its own (a slow one less often); the others, every
+            :attr:`period_s`.  By default :data:`DEFAULT_METRIC_PERIODS_S`.
         workers: How many workers evaluate frames at once.
         dt: The time step of the CommonRoad scenario a frame becomes (s).
         horizon_s: How far ahead the road users' trajectories run on, and the
@@ -66,6 +79,9 @@ class CommonRoadSettings:
     """
 
     period_s: float = 0.1
+    metric_periods_s: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_METRIC_PERIODS_S)
+    )
     workers: int = field(default_factory=_default_workers)
     dt: float = 0.1
     horizon_s: float = 3.0
@@ -73,6 +89,24 @@ class CommonRoadSettings:
     reach_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_dir: Optional[Path] = None
     command: Optional[tuple[str, ...]] = None
+
+    def __post_init__(self) -> None:
+        periods = {"period_s": self.period_s}
+        for key, period in self.metric_periods_s.items():
+            if key not in COMMONROAD_METRICS:
+                raise ValueError(
+                    f"metric_periods_s: {key!r} is not a CommonRoad metric "
+                    f"({', '.join(COMMONROAD_METRICS)})"
+                )
+            periods[f"metric_periods_s[{key!r}]"] = period
+        for name, period in periods.items():
+            if not (math.isfinite(period) and period > 0.0):
+                raise ValueError(f"{name} must be positive and finite, got {period}")
+
+    def period_for(self, key: str) -> float:
+        """Simulated seconds between two frames the metric *key* is evaluated
+        on."""
+        return self.metric_periods_s.get(key, self.period_s)
 
     def worker_settings(self) -> dict[str, Any]:
         return {
@@ -101,7 +135,21 @@ _POOL = _Pool()
 def configure_commonroad_metrics(**changes: Any) -> CommonRoadSettings:
     """Change how the CommonRoad metrics are evaluated
     (:class:`CommonRoadSettings`' fields); the settings now.  A change to how
-    the workers evaluate, or to how many there are, restarts them."""
+    the workers evaluate, or to how many there are, restarts them.
+
+    ``metric_periods_s`` is merged into the periods set so far: a metric
+    given ``None`` goes back to :attr:`CommonRoadSettings.period_s`
+    (``configure_commonroad_metrics(metric_periods_s={"crime_ttr_s": 1.0,
+    "crime_wttr_s": 0.3})``).
+    """
+    if "metric_periods_s" in changes:
+        periods = dict(_POOL.settings.metric_periods_s)
+        for key, period in dict(changes["metric_periods_s"]).items():
+            if period is None:
+                periods.pop(key, None)
+            else:
+                periods[key] = float(period)
+        changes = {**changes, "metric_periods_s": periods}
     settings = replace(_POOL.settings, **changes)
     old = _POOL.settings
     if (

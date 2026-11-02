@@ -195,3 +195,17 @@ def test_no_collision_ahead_leaves_all_the_time_to_react(evaluator: Evaluator) -
     beside, _ = evaluator.evaluate(ego, [on_road(80, 5.25, 5.0, 2)], ["crime_wttr_s"])
     assert alone["crime_wttr_s"] == math.inf
     assert beside["crime_wttr_s"] == math.inf
+
+
+def test_the_time_to_react(evaluator: Evaluator) -> None:
+    ego = on_road(50, 1.75, 15.0, 1)
+    keys = ["crime_ttr_s", "crime_wttr_s", "crime_ttc_s"]
+    values, errors = evaluator.evaluate(ego, [on_road(80, 1.75, 5.0, 2)], keys)
+    assert errors == {}
+    # Simulated manoeuvres under-approximate what the reachable set leaves.
+    assert 0.0 < values["crime_ttr_s"] <= values["crime_wttr_s"] < values["crime_ttc_s"]
+    # No manoeuvre is left: 0, not CriMe's -inf.
+    trapped, _ = evaluator.evaluate(
+        ego, [on_road(62, 1.75, 0.0, 2), on_road(62, 5.25, 0.0, 3)], ["crime_ttr_s"]
+    )
+    assert trapped["crime_ttr_s"] == 0.0

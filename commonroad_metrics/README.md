@@ -53,6 +53,7 @@ evaluates the measures asked for on the ego at the first step:
 | `crime_a_lat_req_mps2` | ALatReq | m/s^2 |
 | `crime_btn` | BTN (brake threat number) | ratio |
 | `crime_stn` | STN (steer threat number) | ratio |
+| `crime_ttr_s` | TTR (time-to-react) | s |
 | `crime_wttr_s` | WTTR (worst-case time-to-react), by Reach | s |
 | `reach_drivable_area_m2` | the drivable area at the end of the horizon | m^2 |
 | `reach_drivable_area_sum_m2` | the drivable area summed over the horizon (CriMe's DA) | m^2 |
@@ -84,8 +85,12 @@ obstacle: the ego's prediction goes straight on and would leave every bend. A
 frame with a collision ahead takes about 110 ms (a few reachable sets, each
 over what is left of the horizon); one without, next to nothing.
 
-CriMe's TTS and TTR (time-to-steer, time-to-react) are left out: they simulate
-the ego's manoeuvres and take seconds a frame.
+TTR is CriMe's: the latest time one of the ego's evasive manoeuvres --
+braking, kick-down, steering left or right, each simulated -- still avoids the
+collision, at or under WTTR. It takes about 2 s a frame with a collision
+ahead (next to nothing without one), which is why the framework evaluates it
+every 0.5 s rather than every 0.1 s. CriMe reads `-Infinity` when no manoeuvre
+is left even now; the worker reads `0`, as for WTTR.
 
 ## Protocol
 

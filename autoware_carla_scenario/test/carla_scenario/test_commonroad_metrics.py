@@ -37,6 +37,7 @@ from autoware_carla_scenario.metrics import (
     CRIME_BTN,
     CRIME_HW_M,
     CRIME_TTC_S,
+    CRIME_TTR_S,
     CRIME_WTTR_S,
     REACH_DRIVABLE_AREA_M2,
     read_metric,
@@ -353,6 +354,48 @@ def test_the_workers_evaluate_the_recorded_frames(
     assert {o["id"] for o in evaluated[0]["others"]} == {2, 3, 5}
 
 
+def test_a_slow_metric_is_evaluated_at_its_own_period(
+    opendrive: str, stand_in: Path
+) -> None:
+    cr_session.configure_commonroad_metrics(metric_periods_s={CRIME_HW_M: 1.0})
+    world = _following(opendrive)
+    series = evaluate_metrics(
+        _recorded(world, TIMES), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+    )
+
+    assert series[CRIME_TTC_S].times == [0.0, 0.5, 1.0]
+    assert series[CRIME_HW_M].times == [0.0, 1.0]
+    asked = [r["measures"] for r in _requests(stand_in) if r["op"] == "evaluate"]
+    # Each frame is asked only what is due on it.
+    assert sorted(map(tuple, asked)) == sorted(
+        [(CRIME_TTC_S,)] * 3 + [(CRIME_HW_M,)] * 2
+    )
+
+
+def test_ttr_is_evaluated_every_half_second_by_default() -> None:
+    settings = cr_session.CommonRoadSettings()
+    assert settings.period_for(CRIME_TTR_S) == 0.5
+    assert settings.period_for(CRIME_TTC_S) == settings.period_s == 0.1
+
+
+def test_the_periods_are_merged_and_checked() -> None:
+    settings = cr_session.configure_commonroad_metrics(
+        metric_periods_s={CRIME_WTTR_S: 0.3}
+    )
+    assert settings.period_for(CRIME_WTTR_S) == 0.3
+    assert settings.period_for(CRIME_TTR_S) == 0.5  # kept
+    settings = cr_session.configure_commonroad_metrics(
+        metric_periods_s={CRIME_TTR_S: None}
+    )
+    assert settings.period_for(CRIME_TTR_S) == settings.period_s
+    with pytest.raises(ValueError, match="not a CommonRoad metric"):
+        cr_session.configure_commonroad_metrics(metric_periods_s={"offroad": 1.0})
+    with pytest.raises(ValueError, match="positive and finite"):
+        cr_session.configure_commonroad_metrics(metric_periods_s={CRIME_TTR_S: 0.0})
+    with pytest.raises(ValueError, match="positive and finite"):
+        cr_session.configure_commonroad_metrics(period_s=math.inf)
+
+
 def test_a_metric_condition_judges_the_workers_ttc(
     opendrive: str, stand_in: Path
 ) -> None:
@@ -438,7 +481,14 @@ def test_crime_and_reach_through_the_real_worker(
         command=tuple(command), cache_dir=tmp_path / "maps", workers=2
     )
     world = _following(opendrive)
-    keys = [CRIME_TTC_S, CRIME_HW_M, CRIME_BTN, CRIME_WTTR_S, REACH_DRIVABLE_AREA_M2]
+    keys = [
+        CRIME_TTC_S,
+        CRIME_HW_M,
+        CRIME_BTN,
+        CRIME_TTR_S,
+        CRIME_WTTR_S,
+        REACH_DRIVABLE_AREA_M2,
+    ]
     series = evaluate_metrics(_recorded(world, [0.0, 0.1, 0.2]), world.get_map(), keys)
 
     assert series[CRIME_TTC_S].values == [pytest.approx(2.55, abs=0.05)] * 3
@@ -448,6 +498,10 @@ def test_crime_and_reach_through_the_real_worker(
     assert series[CRIME_BTN].values == [pytest.approx(0.17, abs=0.01)] * 3
     # Time to react, but less than until they would meet.
     assert all(v is not None and 0.0 < v < 2.55 for v in series[CRIME_WTTR_S].values)
+    # TTR, every 0.5 s: once in these 0.2 s; no later than WTTR.
+    assert series[CRIME_TTR_S].times == [0.0]
+    ttr = series[CRIME_TTR_S].values[0]
+    assert ttr is not None and 0.0 < ttr <= series[CRIME_WTTR_S].values[0]  # type: ignore[operator]
     for condition in (
         MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 3.0, label="ttc"),
         MetricCondition(CRIME_HW_M, ComparisonRule.LESS_THAN, 30.0, label="hw"),
