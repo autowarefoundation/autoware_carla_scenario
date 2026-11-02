@@ -516,6 +516,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
                 f"{where}: a {LIDAR_BLUEPRINT} is sent through a lidar:MODEL codec, "
                 f"not {codec!r}"
             )
+        _lidar_attributes(spec.attributes, f"{where}.attributes")
     elif blueprint.startswith(CAMERA_PREFIX):
         if codec_name != "raw":
             raise HilsConfigError(
@@ -532,6 +533,46 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
             f"{CAMERA_PREFIX}* camera"
         )
     return spec
+
+
+def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> float:
+    """The blueprint attribute *key* of a sensor as a finite number."""
+    text = attributes[key]
+    try:
+        number = float(text)
+    except ValueError:
+        number = math.nan
+    if not math.isfinite(number):
+        raise HilsConfigError(f"{where}.{key}: expected a finite number, got {text!r}")
+    return number
+
+
+def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
+    """Refuse the LiDAR attributes the bridge cannot gather revolutions for.
+
+    The bridge gathers a LiDAR's per-tick arcs into revolutions
+    (:class:`~autoware_carla_scenario.hils.lidar_revolution.LidarRevolution`).
+    A revolution is one sweep of ``horizontal_fov`` degrees, which may be
+    anything in (0, 360].  ``sensor_tick`` must be left unset (or 0): CARLA
+    sweeps only one world tick per measurement however long the
+    ``sensor_tick``, so a LiDAR measured less often than every tick turns
+    slower than its ``rotation_frequency``, and no device turns that way.
+    """
+    if "horizontal_fov" in attributes:
+        fov = _attribute_number(attributes, "horizontal_fov", where)
+        if not 0.0 < fov <= 360.0:
+            raise HilsConfigError(
+                f"{where}.horizontal_fov: must be in (0, 360] degrees, "
+                f"got {attributes['horizontal_fov']!r}"
+            )
+    if "sensor_tick" in attributes:
+        if _attribute_number(attributes, "sensor_tick", where) != 0.0:
+            raise HilsConfigError(
+                f"{where}.sensor_tick: a LiDAR measures every world tick; "
+                f"leave sensor_tick unset (or 0), got {attributes['sensor_tick']!r} "
+                "(CARLA sweeps only one world tick per measurement, so with a "
+                "sensor_tick it turns slower than its rotation_frequency)"
+            )
 
 
 def _relative_file(value: str, base: Path) -> str:

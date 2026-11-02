@@ -389,7 +389,14 @@ class _SensorDevice:
                 if "rotation_frequency" in attributes
                 else 1.0 / dt
             )
-            revolution = LidarRevolution(frequency, dt)
+            # A revolution sweeps the field of view (360 degrees, CARLA's
+            # default); the config refused a sensor_tick.
+            fov = (
+                float(attributes["horizontal_fov"])
+                if "horizontal_fov" in attributes
+                else 360.0
+            )
+            revolution = LidarRevolution(frequency, dt, fov)
         with self._convert_lock:
             self._revolution = revolution
         actor.listen(functools.partial(self._on_data, generation))

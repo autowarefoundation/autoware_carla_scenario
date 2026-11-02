@@ -104,6 +104,30 @@ def _device(**kwargs: Any) -> dict[str, Any]:
     return {"devices": {"d": {"url": "mem://x", **kwargs}}}
 
 
+def _lidar(attributes: dict[str, Any]) -> dict[str, Any]:
+    return _device(
+        codec="lidar:vlp16",
+        sensor={"blueprint": "sensor.lidar.ray_cast", "attributes": attributes},
+    )
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        {"sensor_tick": 0},
+        {"sensor_tick": "0.0"},
+        {"horizontal_fov": 360},
+        {"horizontal_fov": 90.5, "sensor_tick": 0.0},
+    ],
+)
+def test_a_lidar_sweeping_its_field_of_view_every_tick_is_read(
+    attributes: dict[str, Any],
+) -> None:
+    sensor = parse_config(_lidar(attributes)).devices[0].sensor
+    assert sensor is not None
+    assert sensor.attributes == {k: str(v) for k, v in attributes.items()}
+
+
 def _messages(fields: dict[str, Any]) -> dict[str, Any]:
     return _device(codec="nmea", messages=[{"name": "GGA", "fields": fields}])
 
@@ -249,6 +273,14 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
             ),
             "intensity_scale: .*finite",
         ),
+        # A LiDAR's revolutions: one sweep of the field of view, a world tick
+        # a measurement (#1125).
+        (_lidar({"sensor_tick": 0.1}), "attributes.sensor_tick: a LiDAR measures"),
+        (_lidar({"sensor_tick": "0.05"}), "attributes.sensor_tick: a LiDAR"),
+        (_lidar({"sensor_tick": "soon"}), "attributes.sensor_tick: .*finite"),
+        (_lidar({"horizontal_fov": 400}), r"horizontal_fov: must be in \(0, 360\]"),
+        (_lidar({"horizontal_fov": 0}), r"horizontal_fov: must be in \(0, 360\]"),
+        (_lidar({"horizontal_fov": "nan"}), "horizontal_fov: .*finite"),
     ],
 )
 def test_a_bad_configuration_is_refused(document: Any, message: str) -> None:
@@ -420,7 +452,7 @@ def test_arcs_gather_into_revolutions() -> None:
 
 
 def test_a_lidar_turning_once_a_measurement_yields_each() -> None:
-    # One revolution a tick, measured every other tick (sensor_tick).
+    # One revolution a tick, every other measurement lost: two a measurement.
     revolution = LidarRevolution(20.0, 0.05)
     for i in range(1, 4):
         whole = revolution.add(0.1 * i, _points(i))
@@ -744,6 +776,63 @@ def test_lidar_revolutions_go_out_as_the_sensors_packets(world: _World) -> None:
         packets = _drain(receiver)
         assert packets and all(p.name == "scan" for p in packets)
         assert sum(len(p["x"]) for p in packets) == 1000
+    finally:
+        bridge.close()
+        receiver.close()
+
+
+def _fov_measurement(time: float, angles: np.ndarray, fov: float) -> Any:
+    """Points measured at the horizontal *angles* (degrees, unbounded) of a
+    LiDAR whose rays cover azimuths [-fov/2, fov/2), as CARLA lays them."""
+    yaw = np.radians(np.fmod(angles, fov) - 0.5 * fov)
+    points = np.zeros((len(angles), 4), np.float32)
+    points[:, 0] = 10.0 * np.cos(yaw)
+    points[:, 1] = 10.0 * np.sin(yaw)
+    points[:, 3] = 0.5
+    return types.SimpleNamespace(timestamp=time, raw_data=points.tobytes())
+
+
+def test_a_lidar_revolution_sweeps_its_horizontal_fov(world: _World) -> None:
+    # 180 degrees at 15 Hz, 20 Hz ticks: 135 degrees a tick, so the second
+    # arc completes the revolution 45 degrees in (#1125).
+    url = _mem()
+    receiver = hilspy.open(url, "lidar:vlp16", frame="packet")
+    bridge = _bridge(
+        {
+            "devices": {
+                "lidar": {
+                    "url": url,
+                    "codec": "lidar:vlp16",
+                    "sensor": {
+                        "blueprint": "sensor.lidar.ray_cast",
+                        "attributes": {
+                            "rotation_frequency": 15,
+                            "horizontal_fov": 180,
+                            "channels": 16,
+                        },
+                    },
+                }
+            }
+        },
+        world,
+    )
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        # A ray every 0.25 degrees: 540 an arc, 720 a revolution.
+        sensor.callback(_fov_measurement(0.05, np.arange(540) * 0.25, 180.0))
+        world.tick()
+        bridge.step()
+        assert _drain(receiver) == []
+        sensor.callback(_fov_measurement(0.10, (540 + np.arange(540)) * 0.25, 180.0))
+        for _ in range(4):
+            world.tick()
+            bridge.step()
+        packets = _drain(receiver)
+        assert packets and all(p.name == "scan" for p in packets)
+        assert sum(len(p["x"]) for p in packets) == 720
     finally:
         bridge.close()
         receiver.close()
