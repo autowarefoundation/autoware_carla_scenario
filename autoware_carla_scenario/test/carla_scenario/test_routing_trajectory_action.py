@@ -397,6 +397,42 @@ class TestInitialOffsetWithALateFirstVertex:
         assert entity.actor.x == pytest.approx(10.5)
         assert entity.actor.z == pytest.approx(0.0)
 
+    def test_a_timing_offset_delays_the_start_from_the_offset_point(
+        self, entity: _Entity
+    ) -> None:
+        """A first vertex at 0 due 1 s after the action starts: the same wait."""
+        action = _route(
+            "npc1",
+            _late_line(0.0, gated=False),
+            TrajectoryTiming(offset=1.0),
+            initial_distance_offset=10.0,
+        )
+        elapsed = _run(action, entity.actor, 0.5)
+        assert entity.actor.x == pytest.approx(10.0)
+        assert entity.actor.speed == 0.0
+        elapsed = _run(action, entity.actor, 0.5, start=elapsed)
+        assert entity.actor.x == pytest.approx(10.0)
+        _run(action, entity.actor, 0.5, start=elapsed)
+        assert entity.actor.x == pytest.approx(15.0)
+
+    def test_a_following_walker_waits_for_the_first_vertex(self) -> None:
+        walker = _Entity(_Actor(x=10.0, type_id="walker.pedestrian.0001"))
+        register_entity("walker1", walker)
+        try:
+            action = _route(
+                "walker1",
+                _late_line(1.0, gated=False),
+                TrajectoryTiming(),
+                RoutingMode.FOLLOW,
+                initial_distance_offset=10.0,
+            )
+            elapsed = _run(action, walker.actor, 0.95)
+            assert walker.actor.walker_controls[-1].speed == 0.0
+            _run(action, walker.actor, 0.1, start=elapsed)
+            assert walker.actor.walker_controls[-1].speed > 0.0
+        finally:
+            unregister_entity("walker1")
+
     def test_a_first_vertex_at_zero_is_as_before(self, entity: _Entity) -> None:
         """No wait: the clock starts where the trajectory is at the offset."""
         action = _route(
