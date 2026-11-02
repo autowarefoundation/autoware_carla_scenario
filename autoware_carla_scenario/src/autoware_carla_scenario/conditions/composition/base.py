@@ -39,9 +39,9 @@ class DistanceCoordinateSystem(Enum):
 
     The two agree on a straight road and part company on a curve, where the
     entity frame reads short: for a leader 20 m ahead along the lane it gives
-    19.5 m at a 50 m radius and 14.6 m at 15 m.  Past a quarter turn the
-    projection changes sign, and a condition that only looks ahead stops firing
-    for a leader that is directly in front.
+    19.5 m at a 50 m radius and 14.6 m at 15 m.  Past a half turn (an arc of
+    ``pi * R`` or more) the projection changes sign, and a condition that only
+    looks ahead stops firing for a leader that is ahead along the lane.
     """
 
     ENTITY = auto()

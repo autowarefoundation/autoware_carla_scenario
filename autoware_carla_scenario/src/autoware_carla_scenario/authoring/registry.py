@@ -3853,7 +3853,7 @@ register_condition_spec(
             "defined even when the gap is steady, which is what makes it the "
             "following-distance measure; it is undefined, and never fires, "
             "while the follower is stopped.  Measured in a straight line by "
-            "default, which on a curve under-reads and past a quarter turn "
+            "default, which on a curve under-reads and past a half turn "
             "stops firing entirely; measure along the road to avoid that."
         ),
     )
