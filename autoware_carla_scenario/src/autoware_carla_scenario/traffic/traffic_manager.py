@@ -1013,6 +1013,33 @@ class TrafficManagerBackend(TrafficBackend):
         if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
             self._lead_out(actor, first, ahead, path)
 
+    def end_route(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Give *entity*'s vehicle, whose route is over, its own lane changes
+        back as the run's parameters (and its entity's overrides) say:
+        :meth:`follow_route` turned them off for the route alone.  Unset, the
+        TrafficManager's own default, which is on."""
+        actor = _require_actor(entity, "end_route")
+        if actor is None:
+            return
+        vehicle: "carla.Actor" = actor
+        actor_id = int(vehicle.id)
+        if actor_id not in self._lane_locked:
+            return
+        self._lane_locked.discard(actor_id)
+        tm = self._require_tm("end_route")
+        if tm is None:
+            return
+        lane_changes = self._parameters_of(vehicle).lane_changes
+        allowed = True
+        if lane_changes is not None:
+            allowed = bool(lane_changes)
+        tm.auto_lane_change(_vehicle(vehicle), allowed)
+        logger.info(
+            "%s: its route is over; its own lane changes are %s again",
+            _entity_name(entity),
+            "on" if allowed else "off",
+        )
+
     def _lead_out(
         self,
         actor: "carla.Actor",

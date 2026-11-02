@@ -1498,6 +1498,13 @@ class SumoTrafficBackend(TrafficBackend):
             return
         self._set_route(sumo_id, list(stops))
 
+    def end_route(self, entity: Any, world: Any) -> None:
+        """A route SUMO drove changed nothing else (its lane-change mode is
+        left as it was); one handed to the TrafficManager (:meth:`follow_route`)
+        is ended there."""
+        if self._tm_drives_scenario:
+            self._tm.end_route(entity, world)
+
     def finish_at(self, entity: Any, world: Any, points: Any) -> bool:
         """Drive a vehicle SUMO drives the rest of the way along *points*
         itself, off SUMO and published into it, and stop it on the last

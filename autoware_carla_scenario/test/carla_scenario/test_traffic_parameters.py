@@ -8,7 +8,7 @@ pinned in ``test_traffic_sumo``.
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import pytest
 
@@ -577,11 +577,8 @@ def test_a_speed_after_an_entity_override_wins_at_the_first_draw() -> None:
     assert backend._exact_kmh == {42: 15.0}
 
 
-def test_a_route_given_before_start_keeps_lane_changes_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``follow_route`` turns the TrafficManager's lane changes off; the
-    first draw of ``lane_changes: true`` does not turn them back on."""
+def _stub_route_planning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let ``follow_route`` plan a route of three points with no map."""
     from types import SimpleNamespace  # noqa: PLC0415
 
     import autoware_carla_scenario.coordinate.map_manager as map_manager  # noqa: PLC0415
@@ -602,7 +599,17 @@ def test_a_route_given_before_start_keeps_lane_changes_off(
     )
     monkeypatch.setattr(traffic_manager, "_in_junction", lambda m, p: False)
     monkeypatch.setattr(traffic_manager, "_at_junction_mouth", lambda m, p: False)
+    monkeypatch.setattr(traffic_manager, "_lane_change_marks", lambda path: [])
 
+
+def test_a_route_given_before_start_keeps_lane_changes_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``follow_route`` turns the TrafficManager's lane changes off; the
+    first draw of ``lane_changes: true`` does not turn them back on."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    _stub_route_planning(monkeypatch)
     client = _Client()
     backend = TrafficManagerBackend(
         client=client, vehicles=VehicleParameters(lane_changes=True)
@@ -618,6 +625,90 @@ def test_a_route_given_before_start_keeps_lane_changes_off(
     )
     backend.start(world)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, False), (other, True)]
+
+
+@pytest.mark.parametrize(
+    ("lane_changes", "after"), [(True, True), (False, False), (None, True)]
+)
+def test_the_end_of_a_route_gives_lane_changes_back(
+    monkeypatch: pytest.MonkeyPatch, lane_changes: Optional[bool], after: bool
+) -> None:
+    """``end_route`` undoes ``follow_route``'s lane-change lock (#1100): the
+    run's ``lane_changes`` again, ``false`` kept off, and unset the
+    TrafficManager's own default, which is on."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    _stub_route_planning(monkeypatch)
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=lane_changes)
+    )
+    npc = _Actor(5)
+    world = _World([npc])
+    entity = _Entity(npc)
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    backend.follow_route(
+        entity,  # type: ignore[arg-type]
+        world,  # type: ignore[arg-type]
+        [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+    )
+    assert backend._lane_locked == {5}
+    client.tm.calls.clear()
+
+    backend.end_route(entity, world)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, after)]
+    assert backend._lane_locked == set()
+    # Safe to repeat: nothing more to give back.
+    backend.end_route(entity, world)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, after)]
+
+
+def test_the_end_of_a_route_follows_the_entity_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vehicle whose own override turned its lane changes off keeps them
+    off when its route ends, whatever the run's parameters say."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    _stub_route_planning(monkeypatch)
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=True)
+    )
+    npc = _Actor(5)
+    world = _World([npc])
+    entity = _Entity(npc)
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(lane_changes=False),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.follow_route(
+        entity,  # type: ignore[arg-type]
+        world,  # type: ignore[arg-type]
+        [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+    )
+    client.tm.calls.clear()
+    backend.end_route(entity, world)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, False)]
+
+
+def test_the_end_of_no_route_sends_nothing() -> None:
+    """A vehicle never given a route has no lane-change lock to give back."""
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=True)
+    )
+    npc = _Actor(5)
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    client.tm.calls.clear()
+    backend.end_route(_Entity(npc), world)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == []
 
 
 def test_a_lane_changes_override_after_a_route_wins_at_the_first_draw() -> None:

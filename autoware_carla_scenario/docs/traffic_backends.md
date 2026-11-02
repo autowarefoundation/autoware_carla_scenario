@@ -579,6 +579,7 @@ own bookkeeping on the vehicle rather than in a table of its own:
     def lane_change_finished(self, entity, world) -> bool: ...
     def turn_at_junction(self, entity, world, direction, **kwargs) -> None: ...
     def follow_route(self, entity, world, stops) -> None: ...
+    def end_route(self, entity, world) -> None: ...
 ```
 
 `direction` is `LaneChangeDirection` or `TurnDirection` — intents, not CARLA
@@ -593,6 +594,14 @@ point, and there a point lies on several ways through. A backend that has no ans
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.
+
+`end_route` is called when a route a `RoutingAction` watched is over: the
+vehicle arrived, or the action was stopped, overridden or closed first. It gives
+back what the route changed in how the vehicle drives, and does nothing by
+default. The TrafficManager backend turns its own lane changes, which
+`follow_route` turned off, back to the run's `lane_changes` (and the vehicle's
+overrides); unset, the TrafficManager's default, on. A route handed over untimed
+ends its action at once and stays the driver's, its lane changes off.
 
 ### Handing a vehicle back
 

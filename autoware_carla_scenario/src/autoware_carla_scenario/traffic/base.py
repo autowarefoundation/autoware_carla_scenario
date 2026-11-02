@@ -775,6 +775,17 @@ class TrafficBackend:
         planned; see ``docs/traffic_backends.md``."""
         self._unavailable("follow_route", entity)
 
+    def end_route(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """*entity*'s route (:meth:`follow_route`) is over: it arrived, or the
+        action that gave it was stopped.  Whatever the route changed in how
+        the vehicle drives -- its own lane changes turned off -- goes back to
+        the run's settings.
+
+        Must be safe to repeat, and to call for a vehicle given no route.  The
+        base does nothing, which is right for a backend whose routes change
+        nothing else.
+        """
+
     def finish_at(
         self,
         entity: DrivenEntity,
