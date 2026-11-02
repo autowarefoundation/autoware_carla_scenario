@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
@@ -93,8 +94,10 @@ class SetSpeedAction(BaseAction):
             stall one step short.
 
     Raises:
-        ValueError: If *target_speed_kmh* is negative, if *rate_kmh_s* is not
-            positive, or if *reissue* is ``False`` while a rate is given.  A
+        ValueError: If *target_speed_kmh* is negative or not finite, if
+            *rate_kmh_s* is not positive or not finite (``None`` is the
+            unbounded rate), or if *reissue* is ``False`` while a rate is
+            given.  A
             rate of zero is a change that never arrives, and a rate that is
             never re-sent is a walk that never takes its second step; both are
             worth reporting rather than running.
@@ -119,10 +122,16 @@ class SetSpeedAction(BaseAction):
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
-        if target_speed_kmh < 0:
-            raise ValueError("target_speed_kmh must not be negative")
-        if rate_kmh_s is not None and rate_kmh_s <= 0:
-            raise ValueError("rate_kmh_s must be positive")
+        # Finite as well as in range: NaN fails every comparison, so a NaN
+        # target would never arrive and be sent to the backend every tick.
+        # ``inf`` is refused as well: no backend can hold an infinite speed,
+        # and an unbounded rate is already said by ``rate_kmh_s=None``.
+        if not (math.isfinite(target_speed_kmh) and target_speed_kmh >= 0):
+            raise ValueError("target_speed_kmh must not be negative, and finite")
+        if rate_kmh_s is not None and not (
+            math.isfinite(rate_kmh_s) and rate_kmh_s > 0
+        ):
+            raise ValueError("rate_kmh_s must be positive and finite")
         if rate_kmh_s is not None and reissue is False:
             raise ValueError(
                 "a rate-limited speed change must reissue: the traffic seam "

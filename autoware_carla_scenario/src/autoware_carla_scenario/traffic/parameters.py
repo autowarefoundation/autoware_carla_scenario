@@ -106,6 +106,7 @@ library, so the config layer and the editor can name it.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Union
@@ -296,8 +297,10 @@ class Spread:
     std: float = 0.0
 
     def __post_init__(self) -> None:
-        if not self.std >= 0.0:
-            raise ValueError(f"std must not be negative (got {self.std!r})")
+        # Finite: an infinite std draws infinite values, which an
+        # unbounded parameter's bounds would let through.
+        if not (math.isfinite(self.std) and self.std >= 0.0):
+            raise ValueError(f"std must not be negative, and finite (got {self.std!r})")
 
     def draw(self, rng: random.Random, bounds: tuple[float, float]) -> float:
         """One road user's value: from the normal distribution, cut to
@@ -336,7 +339,9 @@ def _check(
     if value is None:
         return
     low, high = bounds[name]
-    if not (low <= value.mean <= high):
+    # Finite as well: an INF high bound means "no upper limit", not that an
+    # infinite value is one a backend can use.
+    if not (math.isfinite(value.mean) and low <= value.mean <= high):
         raise ValueError(
             f"{name} must be within [{low:g}, {high:g}] (got a mean of {value.mean!r})"
         )
