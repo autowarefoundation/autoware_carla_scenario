@@ -63,7 +63,9 @@ class CameraSensorConfig:
       actor origin (the vehicle's centre, where CARLA attaches the sensor), in
       CARLA's convention (x forward, y right, z up, degrees), as a LiDAR's
       are.  This is not Autoware's ``base_link`` (the rear axle, y left): the
-      values go to ``carla.Location`` and ``carla.Rotation`` unchanged.
+      values go to ``carla.Location`` and ``carla.Rotation`` unchanged.  The
+      server mounts the sensor with them as Unreal's ``FRotator``, whose signs
+      the angle fields below give.
 
     Intrinsic matrix entries (``fx``, ``fy``, ``cx``, ``cy``) are derived
     automatically from resolution and FOV via :attr:`intrinsic_matrix`.
