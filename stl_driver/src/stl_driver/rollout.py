@@ -706,7 +706,13 @@ def _headway_slack(
     # still decline to ride its bumper.
     required = required.clamp_min(limits.standstill_gap_m)
 
-    slack = saturate((lead - station) - required, cap)
+    # Bumper to bumper, as RSS states it: `lead` is the lead's rear edge and
+    # `station` the ego's rear axle, so the front of our own car comes off
+    # first. Measured from the axle, the gap was 3.75 m too generous -- a
+    # stopped car half a metre off the bumper read as +1.2 m of slack -- and
+    # every following distance came out short by a car's front end.
+    gap = (lead - station) - limits.ego_front_m()
+    slack = saturate(gap - required, cap)
     # Saturate first, then substitute, so that "no lead vehicle" reads as
     # exactly `cap` -- the same value `_clearance` reports when there are no
     # actors.

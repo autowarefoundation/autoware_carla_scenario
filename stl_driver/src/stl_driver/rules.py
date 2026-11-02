@@ -189,7 +189,7 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             Always(headway > 0.0),
             weight=5.0,
             margin=3.0,
-            description="Stay at least a time headway behind the vehicle ahead.",
+            description="Keep the RSS safe distance, bumper to bumper, behind the vehicle ahead.",
         ),
         Rule(
             "stay_on_route",

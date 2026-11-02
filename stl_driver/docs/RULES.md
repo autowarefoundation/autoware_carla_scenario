@@ -152,9 +152,30 @@ rule whose job is to keep the vehicle out of other vehicles.
 ```
 □ (headway_slack > 0)
 ```
-Stay at least `1.4 s × speed + 4 m` behind the vehicle ahead.  The lead is
-chosen in route coordinates rather than by heading, so a vehicle on a parallel
-road does not become our lead just because it points the same way.
+Stay at least the RSS safe longitudinal distance behind the vehicle ahead
+(Shalev-Shwartz et al., 2017): far enough that, if it braked as hard as it can
+right now, we could still stop behind it after a response delay,
+
+```
+d = v·ρ + a·ρ²/2 + (v + ρ·a)² / 2·b_min − v_lead² / 2·b_max ,   d ≥ standstill_gap_m
+```
+
+with `ρ = rss_response_s` (0.5 s), `a = rss_response_accel_mps2` (2 m/s²),
+`b_min = rss_brake_mps2` (4 m/s²), `b_max = rss_lead_brake_mps2` (8 m/s²) and
+`standstill_gap_m` 2.5 m.  The last term credits the lead for its own braking,
+so at 8 m/s a lead at the same speed asks for 10.4 m and a stopped one 14.4 m.
+`headway_slack` is the bumper-to-bumper gap less `d`: from the ego's front
+bumper (`ego_rear_axle_to_centre_m + ego_length_m / 2`, 3.75 m ahead of the
+rear axle the rig frame is anchored at) to the lead's rear edge.
+
+The lead is chosen in route coordinates rather than by heading, so a vehicle on
+a parallel road does not become our lead just because it points the same way;
+an actor's centre has to be within `lead_capture_half_width_m` of the route.
+It is chosen once, at t = 0, and followed over the horizon, so a car
+overtaking from behind is never adopted half way through it.  "Ahead" starts
+at the middle of the ego's body rather than at its bumper: a vehicle cutting
+in level with our front half is followed, its gap reads negative and the
+policy drops back to let it in.
 
 ### `stay_on_route` — hard, weight 4, margin 5.0
 ```

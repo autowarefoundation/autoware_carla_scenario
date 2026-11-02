@@ -403,8 +403,43 @@ def test_headway_tightens_as_we_close_on_a_lead(config):
     signal = rollout(hold_speed_params(), inputs, config)
     slack = signal[:, Col.HEADWAY_SLACK]
     assert slack[0] > slack[-1]
-    expected0 = 30.0 - rss_distance(8.0, 0.0, config.limits)
+    # Bumper to bumper: `lead_station_m` is the lead's rear edge and the
+    # ego's station its rear axle, so the front of the ego comes off too.
+    # (This used to read `30 - rss`, a gap 3.75 m too generous; #1140.)
+    expected0 = 30.0 - ego_front_m(config) - rss_distance(8.0, 0.0, config.limits)
     assert slack[0].item() == pytest.approx(expected0, abs=1.0)
+
+
+def ego_front_m(config) -> float:
+    """Rear axle to front bumper, written out rather than asked of the config."""
+    return config.limits.ego_rear_axle_to_centre_m + config.limits.ego_length_m / 2.0
+
+
+def test_the_config_reports_the_front_bumper(config):
+    assert config.limits.ego_front_m() == pytest.approx(ego_front_m(config))
+    assert ego_front_m(config) == pytest.approx(3.75)
+
+
+def test_headway_is_measured_from_the_front_bumper(config):
+    """Issue #1140: a stopped lead 0.5 m off the bumper violates the rule."""
+    limits = config.limits
+    front = ego_front_m(config)
+    at_rest = make_inputs(config, speed0_mps=0.0, lead_station_m=front + 0.5)
+    slack = rollout(hold_speed_params(), at_rest, config)[:, Col.HEADWAY_SLACK]
+    assert slack[0].item() == pytest.approx(0.5 - limits.standstill_gap_m, abs=1e-3)
+    assert (slack < 0.0).all()
+
+    # At a matched speed, exactly the RSS distance between bumpers is the edge.
+    # The first sample is one step in, by which time the ego has covered
+    # `speed * step_s` towards a lead these inputs hold still; measured from
+    # the axle this read +2.95 m.
+    speed = 8.0
+    required = rss_distance(speed, speed, limits)
+    matched = make_inputs(
+        config, speed0_mps=speed, lead_station_m=front + required, lead_speed_mps=speed
+    )
+    slack0 = rollout(hold_speed_params(), matched, config)[0, Col.HEADWAY_SLACK].item()
+    assert slack0 == pytest.approx(-speed * config.horizon.step_s, abs=0.05)
 
 
 def test_a_lead_at_our_own_speed_needs_far_less_room_than_a_stopped_one(config):
