@@ -6,8 +6,10 @@ not, and drives so that they can stop within the road they can see.  So the
 visibility is a quantity of the run of its own, in metres, which the weather
 bounds (:func:`visibility_range`, by the weather rules of
 :mod:`autoware_carla_scenario.weather_rules`) and a traffic backend that models drivers'
-sight follows -- the ``sumo`` backend holds its traffic to the speed it can
-stop from within it (:func:`sight_speed`).  The TrafficManager has no such
+sight follows -- the ``sumo`` backend holds its traffic to the speed its
+drivers keep in it (:func:`sight_speed_at`: the rules' ``sight_speed``, which
+reads the visibility, never above the speed a car stops from within it,
+:func:`sight_speed`).  The TrafficManager has no such
 notion of its own: the ``traffic_manager`` backend holds its vehicles to it
 with ``follow_visibility: true``, and otherwise logs what it would hold them
 to.
@@ -35,9 +37,11 @@ __all__ = [
     "DEFAULT_DECEL",
     "DEFAULT_REACTION_S",
     "at_quantile",
+    "driver_quantile",
     "forget_visibility",
     "set_world_visibility",
     "sight_speed",
+    "sight_speed_at",
     "visibility",
     "visibility_range",
     "world_visibility",
@@ -130,6 +134,51 @@ def sight_speed(visibility_m: float, decel: float, reaction_s: float) -> float:
     distance = max(float(visibility_m), 0.0)
     lag = decel * max(float(reaction_s), 0.0)
     return -lag + math.sqrt(lag * lag + 2.0 * decel * distance)
+
+
+def sight_speed_at(
+    visibility_m: float,
+    quantile: float = 0.5,
+    decel: float = DEFAULT_DECEL,
+    reaction_s: float = DEFAULT_REACTION_S,
+) -> float:
+    """The speed, m/s, a driver who sees *visibility_m* metres keeps: the
+    weather rules' ``sight_speed`` at *quantile* (0-1).
+
+    The rules read the visibility (a quantity of their own: the chain
+    weather -> visibility -> speed) and are written for SUMO's default car,
+    which brakes at :data:`DEFAULT_DECEL` a :data:`DEFAULT_REACTION_S` after
+    it sees.  A car that brakes at *decel* after *reaction_s* scales that by
+    its own :func:`sight_speed` over the default car's, and never keeps more
+    than its own: whatever the rules say, it stops within what it sees.
+
+    Raises:
+        ValueError: If *decel* is not positive.
+    """
+    own = sight_speed(visibility_m, decel, reaction_s)
+    default = sight_speed(visibility_m, DEFAULT_DECEL, DEFAULT_REACTION_S)
+    kept = weather_at("sight_speed", {"visibility": float(visibility_m)}, quantile)
+    if default > 0.0:
+        kept = kept * own / default
+    return min(kept, own)
+
+
+def driver_quantile(key: str) -> float:
+    """A quantile, 0-1, of the driver *key* names (a vehicle's id): the same
+    for the same key in every run, and spread evenly over keys, so traffic
+    keeps speeds of its own (:func:`sight_speed_at`) and a run repeats."""
+    # FNV-1a, 32 bits, then murmur3's finalizer so that keys a character
+    # apart ("1", "2") land far apart: no hash() (salted per process) and no
+    # zlib (which Codon lacks).
+    h = 2166136261
+    for c in key:
+        h = ((h ^ ord(c)) * 16777619) & 0xFFFFFFFF
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+    h ^= h >> 16
+    return (h + 0.5) / 4294967296.0
 
 
 #: World (episode) id -> the visibility, metres, set in it.

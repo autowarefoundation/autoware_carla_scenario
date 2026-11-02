@@ -301,9 +301,11 @@ defaults.
       `traffic.options.lateral_resolution_m: null` it is an error before the run.
 
 - `follow_visibility` — bool
-    - Hold the backend's own traffic to the speed it stops from within what
-      its drivers see in the run's weather, `v * tau + v² / (2 * decel)` = the
-      visibility, and give each its own speed back when the weather lifts.
+    - Hold the backend's own traffic to the speed its drivers keep in what
+      they see in the run's weather -- the weather rules' `sight_speed`, which
+      reads the visibility, at each driver's own quantile, never above the
+      speed it stops from within it (`v * tau + v² / (2 * decel)` = the
+      visibility) -- and give each its own speed back when the weather lifts.
     - `sumo`: SUMO's own traffic (ambient and background vehicles), with each
       vehicle's own `tau` and `decel`. Unset, `true`; `false` ignores the
       visibility. See **Visibility** under [The SUMO backend](#the-sumo-backend).
@@ -773,8 +775,10 @@ no traffic but its own and its traffic sources' unless asked.
 CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
 know where every actor is whatever the fog. With
 `traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
-the speed it stops from within what its driver sees, worked out with SUMO's
-default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
+the speed its driver keeps in what it sees: the weather rules' `sight_speed`
+([Weather rules](odd.md#weather-rules)) at the driver's own quantile, for
+SUMO's default car's reaction (1 s) and braking (4.5 m/s²) -- about 46-62
+km/h in 50 m of fog, never more than the 62 km/h it stops from within it.
 A vehicle is never held faster than it drives anyway. One given a speed of
 its own (`set_desired_speed`, a `SetSpeedAction`, a background vehicle's spawn
 speed) is given the lesser of that and the sight speed (`set_desired_speed`),
@@ -1092,9 +1096,13 @@ as far as the run's weather lets a driver see. An
 drivers see in the weather it leaves
 ([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
 and the backend holds each of SUMO's own vehicles (ambient and background)
-to the speed it stops from within that distance: `v * tau + v² / (2 *
-decel)`, with the vehicle's own `tau` as its reaction time and its `decel` as
-its braking (`traffic.vehicles.reaction_time_s` and `decel` when set) -- a default car in 50 m of fog drives at most about 62 km/h, at
+to the speed its driver keeps in that distance: the weather rules'
+`sight_speed` ([Weather rules](odd.md#weather-rules)), which reads the
+visibility, at the driver's own quantile (`visibility.driver_quantile`, from
+the vehicle's id), scaled to the vehicle's own `tau` (reaction time) and
+`decel` (braking; `traffic.vehicles.reaction_time_s` and `decel` when set),
+and never above the speed it stops from within the visibility, `v * tau + v² /
+(2 * decel)` -- a default car in 50 m of fog drives at about 46-62 km/h, at
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the

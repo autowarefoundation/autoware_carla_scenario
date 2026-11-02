@@ -8,12 +8,16 @@ is written as conditional distributions (``weather_rules.yaml`` next to this
 module), which openodd reads (:mod:`openodd.rules`, its docs/rules.md): they
 are the CARLA backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
 
-* a **quantity** (``tire_friction``, ``visibility``) is one or more parts;
+* a **quantity** (``tire_friction``, ``visibility``, ``sight_speed``) is one
+  or more parts;
   at a run's quantile, each part gives its value and ``combine`` (``min`` or
   ``max``) joins them;
 * a **part** reads some of the weather's fields (:data:`WEATHER_INPUTS`) and
   gives a distribution (``uniform``, ``triangular`` or ``normal``) at points
-  of them, interpolated linearly between the points.
+  of them, interpolated linearly between the points;
+* a part may read another quantity, so the rules chain: ``sight_speed``, the
+  speed a driver keeps, reads the ``visibility``
+  (:func:`~autoware_carla_scenario.visibility.sight_speed_at`).
 
 A run reads other rules with ``environment.rules`` (:func:`use_weather_rules`):
 a file -- a path or an ``https://`` URL -- merged over the default rules (it
@@ -67,7 +71,7 @@ __all__ = [
 DEFAULT_RULES: Path = Path(__file__).resolve().parent / "weather_rules.yaml"
 
 #: The quantities the framework reads.
-QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility")
+QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility", "sight_speed")
 
 #: The weather's fields a part may read, as CARLA's ``WeatherParameters``
 #: name them, and ``water``: the larger of ``wetness`` and

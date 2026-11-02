@@ -1073,7 +1073,8 @@ it always did; each run starts with none, whatever the last left.
 
 What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`):
 the `sumo` backend holds its own
-traffic to the speed it stops from within it, by default
+traffic to the speed its drivers keep in it -- the weather rules'
+[`sight_speed`](#weather-rules), which reads the visibility -- by default
 ([Visibility](traffic_backends.md#the-sumo-backend)); the `traffic_manager`
 backend holds every vehicle it drives to it with `follow_visibility: true`,
 under its road's speed limit
@@ -1129,6 +1130,28 @@ quantities:
   is at the worse end of the fog's, the rain's and the light's alike -- so
   the quantity's range is the least of the parts' lows to the least of their
   highs, as before.
+
+**A chain: the speed drivers keep.** A part may read another quantity, so
+the rules chain: `sight_speed`, the speed (m/s) a driver keeps, reads the
+`visibility`. Its distribution is triangular at each visibility: at most the
+speed SUMO's default car (braking at 4.5 m/s² a second after it sees) stops
+from within it, `v * tau + v² / (2 * decel)` = the visibility, and down to
+three quarters of that (`visibility.sight_speed`).
+
+| Visibility, m | 15 | 50 | 100 | 250 | 400 |
+|---|---|---|---|---|---|
+| `sight_speed`, km/h (low / mode / high) | 22 / 27 / 29 | 46 / 59 / 62 | 70 / 88 / 93 | 117 / 148 / 155 | 150 / 190 / 200 |
+
+`visibility.sight_speed_at(visibility_m, quantile, decel, reaction_s)` reads
+it at a quantile for a car that brakes and reacts otherwise: the rules'
+value scaled by that car's stopping speed over the default car's, and never
+above that car's stopping speed. A traffic backend holds each of its
+vehicles to it at a quantile of the vehicle's own
+(`visibility.driver_quantile`, from its id: the same in every run, spread
+over the traffic), so some drivers keep close to what they can stop from and
+others well below it. `weather_rules.default_rules().sample(weather)` gives
+every quantity of a weather at once -- the grip, the visibility at its
+median, and the speed kept in that visibility.
 
 A rule file is checked when it is read: every field known, every input's
 points increasing, one value per point, and the distribution valid at every
