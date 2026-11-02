@@ -2604,7 +2604,7 @@ separate process serving <code>egodriver.EgodriverService</code>.</p>
 control. Every <code>driver.policy_timestep_s</code> it also submits fresh observations — camera
 frames, the ego's pose and dynamic state at every tick since the previous step (the
 egomotion history the upstream runtime sends), and a route window rolled forward from
-the ego's current position — and asks the policy to re-plan. Between policy steps the cached
+the ego's current position (its rear axle) — and asks the policy to re-plan. Between policy steps the cached
 plan keeps being tracked, which is how a policy slower than the simulation stays usable.</p>
 <h2 id="running-a-scenario-against-a-policy">Running a scenario against a policy<a class="headerlink" href="#running-a-scenario-against-a-policy" title="Permanent link">&para;</a></h2>
 <p>The scenario can serve the policy itself, in its own process, so one command runs
@@ -3193,6 +3193,14 @@ falls back to half the bounding-box length and a warning is logged. Set
 <p>Observations are submitted with the ego pose in the <strong>local</strong> frame and velocities in
 the <strong>rig</strong> frame; the route is submitted in the rig frame. The plan comes back in the
 local frame and is converted to the rig frame before the controller tracks it.</p>
+<p>The route starts <strong>level with the rig</strong>: its first waypoint is the rear axle's
+projection onto the ego's lane, at rig <code>x</code> of about zero, not the actor origin's,
+which is <code>rear_axle_offset_m</code> further ahead. From there the waypoints follow the lane
+<code>route_resolution_m</code> apart, for <code>route_horizon_m</code>; where a lane splits between the
+rig and the actor origin, the route keeps to the lane the actor is on. At the very
+start of the road network, where no lane leads in, it starts at the actor origin's
+waypoint instead, so a policy should project the rig onto the route rather than assume
+it sits on the first point.</p>
 <h2 id="early-termination">Early termination<a class="headerlink" href="#early-termination" title="Permanent link">&para;</a></h2>
 <p>A policy can set <code>terminate_session</code> on its response. The entity records it, and
 <code>ScenarioRunner</code> ends the tick loop — but only after evaluating the scenario's own pass
@@ -3294,7 +3302,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 11:17:14 UTC"><span class="timeago" datetime="2026-11-01T11:17:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 11:17:14 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 14:08:58 UTC"><span class="timeago" datetime="2026-11-02T14:08:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 14:08:58 UTC">2026-11-02</span>
   </span>
 
     
