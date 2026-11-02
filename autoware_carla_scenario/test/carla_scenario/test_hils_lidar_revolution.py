@@ -12,6 +12,7 @@ them out.
 
 from __future__ import annotations
 
+import math
 import random
 from typing import List, Optional
 
@@ -87,7 +88,12 @@ def _points(rng: random.Random, serial: int) -> FloatPoints:
 
 
 def _times(rng: random.Random, dt: float, steps: int) -> List[float]:
-    """Tick times: steady, and restarted clocks (so arcs end on boundaries)."""
+    """Tick times: steady, and restarted clocks (so arcs end on boundaries).
+
+    Jittered and skipped ticks make arcs that cross a boundary, which the
+    original emitted whole (#1122): :func:`test_a_carla_lidar_stream` covers
+    them.
+    """
     times: List[float] = []
     now = 0.0
     for _ in range(steps):
@@ -119,7 +125,6 @@ def _assert_same_state(
     assert moved._first_dt == original._first_dt
     assert moved._time == original._time
     assert moved._swept == original._swept
-    assert moved._start % 360.0 < 1e-6 or moved._start % 360.0 > 360.0 - 1e-6
     assert len(moved._parts) == len(original._parts)
     for a, b in zip(moved._parts, original._parts):
         assert a is b
@@ -323,3 +328,162 @@ def test_a_restart_after_a_split_starts_at_the_sensors_start() -> None:
     assert revolution.add(0.05, lidar.arc(0.05)) is None
     whole = revolution.add(0.10, lidar.arc(0.05))
     assert whole is not None and _rays(whole, 0) == list(range(360))
+
+
+class _Sensor:
+    """CARLA's ray-cast LiDAR as RayCastSemanticLidar.cpp turns it.
+
+    Its horizontal angle starts at 0 when it is spawned and grows by
+    ``rotation_frequency * 360 * dt`` every tick, measured or not; a tick
+    shoots the rays from where the angle was, first ray included, each at yaw
+    ``angle - 180``, and lays the hits out channel by channel.  Rays are
+    ``step`` degrees apart, on multiples of ``step`` (so some fall exactly on
+    a revolution's start); each point's intensity is the ray's index, its z
+    the channel.  A ray misses with probability ``miss``.
+    """
+
+    def __init__(
+        self,
+        rotation_frequency: float,
+        rng: random.Random,
+        channels: int = 3,
+        step: float = 0.5,
+        miss: float = 0.1,
+    ) -> None:
+        self.per_second = 360.0 * rotation_frequency
+        self.rng = rng
+        self.channels = channels
+        self.step = step
+        self.miss = miss
+        self.angle = 0.0
+        self.np_rng = np.random.default_rng(rng.randrange(2**32))
+
+    def tick(self, dt: float) -> FloatPoints:
+        arc = self.per_second * dt
+        first = math.ceil(self.angle / self.step - 1e-9)
+        end = math.ceil((self.angle + arc) / self.step - 1e-9)
+        self.angle += arc
+        rays = np.tile(np.arange(first, end, dtype=np.float64), self.channels)
+        channel = np.repeat(np.arange(self.channels, dtype=np.float64), end - first)
+        hit = self.np_rng.random(len(rays)) >= self.miss
+        rays, channel = rays[hit], channel[hit]
+        yaw = np.radians(rays * self.step - 180.0)
+        distance = 5.0 + 20.0 * self.np_rng.random(len(rays))
+        return np.stack(
+            [distance * np.cos(yaw), distance * np.sin(yaw), channel, rays], axis=1
+        ).astype(np.float32)
+
+
+@pytest.mark.parametrize("seed", range(8))
+@pytest.mark.parametrize(
+    ("rotation_frequency", "dt"),
+    [
+        (15.0, 0.05),  # 270 degrees a tick (#1122)
+        (10.0, 0.05),  # 180, dividing 360
+        (7.0, 0.05),  # 126
+        (19.0, 0.05),  # 342
+        (25.0, 1.0 / 30.0),  # 300
+        (10.0, 1.0 / 30.0),  # 120, dividing 360
+        (1.0, 0.05),  # 18
+    ],
+)
+def test_a_carla_lidar_stream(seed: int, rotation_frequency: float, dt: float) -> None:
+    """Jittered and long ticks, lost measurements and new sensors.
+
+    Every revolution holds the rays measured from the first ray of the
+    first arc that arrived (a sensor's first measurements may not), through
+    360 degrees, each ray once.  An arc of a whole revolution or more, by
+    the time since the measurement before (which a lost one lengthens), is
+    one as it came, and the next revolution starts with the next arc.
+    """
+    rng = random.Random(seed)
+    revolution = LidarRevolution(rotation_frequency, dt)
+    per_second = 360.0 * rotation_frequency
+    per_revolution = 720  # rays 0.5 degrees apart
+    time = 0.0
+    last = 0.0  # when the measurement before was taken
+    sensor: Optional[_Sensor] = None
+    start: Optional[int] = None  # the first ray of the current revolution
+    pending: List[FloatPoints] = []
+    emitted = 0
+    for _ in range(400):
+        kind = rng.random()
+        if sensor is None or (kind < 0.02 and time > 5.0 * dt):
+            # A new episode: a new sensor, the clock started over (so the
+            # first measurement that arrives is not after the last one),
+            # its first measurements lost or not.
+            sensor = _Sensor(rotation_frequency, rng)
+            time = 0.0
+            start = None
+            pending = []
+            for _ in range(rng.choice([0, 0, 1, 3])):
+                time += dt
+                sensor.tick(dt)
+            step = dt  # a whole tick, as first_dt says
+            last = time
+        elif kind < 0.06:
+            step = dt * rng.uniform(1.0, 30.0)  # a long tick
+        elif kind < 0.35:
+            step = dt * rng.uniform(0.75, 1.25)  # jitter
+        else:
+            step = dt
+        lost = start is not None and rng.random() < 0.1
+        short = 360.0 - per_second * (time + step - last)
+        if not lost and 0.0 < short < 2.0:
+            # Within a few rays of a whole revolution, an arc's first ray
+            # (where its revolution starts) and its last fall either side of
+            # the cut: make it a whole revolution.
+            step += (short + 1.0) / per_second
+        time += step
+        points = sensor.tick(step)
+        if lost:
+            continue  # lost on the way
+        whole = revolution.add(time, points)
+        swept, last = per_second * (time - last), time
+        if swept + _REVOLUTION_TOLERANCE_DEG >= 360.0:
+            assert whole is points
+            pending = []
+            start = None
+            continue
+        if start is None and len(points):
+            start = int(points[:, 3].min())
+        pending.append(points)
+        assert start is not None  # three channels: no arc misses every ray
+        if whole is None:
+            assert sensor.angle < (start + per_revolution + 1) * 0.5
+            continue
+        emitted += 1
+        assert sensor.angle >= (start + per_revolution - 1) * 0.5
+        gathered = np.concatenate(pending)
+        rays = gathered[:, 3].astype(np.int64)
+        inside = (rays >= start) & (rays < start + per_revolution)
+        want = gathered[inside]
+        assert np.array_equal(
+            whole[np.lexsort((whole[:, 3], whole[:, 2]))],
+            want[np.lexsort((want[:, 3], want[:, 2]))],
+        )
+        pending = [gathered[~inside]]
+        start += per_revolution
+    assert emitted > 0
+
+
+@pytest.mark.parametrize("lost", [1, 2, 3])
+def test_revolutions_start_where_the_first_arc_that_arrives_does(lost: int) -> None:
+    # CARLA turns a LiDAR from the tick it is spawned on; the measurements
+    # taken before the bridge's listen() took hold never arrive.
+    sensor = _Sensor(15.0, random.Random(lost), miss=0.0)
+    for _ in range(lost):
+        sensor.tick(0.05)
+    revolution = LidarRevolution(15.0, 0.05)
+    first = 540 * lost  # 270 degrees, 540 rays a tick
+    emitted = []
+    for tick in range(1, 9):
+        whole = revolution.add(0.05 * tick, sensor.tick(0.05))
+        if whole is not None:
+            emitted.append(whole)
+    assert len(emitted) == 6
+    for index, whole in enumerate(emitted):
+        for channel in range(3):
+            rays = sorted(int(r) for r in whole[whole[:, 2] == channel, 3])
+            begin = first + 720 * index
+            assert rays == list(range(begin, begin + 720))
