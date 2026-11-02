@@ -309,9 +309,8 @@ def test_a_stopped_car_half_a_metre_off_the_bumper_violates_safe_headway():
             renderer(actor(centre, 0.0, length=length)), Pose.identity(), table(), 0.0, CONFIG
         )
         slack = headway_slack_now(forecast)
-        # The disc cover reports the rear up to 0.6 m short of the box (the
-        # rear disc's radius reaches past the box's corners on the centreline).
-        assert slack == pytest.approx(bumper_gap - limits.standstill_gap_m, abs=0.7)
+        # The lead's rear is its box's (#1151), so the gap is exact.
+        assert slack == pytest.approx(bumper_gap - limits.standstill_gap_m, abs=1e-3)
         assert slack < 0.0, f"a stopped car {bumper_gap} m off the bumper must violate"
 
 
@@ -337,12 +336,112 @@ def test_the_following_distance_is_kept_from_the_front_bumper():
         CONFIG,
     )
     slack = headway_slack_now(forecast, speed0_mps=speed, lead_speed_mps=speed)
-    # The first sample is one step in, by which time the ego has covered
-    # `speed * step_s` towards a lead the inputs hold still, and the disc
-    # cover puts the rear up to 0.6 m short of the box. Measured from the
-    # axle instead, this read about +2.9 m.
-    expected = -speed * CONFIG.horizon.step_s
-    assert slack == pytest.approx(expected, abs=0.7)
+    # The first sample is one step in: the ego has covered `speed * step_s`,
+    # and `lead_station_m[0]`, the lead's forecast one step in, has moved on
+    # by as much. With the lead's rear taken from its box (#1151) the gap is
+    # then exactly the required one. Measured from the axle instead, this
+    # read about +2.9 m; from the disc cover's rear, 0.6 m short.
+    assert slack == pytest.approx(0.0, abs=1e-3)
+
+
+def test_the_lead_is_reported_at_its_rear_bumper():
+    """Issue #1151: the rear is the box's, not the disc cover's.
+
+    A 4.5 x 2.0 m car centred 20 m ahead ends at 17.75 m. Taken as the rear
+    disc's centre less its radius, it read 17.165 m -- the radius is mostly
+    half the car's *width* -- and every following gap 0.6 m short.
+    """
+    forecast = forecast_actors(
+        renderer(actor(20.0, 0.0, length=4.5, width=2.0)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    assert forecast.lead_station_m[0] == pytest.approx(20.0 - 4.5 / 2.0, abs=1e-3)
+
+
+def test_a_long_vehicle_elsewhere_does_not_move_the_lead():
+    """The disc count is shared, so a bus anywhere changed every lead's rear.
+
+    It read 16.95 m with a 12 m bus 30 m off to the side, against 17.165 m
+    without one.
+    """
+    car = actor(20.0, 0.0, length=4.5, width=2.0, track_id="car")
+    bus = actor(40.0, 30.0, length=12.0, width=2.5, track_id="bus")
+    alone = forecast_actors(renderer(car), Pose.identity(), table(), 0.0, CONFIG)
+    with_bus = forecast_actors(renderer(car, bus), Pose.identity(), table(), 0.0, CONFIG)
+    assert with_bus.lead_station_m == pytest.approx(alone.lead_station_m, abs=1e-6)
+    assert with_bus.lead_station_m[0] == pytest.approx(17.75, abs=1e-3)
+
+
+def test_a_lead_at_an_angle_reaches_back_by_its_corner():
+    """Turned to the road, the nearest part of the box is a rear corner."""
+    yaw = 0.3
+    forecast = forecast_actors(
+        renderer(actor(20.0, 0.0, yaw=yaw, length=4.5, width=2.0)),
+        Pose.identity(),
+        table(),
+        0.0,
+        CONFIG,
+    )
+    corner = 20.0 - 2.25 * math.cos(yaw) - 1.0 * math.sin(yaw)
+    assert forecast.lead_station_m[0] == pytest.approx(corner, abs=1e-3)
+
+
+def test_a_lead_on_a_bend_is_reported_at_its_inner_rear_corner():
+    """On a left bend the inner rear corner is the nearest part of the box.
+
+    The car sits tangent to a 60 m left turn, centred 25 m round it. Its rear
+    bumper's middle is 22.75 m round the arc; the corner on the inside of the
+    turn sits on a tighter radius, so it is a little further back along the
+    route than that.
+    """
+    radius = 60.0
+    curved = build_route_table(
+        curved_route(radius_m=radius),
+        ds=CONFIG.route_table_ds_m,
+        length_m=CONFIG.route_table_length_m(),
+    )
+    angle = 25.0 / radius
+    heading = np.array([math.cos(angle), math.sin(angle)])
+    centre = radius * np.array([math.sin(angle), 1.0 - math.cos(angle)])
+    forecast = forecast_actors(
+        renderer(actor(float(centre[0]), float(centre[1]), yaw=angle, length=4.5, width=2.0)),
+        Pose.identity(),
+        curved,
+        0.0,
+        CONFIG,
+    )
+    inner_corner = centre - 2.25 * heading + 1.0 * np.array([-heading[1], heading[0]])
+    # Arc length to the corner's foot on the circle (centre of turn at (0, R)).
+    expected = radius * math.atan2(inner_corner[0], radius - inner_corner[1])
+    assert expected < 25.0 - 2.25
+    # Within the route polyline's chord error, a few millimetres here.
+    assert forecast.lead_station_m[0] == pytest.approx(expected, abs=0.01)
+
+
+def test_a_stopped_queue_closes_to_the_standstill_gap():
+    """At rest, `safe_headway` holds exactly down to `standstill_gap_m`.
+
+    Behind a stopped car the rule's boundary is where the ego queues. With the
+    disc cover's rear it sat 0.6 m further back than the gap the rule states
+    (0.8 m with a long vehicle in the scene); now it is the stated gap.
+    """
+    limits = CONFIG.limits
+    length = 4.5
+    centre = ego_front_m() + limits.standstill_gap_m + length / 2.0
+    bus = actor(40.0, 30.0, length=12.0, width=2.5, track_id="bus")
+    for scene in ((), (bus,)):
+        forecast = forecast_actors(
+            renderer(actor(centre, 0.0, length=length), *scene),
+            Pose.identity(),
+            table(),
+            0.0,
+            CONFIG,
+        )
+        assert headway_slack_now(forecast) == pytest.approx(0.0, abs=1e-3)
+    # And a decimetre closer is a violation, not slack.
+    closer = forecast_actors(
+        renderer(actor(centre - 0.1, 0.0, length=length)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    assert headway_slack_now(closer) == pytest.approx(-0.1, abs=1e-3)
 
 
 def test_a_vehicle_cutting_in_beside_our_front_half_is_the_lead():
@@ -369,7 +468,7 @@ def test_a_vehicle_cutting_in_beside_our_front_half_is_the_lead():
 
 def test_a_vehicle_reaching_into_our_front_half_is_followed():
     """Its centre is behind ours, but its nose is past the middle of the ego."""
-    # A 4.5 m car centred on the rear axle: its front disc sits 1.69 m ahead
+    # A 4.5 m car centred on the rear axle: its front bumper is 2.25 m ahead
     # of the axle, past the ego's middle (1.4 m).
     forecast = forecast_actors(renderer(actor(0.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
     assert np.isfinite(forecast.lead_station_m).all()
@@ -378,9 +477,9 @@ def test_a_vehicle_reaching_into_our_front_half_is_followed():
 def test_a_vehicle_level_with_our_back_half_is_not_the_lead():
     """Beside our rear, it is the merger's turn to yield, not ours.
 
-    Its front disc is 0.69 m ahead of the rear axle: past the old mark of
-    axle + 0.5 m, which made it the lead and had the policy brake for a car
-    that was behind its own middle.
+    Its front bumper is 1.25 m ahead of the rear axle, short of the ego's
+    middle (1.4 m), but past the old mark of axle + 0.5 m, which made it the
+    lead and had the policy brake for a car that was behind its own middle.
     """
     forecast = forecast_actors(renderer(actor(-1.0, 1.2)), Pose.identity(), table(), 0.0, CONFIG)
     assert not np.isfinite(forecast.lead_station_m).any()
