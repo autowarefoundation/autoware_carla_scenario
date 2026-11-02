@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -626,6 +627,97 @@ def test_a_failed_conversion_keeps_the_recording_it_would_replace(
     assert not failed.ok and not failed.skipped
     assert failed.error == "ValueError: cannot read A.trajectory.jsonl"
     assert (tmp_path / "A.rrd").read_bytes() == b"OLD"
+
+
+# ---------------------------------------------------------------------------
+# A PATH that cannot be converted (#1176)
+# ---------------------------------------------------------------------------
+
+
+def test_convert_outputs_refuses_a_path_that_does_not_exist(
+    tmp_path: Path, no_sdk_cli: _FakeModule
+) -> None:
+    missing = tmp_path / "no-such-run"
+    with pytest.raises(FileNotFoundError, match="no-such-run"):
+        convert_outputs(missing)
+    assert not missing.exists()
+
+
+def test_the_command_line_reports_a_path_that_does_not_exist(
+    tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "no-such-run"
+    assert main([str(missing)]) == 1
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 0/1 written" in out
+    assert f"[FAILED] {missing}: FileNotFoundError:" in out
+
+
+def test_a_bad_path_does_not_stop_the_others(
+    tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "A.trajectory.jsonl").write_text("{}\n")
+    missing = tmp_path / "no-such-run"
+
+    assert main([str(missing), str(good)]) == 1
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 1/2 written" in out
+    assert f"[FAILED] {missing}: FileNotFoundError:" in out
+    assert (good / "A.rrd").read_bytes() == b"RRD"
+
+
+def test_a_path_whose_scratch_directory_cannot_be_made_is_reported(
+    tmp_path: Path,
+    no_sdk_cli: _FakeModule,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tempfile
+
+    good = tmp_path / "good"
+    locked = tmp_path / "locked"
+    for directory in (good, locked):
+        directory.mkdir()
+        (directory / "A.trajectory.jsonl").write_text("{}\n")
+    real = tempfile.mkdtemp
+
+    def mkdtemp(prefix: str, dir: Path) -> str:
+        if Path(dir) == locked:
+            raise PermissionError(13, "Permission denied", str(dir))
+        return real(prefix=prefix, dir=dir)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
+    assert main([str(locked), str(good)]) == 1
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 1/2 written" in out
+    assert f"[FAILED] {locked}: PermissionError:" in out
+    assert (good / "A.rrd").read_bytes() == b"RRD"
+    assert not (locked / "A.rrd").exists()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root can write a read-only directory",
+)
+def test_a_read_only_path_is_reported_and_the_others_still_convert(
+    tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = tmp_path / "good"
+    locked = tmp_path / "locked"
+    for directory in (good, locked):
+        directory.mkdir()
+        (directory / "A.trajectory.jsonl").write_text("{}\n")
+    locked.chmod(0o555)
+    try:
+        assert main([str(locked), str(good)]) == 1
+    finally:
+        locked.chmod(0o755)
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 1/2 written" in out
+    assert f"[FAILED] {locked}: PermissionError:" in out
+    assert (good / "A.rrd").read_bytes() == b"RRD"
 
 
 # ---------------------------------------------------------------------------
