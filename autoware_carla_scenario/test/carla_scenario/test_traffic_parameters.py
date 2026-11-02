@@ -99,11 +99,29 @@ def test_nothing_set_is_every_default() -> None:
         ("imperfection", 2.0),
         ("max_lateral_speed_mps", 0.0),
         ("max_lateral_accel", -1.0),
+        # An INF bound is "no upper limit", not a usable value.
+        ("speed_factor", math.inf),
+        ("min_gap_m", math.inf),
+        ("reaction_time_s", math.nan),
     ],
 )
 def test_an_impossible_value_is_refused(field: str, value: float) -> None:
     with pytest.raises(ValueError, match=field):
         VehicleParameters(**{field: Spread(value)})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("mean", [math.inf, math.nan])
+def test_a_non_finite_mean_is_refused_as_not_finite(mean: float) -> None:
+    """Not "must be within [0.05, inf]", which an infinite mean reads as met."""
+    with pytest.raises(ValueError, match="speed_factor must be finite"):
+        VehicleParameters(speed_factor=Spread(mean))
+
+
+@pytest.mark.parametrize("std", [math.inf, math.nan])
+def test_a_non_finite_std_is_refused(std: float) -> None:
+    """An infinite std draws infinite values, which an INF bound lets through."""
+    with pytest.raises(ValueError, match="std must be finite and not negative"):
+        Spread(1.0, std)
 
 
 def test_a_mapping_with_an_unknown_key_is_refused() -> None:

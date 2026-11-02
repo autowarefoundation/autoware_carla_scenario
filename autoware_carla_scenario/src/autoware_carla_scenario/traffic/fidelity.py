@@ -68,21 +68,45 @@ class MesoscopicConfig:
     junction_control: bool = True
 
     def __post_init__(self) -> None:
-        if not self.micro_radius_m > 0.0:
+        # Every number must be finite as well as in range: NaN fails every
+        # comparison, so a NaN radius would never demote anything and a NaN
+        # interval would never decide again, with no error.  ``inf`` is
+        # refused too: nothing reads it as "unbounded" here -- an infinite
+        # radius is ``enabled=False`` said another way, an infinite interval
+        # freezes every level after the first decision, and an infinite
+        # headway or spacing stops the queue model -- and ``enabled`` already
+        # says "off".
+        if not (math.isfinite(self.micro_radius_m) and self.micro_radius_m > 0.0):
             raise ValueError(
-                f"micro_radius_m must be positive (got {self.micro_radius_m!r})"
+                "micro_radius_m must be positive and finite "
+                f"(got {self.micro_radius_m!r})"
+            )
+        if self.meso_radius_m is not None and not math.isfinite(self.meso_radius_m):
+            raise ValueError(
+                f"meso_radius_m must be finite or null (got {self.meso_radius_m!r})"
             )
         if self.meso_radius_m is not None and self.meso_radius_m < self.micro_radius_m:
             raise ValueError(
                 "meso_radius_m must be at least micro_radius_m "
                 f"(got {self.meso_radius_m!r} < {self.micro_radius_m!r})"
             )
-        if not self.update_interval_s >= 0.0:
+        if not (
+            math.isfinite(self.update_interval_s) and self.update_interval_s >= 0.0
+        ):
             raise ValueError(
-                f"update_interval_s must not be negative (got {self.update_interval_s!r})"
+                "update_interval_s must be finite and not negative "
+                f"(got {self.update_interval_s!r})"
             )
-        if not (self.headway_s > 0.0 and self.jam_spacing_m > 0.0):
-            raise ValueError("headway_s and jam_spacing_m must be positive")
+        if not (
+            math.isfinite(self.headway_s)
+            and self.headway_s > 0.0
+            and math.isfinite(self.jam_spacing_m)
+            and self.jam_spacing_m > 0.0
+        ):
+            raise ValueError(
+                "headway_s and jam_spacing_m must be positive and finite "
+                f"(got {self.headway_s!r} and {self.jam_spacing_m!r})"
+            )
 
     @property
     def demote_radius_m(self) -> float:
