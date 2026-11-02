@@ -2479,6 +2479,91 @@ class TestTheJunctionEditor:
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == ""
 
+    def test_deleting_a_controller_clears_the_cards_that_named_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Actions and conditions alike, wherever the condition is written."""
+        from autoware_carla_scenario.authoring.models import ConditionNode
+
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        assertion = ConditionNode(
+            type="traffic_signal_controller",
+            params={"controller": "junction_1", "signal_phase": "phase_1"},
+        )
+        draft.document.assertions.pass_conditions.append(
+            ConditionNode(type="all", children=[assertion])
+        )
+        store.save(draft)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/delete")
+
+        document = _document(store, draft_id)
+        card = _present(document.action(node_id), "the card")
+        condition = _present(document.condition(assertion.id), "the condition")
+        for node in (card, condition):
+            assert node.params["controller"] == ""
+            assert node.params["signal_phase"] == ""
+
+    def test_a_controller_added_after_a_delete_does_not_adopt_its_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The new cycle reuses the freed name; the old cards must not follow it."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/delete")
+        client.post(f"/draft/{draft_id}/signal-controller")
+
+        document = _document(store, draft_id)
+        assert [c.name for c in document.map.traffic_signal_controllers] == [
+            "junction_1"
+        ]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["controller"] == ""
+
+    def test_deleting_a_renamed_controller_leaves_no_dangling_name(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A delete must not leave a validation error the user did not cause."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0", data={"name": "main_junction"}
+        )
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/delete")
+
+        report = validate_document(_document(store, draft_id))
+        assert not [
+            issue.message
+            for issue in report.issues
+            if node_id in (issue.object_id or "")
+            and "No signal controller named" in issue.message
+        ]
+
+    def test_deleting_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Mid-rename duplicates: the name the cards use is still declared."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[1].name = "junction_1"
+        store.save(draft)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/delete")
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
     def test_deleting_a_controller_drops_the_offsets_that_measured_from_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

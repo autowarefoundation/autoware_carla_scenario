@@ -660,14 +660,28 @@ class EditorService:
             controller.delay_seconds = 0.0
 
     def delete_signal_controller(self, document: ScenarioDocument, index: int) -> None:
-        """Remove a controller, and drop the offsets that measured from it."""
+        """Remove a controller, and every offset and card that named it.
+
+        The cards are cleared as a deleted phase's are, not left naming a
+        controller that is gone: that would be a validation error the user did
+        not cause, and worse, the next "add controller" takes the first unused
+        name -- this one -- and the card would silently drive that new,
+        unrelated cycle.  A controller still called the same thing (a document
+        mid-rename may hold two) keeps its cards and offsets.
+        """
         controller = self._signal_controller(document, index)
         name = controller.name
         document.map.traffic_signal_controllers.pop(index)
+        if any(c.name == name for c in document.map.traffic_signal_controllers):
+            return
         for other in document.map.traffic_signal_controllers:
             if other.reference == name:
                 other.reference = None
                 other.delay_seconds = 0.0
+        for path, node in _signal_controller_uses(document):
+            if str(node.params.get("controller") or "") == name:
+                node.params["controller"] = ""
+                node.params["signal_phase"] = ""
 
     def add_signal_phase(self, document: ScenarioDocument, index: int) -> None:
         """Add a step to a cycle, already naming every group it drives."""
