@@ -2431,7 +2431,7 @@ one scenario, or fail on a count, not on a rate:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="commonroad-metrics">CommonRoad metrics<a class="headerlink" href="#commonroad-metrics" title="Permanent link">&para;</a></h3>
-<p>Ten more read how critical the frame is, with TU Munich's
+<p>Fourteen more read how critical the frame is, with TU Munich's
 <a href="https://commonroad.in.tum.de/">CommonRoad</a> tools:
 <a href="https://github.com/CommonRoad/CommonRoad-CriMe">CriMe</a>'s criticality
 measures and <a href="https://github.com/CommonRoad/commonroad-reach">CommonRoad-Reach</a>'s
@@ -2499,6 +2499,30 @@ folds them.</p>
 <td>max</td>
 </tr>
 <tr>
+<td><code>crime_btn</code></td>
+<td>ratio</td>
+<td>The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above <code>1</code> braking alone no longer avoids it (CriMe BTN)</td>
+<td>max</td>
+</tr>
+<tr>
+<td><code>crime_stn</code></td>
+<td>ratio</td>
+<td>The lateral acceleration the ego needs to steer clear of a road user over the most it can steer (8 m/s^2); above <code>1</code> steering alone no longer avoids it (CriMe STN)</td>
+<td>max</td>
+</tr>
+<tr>
+<td><code>crime_ttr_s</code></td>
+<td>s</td>
+<td>How long the ego can go on as it goes before no evasive manoeuvre -- braking, kick-down, steering left or right, each simulated -- avoids the collision (CriMe TTR); at or under WTTR; <code>inf</code> when it hits no one, <code>0</code> when none does even now. Evaluated every 0.5 s by default</td>
+<td>min</td>
+</tr>
+<tr>
+<td><code>crime_wttr_s</code></td>
+<td>s</td>
+<td>How long the ego can go on as it goes before no way it can go is free of collisions to the end of the horizon, by CommonRoad-Reach's reachable set (CriMe WTTR); <code>inf</code> when it hits no one, <code>0</code> when no way is left even now</td>
+<td>min</td>
+</tr>
+<tr>
 <td><code>reach_drivable_area_m2</code></td>
 <td>m^2</td>
 <td>The road the ego can still reach without a collision at the end of the horizon (CommonRoad-Reach); <code>0</code> when every way it can go meets a road user: a collision it can no longer avoid</td>
@@ -2544,8 +2568,36 @@ extra) converts the world's OpenDRIVE once per machine, cached under
 the map. A worker evaluates each frame moved to the ego and turned so the lane
 under it runs along +x: CriMe projects speeds onto a lane with the cosine of
 the lane's own heading, which is the speed along the lane only there. On a
-frame of ten road users the eight CriMe measures take about 95 ms together,
-the drivable area about 155 ms (over 2 s instead of 3, 45 ms).</p>
+frame of ten road users the eight CriMe measures from TTC to ALatReq take
+about 95 ms together, BTN and STN 170 ms more, the drivable area about 155 ms
+(over 2 s instead of 3, 45 ms), and WTTR about 110 ms on a frame with a
+collision ahead, next to nothing on one without. TTR simulates the ego's
+manoeuvres: about 2 s a frame with a collision ahead.</p>
+<p>A slow metric is evaluated less often than every <code>period_s</code> (0.1 s): at its
+own period, <code>metric_periods_s</code>, by default 0.5 s for <code>crime_ttr_s</code>
+(<code>DEFAULT_METRIC_PERIODS_S</code>). A frame is asked only the metrics due on it, and
+a metric condition counts each NG sample until the next, so <code>max_ng_seconds</code>
+is still simulated time. Set the periods of any CommonRoad metric; the
+dictionary given replaces the one set, so start from it to keep the others':</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.commonroad</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">commonroad_settings</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">configure_commonroad_metrics</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">configure_commonroad_metrics</span><span class="p">(</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">metric_periods_s</span><span class="o">=</span><span class="p">{</span><span class="o">**</span><span class="n">commonroad_settings</span><span class="p">()</span><span class="o">.</span><span class="n">metric_periods_s</span><span class="p">,</span> <span class="s2">"crime_wttr_s"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</code></pre></div>
+<p>A CommonRoad metric is computed only when a metric condition reads it, so a
+heavy one costs nothing until a scenario judges on it. The heavy ones
+(<code>HEAVY_METRICS</code>, <code>crime_ttr_s</code> today) can also be turned off for a run that
+should not wait on them, a quick iteration on a scenario that judges on TTR:
+a metric condition on one is then not judged -- the run neither fails nor
+passes on it, and a warning says so. They are on by default; turn them off
+with <code>metrics.heavy=false</code>, <code>$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0</code>, or
+<code>configure_commonroad_metrics(heavy_metrics=False)</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>metrics.heavy<span class="o">=</span><span class="nb">false</span>
+</code></pre></div>
 <p>The workers are started with, in order, the command in
 <code>$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER</code>, <code>commonroad-metrics-worker</code> on
 the <code>PATH</code>, or, in a checkout, <code>uv run --project commonroad_metrics
@@ -2553,8 +2605,9 @@ commonroad-metrics-worker</code> (which builds its environment the first time). 
 judged on a CommonRoad metric whose workers cannot be started fails with
 <code>CommonRoadWorkerError</code> rather than pass on a metric that read nothing.
 <code>configure_commonroad_metrics()</code> (in <code>autoware_carla_scenario.commonroad</code>)
-changes the period, the number of workers, the horizon, the radius,
-CommonRoad-Reach's settings and the command.</p>
+changes the period (<code>period_s</code>, and <code>metric_periods_s</code> for each metric), the
+number of workers, the horizon, the radius, CommonRoad-Reach's settings and
+the command.</p>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
 <thead>
@@ -2595,42 +2648,42 @@ run fails when its NG frames add up to more than <code>max_ng_seconds</code> of
 simulated time -- with the default <code>0</code>, at its first NG frame -- at the time
 they do. Each NG frame counts until the next frame evaluated (the last, the
 run's end, counts nothing); a frame the metric reads nothing in is not NG.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">COLLISION_AT_FAULT</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">CRIME_TTC_S</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">OFFROAD</span><span class="p">,</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">)</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="o">...</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">COLLISION_AT_FAULT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"collision at fault"</span><span class="p">)</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="p">)</span>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="c1"># Off the road for more than a second, in all.</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">OFFROAD</span><span class="p">,</span> <span class="n">max_ng_seconds</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"off the road"</span><span class="p">)</span>
-<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="p">)</span>
-<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
-<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>                <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
-<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
-<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>                <span class="mf">0.5</span><span class="p">,</span>
-<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"closer than half a metre"</span><span class="p">,</span>
-<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>            <span class="p">)</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="p">)</span>
-<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
-<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
-<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>                <span class="n">CRIME_TTC_S</span><span class="p">,</span>
-<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
-<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>                <span class="mf">1.5</span><span class="p">,</span>
-<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>                <span class="n">max_ng_seconds</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
-<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"TTC under 1.5 s"</span><span class="p">,</span>
-<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>            <span class="p">)</span>
-<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a>        <span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">COLLISION_AT_FAULT</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">CRIME_TTC_S</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">OFFROAD</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">)</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="o">...</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">COLLISION_AT_FAULT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"collision at fault"</span><span class="p">)</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>        <span class="p">)</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        <span class="c1"># Off the road for more than a second, in all.</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>            <span class="n">MetricCondition</span><span class="p">(</span><span class="n">OFFROAD</span><span class="p">,</span> <span class="n">max_ng_seconds</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"off the road"</span><span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="p">)</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>                <span class="n">MIN_DISTANCE_TO_OBSTACLE_M</span><span class="p">,</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>                <span class="mf">0.5</span><span class="p">,</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"closer than half a metre"</span><span class="p">,</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>            <span class="p">)</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>        <span class="p">)</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>            <span class="n">MetricCondition</span><span class="p">(</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>                <span class="n">CRIME_TTC_S</span><span class="p">,</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>                <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="p">,</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>                <span class="mf">1.5</span><span class="p">,</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>                <span class="n">max_ng_seconds</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>                <span class="n">label</span><span class="o">=</span><span class="s2">"TTC under 1.5 s"</span><span class="p">,</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>            <span class="p">)</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>        <span class="p">)</span>
 </code></pre></div>
 <p>Judged after the run, a metric condition neither ends a run early nor
 composes: <code>PersistentCondition</code>, <code>NotCondition</code>, <code>AndCondition</code>,
@@ -2676,9 +2729,9 @@ where the vehicle drives, counts though the vehicle is in its lane, so
 lets them through). To judge a run by how much of
 the box is off instead, use <code>OffRoadFractionCondition(fraction, entity_name,
 *, label)</code>, a condition rather than a metric:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">OffRoadFractionCondition</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">OffRoadFractionCondition</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"offroad"</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">OffRoadFractionCondition</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">OffRoadFractionCondition</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"offroad"</span><span class="p">))</span>
 </code></pre></div>
 <p>Every tick it samples a 5 x 3 grid of points over the entity's bounding box
 (the ego's unless <code>entity_name</code> names another): 5 evenly spaced along its
@@ -2723,7 +2776,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 11:08:50 UTC"><span class="timeago" datetime="2026-11-02T11:08:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 11:08:50 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 15:40:18 UTC"><span class="timeago" datetime="2026-11-02T15:40:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 15:40:18 UTC">2026-11-02</span>
   </span>
 
     
