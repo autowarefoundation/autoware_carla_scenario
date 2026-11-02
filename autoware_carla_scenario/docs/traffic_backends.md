@@ -601,7 +601,10 @@ back what the route changed in how the vehicle drives, and does nothing by
 default. The TrafficManager backend turns its own lane changes, which
 `follow_route` turned off, back to the run's `lane_changes` (and the vehicle's
 overrides); unset, the TrafficManager's default, on. A route handed over untimed
-ends its action at once and stays the driver's, its lane changes off.
+ends its action at once, with nothing left to watch it: the TrafficManager
+backend gives the lane changes back itself once the vehicle comes within a path
+point's spacing (5 m) of its path's last point, where the TrafficManager has
+used the path up and drives on as it likes.
 
 ### Handing a vehicle back
 

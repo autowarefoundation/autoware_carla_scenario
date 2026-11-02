@@ -664,6 +664,67 @@ def test_the_end_of_a_route_gives_lane_changes_back(
     assert client.tm.called("auto_lane_change") == [(npc, after)]
 
 
+class _Point:
+    """A CARLA location on the x axis, for the distance to a path's end."""
+
+    def __init__(self, x: float) -> None:
+        self.x = float(x)
+        self.y = 0.0
+
+    def distance(self, other: "_Point") -> float:
+        return abs(self.x - other.x)
+
+
+class _MovingActor(_Actor):
+    def __init__(self, actor_id: int) -> None:
+        super().__init__(actor_id)
+        self.location = _Point(0.0)
+        self.is_alive = True
+
+    def get_location(self) -> _Point:
+        return self.location
+
+
+@pytest.mark.parametrize(("lane_changes", "after"), [(None, True), (False, False)])
+def test_a_route_used_up_gives_lane_changes_back(
+    monkeypatch: pytest.MonkeyPatch, lane_changes: Optional[bool], after: bool
+) -> None:
+    """A route nothing watches to its end (an untimed ``RoutingAction``
+    hands it over and is done) is ended by the backend where the vehicle uses
+    its path up (#1100): its lane changes come back there, not before."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    import autoware_carla_scenario.coordinate.transform as transform  # noqa: PLC0415
+
+    _stub_route_planning(monkeypatch)
+    monkeypatch.setattr(transform, "to_carla_location", lambda pose: _Point(5 * pose))
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=lane_changes)
+    )
+    npc = _MovingActor(5)
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    backend.follow_route(
+        _Entity(npc),  # type: ignore[arg-type]
+        world,  # type: ignore[arg-type]
+        [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+    )
+    client.tm.calls.clear()
+
+    backend._keep_scenario_vehicles(world, 0.0)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == []
+    assert backend._lane_locked == {5}
+
+    npc.location = _Point(8.0)  # within a point's spacing of its last, 10 m
+    backend._keep_scenario_vehicles(world, 0.05)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, after)]
+    assert backend._lane_locked == set()
+    backend._keep_scenario_vehicles(world, 0.1)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, after)]
+
+
 def test_the_end_of_a_route_follows_the_entity_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

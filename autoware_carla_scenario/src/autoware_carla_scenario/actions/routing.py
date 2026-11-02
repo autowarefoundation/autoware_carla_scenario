@@ -844,7 +844,8 @@ class RoutingAction(TrajectoryRun):
             return
         self._stepping = True
         # Watched to its end: the route is ended there (_end_route).  One
-        # handed over untimed is the driver's from here on, lanes and all.
+        # handed over untimed is ended by its backend, where the vehicle uses
+        # its path up (the TrafficManager's _end_route_at_path_end).
         self._route_held = True
 
     def _hand_route(
