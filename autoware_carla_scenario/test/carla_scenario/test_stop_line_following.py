@@ -192,3 +192,41 @@ def test_the_wrapper_passes_the_map_manager_s_routing_graph(
     _no_graph_built(monkeypatch)
     assert stop_line.get_stop_line_linestrings_with_following(ids[0]) == []
     graph.following.assert_called_once()
+
+
+class _NoGraphMapManager:
+    """A stand-in for the initialised MapManager whose routing graph must not
+    be asked for: building it reads the whole map."""
+
+    def __init__(self, lanelet_map: LaneletMap) -> None:
+        self.lanelet_map = lanelet_map
+
+    @property
+    def routing_graph(self) -> object:
+        raise AssertionError("the routing graph was asked for")
+
+
+def test_the_wrapper_needs_no_graph_for_a_lanelet_s_own_stop_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.coordinate import stop_line
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    lanelet_map, ids, line = _road_with_stop_line_on(0)
+    mm = _NoGraphMapManager(lanelet_map)
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    found = stop_line.get_stop_line_linestrings_with_following(ids[0])
+    assert [(owner, ls.id) for owner, ls in found] == [(ids[0], line)]
+
+
+def test_the_wrapper_needs_no_graph_to_reject_a_missing_lanelet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.coordinate import stop_line
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    lanelet_map, _, _ = _road_with_stop_line_on(0)
+    mm = _NoGraphMapManager(lanelet_map)
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    with pytest.raises(ValueError, match=f"Lanelet ID {_MISSING} not found"):
+        stop_line.get_stop_line_linestrings_with_following(_MISSING)

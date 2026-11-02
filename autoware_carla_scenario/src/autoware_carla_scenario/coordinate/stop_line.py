@@ -50,7 +50,9 @@ def get_stop_line_linestrings_with_following(
 
     Successors are found in the :attr:`MapManager.routing_graph` (by German
     traffic rules, for a vehicle, as one built for the call would be), which
-    is built once for the run rather than on every call.
+    is built once for the run rather than on every call -- and only when
+    they are searched: a lanelet with a stop line of its own, or one not in
+    the map, never asks for it.
 
     Requires :class:`MapManager` to be initialised.
 
@@ -58,8 +60,14 @@ def get_stop_line_linestrings_with_following(
         ValueError: If the lanelet ID is not found in the map.
     """
     mm = MapManager.get_instance()
+    lanelet_map = mm.lanelet_map
+    # The lanelet's own stop lines first, as the search itself does, so that
+    # the graph (some 40 s on a city map) is built only to look further.
+    own = _linestrings_of(lanelet_map, lanelet_id)
+    if own:
+        return [(lanelet_id, ls) for ls in own]
     return _linestrings_of_with_following(
-        mm.lanelet_map, lanelet_id, depth, routing_graph=mm.routing_graph
+        lanelet_map, lanelet_id, depth, routing_graph=mm.routing_graph
     )
 
 
