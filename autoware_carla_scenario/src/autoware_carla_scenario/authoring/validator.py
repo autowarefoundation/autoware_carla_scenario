@@ -37,6 +37,7 @@ from ..trajectory.authoring import (
 from ..constants import MIN_BACKGROUND_SPEED_KMH
 from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from .registry import (
+    EQUAL_TO_DEFAULT_TOLERANCE,
     INT_KINDS,
     INT_LIST_KINDS,
     ActionSpec,
@@ -377,6 +378,7 @@ def _check_condition(
 
     _check_collision_names_one_target(out, path, node)
     _check_condition_frame(out, path, node)
+    _check_equal_tolerance(out, path, spec, node)
 
     for index, child in enumerate(node.children):
         _check_condition(out, f"{path}.children[{index}]", child, refs, owner)
@@ -429,6 +431,18 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
     elif limit is not None and count > limit:
         out.error(
             path, f"{spec.title} takes at most {limit} child constraint(s).", node.id
+        )
+
+    if node.type == "lanelet_length" and str(node.params.get("rule")) == "equal_to":
+        # The sweeper's LaneletLengthConstraint has no tolerance to give it, and
+        # a measured centerline length is never a round number: the "=" rule
+        # matches no lanelet.  A warning, so a document that used it still loads.
+        out.warn(
+            f"{path}.rule",
+            'A lanelet length "=" a value matches within 1e-6 m, so it matches '
+            "practically no lanelet: bound the length with ≥ and ≤ "
+            "(an And of two Lanelet length constraints) instead.",
+            node.id,
         )
 
     for index, child in enumerate(node.constraints):
@@ -932,6 +946,42 @@ def _check_traffic_constraints(out: _Collector, path: str, node: ActionNode) -> 
         out.error(
             f"{path}.constraints",
             f"The constraints do not parse: {exc}",
+            node.id,
+        )
+
+
+def _check_equal_tolerance(
+    out: _Collector, path: str, spec: ConditionSpec, node: ConditionNode
+) -> None:
+    """An ``=`` rule needs a tolerance it can be met within (#1091).
+
+    A negative tolerance is refused when the condition is built, so it is an
+    error here.  An ``=`` left at the runtime's 1e-6 on a card measuring a
+    physical quantity (its tolerance field has a unit) is only a warning: a
+    document written before the field existed must still load and run as it
+    did, but a measured speed or distance practically never lands that close
+    to the threshold, so the rule would never fire.
+    """
+    field_spec = next((f for f in spec.fields if f.name == "tolerance"), None)
+    if field_spec is None:
+        return
+    tolerance = _number(node.params, "tolerance")
+    if tolerance is not None and tolerance < 0:
+        out.error(
+            f"{path}.tolerance",
+            f"{field_spec.label} must not be negative.",
+            node.id,
+        )
+        return
+    if str(node.params.get("rule")) != "equal_to" or not field_spec.unit:
+        return
+    if tolerance is None or tolerance <= EQUAL_TO_DEFAULT_TOLERANCE:
+        out.warn(
+            f"{path}.tolerance",
+            f'{spec.title} "=" compares within {EQUAL_TO_DEFAULT_TOLERANCE:g} '
+            f"{field_spec.unit}, which a measured value practically never "
+            f"lands in, so the rule would never fire: give a tolerance "
+            f"(say 0.1 {field_spec.unit}), or use ≤ or ≥.",
             node.id,
         )
 

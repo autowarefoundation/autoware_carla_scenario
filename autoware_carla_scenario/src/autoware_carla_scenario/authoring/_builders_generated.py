@@ -254,6 +254,7 @@ def build_acceleration_condition(
         value=params["value"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         direction=AccelerationDirection[str(params["direction"])],
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -472,6 +473,7 @@ def build_route_progress_condition(
         value=params["value"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         anchor=(str(params["anchor"]) if params["anchor"] is not None else None),
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -495,6 +497,7 @@ def build_speed_condition(
         direction=SpeedDirection[str(params["direction"])],
         coordinate_system=SpeedCoordinateSystem.ENTITY,
         reference_entity_name=str(params["entity"]),
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -639,6 +642,7 @@ def build_entity_distance_condition(
         rule=ComparisonRule[str(params["rule"]).upper()],
         distance_type=RelativeDistanceType[str(params["distance_type"])],
         edge_to_edge=params["edge_to_edge"],
+        tolerance=params["tolerance"],
         coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
         signed=params["signed"],
@@ -666,6 +670,7 @@ def build_distance_condition(
         position=position,
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -687,6 +692,7 @@ def build_relative_speed_condition(
         value=params["value"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         direction=SpeedDirection[str(params["direction"])],
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -740,6 +746,7 @@ def build_ttc_condition(
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         edge_to_edge=params["edge_to_edge"],
+        tolerance=params["tolerance"],
         coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )
@@ -766,6 +773,7 @@ def build_ttc_to_position_condition(
         rule=ComparisonRule[str(params["rule"]).upper()],
         position=position,
         edge_to_edge=params["edge_to_edge"],
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 
@@ -786,6 +794,7 @@ def build_time_headway_condition(
         target=str(params["target"]),
         value=params["seconds"],
         rule=ComparisonRule[str(params["rule"]).upper()],
+        tolerance=params["tolerance"],
         coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
     )
@@ -886,6 +895,7 @@ def build_metric_condition(
         metric=str(params["metric"]),
         rule=ComparisonRule[str(params["rule"]).upper()],
         value=params["value"],
+        tolerance=params["tolerance"],
         label=compiled.label,
     )
 

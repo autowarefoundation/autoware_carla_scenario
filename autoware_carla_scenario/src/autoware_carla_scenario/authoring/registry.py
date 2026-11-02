@@ -633,6 +633,41 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
+#: The runtime conditions' own ``tolerance`` default, which a card left without
+#: one keeps: a document written before the field existed means what it meant.
+EQUAL_TO_DEFAULT_TOLERANCE = 1e-6
+
+
+def _tolerance_field(unit: str, example: str) -> FieldSpec:
+    """Return the tolerance an ``=`` rule compares within, in *unit*.
+
+    A card measuring a continuous quantity -- a speed, a distance, a time to
+    collision -- offers ``=`` through :func:`_rule_field`, and without this the
+    runtime's 1e-6 applied: a measured speed lands within a micrometre per
+    second of 10 m/s on practically no tick, so "Speed = 10" never fired
+    (#1091).  The other rules do not read it.  *example* is a tolerance that
+    makes sense in *unit*, for the help text.
+
+    Not required, and blank means the old 1e-6, so documents that used ``=``
+    before the field existed still load and behave as they did; the validator
+    warns about them instead (``_check_equal_tolerance``).
+    """
+    return FieldSpec(
+        name="tolerance",
+        label="Tolerance (=)",
+        kind="number",
+        default=EQUAL_TO_DEFAULT_TOLERANCE,
+        unit=unit,
+        required=False,
+        help=(
+            'Only read by the "=" predicate, which holds while the measured '
+            "value is within this much of the threshold, either side.  A "
+            "measured value almost never lands exactly on a threshold, so "
+            f"give a margin such as {example}; the other predicates ignore it."
+        ),
+    )
+
+
 def _edge_to_edge_field() -> FieldSpec:
     """Return the bounding-box-versus-centres switch.
 
@@ -3332,6 +3367,7 @@ register_condition_spec(
                     "so -30 with at most reads at least 30 m behind."
                 ),
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "Distance from the subject to the target.  Say which frame and "
@@ -3622,6 +3658,7 @@ register_condition_spec(
                 default=20.0,
                 unit="m",
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "Distance from an entity to a place on the map -- a stop line, a "
@@ -3655,6 +3692,7 @@ register_condition_spec(
             ),
             _coordinate_system_field(),
             _edge_to_edge_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "Time to collision from the subject to the target.  Measured "
@@ -3717,6 +3755,7 @@ register_condition_spec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
             _edge_to_edge_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "Time until the subject reaches a place on the map -- a stop "
@@ -3759,6 +3798,7 @@ register_condition_spec(
                 name="seconds", label="Headway", kind="number", default=2.0, unit="s"
             ),
             _coordinate_system_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "How long the follower would take to reach where the vehicle "
@@ -3819,6 +3859,7 @@ register_condition_spec(
                     '"less than 0" rule on it can never fire.'
                 ),
             ),
+            _tolerance_field("m/s", "0.1 m/s"),
         ),
         description="Speed of a single entity.",
     )
@@ -3862,6 +3903,7 @@ register_condition_spec(
                     "junction:K:entry or junction:K:exit (K from 0)."
                 ),
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "How far an entity (the ego when none is named) has come along the "
@@ -3915,6 +3957,7 @@ register_condition_spec(
                     '"less than -3" rule on it can never fire.'
                 ),
             ),
+            _tolerance_field("m/s²", "0.2 m/s²"),
         ),
         description=(
             "Acceleration of a single entity.  Read from CARLA directly, not "
@@ -3972,6 +4015,7 @@ register_condition_spec(
                     "frame."
                 ),
             ),
+            _tolerance_field("m/s", "0.1 m/s"),
         ),
         description=(
             "Speed of one entity relative to another: the subject's velocity "
@@ -4615,6 +4659,7 @@ register_condition_spec(
                     "happens) or 0 for an event."
                 ),
             ),
+            _tolerance_field("", "0.1 in the metric's unit"),
         ),
         description=(
             "How the ego drives, read off the world: a collision, leaving the "

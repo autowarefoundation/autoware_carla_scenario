@@ -1547,6 +1547,8 @@ class TestSpeedCard:
                 "rule": rule,
                 "value": value,
                 "direction": direction,
+                # The compiler fills every field in, so a builder reads each.
+                "tolerance": 1e-6,
             },
             label="card",
         )
