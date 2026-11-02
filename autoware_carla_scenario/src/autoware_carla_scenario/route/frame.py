@@ -256,6 +256,14 @@ def ego_placement(
     Raises:
         ValueError: If the spawn is not on the route, or not before the goal.
     """
+    # Every comparison with a NaN is false: without this, a NaN spawn_s
+    # passes both checks below and locate() puts it on the last lanelet.
+    if not math.isfinite(spawn_s) or spawn_s < 0.0:
+        raise ValueError(f"ego_spawn_s must be finite and not negative, got {spawn_s}")
+    if not math.isfinite(goal_margin) or goal_margin < 0.0:
+        raise ValueError(
+            f"ego_goal_margin must be finite and not negative, got {goal_margin}"
+        )
     if spawn_s > frame.length:
         raise ValueError(
             f"ego_spawn_s {spawn_s:g} m is past the end of the route "
