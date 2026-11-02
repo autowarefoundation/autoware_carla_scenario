@@ -26,7 +26,12 @@ from carla_driver_interface.geometry import Pose, Trajectory
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.fallback import emergency_brake_plan, hold_plan
-from stl_driver.frenet import build_route_table, distance_behind_start, project_to_frenet
+from stl_driver.frenet import (
+    RouteTable,
+    build_route_table,
+    distance_behind_start,
+    project_to_frenet,
+)
 from stl_driver.optimizer import PlanSolution, RobustnessOptimizer
 from stl_driver.perception import (
     TrafficLight,
@@ -173,12 +178,14 @@ class EgoPolicy(BaseDriver):
             )
 
         try:
+            frame = self._locate_ego(route)
             inputs = self._build_inputs(
                 route_in_rig=route,
                 anchor=anchor,
                 renderer_data=ctx.renderer_data,
                 speed_mps=speed_mps,
                 accel_mps2=accel_mps2,
+                frame=frame,
             )
         except ValueError:
             # A degenerate route -- all waypoints coincident, say. Coasting is
@@ -200,12 +207,17 @@ class EgoPolicy(BaseDriver):
             # `hard` meaningless.
             with self._warm_start_lock:
                 self._warm_start = None
+            # From where the ego is on the route, not from the table's first
+            # point: the table reaches back behind the ego (`_locate_ego`).
+            table, station0, offset0 = frame
             return DriveResult(
                 trajectory_in_rig=emergency_brake_plan(
                     ctx.time_now_us,
                     speed_mps,
                     self.config,
-                    centreline_xy=inputs.route_xy.cpu().numpy(),
+                    route=table,
+                    station0_m=station0,
+                    offset0_m=offset0,
                 ),
                 debug_scalars=scalars,
             )
@@ -280,15 +292,12 @@ class EgoPolicy(BaseDriver):
             self._anchor_accel_mps2 = plausible
         return plausible
 
-    def _build_inputs(
-        self,
-        route_in_rig: np.ndarray,
-        anchor: Pose,
-        renderer_data,
-        speed_mps: float,
-        accel_mps2: float,
-    ) -> RolloutInputs:
-        """Everything the rollout needs that does not depend on the plan."""
+    def _locate_ego(self, route_in_rig: np.ndarray) -> tuple[RouteTable, float, float]:
+        """The route table and the ego's ``(station, offset)`` on it.
+
+        Raises:
+            ValueError: for a degenerate route (`build_route_table`).
+        """
         config = self.config
         # The runtime publishes the route from the ego's projection, but a
         # route starting ahead of it -- at the road network's start, or from
@@ -302,7 +311,24 @@ class EgoPolicy(BaseDriver):
             behind_m=distance_behind_start(route_in_rig, np.zeros(2)),
         )
         station, offset = project_to_frenet(table, np.zeros((1, 2)))
-        station0, offset0 = float(station[0]), float(offset[0])
+        return table, float(station[0]), float(offset[0])
+
+    def _build_inputs(
+        self,
+        route_in_rig: np.ndarray,
+        anchor: Pose,
+        renderer_data,
+        speed_mps: float,
+        accel_mps2: float,
+        frame: tuple[RouteTable, float, float] | None = None,
+    ) -> RolloutInputs:
+        """Everything the rollout needs that does not depend on the plan.
+
+        ``frame`` is `_locate_ego`'s answer for ``route_in_rig``, when the
+        caller already has it.
+        """
+        config = self.config
+        table, station0, offset0 = frame if frame is not None else self._locate_ego(route_in_rig)
 
         with self._warm_start_lock:
             previous = self._light

@@ -335,6 +335,50 @@ def test_a_plan_at_rest_starts_at_the_ego(policy):
     assert np.linalg.norm(result.trajectory_in_rig.positions[0, :2]) < 0.3
 
 
+def stopped_car_ahead(x_m: float) -> CarlaRendererData:
+    return CarlaRendererData(
+        ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_NONE,
+        ego_traffic_light_distance_m=-1.0,
+        speed_limit_mps=13.9,
+        actors=[
+            CarlaActorState(
+                track_id="a",
+                type_id="vehicle.tesla.model3",
+                pose_local_to_aabb=PoseProto(
+                    vec=Vec3(x=x_m, y=0.0, z=0.0),
+                    quat=QuatProto(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
+                aabb=AABB(size_x=4.5, size_y=2.0, size_z=1.6),
+                dynamic_state=DynamicState(linear_velocity=Vec3(x=0.0, y=0.0, z=0.0)),
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize("speed_mps", [2.0, 3.0])
+def test_an_emergency_stop_starts_at_the_ego(policy, speed_mps):
+    """A car stopped 5 m ahead leaves no plan that keeps clear, so the policy
+    brakes. With the route starting 1.4 m ahead of the rig, the table reaches
+    back behind the ego; the stop is laid out from the ego's station, not
+    from the table's first point, which would put every pose behind it."""
+    result = policy.drive(
+        context(
+            route=route_ahead_of_the_ego(),
+            speed_mps=speed_mps,
+            renderer_data=stopped_car_ahead(5.0),
+        )
+    )
+    assert result.debug_scalars["stl_fallback"] == 1.0
+    positions = result.trajectory_in_rig.positions
+    dt = CONFIG.horizon.step_s
+    first_step = (speed_mps - CONFIG.limits.emergency_decel_mps2 * dt) * dt
+    assert positions[0, 0] == pytest.approx(first_step, abs=1e-6)
+    assert np.all(np.diff(positions[:, 0]) >= 0.0)
+    assert positions[-1, 0] == pytest.approx(
+        speed_mps**2 / (2.0 * CONFIG.limits.emergency_decel_mps2), abs=speed_mps * dt
+    )
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
