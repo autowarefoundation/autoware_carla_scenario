@@ -343,6 +343,105 @@ def test_route_stops_when_the_road_ends() -> None:
     assert route.shape == (1, 3)
 
 
+class _LaneWaypoint:
+    """A waypoint on a straight lane along CARLA's ``heading_deg``, at
+    *station* metres from the lane's start (``start``), which has no
+    predecessor; past it, *ways_in* lanes lead in (as at a merge), the extra
+    ones offset sideways by 3 m in CARLA's +y."""
+
+    def __init__(
+        self, station: float, heading_deg: float = 0.0, ways_in: int = 1, lane: int = 0
+    ) -> None:
+        self.station = station
+        self.heading_deg = heading_deg
+        self.ways_in = ways_in
+        self.lane = lane
+        yaw = math.radians(heading_deg)
+        side = 3.0 * lane
+        self.transform = SimpleNamespace(
+            location=SimpleNamespace(
+                x=station * math.cos(yaw) - side * math.sin(yaw),
+                y=station * math.sin(yaw) + side * math.cos(yaw),
+                z=0.0,
+            )
+        )
+
+    def next(self, step: float) -> list:
+        return [_LaneWaypoint(self.station + step, self.heading_deg, self.ways_in)]
+
+    def previous(self, step: float) -> list:
+        station = self.station - step
+        if station < 0.0:
+            return []
+        # The lane nearest the rig listed last, so taking the first one fails.
+        return [
+            _LaneWaypoint(station, self.heading_deg, self.ways_in, lane)
+            for lane in reversed(range(self.ways_in))
+        ]
+
+
+class _LaneMap:
+    """``get_waypoint`` projects onto the lane exactly, as CARLA's does."""
+
+    def __init__(self, heading_deg: float = 0.0, ways_in: int = 1) -> None:
+        self.heading_deg = heading_deg
+        self.ways_in = ways_in
+
+    def get_waypoint(self, location: SimpleNamespace) -> _LaneWaypoint:
+        yaw = math.radians(self.heading_deg)
+        station = location.x * math.cos(yaw) + location.y * math.sin(yaw)
+        return _LaneWaypoint(station, self.heading_deg, self.ways_in)
+
+
+@pytest.mark.parametrize("heading_deg", [0.0, 90.0, -135.0])
+def test_the_route_starts_level_with_the_rig_not_the_actor_origin(
+    heading_deg: float,
+) -> None:
+    """The rig is the rear axle, 1.4 m behind the actor origin ``get_waypoint``
+    is asked about: the route must begin there, not 1.4 m ahead (#1141)."""
+    yaw = math.radians(heading_deg)
+    transform = _transform(
+        x=100.0 * math.cos(yaw), y=100.0 * math.sin(yaw), yaw=heading_deg
+    )
+    actor = _actor(transform)
+    rig = to_local_pose(transform, rear_axle_offset_m=-1.4)
+
+    route = route_waypoints_in_rig(
+        _LaneMap(heading_deg), actor, rig, horizon_m=10.0, resolution_m=2.0
+    )
+
+    assert np.allclose(route[0], [0.0, 0.0, 0.0], atol=1e-6)
+    assert np.allclose(route[:, 0], [0.0, 2.0, 4.0, 6.0, 8.0], atol=1e-6)
+    assert np.allclose(route[:, 1], 0.0, atol=1e-6)
+
+
+def test_of_lanes_leading_in_the_route_starts_on_the_one_the_rig_is_on() -> None:
+    transform = _transform(x=100.0)
+    route = route_waypoints_in_rig(
+        _LaneMap(ways_in=3),
+        _actor(transform),
+        to_local_pose(transform, rear_axle_offset_m=-1.4),
+        horizon_m=4.0,
+        resolution_m=2.0,
+    )
+
+    assert np.allclose(route[0], [0.0, 0.0, 0.0], atol=1e-6)
+
+
+def test_at_the_start_of_the_road_the_route_starts_where_it_can() -> None:
+    """Nothing leads in: the actor's own waypoint is the first there is."""
+    transform = _transform(x=1.0)
+    route = route_waypoints_in_rig(
+        _LaneMap(),
+        _actor(transform),
+        to_local_pose(transform, rear_axle_offset_m=-1.4),
+        horizon_m=4.0,
+        resolution_m=2.0,
+    )
+
+    assert np.allclose(route[0], [1.4, 0.0, 0.0], atol=1e-6)
+
+
 def _map_with_a_fork() -> MagicMock:
     """Road 1 along +x; 4 m on, road 1 goes on and road 2 turns off along +y."""
     carla_map = MagicMock()

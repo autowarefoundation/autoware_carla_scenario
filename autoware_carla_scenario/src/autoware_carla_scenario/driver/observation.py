@@ -50,6 +50,10 @@ __all__ = [
 #: coordinates and centimetres, which lands far outside this range.
 _MAX_PLAUSIBLE_AXLE_OFFSET_M: float = 5.0
 
+#: How far ahead of the rig (metres) the actor's waypoint may lie and still
+#: start the route as it is: closer than this, there is nothing to step back.
+_ALREADY_LEVEL_M: float = 1e-3
+
 #: Fallback when a fork in the road offers no continuation within the horizon.
 _MIN_ROUTE_POINTS: int = 2
 
@@ -423,6 +427,45 @@ def _leads_onto(
     return False
 
 
+def _in_rig(
+    waypoint: "carla.Waypoint", to_rig: Pose
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """*waypoint*'s location in the rig frame (*to_rig* maps local into it)."""
+    location = waypoint.transform.location
+    return to_rig.transform_points(
+        np.stack([to_local_vector(location.x, location.y, location.z)])
+    )[0]
+
+
+def _back_to_the_rig(waypoint: "carla.Waypoint", ego_pose: Pose) -> "carla.Waypoint":
+    """The waypoint level with the rig, *waypoint* stepped back along its lane.
+
+    ``get_waypoint`` is asked for the actor's location, its origin at the
+    vehicle centre, while the rig the route is published in is the rear axle,
+    ``rear_axle_offset_m`` behind it: walked from there, the route would begin
+    that far ahead of the ego.  Stepping back by how far ahead of the rig the
+    waypoint lies starts it level with the rig instead.  Of several lanes
+    leading in, the one nearest the rig is taken; with none (the start of the
+    road network), *waypoint* is kept.
+    """
+    to_rig = ego_pose.inverse()
+    ahead = float(_in_rig(waypoint, to_rig)[0])
+    if ahead <= _ALREADY_LEVEL_M:
+        return waypoint
+    behind = list(waypoint.previous(ahead))
+    if not behind:
+        return waypoint
+    best = behind[0]
+    best_distance_sq = math.inf
+    for way in behind:
+        point = _in_rig(way, to_rig)
+        distance_sq = float(point[0]) ** 2 + float(point[1]) ** 2
+        if distance_sq < best_distance_sq:
+            best = way
+            best_distance_sq = distance_sq
+    return best
+
+
 def route_waypoints_in_rig(
     carla_map: "carla.Map",
     actor: "carla.Actor",
@@ -433,7 +476,10 @@ def route_waypoints_in_rig(
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """Return the road ahead of *actor* as waypoints in the rig frame.
 
-    Walks CARLA's road graph forward from the ego's current waypoint.  At a fork it
+    Walks CARLA's road graph forward from the ego's current waypoint, the lane
+    point level with the rig (the rear axle, *ego_pose*'s origin): the first
+    waypoint is the rig's projection onto its lane, at rig ``x`` of about zero,
+    and the walk covers *horizon_m* from there.  At a fork it
     takes the continuation onto one of *route_roads* -- the OpenDRIVE roads of the
     route the scenario sends the ego along, outside its junctions -- or, into a
     junction, the lane through it that comes out on one; the first one when none
@@ -456,6 +502,7 @@ def route_waypoints_in_rig(
     if waypoint is None:
         logger.warning("Ego is not on a drivable waypoint; sending an empty route")
         return np.zeros((0, 3))
+    waypoint = _back_to_the_rig(waypoint, ego_pose)
 
     step = max(resolution_m, 0.1)
     points: List[np.ndarray[tuple[int], np.dtype[np.float64]]] = []

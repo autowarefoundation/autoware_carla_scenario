@@ -24,7 +24,12 @@ from dataclasses import dataclass
 import numpy as np
 from carla_driver_interface import polyline
 
-__all__ = ["RouteTable", "build_route_table", "project_to_frenet"]
+__all__ = ["RouteTable", "build_route_table", "distance_behind_start", "project_to_frenet"]
+
+
+#: How far behind the route's start (metres) a point may lie before the table
+#: is extended to cover it: closer, clamping it onto the start costs nothing.
+_LEVEL_M = 1e-6
 
 
 @dataclass(frozen=True)
@@ -49,10 +54,15 @@ class RouteTable:
     #: the rollout rather than recovered by differentiating the path; see
     #: `build_route_table`.
     curvature: np.ndarray
-    #: Arc length of the route as published, before extrapolation. The table
-    #: itself runs past this so that plan lookups never clamp; `stay_on_route`
-    #: is what discourages planning beyond it.
+    #: Station where the route as published ends, before extrapolation: its
+    #: arc length, plus `route_start_m`. The table itself runs past this so
+    #: that plan lookups never clamp; `stay_on_route` is what discourages
+    #: planning beyond it.
     published_length_m: float
+    #: Station of the route's first published point. Zero unless the table
+    #: was extended behind it (`build_route_table`'s ``behind_m``), stations
+    #: being counted from the table's own start.
+    route_start_m: float = 0.0
 
     def __len__(self) -> int:
         return len(self.xy)
@@ -104,11 +114,43 @@ class RouteTable:
         return point + offset_m * normal
 
 
+def distance_behind_start(route_in_rig: np.ndarray, point_xy: np.ndarray) -> float:
+    """How far *point_xy* lies behind the route's first point, along its first
+    segment; zero when it is level with it or ahead.
+
+    A runtime need not publish the route from where the ego is: this
+    project's sends it from the rig's projection, but at the start of the road
+    network, or from another publisher, it may start ahead -- the actor's
+    centre, say, ``rear_axle_offset`` ahead of the rig. `build_route_table`'s
+    ``behind_m`` takes this to reach back over the ego.
+    """
+    route = np.asarray(route_in_rig, dtype=np.float64).reshape(-1, 3)
+    heading = _start_heading(route)
+    if heading is None:
+        return 0.0
+    offset = np.asarray(point_xy, dtype=np.float64).reshape(2) - route[0, :2]
+    return max(0.0, -float(np.dot(offset, heading)))
+
+
+def _start_heading(route: np.ndarray) -> np.ndarray | None:
+    """Unit ``(x, y)`` direction the route leaves its first point in; ``None``
+    when it never moves."""
+    if len(route) < 2:
+        return None
+    segment = route[1:, :2] - route[0, :2]
+    lengths = np.linalg.norm(segment, axis=1)
+    moving = np.flatnonzero(lengths > 1e-9)
+    if not len(moving):
+        return None
+    return segment[moving[0]] / lengths[moving[0]]
+
+
 def build_route_table(
     route_in_rig: np.ndarray,
     *,
     ds: float,
     length_m: float,
+    behind_m: float = 0.0,
 ) -> RouteTable:
     """Resample a route polyline onto a uniform station grid.
 
@@ -116,9 +158,17 @@ def build_route_table(
         route_in_rig: ``(N, 3)`` route waypoints in the rig frame, as the
             runtime publishes them.
         ds: Station spacing for the resampled table.
-        length_m: How far the table must reach.  Should exceed anything the
-            fastest plan could travel, so that the lookup in
-            :mod:`stl_driver.rollout` never hits its clamp and loses gradient.
+        length_m: How far past the route's first point the table must reach.
+            Should exceed anything the fastest plan could travel, so that the
+            lookup in :mod:`stl_driver.rollout` never hits its clamp and loses
+            gradient.
+        behind_m: How far behind the route's first point the table must
+            reach too -- `distance_behind_start` of the ego, so the ego
+            projects onto the table rather than clamping onto its start. The
+            table then starts one spacing further back than that, rounded to
+            the grid, continuing the first segment's heading; its stations
+            count from there, so the route's first point is at
+            `RouteTable.route_start_m`.
 
     Raises:
         ValueError: if the route has fewer than two distinct points.
@@ -140,6 +190,23 @@ def build_route_table(
     # discontinuity in the gradient.
     stations = np.arange(0.0, length_m + ds, ds)
     sampled = polyline.sample(route, arc, stations, extrapolate=True)
+
+    # Before the start `polyline` clamps, which would put every point behind
+    # the route's first one on top of it: an ego there would project onto
+    # station zero wherever it stood, and everything placed relative to it --
+    # the plan, the stop line -- would land that much further ahead. The
+    # first segment's heading continued backward, as the end is continued
+    # forward, gives it a station. Whole spacings, one more than needed, so
+    # the grid ahead is the one an unextended table has and the ego has a
+    # segment behind it.
+    n_back = int(np.ceil(behind_m / ds)) + 1 if behind_m > _LEVEL_M else 0
+    route_start = n_back * ds
+    if n_back:
+        heading = _start_heading(route)
+        assert heading is not None  # the route has a nonzero length
+        direction = np.array([heading[0], heading[1], 0.0])
+        back = -ds * np.arange(n_back, 0, -1, dtype=np.float64)
+        sampled = np.concatenate([route[0] + back[:, None] * direction, sampled])
 
     xy = sampled[:, :2]
     z = sampled[:, 2]
@@ -175,7 +242,8 @@ def build_route_table(
         z=np.ascontiguousarray(z),
         tangent=np.ascontiguousarray(tangent),
         curvature=np.ascontiguousarray(curvature),
-        published_length_m=published_length,
+        published_length_m=route_start + published_length,
+        route_start_m=route_start,
     )
 
 

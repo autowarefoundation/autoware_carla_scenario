@@ -137,8 +137,9 @@ their velocity is resolved into the route's own frame and advanced there, so a
 car we are following stays in its lane however the road bends.  A straight
 line leaves the lane tangentially within a second or two, which is exactly
 when it matters.  Frenet coordinates only describe the space the route
-parameterises, though, so a vehicle behind the route's start -- and the route
-begins at the ego -- would come back at station zero, on our front bumper.
+parameterises, though, so a vehicle behind the route table's start -- which
+is at the ego, reaching back over it when the route is published from ahead of
+it -- would come back at station zero, on our front bumper.
 The two models are therefore chosen per vehicle.
 
 The clearance is an exact minimum over disc pairs, not a soft one.  A soft

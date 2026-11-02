@@ -63,7 +63,7 @@ Each simulation tick, `CarlaDriverEntity` tracks the most recent plan and applie
 control. Every `driver.policy_timestep_s` it also submits fresh observations — camera
 frames, the ego's pose and dynamic state at every tick since the previous step (the
 egomotion history the upstream runtime sends), and a route window rolled forward from
-the ego's current position — and asks the policy to re-plan. Between policy steps the cached
+the ego's current position (its rear axle) — and asks the policy to re-plan. Between policy steps the cached
 plan keeps being tracked, which is how a policy slower than the simulation stays usable.
 
 ## Running a scenario against a policy
@@ -621,6 +621,14 @@ Two conversions sit between CARLA and the contract, both handled in
 Observations are submitted with the ego pose in the **local** frame and velocities in
 the **rig** frame; the route is submitted in the rig frame. The plan comes back in the
 local frame and is converted to the rig frame before the controller tracks it.
+
+The route starts **level with the rig**: its first waypoint is the rear axle's
+projection onto the ego's lane, at rig `x` of about zero, not the actor origin's,
+which is `rear_axle_offset_m` further ahead. From there the waypoints follow the lane
+`route_resolution_m` apart, for `route_horizon_m`. At the very start of the road
+network, where no lane leads in, it starts at the actor origin's waypoint instead, so
+a policy should project the rig onto the route rather than assume it sits on the first
+point.
 
 ## Early termination
 

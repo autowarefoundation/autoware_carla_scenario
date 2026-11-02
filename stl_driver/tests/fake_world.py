@@ -110,6 +110,12 @@ class FakeWorld:
         step_s: Simulated time between drive calls.
         horizon_m: How far ahead of the ego the route sent each step reaches,
             as a runtime trims it.
+        route_resolution_m: Spacing of the route sent each step; the
+            runtime's ``driver.route_resolution_m``.
+        route_lead_m: How far ahead of the ego's projection the route sent
+            starts. The runtime starts it level with the rig, the ego's pose
+            here, so zero; where no lane leads in, it starts at the actor's
+            centre instead, ``-rear_axle_offset_m`` (about 1.4 m) ahead.
     """
 
     def __init__(
@@ -119,6 +125,8 @@ class FakeWorld:
         speed_limit_mps: float = 20.0,
         step_s: float = 0.1,
         horizon_m: float = 80.0,
+        route_resolution_m: float = 2.0,
+        route_lead_m: float = 0.0,
     ) -> None:
         self.route = (
             straight_then_curve_route() if route is None else np.asarray(route, dtype=np.float64)
@@ -126,6 +134,8 @@ class FakeWorld:
         self.speed_limit_mps = speed_limit_mps
         self.step_s = step_s
         self.horizon_m = horizon_m
+        self.route_resolution_m = route_resolution_m
+        self.route_lead_m = route_lead_m
         self._arc = polyline.arc_lengths(self.route)
 
     def environment(self, pose: Pose, now_us: int) -> CarlaRendererData:
@@ -224,8 +234,15 @@ class FakeWorld:
             )
         )
         stub.submit_egomotion_observation(egomotion, timeout=60.0)
-        # The route ahead of the ego's projection, resampled every metre.
-        stations = np.arange(station, min(station + self.horizon_m, self._arc[-1]) + 1e-9, 1.0)
+        # The route ahead of the ego's projection, as the runtime walks it:
+        # from level with the rig (or `route_lead_m` ahead), every
+        # `route_resolution_m`, for `horizon_m`.
+        start = station + self.route_lead_m
+        stations = np.arange(
+            start,
+            min(start + self.horizon_m, self._arc[-1]) + 1e-9,
+            self.route_resolution_m,
+        )
         in_rig = pose.inverse().transform_points(polyline.sample(self.route, self._arc, stations))
         stub.submit_route(
             RouteRequest(

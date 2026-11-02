@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from stl_driver.frenet import build_route_table, project_to_frenet
+from stl_driver.frenet import build_route_table, distance_behind_start, project_to_frenet
 from tests.conftest import curved_route, straight_route
 
 
@@ -123,6 +123,69 @@ def test_projection_handles_points_behind_the_route_start():
     station, offset = project_to_frenet(table, np.array([[-2.0, 0.0]]))
     assert station[0] == pytest.approx(0.0, abs=1e-6)
     assert offset[0] == pytest.approx(0.0, abs=1e-6)
+
+
+def _rotated(route: np.ndarray, yaw: float, shift: np.ndarray) -> np.ndarray:
+    rotation = np.array([[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]])
+    out = route.copy()
+    out[:, :2] = route[:, :2] @ rotation.T + shift
+    return out
+
+
+@pytest.mark.parametrize("yaw", [0.0, 0.7, -2.5])
+@pytest.mark.parametrize("ds", [1.0, 2.0])
+def test_a_table_reaching_back_gives_a_point_behind_the_route_start_its_station(ds, yaw):
+    """A route starting 1.4 m ahead of the ego, as one walked from the actor's
+    centre does: the ego is 1.4 m behind its start, not on it (#1141)."""
+    heading = np.array([np.cos(yaw), np.sin(yaw)])
+    route = _rotated(straight_route(), yaw, 1.4 * heading)
+    behind = distance_behind_start(route, np.zeros(2))
+    assert behind == pytest.approx(1.4)
+
+    table = build_route_table(route, ds=ds, length_m=200.0, behind_m=behind)
+    station, offset = project_to_frenet(table, np.zeros((1, 2)))
+
+    assert station[0] - table.route_start_m == pytest.approx(-1.4, abs=1e-6)
+    assert offset[0] == pytest.approx(0.0, abs=1e-6)
+    assert table.published_length_m - table.route_start_m == pytest.approx(300.0)
+    # Ahead of the route's start, nothing moves.
+    plain = build_route_table(route, ds=ds, length_m=200.0)
+    start = round(table.route_start_m / ds)
+    assert np.allclose(table.xy[start:], plain.xy, atol=1e-9)
+    assert np.allclose(table.curvature[start + 2 :], plain.curvature[2:], atol=1e-9)
+    point = np.array([[37.0 * heading[0], 37.0 * heading[1]]])
+    ahead, _ = project_to_frenet(table, point)
+    plain_ahead, _ = project_to_frenet(plain, point)
+    assert ahead[0] - table.route_start_m == pytest.approx(plain_ahead[0], abs=1e-6)
+
+
+def test_the_ego_on_or_ahead_of_the_route_start_extends_nothing():
+    route = straight_route()
+    assert distance_behind_start(route, np.zeros(2)) == 0.0
+    assert distance_behind_start(route, np.array([5.0, 3.0])) == 0.0
+    table = build_route_table(route, ds=1.0, length_m=200.0, behind_m=0.0)
+    assert table.route_start_m == 0.0
+    assert table.published_length_m == pytest.approx(300.0)
+
+
+def test_the_table_reaches_back_along_the_first_segment_of_a_curve():
+    """Behind its start a curve is continued along its first segment, as it is
+    past its end along its last."""
+    route = curved_route()
+    shifted = route.copy()
+    shifted[:, 0] += 2.5
+    table = build_route_table(
+        shifted, ds=1.0, length_m=200.0, behind_m=distance_behind_start(shifted, np.zeros(2))
+    )
+    points = np.array([[0.0, 0.0], [1.0, 0.2]])
+    station, offset = project_to_frenet(table, points)
+
+    first = shifted[1, :2] - shifted[0, :2]
+    first /= np.linalg.norm(first)
+    relative = points - shifted[0, :2]
+    assert station - table.route_start_m == pytest.approx(relative @ first, abs=1e-6)
+    assert offset == pytest.approx(first[0] * relative[:, 1] - first[1] * relative[:, 0], abs=1e-6)
+    assert station - table.route_start_m == pytest.approx([-2.5, -1.5], abs=1e-2)
 
 
 @pytest.mark.parametrize("ds", [1.0, 2.0])

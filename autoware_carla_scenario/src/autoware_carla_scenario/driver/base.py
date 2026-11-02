@@ -296,7 +296,8 @@ class DriverClientConfig:
     """
 
     route_horizon_m: float = 80.0
-    """How far ahead the route sent to the policy extends."""
+    """How far ahead the route sent to the policy extends, from its first
+    waypoint, which is level with the rig (the rear axle)."""
 
     route_resolution_m: float = 2.0
     """Spacing between route waypoints."""

@@ -549,8 +549,9 @@ def _predict_centres(
 
     # Frenet coordinates only describe the space the route actually
     # parameterises. Projection clamps at both ends, so a vehicle *behind* the
-    # ego -- and the route is published from the ego forward -- comes back at
-    # station zero, which would teleport every follower onto our front bumper.
+    # table's start -- which is at the ego, or a spacing or two behind it when
+    # the table reaches back over the ego -- comes back at station zero, which
+    # would teleport every follower onto our front bumper.
     # A vehicle far off to the side is no better described: the frame folds
     # where the road bends away from it.
     #
