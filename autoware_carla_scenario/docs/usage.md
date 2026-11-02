@@ -1175,7 +1175,7 @@ The page's *Download .rrd* link is the recording itself, for the native
 viewer (`rerun X.rrd`).
 
 The web viewer is the `@rerun-io/web-viewer` package of the version the
-converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.1;
+converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.2;
 a recording opens only in a viewer of its minor version). By default the page
 loads it from the unpkg CDN, pinned to that version. For a machine without
 the network, keep a copy that the viewer serves itself:
