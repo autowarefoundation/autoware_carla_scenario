@@ -341,6 +341,11 @@ def _cut_in_conditions(
         unittest.mock.patch.object(
             cut_in, "lanelets_ahead", wraps=lanelets_ahead
         ) as ahead,
+        # lanes_ahead_before_junction is the framework's, and calls its own
+        # module's lanelets_ahead: counted with the example's.
+        unittest.mock.patch(
+            "autoware_carla_scenario.coordinate.transform.lanelets_ahead", ahead
+        ),
     ):
         scenario.setup()
     # Once for the lanes the NPC cuts in on; for the ones the ego is to stay

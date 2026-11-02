@@ -241,6 +241,9 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
 | `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`. |
 | `lanelets_ahead` | A lanelet and the lanelets that follow it in the routing graph (no lane changes, every branch), up to a distance: the lanes a vehicle keeps to without changing lanes. |
+| `lanes_ahead_before_junction` | `lanelets_ahead` cut at the first junction lanelet (one with a `turn_direction` tag): the lane a vehicle is on until the next intersection. |
+| `lane_beside` | The lanelet a lane change to the `"left"` or `"right"` ends on: the routing graph's `left` / `right`, else its `adjacentLeft` / `adjacentRight`; `None` where there is none. |
+| `lane_change_target_lanelets` | `lane_beside` and the lanes ahead of it before the junction, less any the lanelet's own lane reaches too: where a lane change from a lanelet ends, read in the Lanelet2 frame (`entity_lane_of` beside a lanelet). Empty with no lane beside. |
 | `get_stop_line_poses`, `get_stop_line_poses_with_following` | Resolve stop-line `Lanelet2Pose`s for a lanelet (optionally including following lanelets). |
 
 ## Entities (`autoware_carla_scenario.entity`)
