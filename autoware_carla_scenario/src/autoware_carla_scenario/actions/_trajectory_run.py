@@ -174,7 +174,10 @@ class TrajectoryRun(BaseAction):
         following_mode: ``POSITION`` (default) or ``FOLLOW``.
         initial_distance_offset: Start this many metres along the trajectory
             instead of at its first vertex.  With a timing, the clock starts at
-            the time the trajectory reaches that point.
+            the time the trajectory reaches that point, when the first vertex
+            is due: the entity waits at the point until then (out of the
+            world, with *hidden_outside_trajectory*), and the rest of the
+            trajectory is brought forward by the time the part skipped takes.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.  Pre-tick (default), so the pose set is the one the
             world then advances from.
@@ -197,7 +200,8 @@ class TrajectoryRun(BaseAction):
             that end at no time (or a time already past).  ``None`` (default)
             takes the speed the entity had when the run started.
         hidden_outside_trajectory: Keep the entity out of the world while the
-            trajectory's clock is before its first vertex or past its last:
+            trajectory's clock is before its first vertex (or the point
+            *initial_distance_offset* starts it from) or past its last:
             parked under the map with its physics off, so it neither shows nor
             collides.  What a recording needs for a road user that enters it
             late or leaves it early, since an entity cannot be spawned once a
@@ -244,6 +248,7 @@ class TrajectoryRun(BaseAction):
     _warned_absent: bool
     _start_time: float
     _clock_shift: float
+    _clock_start: float
     _distance: float
     _speed: float
     _follower: Optional[TrajectoryFollower]
@@ -328,6 +333,7 @@ class TrajectoryRun(BaseAction):
         self._warned_absent = False
         self._start_time = 0.0
         self._clock_shift = 0.0
+        self._clock_start = 0.0
         self._distance = 0.0
         self._speed = 0.0
         self._follower = None
@@ -353,6 +359,7 @@ class TrajectoryRun(BaseAction):
         self._warned_absent = False
         self._start_time = 0.0
         self._clock_shift = 0.0
+        self._clock_start = 0.0
         self._distance = 0.0
         self._speed = 0.0
         self._follower = None
@@ -631,17 +638,26 @@ class TrajectoryRun(BaseAction):
         self._start_time = self._elapsed
         self._distance = self._initial_distance_offset
         self._clock_shift = 0.0
+        self._clock_start = self._resolved.start_time
         if (
             self._time_reference is not None
             and self._initial_distance_offset > 0.0
             and not self._gated
         ):
             # Start that far along: the trajectory's clock begins where it is
-            # there, not at its first vertex.
-            self._clock_shift = (
-                self._resolved.time_at_distance(self._initial_distance_offset)
-                - self._resolved.start_time
+            # there, not at its first vertex.  It begins when the first vertex
+            # was due -- the rest of the trajectory brought forward by the time
+            # the skipped part takes -- and until then the entity waits at the
+            # point it starts from, as on a gated trajectory's timeline
+            # (_begin_timeline).  Shifting the clock rather than waiting for
+            # the time the point was due keeps the first vertex's time as when
+            # the entity appears (hidden_outside_trajectory), and is the same
+            # in both domains: an ABSOLUTE timing's vertex times are moved as a
+            # RELATIVE one's are, which a first vertex at 0 always did.
+            self._clock_start = self._resolved.time_at_distance(
+                self._initial_distance_offset
             )
+            self._clock_shift = self._clock_start - self._resolved.start_time
         velocity = actor.get_velocity()
         self._speed = (
             math.hypot(velocity.x, velocity.y)
@@ -712,11 +728,15 @@ class TrajectoryRun(BaseAction):
         if self._timeline is not None:
             # Before the first departure (on its time), and once ended.
             return self._finished or self._elapsed < self._timeline.times[0] - 1e-9
-        now = self._trajectory_time()
-        return (
-            now < self._resolved.start_time - 1e-9
-            or now >= self._resolved.end_time - 1e-9
+        return self._before_start() or (
+            self._trajectory_time() >= self._resolved.end_time - 1e-9
         )
+
+    def _before_start(self) -> bool:
+        """Whether a timed run's clock has not reached the time it starts
+        at: the first vertex's, or the point *initial_distance_offset* starts
+        it from."""
+        return self._trajectory_time() < self._clock_start - 1e-9
 
     def _hide(self, actor: "carla.Actor", sample: TrajectorySample) -> None:
         """Park *actor* under where *sample* is, out of the simulation."""
@@ -761,6 +781,11 @@ class TrajectoryRun(BaseAction):
                     # At the end, but with the last segment's velocity rather
                     # than at rest: handed back to traffic still moving.
                     now = resolved.end_time - _END_EPSILON_S
+            if self._initial_distance_offset > 0.0 and self._before_start():
+                # Waiting at the point it starts from (_begin), at rest; the
+                # clock before it reads the part skipped.
+                start = resolved.at_time(self._clock_start)
+                return TrajectorySample(start.x, start.y, start.z, start.yaw)
             sample = resolved.at_time(now)
             # The sample moves in vertex time; the world, in scenario time,
             # which runs `scale` times slower.
@@ -938,7 +963,10 @@ class TrajectoryRun(BaseAction):
         if not resolved.closed and here >= resolved.length - ARRIVAL_TOLERANCE_M:
             self._finished = True
             return
-        if self._time_reference is not None:
+        if self._time_reference is not None and self._before_start():
+            # Not started yet: it waits, as before its first vertex's time.
+            speed = 0.0
+        elif self._time_reference is not None:
             now = self._trajectory_time()
             wanted = resolved.distance_at_time(now)
             # The recorded speed in scenario time, plus a catch-up of the
