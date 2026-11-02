@@ -458,7 +458,30 @@ def _judge_metrics(
         return result
     from .metric_batch import evaluate_metrics  # noqa: PLC0415
 
+    from .commonroad.session import (  # noqa: PLC0415
+        HEAVY_METRICS_ENV,
+        commonroad_settings,
+    )
+
     judged = [(i, c) for i, c in enumerate(scenario._fail_conditions) if is_post_run(c)]
+    settings = commonroad_settings()
+    for i, condition in judged:
+        metric = condition.metric  # type: ignore[attr-defined]
+        if not settings.evaluates(metric):
+            logger.warning(
+                "[%s] Metric condition [%d](%s) not judged: %s is a heavy "
+                "metric, and the heavy metrics are off (metrics.heavy, $%s)",
+                scenario_name,
+                i,
+                condition.label,
+                metric,
+                HEAVY_METRICS_ENV,
+            )
+    judged = [
+        (i, c)
+        for i, c in judged
+        if settings.evaluates(c.metric)  # type: ignore[attr-defined]
+    ]
     keys = [c.metric for _, c in judged]  # type: ignore[attr-defined]
     logger.info(
         "[%s] Computing %d metric(s) over %d recorded frames: %s",

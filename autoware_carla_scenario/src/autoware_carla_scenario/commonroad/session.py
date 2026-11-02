@@ -3,7 +3,11 @@ running at once.
 
 When a run that reads a CommonRoad metric is over,
 :func:`~autoware_carla_scenario.metric_batch.evaluate_metrics` hands
-:func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`.
+:func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`
+-- every :meth:`CommonRoadSettings.period_for` a metric, for the slow ones
+(:attr:`CommonRoadSettings.metric_periods_s`).  The heaviest
+(:data:`HEAVY_METRICS`) can be turned off altogether
+(:attr:`CommonRoadSettings.heavy_metrics`).
 It converts the world's map to CommonRoad (:mod:`.map`, once per machine),
 starts :attr:`CommonRoadSettings.workers` workers on it (:mod:`.worker`, kept
 for the next run on the map), and shares the frames out among them, each
@@ -18,12 +22,14 @@ from __future__ import annotations
 
 import atexit
 import logging
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..metrics import COMMONROAD_METRICS, CRIME_TTR_S
 from .frame import read_frame
 from .map import commonroad_map
 from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
@@ -46,12 +52,41 @@ def _default_workers() -> int:
     return max(1, min(4, os.cpu_count() or 1))
 
 
+#: The CommonRoad metrics that take seconds a frame: CriMe's TTR simulates
+#: the ego's evasive manoeuvres, about 2 s a frame with a collision ahead.
+HEAVY_METRICS: frozenset[str] = frozenset({CRIME_TTR_S})
+
+#: The metrics evaluated less often than every :attr:`CommonRoadSettings.period_s`
+#: by default, and how often (simulated seconds): the heavy ones every 0.5 s.
+DEFAULT_METRIC_PERIODS_S: dict[str, float] = {key: 0.5 for key in HEAVY_METRICS}
+
+#: Set to ``0`` (or ``false``, ``off``, ``no``) to turn the heavy metrics off
+#: (:attr:`CommonRoadSettings.heavy_metrics`).
+HEAVY_METRICS_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
+
+
+def _heavy_metrics_default() -> bool:
+    value = os.environ.get(HEAVY_METRICS_ENV, "").strip().lower()
+    return value not in ("0", "false", "off", "no")
+
+
+def _check_period(name: str, period: float) -> None:
+    if not (math.isfinite(period) and period > 0.0):
+        raise ValueError(f"{name} must be positive and finite, got {period}")
+
+
 @dataclass(frozen=True)
 class CommonRoadSettings:
     """How the CommonRoad metrics are evaluated.
 
     Attributes:
         period_s: Simulated seconds between two frames evaluated.
+        metric_periods_s: The same, for each metric evaluated at a period of
+            its own (a slow one less often); the others, every
+            :attr:`period_s`.  By default :data:`DEFAULT_METRIC_PERIODS_S`.
+        heavy_metrics: Whether the heavy metrics (:data:`HEAVY_METRICS`) are
+            evaluated at all; off, a metric condition on one is not judged.
+            On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``.
         workers: How many workers evaluate frames at once.
         dt: The time step of the CommonRoad scenario a frame becomes (s).
         horizon_s: How far ahead the road users' trajectories run on, and the
@@ -66,6 +101,10 @@ class CommonRoadSettings:
     """
 
     period_s: float = 0.1
+    metric_periods_s: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_METRIC_PERIODS_S)
+    )
+    heavy_metrics: bool = field(default_factory=_heavy_metrics_default)
     workers: int = field(default_factory=_default_workers)
     dt: float = 0.1
     horizon_s: float = 3.0
@@ -73,6 +112,26 @@ class CommonRoadSettings:
     reach_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_dir: Optional[Path] = None
     command: Optional[tuple[str, ...]] = None
+
+    def __post_init__(self) -> None:
+        _check_period("period_s", self.period_s)
+        for key, period in self.metric_periods_s.items():
+            if key not in COMMONROAD_METRICS:
+                raise ValueError(
+                    f"metric_periods_s: {key!r} is not a CommonRoad metric "
+                    f"({', '.join(COMMONROAD_METRICS)})"
+                )
+            _check_period(f"metric_periods_s[{key!r}]", period)
+
+    def evaluates(self, key: str) -> bool:
+        """Whether the metric *key* is evaluated: not when it is heavy and the
+        heavy metrics are off."""
+        return self.heavy_metrics or key not in HEAVY_METRICS
+
+    def period_for(self, key: str) -> float:
+        """Simulated seconds between two frames the metric *key* is evaluated
+        on."""
+        return self.metric_periods_s.get(key, self.period_s)
 
     def worker_settings(self) -> dict[str, Any]:
         return {
@@ -101,7 +160,13 @@ _POOL = _Pool()
 def configure_commonroad_metrics(**changes: Any) -> CommonRoadSettings:
     """Change how the CommonRoad metrics are evaluated
     (:class:`CommonRoadSettings`' fields); the settings now.  A change to how
-    the workers evaluate, or to how many there are, restarts them."""
+    the workers evaluate, or to how many there are, restarts them.
+
+    A field given replaces the one set, ``metric_periods_s`` too: to change
+    one metric's period and keep the others', start from those set
+    (``metric_periods_s={**commonroad_settings().metric_periods_s,
+    "crime_wttr_s": 0.3}``).
+    """
     settings = replace(_POOL.settings, **changes)
     old = _POOL.settings
     if (

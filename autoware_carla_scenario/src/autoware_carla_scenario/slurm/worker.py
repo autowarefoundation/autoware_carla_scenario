@@ -521,6 +521,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         # The submitting process already refused a batch without the extra.
         rerun = run.build_rerun_converter(*configs)
         run.apply_canvas(*configs)
+        run.apply_metrics(*configs)
         queue = run._batch_queue(
             first_cfg,
             map_paths,
