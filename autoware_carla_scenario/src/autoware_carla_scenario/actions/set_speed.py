@@ -127,7 +127,7 @@ class SetSpeedAction(BaseAction):
         # ``inf`` is refused as well: no backend can hold an infinite speed,
         # and an unbounded rate is already said by ``rate_kmh_s=None``.
         if not (math.isfinite(target_speed_kmh) and target_speed_kmh >= 0):
-            raise ValueError("target_speed_kmh must not be negative, and finite")
+            raise ValueError("target_speed_kmh must be finite and not negative")
         if rate_kmh_s is not None and not (
             math.isfinite(rate_kmh_s) and rate_kmh_s > 0
         ):

@@ -110,10 +110,17 @@ def test_an_impossible_value_is_refused(field: str, value: float) -> None:
         VehicleParameters(**{field: Spread(value)})  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("mean", [math.inf, math.nan])
+def test_a_non_finite_mean_is_refused_as_not_finite(mean: float) -> None:
+    """Not "must be within [0.05, inf]", which an infinite mean reads as met."""
+    with pytest.raises(ValueError, match="speed_factor must be finite"):
+        VehicleParameters(speed_factor=Spread(mean))
+
+
 @pytest.mark.parametrize("std", [math.inf, math.nan])
 def test_a_non_finite_std_is_refused(std: float) -> None:
     """An infinite std draws infinite values, which an INF bound lets through."""
-    with pytest.raises(ValueError, match="std must not be negative, and finite"):
+    with pytest.raises(ValueError, match="std must be finite and not negative"):
         Spread(1.0, std)
 
 

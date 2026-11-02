@@ -300,7 +300,7 @@ class Spread:
         # Finite: an infinite std draws infinite values, which an
         # unbounded parameter's bounds would let through.
         if not (math.isfinite(self.std) and self.std >= 0.0):
-            raise ValueError(f"std must not be negative, and finite (got {self.std!r})")
+            raise ValueError(f"std must be finite and not negative (got {self.std!r})")
 
     def draw(self, rng: random.Random, bounds: tuple[float, float]) -> float:
         """One road user's value: from the normal distribution, cut to
@@ -341,7 +341,9 @@ def _check(
     low, high = bounds[name]
     # Finite as well: an INF high bound means "no upper limit", not that an
     # infinite value is one a backend can use.
-    if not (math.isfinite(value.mean) and low <= value.mean <= high):
+    if not math.isfinite(value.mean):
+        raise ValueError(f"{name} must be finite (got a mean of {value.mean!r})")
+    if not low <= value.mean <= high:
         raise ValueError(
             f"{name} must be within [{low:g}, {high:g}] (got a mean of {value.mean!r})"
         )
