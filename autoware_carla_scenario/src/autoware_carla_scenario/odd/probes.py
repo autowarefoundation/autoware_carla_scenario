@@ -7,18 +7,22 @@ missing.  A probe that raises is treated the same way.
 
 Probes run on every tick, so they share what they read:
 
-* per frame: the actors near the ego, its waypoint and the weather;
+* per frame: the actors near the ego, its waypoint, its lanelet and the
+  weather;
 * per run: the ego actor, the CARLA map, whether a Lanelet2 map is loaded,
-  the lanelet the ego was last on, and the lane counts already worked out.
+  the lanelet the ego was last on, its tags and the lane counts already
+  worked out.
 
 :func:`reset_probes` forgets both, and the runner calls it at the start of
 every run.
 
-The scenery attributes come from two maps:
-
-* CARLA: the waypoint (junction, lanes) and ``get_speed_limit()``;
-* Lanelet2: the tags of the lanelet the ego is on (``location``, ``subtype``,
-  ``speed_limit``), for a run with a Lanelet2 map loaded.
+The scenery attributes come from the Lanelet2 map when the run has one
+loaded: the lanelet the ego is on, its tags (``location``, ``subtype``,
+``speed_limit``, ``turn_direction`` for the junction) and its neighbours in
+the routing graph (the lane count), read exactly as a planned route reads
+them.  Without a Lanelet2 map, the junction and the lane count come from the
+CARLA waypoint, and the speed limit from ``get_speed_limit()`` (also the
+fallback for a lanelet without a ``speed_limit`` tag).
 
 Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
 so rain, fog, the road's water, the wind and the clouds are named levels.  How
@@ -49,7 +53,7 @@ from .model import UNDECIDED
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
-    from lanelet2.core import BasicPoint2d, ConstLanelet, Lanelet, LaneletMap
+    from lanelet2.core import BasicPoint2d, ConstLanelet, LaneletMap
     from lanelet2.routing import RoutingGraph
 
     from .model import Undecided
@@ -154,7 +158,7 @@ class _Frame:
     waypoint: Optional[carla.Waypoint] = None
     geolocation: Optional[tuple[float, float]] = None
     weather: Optional[carla.WeatherParameters] = None
-    lanelet_tags: Optional[dict[str, str]] = None
+    lanelet: Optional[ConstLanelet] = None
     nearby: Optional[tuple[int, int]] = None
 
 
@@ -166,9 +170,12 @@ class _Run:
     carla_map: Optional[carla.Map] = None
     #: ``None`` until asked; then whether a Lanelet2 map is loaded.
     lanelet2: Optional[bool] = None
-    lanelet: Optional[Lanelet] = None
+    lanelet: Optional[ConstLanelet] = None
     tags: dict[int, dict[str, str]] = field(default_factory=dict)
+    #: Lane counts read off the CARLA waypoint, by (road, section, lane).
     lane_counts: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    #: Lane counts read off the Lanelet2 map, by lanelet id.
+    lanelet_lane_counts: dict[int, Optional[int]] = field(default_factory=dict)
     frame: Optional[int] = None
     #: What was read this frame.
     cache: _Frame = field(default_factory=_Frame)
@@ -275,28 +282,43 @@ def _weather(world: carla.World) -> Optional[carla.WeatherParameters]:
     return cache.weather
 
 
-def _still_on(lanelet: Lanelet, here: BasicPoint2d) -> bool:
+def _still_on(lanelet: ConstLanelet, here: BasicPoint2d) -> bool:
     """Whether *here* lies on *lanelet*."""
     import lanelet2.geometry  # noqa: PLC0415
 
     return bool(lanelet2.geometry.inside(lanelet, here))
 
 
-def _read_lanelet_tags(world: carla.World) -> Optional[dict[str, str]]:
+def _lanelet2_loaded() -> bool:
+    """Whether the run has a Lanelet2 map loaded, asked once per run."""
+    if _RUN.lanelet2 is None:
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+        try:
+            MapManager.get_instance().lanelet_map
+            _RUN.lanelet2 = True
+        except RuntimeError:
+            _RUN.lanelet2 = False
+    loaded: bool = _RUN.lanelet2
+    return loaded
+
+
+def _as_const(lanelet: ConstLanelet) -> ConstLanelet:
+    """*lanelet* as a ``ConstLanelet``: what the lane count and the junction
+    read take (Codon widens a ``Lanelet`` passed as an argument, not one
+    stored in an ``Optional``)."""
+    return lanelet
+
+
+def _read_lanelet(world: carla.World) -> Optional[ConstLanelet]:
     import lanelet2.core  # noqa: PLC0415
 
     from ..coordinate import CarlaWorldPose, to_lanelet2  # noqa: PLC0415
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
     from ..coordinate.transform import _carla_to_lanelet2_frame  # noqa: PLC0415
 
-    manager = MapManager.get_instance()
-    if _RUN.lanelet2 is None:
-        try:
-            manager.lanelet_map
-        except RuntimeError:
-            _RUN.lanelet2 = False
-            return None
-        _RUN.lanelet2 = True
+    if not _lanelet2_loaded():
+        return None
     ego = _ego(world)
     if ego is None:
         return None
@@ -306,25 +328,36 @@ def _read_lanelet_tags(world: carla.World) -> Optional[dict[str, str]]:
     # Still on the lanelet it was on: no map-matching needed.
     if _RUN.lanelet is None or not _still_on(_RUN.lanelet, here):
         lanelet_id = to_lanelet2(pose).lanelet_id
-        _RUN.lanelet = manager.lanelet_map.laneletLayer[lanelet_id]
-    lanelet: Lanelet = _RUN.lanelet
-    if lanelet.id not in _RUN.tags:
-        _RUN.tags[lanelet.id] = {str(k): str(v) for k, v in lanelet.attributes.items()}
-    return _RUN.tags[lanelet.id]
+        layer = MapManager.get_instance().lanelet_map.laneletLayer
+        _RUN.lanelet = _as_const(layer[lanelet_id])
+    lanelet: ConstLanelet = _RUN.lanelet
+    return lanelet
+
+
+def _ego_lanelet(world: carla.World) -> Optional[ConstLanelet]:
+    """The lanelet the ego is on, read once per frame; ``None`` without a
+    Lanelet2 map."""
+    if _RUN.lanelet2 is False:
+        return None
+    cache = _frame(world)
+    if "lanelet" not in cache.read:
+        try:
+            cache.lanelet = _read_lanelet(world)
+        except Exception:
+            cache.lanelet = None
+        cache.read.add("lanelet")
+    return cache.lanelet
 
 
 def _lanelet_tags(world: carla.World) -> Optional[dict[str, str]]:
     """The tags of the lanelet the ego is on, or ``None`` without a Lanelet2 map."""
-    if _RUN.lanelet2 is False:
+    found = _ego_lanelet(world)
+    if found is None:
         return None
-    cache = _frame(world)
-    if "lanelet_tags" not in cache.read:
-        try:
-            cache.lanelet_tags = _read_lanelet_tags(world)
-        except Exception:
-            cache.lanelet_tags = None
-        cache.read.add("lanelet_tags")
-    return cache.lanelet_tags
+    lanelet: ConstLanelet = found
+    if lanelet.id not in _RUN.tags:
+        _RUN.tags[lanelet.id] = {str(k): str(v) for k, v in lanelet.attributes.items()}
+    return _RUN.tags[lanelet.id]
 
 
 def _read_nearby(world: carla.World) -> Optional[tuple[int, int]]:
@@ -384,7 +417,17 @@ def ego_speed_kph(world: carla.World) -> Optional[float]:
 
 
 def in_junction(world: carla.World) -> Optional[bool]:
-    """Whether the ego is inside a junction (CARLA waypoint)."""
+    """Whether the ego is inside a junction.
+
+    With a Lanelet2 map loaded, whether the ego's lanelet has a
+    ``turn_direction`` tag (:func:`lanelet_in_junction`), as a planned route
+    reads it; without one, the CARLA waypoint's ``is_junction``.
+    """
+    if _lanelet2_loaded():
+        lanelet = _ego_lanelet(world)
+        if lanelet is None:
+            return None
+        return lanelet_in_junction(lanelet)
     waypoint = _waypoint(world)
     if waypoint is None:
         return None
@@ -435,8 +478,18 @@ def _beside(waypoint: carla.Waypoint, left: bool) -> Optional[carla.Waypoint]:
 def lane_count(world: carla.World) -> Optional[int]:
     """Driving lanes in the ego's direction of travel, its own included.
 
-    Read from the CARLA waypoint, and only outside junctions.
+    Only outside junctions (as :func:`in_junction` reads them).  With a
+    Lanelet2 map loaded, the ego's lanelet and its same-direction neighbours
+    in the routing graph, as a planned route reads them
+    (``lane_count.on_lanelet``); without one, the driving lanes of the CARLA
+    waypoint's OpenDRIVE road, which can differ: a lane-change neighbour on
+    the Lanelet2 map may be on another OpenDRIVE road.
     """
+    if _lanelet2_loaded():
+        lanelet = _ego_lanelet(world)
+        if lanelet is None:
+            return None
+        return _lanelet_lane_count(lanelet)
     waypoint = _waypoint(world)
     if waypoint is None or waypoint.is_junction:
         return None
@@ -461,6 +514,18 @@ def lane_count(world: carla.World) -> Optional[int]:
                 lane = _beside(lane, left)
         _RUN.lane_counts[key] = count
     return _RUN.lane_counts[key]
+
+
+def _lanelet_lane_count(lanelet: ConstLanelet) -> Optional[int]:
+    """What :func:`lane_count` reads on *lanelet*, worked out once per run."""
+    if lanelet.id not in _RUN.lanelet_lane_counts:
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+        manager = MapManager.get_instance()
+        _RUN.lanelet_lane_counts[lanelet.id] = _lane_count_on_lanelet(
+            lanelet, manager.lanelet_map, manager.routing_graph
+        )
+    return _RUN.lanelet_lane_counts[lanelet.id]
 
 
 def lanelet_location(world: carla.World) -> Optional[str]:
@@ -665,8 +730,9 @@ def _neighbour(
 def _lane_count_on_lanelet(
     lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
 ) -> Optional[int]:
-    # As the run reads it: nothing inside a junction, and every lane in the
-    # same direction, whether or not a lane change into it is allowed.
+    # As a run with a Lanelet2 map reads it (lane_count): nothing inside a
+    # junction, and every lane in the same direction, whether or not a lane
+    # change into it is allowed.
     if lanelet_in_junction(lanelet):
         return None
     seen = {lanelet.id}
