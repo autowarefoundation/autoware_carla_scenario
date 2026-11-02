@@ -65,3 +65,20 @@ quantities:
         uniform:
           low:  [50, 250]
           high: [150, 400]
+
+  # The speed a driver keeps, m/s, from how far they see: a part reading the
+  # visibility above, so the rules chain (weather -> visibility -> speed).
+  # Written for SUMO's default car, braking at 4.5 m/s^2 a second after it
+  # sees: `high` is the speed it stops from within the visibility (8 m/s in
+  # 15 m, 26 m/s in 100 m; visibility.sight_speed), and most drivers keep a
+  # little below it.  A vehicle that brakes or reacts otherwise scales it by
+  # its own stopping speed (visibility.sight_speed_at), and each traffic
+  # vehicle draws a quantile of its own.
+  sight_speed:
+    parts:
+      sight:
+        at: {visibility: [15, 30, 50, 100, 150, 250, 400]}
+        triangular:
+          low:  [6.0, 9.4, 12.9, 19.4, 24.4, 32.4, 41.8]
+          mode: [7.6, 11.9, 16.3, 24.5, 30.9, 41.0, 52.9]
+          high: [8.0, 12.5, 17.2, 25.8, 32.5, 43.1, 55.7]
