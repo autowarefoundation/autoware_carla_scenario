@@ -168,11 +168,11 @@ three top-level categories:
 
 | Item | Buckets | Read from |
 |---|---|---|
-| `odd.scenery.junction` | false, true | The ego's CARLA waypoint |
+| `odd.scenery.junction` | false, true | Lanelet2 `turn_direction` tag of the ego's lanelet, else the ego's CARLA waypoint |
 | `odd.scenery.location` ² | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
 | `odd.scenery.road_type` ² | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
 | `odd.scenery.speed_limit` ² | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
-| `odd.scenery.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions |
+| `odd.scenery.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions (Lanelet2 routing graph, else the CARLA waypoint) |
 | `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
 | `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
 | `odd.environment.fog` | none, light, moderate, heavy | CARLA fog density (0-100): 1, 30, 70 |
