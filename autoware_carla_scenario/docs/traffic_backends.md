@@ -628,7 +628,14 @@ nothing, which is right for a backend that never drives the scenario's vehicles.
 when it is done (`entity.resume_traffic(world)`; a `RoutingAction`
 leaves its vehicle where the trajectory ends and does not): the TrafficManager
 puts it back on autopilot, keeping the desired speed and lane-change settings
-it had; SUMO drives it again from the pose it was published at, with the speed
+it had, and gives it the rest of its route again from where it was driven to
+(taken off autopilot, the TrafficManager dropped the points it had planned),
+with the lane changes along it it has not yet been told of or driven past
+(#1154). A route given before the vehicle is on autopilot (a `RoutingAction`
+at init, or while released) is handed over the same as one given after: the
+vehicle is told to change lanes where its path crosses to the lane beside, and
+one starting in a junction's mouth is driven out of the junction first. SUMO
+drives it again from the pose it was published at, with the speed
 and lane-change modes and the desired speed it had before. A vehicle never
 released, or driven elsewhere from the start (an ego: `ExternallyDrivenEgo`
 refuses `resume_traffic`, and both backends ignore it), is left as it is, and
