@@ -111,6 +111,22 @@ def _map_manager_left_as_found() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _heavy_metrics_decision_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start without, and forget, the heavy metrics decision a run left.
+
+    ``apply_metrics`` (every ``scenario`` run) sets
+    ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED`` in ``os.environ``,
+    which ``CommonRoadSettings`` reads before the user's variable: a run in
+    one test would otherwise decide for any later test in the same xdist
+    worker.  Set, then removed, so that monkeypatch puts back what was there.
+    """
+    from autoware_carla_scenario.commonroad.session import HEAVY_METRICS_DECIDED_ENV
+
+    monkeypatch.setenv(HEAVY_METRICS_DECIDED_ENV, "")
+    monkeypatch.delenv(HEAVY_METRICS_DECIDED_ENV)
+
+
+@pytest.fixture(autouse=True)
 def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     """Forget the entry speeds, the warm-up flag and the control holds a test
     left behind.

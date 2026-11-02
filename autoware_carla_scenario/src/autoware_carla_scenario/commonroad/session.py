@@ -64,10 +64,34 @@ DEFAULT_METRIC_PERIODS_S: dict[str, float] = {key: 0.5 for key in HEAVY_METRICS}
 #: (:attr:`CommonRoadSettings.heavy_metrics`).
 HEAVY_METRICS_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
 
+#: What the ``scenario`` command decided (``1`` or ``0``), from its configs'
+#: ``metrics.heavy`` and :data:`HEAVY_METRICS_ENV`: set by it, not by the user,
+#: to carry the decision to the runs' own processes.  Read before
+#: :data:`HEAVY_METRICS_ENV` when set; the command never changes the user's
+#: :data:`HEAVY_METRICS_ENV`.
+HEAVY_METRICS_DECIDED_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED"
+
+
+def _heavy_metrics_on(value: Optional[str]) -> bool:
+    """Whether *value* (an environment variable's, ``None``: unset) leaves
+    the heavy metrics on: unless it is ``0``, ``false``, ``off`` or ``no``."""
+    return (value or "").strip().lower() not in ("0", "false", "off", "no")
+
+
+def _heavy_metrics_from_user() -> bool:
+    """Whether :data:`HEAVY_METRICS_ENV`, as the user set it, leaves the heavy
+    metrics on."""
+    return _heavy_metrics_on(os.environ.get(HEAVY_METRICS_ENV))
+
 
 def _heavy_metrics_default() -> bool:
-    value = os.environ.get(HEAVY_METRICS_ENV, "").strip().lower()
-    return value not in ("0", "false", "off", "no")
+    """Whether the heavy metrics are on by default: as the ``scenario``
+    command decided (:data:`HEAVY_METRICS_DECIDED_ENV`), else as
+    :data:`HEAVY_METRICS_ENV` says."""
+    decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
+    if decided:
+        return _heavy_metrics_on(decided)
+    return _heavy_metrics_from_user()
 
 
 def _check_period(name: str, period: float) -> None:
@@ -86,7 +110,9 @@ class CommonRoadSettings:
             :attr:`period_s`.  By default :data:`DEFAULT_METRIC_PERIODS_S`.
         heavy_metrics: Whether the heavy metrics (:data:`HEAVY_METRICS`) are
             evaluated at all; off, a metric condition on one is not judged.
-            On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``.
+            On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``
+            (or the ``scenario`` command decided otherwise,
+            :data:`HEAVY_METRICS_DECIDED_ENV`).
         workers: How many workers evaluate frames at once.
         dt: The time step of the CommonRoad scenario a frame becomes (s).
         horizon_s: How far ahead the road users' trajectories run on, and the

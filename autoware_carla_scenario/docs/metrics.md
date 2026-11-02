@@ -225,11 +225,17 @@ alike) decides in this order:
 
 The shipped `config.yaml` leaves `metrics.heavy` `null`, so the environment
 variable decides unless the command line or a scenario's config says
-otherwise. The command then sets the variable to what it decided (`1` or
-`0`), which carries it to the runs' own processes and to the SLURM jobs.
+otherwise. The command leaves your variable as it is and writes what it
+decided (`1` or `0`) to `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED`
+(`HEAVY_METRICS_DECIDED_ENV`), which `CommonRoadSettings` reads before
+`$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`: it carries the decision to the runs'
+own processes and to the SLURM jobs (`launcher.env_passthrough`'s `AUTOWARE_*`
+passes it; a SLURM task runs with it rather than decide again from its own
+cases, which are only some of the batch's). Set by the command, not by you:
+the command never reads it to decide, and overwrites it each time it decides.
 A batch decides once, for all its cases; the cases of a Hydra `--multirun`
 (`scenario=a,b`) each decide for themselves, from the variable as you set it,
-not as an earlier case's `metrics.heavy` left it.
+not as an earlier case's `metrics.heavy` decided.
 
 The workers are started with, in order, the command in
 `$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on

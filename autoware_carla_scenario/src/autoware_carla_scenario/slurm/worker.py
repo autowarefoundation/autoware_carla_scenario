@@ -412,6 +412,33 @@ class _Task:
         write_json(self.layout.task(self.submission, self.task), self.status)
 
 
+def _apply_metrics(run: Any, configs: list[Any]) -> bool:
+    """Turn the heavy CommonRoad metrics on or off for this task's cases as
+    the submitting ``scenario`` command decided for the whole batch; whether
+    they are on.
+
+    Its decision comes in ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED``
+    (the manifest's environment snapshot, ``launcher.env_passthrough``): a
+    task's cases are only some of the batch's, whose first ``metrics.heavy``
+    may be in another task's, so the task does not decide again from its own.
+    Without it (a batch whose snapshot left it out), as
+    :func:`~autoware_carla_scenario.examples.run.apply_metrics` decides from
+    *configs*.
+    """
+    from ..commonroad.session import (  # noqa: PLC0415
+        HEAVY_METRICS_DECIDED_ENV,
+        _heavy_metrics_on,
+        configure_commonroad_metrics,
+    )
+
+    decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
+    if not decided:
+        return bool(run.apply_metrics(*configs))
+    heavy = _heavy_metrics_on(decided)
+    configure_commonroad_metrics(heavy_metrics=heavy)
+    return heavy
+
+
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:
     """Run task *task_index* of submission *submission_index*; its exit status."""
     layout = BatchLayout(manifest_path.resolve().parent.parent)
@@ -521,7 +548,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         # The submitting process already refused a batch without the extra.
         rerun = run.build_rerun_converter(*configs)
         run.apply_canvas(*configs)
-        run.apply_metrics(*configs)
+        _apply_metrics(run, configs)
         queue = run._batch_queue(
             first_cfg,
             map_paths,
