@@ -272,7 +272,7 @@ class AnnotationSequence(_message.Message):
     def __init__(self, values: _Optional[_Union[Annotations, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., box_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., cylinder_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., polygon_offsets: _Optional[_Union[NumericArray, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
 
 class T4Scene(_message.Message):
-    __slots__ = ("scene_metadata", "timestamps_ns", "current_index", "frame_indices", "ego", "annotations", "global_origin", "global_origin_3d", "goal_poses", "goal_poses_3d", "map", "routes", "traffic_lights", "cameras", "lidar")
+    __slots__ = ("scene_metadata", "timestamps_ns", "current_index", "frame_indices", "ego", "annotations", "global_origin", "global_origin_3d", "goal_poses", "goal_poses_3d", "map", "routes", "traffic_lights", "cameras", "lidar", "model_data")
     SCENE_METADATA_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
     CURRENT_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -288,6 +288,7 @@ class T4Scene(_message.Message):
     TRAFFIC_LIGHTS_FIELD_NUMBER: _ClassVar[int]
     CAMERAS_FIELD_NUMBER: _ClassVar[int]
     LIDAR_FIELD_NUMBER: _ClassVar[int]
+    MODEL_DATA_FIELD_NUMBER: _ClassVar[int]
     scene_metadata: SceneMetadata
     timestamps_ns: NumericArray
     current_index: int
@@ -303,7 +304,8 @@ class T4Scene(_message.Message):
     traffic_lights: TrafficLightSequence
     cameras: CameraSequence
     lidar: LidarSequence
-    def __init__(self, scene_metadata: _Optional[_Union[SceneMetadata, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., current_index: _Optional[int] = ..., frame_indices: _Optional[_Union[NumericArray, _Mapping]] = ..., ego: _Optional[_Union[EgoSequence, _Mapping]] = ..., annotations: _Optional[_Union[AnnotationSequence, _Mapping]] = ..., global_origin: _Optional[_Union[Pose2D, _Mapping]] = ..., global_origin_3d: _Optional[_Union[RigidTransform3D, _Mapping]] = ..., goal_poses: _Optional[_Union[NumericArray, _Mapping]] = ..., goal_poses_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., map: _Optional[_Union[MapReference, _Mapping]] = ..., routes: _Optional[_Union[RouteSequence, _Mapping]] = ..., traffic_lights: _Optional[_Union[TrafficLightSequence, _Mapping]] = ..., cameras: _Optional[_Union[CameraSequence, _Mapping]] = ..., lidar: _Optional[_Union[LidarSequence, _Mapping]] = ...) -> None: ...
+    model_data: ModelData
+    def __init__(self, scene_metadata: _Optional[_Union[SceneMetadata, _Mapping]] = ..., timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., current_index: _Optional[int] = ..., frame_indices: _Optional[_Union[NumericArray, _Mapping]] = ..., ego: _Optional[_Union[EgoSequence, _Mapping]] = ..., annotations: _Optional[_Union[AnnotationSequence, _Mapping]] = ..., global_origin: _Optional[_Union[Pose2D, _Mapping]] = ..., global_origin_3d: _Optional[_Union[RigidTransform3D, _Mapping]] = ..., goal_poses: _Optional[_Union[NumericArray, _Mapping]] = ..., goal_poses_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., map: _Optional[_Union[MapReference, _Mapping]] = ..., routes: _Optional[_Union[RouteSequence, _Mapping]] = ..., traffic_lights: _Optional[_Union[TrafficLightSequence, _Mapping]] = ..., cameras: _Optional[_Union[CameraSequence, _Mapping]] = ..., lidar: _Optional[_Union[LidarSequence, _Mapping]] = ..., model_data: _Optional[_Union[ModelData, _Mapping]] = ...) -> None: ...
 
 class MapResource(_message.Message):
     __slots__ = ("sha256", "encoding", "data", "projection")
@@ -462,3 +464,24 @@ class LidarSequence(_message.Message):
     ROWS_FIELD_NUMBER: _ClassVar[int]
     rows: _containers.RepeatedCompositeFieldContainer[LidarRow]
     def __init__(self, rows: _Optional[_Iterable[_Union[LidarRow, _Mapping]]] = ...) -> None: ...
+
+class ModelDataValue(_message.Message):
+    __slots__ = ("tensor", "text")
+    TENSOR_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    tensor: NumericArray
+    text: str
+    def __init__(self, tensor: _Optional[_Union[NumericArray, _Mapping]] = ..., text: _Optional[str] = ...) -> None: ...
+
+class ModelData(_message.Message):
+    __slots__ = ("entries",)
+    class EntriesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: ModelDataValue
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[ModelDataValue, _Mapping]] = ...) -> None: ...
+    ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    entries: _containers.MessageMap[str, ModelDataValue]
+    def __init__(self, entries: _Optional[_Mapping[str, ModelDataValue]] = ...) -> None: ...
