@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, Optional
 
-from .base import BaseCondition, ScenarioResult
+from .base import BaseCondition, ScenarioResult, refuse_post_run
 from ..failure import FailureCategory
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ class PersistentCondition(BaseCondition):
     ) -> None:
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("duration must be positive and finite")
+        refuse_post_run(condition, "PersistentCondition")
         super().__init__(label=label if label is not None else condition.label)
         self._condition = condition
         self._duration = duration

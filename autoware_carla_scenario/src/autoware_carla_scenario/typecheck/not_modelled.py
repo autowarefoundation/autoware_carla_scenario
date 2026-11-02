@@ -686,6 +686,18 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_dict": _FROM_MAPPING,
     },
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
+    "TrajectoryRecorder": {
+        "record_metric": (
+            "writes the metrics computed once the run is over; only "
+            "scenario_runner._record_metrics calls it, and that is not checked "
+            "(library.py), so no checked code reaches it"
+        ),
+        "record_condition_at": (
+            "writes a metric condition's state judged once the run is over; "
+            "only scenario_runner._record_metrics calls it, and that is not "
+            "checked (library.py)"
+        ),
+    },
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},

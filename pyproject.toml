@@ -9,6 +9,10 @@ members = [
 # `uv run --with-editable ./stl_driver ...`.
 exclude = [
     "stl_driver",
+    # The CommonRoad worker (commonroad_metrics/README.md): CommonRoad pins
+    # protobuf 3 and builds for CPython 3.10-3.11 only, so it runs in an
+    # environment of its own, which the framework starts as a process.
+    "commonroad_metrics",
 ]
 
 [tool.uv.sources]
@@ -45,7 +49,7 @@ dev = [
     "sumolib>=1.23",
     "traci>=1.23",
     # ...and the `map` extra (driver map files) and its tests.
-    "roadgen>=0.41.2",
+    "roadgen>=0.42.0",
     # ...and the `ros2` extra (the DDS ego) and its tests, where it has wheels.
     "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these

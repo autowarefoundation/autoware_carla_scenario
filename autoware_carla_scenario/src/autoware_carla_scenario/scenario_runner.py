@@ -7,7 +7,7 @@ import math
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Optional
+from typing import TYPE_CHECKING, Any, Collection, Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -28,7 +28,12 @@ from .conditions import (
     StickyCondition,
     TimeoutCondition,
 )
-from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
+from .conditions.base import (
+    BaseCondition,
+    ConditionStatus,
+    find_actor_by_role_name,
+    is_post_run,
+)
 from .actions.base import reset_control_slots
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
@@ -39,6 +44,7 @@ from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .metrics import (
+    BUILT_IN_METRICS,
     ego_progress,
     reset_ego_motion,
     set_importance_sampling_weight,
@@ -273,8 +279,26 @@ def _build_condition_status(
         world: CARLA world.
         elapsed: Elapsed time in seconds.
     """
-    check = cond.check(world, elapsed)
     cond_type = type(cond).__name__
+    if is_post_run(cond):
+        # Judged once the run is over (_judge_metrics), not checked here:
+        # what the judgement found, or that there has been none yet.
+        details = cond.get_details()
+        if cond._last_satisfied:
+            message = cond._last_message
+        elif "ng_seconds" in details:
+            message = "not triggered"
+        else:
+            message = "judged after the run"
+        return ConditionStatus(
+            label=_status_label(role, index, cond),
+            satisfied=cond._last_satisfied,
+            message=message,
+            condition_type=cond_type,
+            role=role,
+            details=details,
+        )
+    check = cond.check(world, elapsed)
     details = cond.get_details()
 
     if check is not None:
@@ -357,6 +381,150 @@ def _npc_collision_monitor() -> "NpcCollisionMonitor":
     from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
 
     return NpcCollisionMonitor()
+
+
+def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
+    """What records the run's frames for its MetricConditions, judged once it
+    is over (:mod:`~autoware_carla_scenario.metric_batch`); ``None`` when it
+    has none.  Recorded frames are duck-typed actors, which the check
+    (docs/typecheck.md) does not compile."""
+    if not any(is_post_run(c) for c in scenario._fail_conditions):
+        return None
+    from .metric_batch import FrameRecorder  # noqa: PLC0415
+
+    return FrameRecorder()
+
+
+def _as_bool(value: Optional[float]) -> Optional[bool]:
+    """A yes/no metric's reading as a boolean: ``None`` (and NaN) for one
+    that read nothing."""
+    if value is None or math.isnan(value):
+        return None
+    return value != 0.0
+
+
+def _record_metrics(
+    trajectory: Any,
+    frames: list[Any],
+    series: dict[str, Any],
+    judged: list[tuple[int, BaseCondition]],
+) -> None:
+    """Write the metrics of *series* into the *trajectory* log, a ``metric``
+    record per frame evaluated, and each condition of *judged* as
+    ``condition`` records: whether its metric was NG, on its first frame and
+    whenever that changed.  A yes/no metric (``Metric.boolean``) is written
+    as ``true`` or ``false``, not ``1`` or ``0``."""
+    frame_at = {frame.t: frame.frame for frame in frames}
+    rows: dict[float, dict[str, Optional[Union[float, bool]]]] = {}
+    for key, metric in series.items():
+        boolean = key in BUILT_IN_METRICS and BUILT_IN_METRICS[key].boolean
+        for t, value in zip(metric.times, metric.values):
+            rows.setdefault(t, {})[key] = _as_bool(value) if boolean else value
+    for t in sorted(rows):
+        trajectory.record_metric(frame_at.get(t, 0), t, rows[t])
+    for i, condition in judged:
+        metric = series[condition.metric]  # type: ignore[attr-defined]
+        last: Optional[bool] = None
+        for t, value in zip(metric.times, metric.values):
+            ng = condition.is_ng(value)  # type: ignore[attr-defined]
+            if ng != last:
+                trajectory.record_condition_at(
+                    frame_at.get(t, 0), t, "fail", i, condition.label, ng
+                )
+                last = ng
+
+
+def _judge_metrics(
+    scenario: BaseScenario,
+    recorder: Optional[Any],
+    world: "carla.World",
+    result: ScenarioResult,
+    scenario_name: str,
+    trajectory: Optional[Any] = None,
+) -> ScenarioResult:
+    """Judge the run's MetricConditions on the metrics of the frames it
+    recorded, computed now, on the run's map (still loaded); the run's result,
+    failed by the first that fails when it fails earlier than the run did.
+
+    The metrics, and each condition's NG frames, go into the run's
+    *trajectory* log (its :class:`TrajectoryRecorder`), for its Rerun
+    recording (:mod:`~autoware_carla_scenario.rerun_metrics`).
+
+    Raises:
+        ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A CommonRoad
+            metric is judged and its workers cannot be started.
+    """
+    if recorder is None:
+        return result
+    from .metric_batch import evaluate_metrics  # noqa: PLC0415
+
+    judged = [(i, c) for i, c in enumerate(scenario._fail_conditions) if is_post_run(c)]
+    keys = [c.metric for _, c in judged]  # type: ignore[attr-defined]
+    logger.info(
+        "[%s] Computing %d metric(s) over %d recorded frames: %s",
+        scenario_name,
+        len(set(keys)),
+        len(recorder.frames),
+        ", ".join(sorted(set(keys))),
+    )
+    series = evaluate_metrics(recorder.frames, run_carla_map(world), keys)
+    if trajectory is not None:
+        _record_metrics(trajectory, recorder.frames, series, judged)
+    first: Optional[tuple[int, BaseCondition, ScenarioResult]] = None
+    for i, condition in judged:
+        metric = series[condition.metric]  # type: ignore[attr-defined]
+        verdict = condition.judge(metric.times, metric.values)  # type: ignore[attr-defined]
+        if verdict is None:
+            logger.info(
+                "[%s] Metric condition [%d](%s) held: %s",
+                scenario_name,
+                i,
+                condition.label,
+                condition.get_details(),
+            )
+            continue
+        logger.info(
+            "[%s] Metric condition [%d](%s) TRIGGERED: %s",
+            scenario_name,
+            i,
+            condition.label,
+            verdict.message,
+        )
+        if first is None or verdict.elapsed_seconds < first[2].elapsed_seconds:
+            first = (i, condition, verdict)
+    statuses = _condition_statuses(
+        scenario, world, result.elapsed_seconds, scenario_name
+    )
+    if first is None or (
+        not result.passed and result.elapsed_seconds <= first[2].elapsed_seconds
+    ):
+        # The run's own outcome stands; its statuses now hold the judgements.
+        judged_labels = {_status_label("fail", i, c) for i, c in judged}
+        result.condition_statuses = [
+            s for s in result.condition_statuses if s.label not in judged_labels
+        ] + [s for s in statuses if s.label in judged_labels]
+        if result.failure is not None:
+            also = result.failure.also_triggered
+            also.extend(
+                s.label
+                for s in statuses
+                if s.label in judged_labels and s.satisfied and s.label not in also
+            )
+        return result
+    i, condition, verdict = first
+    return ScenarioResult(
+        passed=False,
+        message=verdict.message,
+        elapsed_seconds=verdict.elapsed_seconds,
+        condition_statuses=statuses,
+        failure=_failure(
+            _status_label("fail", i, condition),
+            scenario.fail_category(i),
+            verdict.elapsed_seconds,
+            verdict.message,
+            statuses,
+        ),
+    )
 
 
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
@@ -1610,6 +1778,12 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
+            metric_recorder: Optional[Any] = None
+            if TYPE_CHECKING:
+                # Duck-typed recorded actors (UNCALLED in typecheck/library.py).
+                pass
+            else:
+                metric_recorder = _metric_recorder(scenario)
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
@@ -1711,6 +1885,17 @@ class ScenarioRunner:
                 set_importance_sampling_weight(scenario.importance_sampling_weight)
                 # The ego's motion, which the weaving metrics read.
                 track_ego_motion(world, elapsed)
+                if TYPE_CHECKING:
+                    # Duck-typed recorded actors (UNCALLED in
+                    # typecheck/library.py).
+                    pass
+                else:
+                    # The frames the MetricConditions are judged on once the
+                    # run is over.
+                    if metric_recorder is not None:
+                        metric_recorder.record(
+                            world, elapsed, scenario.importance_sampling_weight
+                        )
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1759,6 +1944,9 @@ class ScenarioRunner:
 
                 # Check fail conditions
                 for i, condition in enumerate(scenario._fail_conditions):
+                    if is_post_run(condition):
+                        # A MetricCondition: judged once the run is over.
+                        continue
                     check = condition.check(world, elapsed)
                     trajectory.record_condition(
                         "fail", i, condition.label, check is not None
@@ -1828,6 +2016,22 @@ class ScenarioRunner:
                     passed=True,
                     message="Scenario completed successfully",
                     elapsed_seconds=elapsed,
+                )
+
+            if TYPE_CHECKING:
+                # Duck-typed recorded actors, and worker processes spoken to
+                # in JSON (UNCALLED in typecheck/library.py).
+                pass
+            else:
+                # The MetricConditions, on the metrics of the recorded frames,
+                # while the run's map is still loaded.
+                result = _judge_metrics(
+                    scenario,
+                    metric_recorder,
+                    world,
+                    result,
+                    scenario_name,
+                    trajectory,
                 )
 
             # Sampled before teardown, while the ego still exists.

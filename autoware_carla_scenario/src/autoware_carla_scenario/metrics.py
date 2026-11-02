@@ -37,6 +37,14 @@ ego weaves from side to side (:data:`LATERAL_REVERSALS`,
 indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
 runner hands this module every tick (:func:`track_ego_motion`).
 
+Ten read the criticality of the frame with TU Munich's CommonRoad tools: eight
+CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`, ...) and the area the
+ego can still reach by CommonRoad-Reach (:data:`REACH_DRIVABLE_AREA_M2`,
+:data:`REACH_DRIVABLE_AREA_SUM_M2`).  Those packages run in worker processes
+of their own (:mod:`autoware_carla_scenario.commonroad`), on the frames a run
+recorded, once it is over (:mod:`autoware_carla_scenario.metric_batch`):
+:func:`read_metric` reads nothing of them off a live world.
+
 AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
 ``min_ade``), the driver's plan (``plan_deviation``, ``open_loop_collision``),
@@ -66,6 +74,15 @@ __all__ = [
     "COLLISION_FRONT",
     "COLLISION_LATERAL",
     "COLLISION_REAR",
+    "COMMONROAD_METRICS",
+    "CRIME_A_LAT_REQ_MPS2",
+    "CRIME_A_LONG_REQ_MPS2",
+    "CRIME_DCE_M",
+    "CRIME_HW_M",
+    "CRIME_THW_S",
+    "CRIME_TTB_S",
+    "CRIME_TTCE_S",
+    "CRIME_TTC_S",
     "IMPORTANCE_SAMPLING_WEIGHT",
     "LATERAL_REVERSALS",
     "LATERAL_WOBBLE_M",
@@ -75,6 +92,8 @@ __all__ = [
     "OFFROAD",
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
+    "REACH_DRIVABLE_AREA_M2",
+    "REACH_DRIVABLE_AREA_SUM_M2",
     "STEERING_REVERSALS",
     "TURN_INDICATOR_CHANGES",
     "WRONG_LANE",
@@ -123,6 +142,50 @@ STEERING_REVERSALS = "steering_reversals"
 #: How many times so far the ego's turn indicators changed (off, left, right,
 #: hazard), not AlpaSim's.
 TURN_INDICATOR_CHANGES = "turn_indicator_changes"
+#: Seconds until the ego hits a road user ahead in its lane, both holding
+#: their acceleration (CriMe's TTC); ``inf`` when they never meet.
+CRIME_TTC_S = "crime_ttc_s"
+#: Seconds until the ego reaches where the road user ahead is now (CriMe's
+#: THW, time headway).
+CRIME_THW_S = "crime_thw_s"
+#: Metres from the ego's front to the rear of the road user ahead, along the
+#: lane (CriMe's HW, headway).
+CRIME_HW_M = "crime_hw_m"
+#: Seconds left before the ego must brake at full to avoid a collision
+#: (CriMe's TTB, time-to-brake).
+CRIME_TTB_S = "crime_ttb_s"
+#: Seconds until the ego and a road user come closest, both going on as they
+#: go (CriMe's TTCE, time-to-closest-encounter).
+CRIME_TTCE_S = "crime_ttce_s"
+#: Metres between the ego and a road user when they come closest (CriMe's DCE,
+#: distance of closest encounter); ``0`` when they would collide.
+CRIME_DCE_M = "crime_dce_m"
+#: The longitudinal acceleration the ego needs not to hit the road user ahead,
+#: m/s^2, negative to brake (CriMe's ALongReq).
+CRIME_A_LONG_REQ_MPS2 = "crime_a_long_req_mps2"
+#: The lateral acceleration the ego needs to steer clear of a road user, m/s^2
+#: (CriMe's ALatReq).
+CRIME_A_LAT_REQ_MPS2 = "crime_a_lat_req_mps2"
+#: Square metres of road the ego can still reach without a collision at the
+#: end of the horizon (CommonRoad-Reach's drivable area); ``0`` when every
+#: way it can go meets a road user: a collision it can no longer avoid.
+REACH_DRIVABLE_AREA_M2 = "reach_drivable_area_m2"
+#: The drivable area summed over the horizon's steps (CriMe's DA), m^2.
+REACH_DRIVABLE_AREA_SUM_M2 = "reach_drivable_area_sum_m2"
+
+#: The metrics the CommonRoad worker reads (:mod:`autoware_carla_scenario.commonroad`).
+COMMONROAD_METRICS: tuple[str, ...] = (
+    CRIME_TTC_S,
+    CRIME_THW_S,
+    CRIME_HW_M,
+    CRIME_TTB_S,
+    CRIME_TTCE_S,
+    CRIME_DCE_M,
+    CRIME_A_LONG_REQ_MPS2,
+    CRIME_A_LAT_REQ_MPS2,
+    REACH_DRIVABLE_AREA_M2,
+    REACH_DRIVABLE_AREA_SUM_M2,
+)
 
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
@@ -174,6 +237,8 @@ class Metric:
         aggregation: How AlpaSim folds a run's frames into one value:
             ``"max"`` (an event that happened at some point), ``"min"`` (the
             closest the ego came), ``"mean"`` or ``"last"``.
+        boolean: A yes/no event: it reads ``1`` or ``0`` (and is judged so),
+            and the run's trajectory log writes it as ``true`` or ``false``.
     """
 
     key: str
@@ -182,6 +247,7 @@ class Metric:
     unit: str = ""
     text: str = ""
     aggregation: str = "max"
+    boolean: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +902,58 @@ def _turn_indicator_changes(world: "carla.World") -> Optional[float]:
     return float(motion.indicator_changes)
 
 
+# ---------------------------------------------------------------------------
+# CommonRoad: CriMe's and CommonRoad-Reach's, read in a worker of their own
+# ---------------------------------------------------------------------------
+
+
+def _commonroad(key: str) -> Optional[float]:
+    """Nothing: a CommonRoad metric is computed from a run's recorded frames
+    once it is over (:mod:`autoware_carla_scenario.metric_batch`), not read
+    off a live world."""
+    return None
+
+
+def _crime_ttc_s(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_TTC_S)
+
+
+def _crime_thw_s(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_THW_S)
+
+
+def _crime_hw_m(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_HW_M)
+
+
+def _crime_ttb_s(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_TTB_S)
+
+
+def _crime_ttce_s(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_TTCE_S)
+
+
+def _crime_dce_m(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_DCE_M)
+
+
+def _crime_a_long_req_mps2(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_A_LONG_REQ_MPS2)
+
+
+def _crime_a_lat_req_mps2(world: "carla.World") -> Optional[float]:
+    return _commonroad(CRIME_A_LAT_REQ_MPS2)
+
+
+def _reach_drivable_area_m2(world: "carla.World") -> Optional[float]:
+    return _commonroad(REACH_DRIVABLE_AREA_M2)
+
+
+def _reach_drivable_area_sum_m2(world: "carla.World") -> Optional[float]:
+    return _commonroad(REACH_DRIVABLE_AREA_SUM_M2)
+
+
 def _offroad(world: "carla.World") -> Optional[float]:
     return _event(world, _OFFROAD)
 
@@ -945,7 +1063,8 @@ def _min_distance_to_lane_boundary_m(world: "carla.World") -> Optional[float]:
     return max(gap, 0.0)
 
 
-#: The built-in metrics, by key: AlpaSim's, as CARLA reads them.
+#: The built-in metrics, by key: AlpaSim's, as CARLA reads them, and
+#: CriMe's and CommonRoad-Reach's (:data:`COMMONROAD_METRICS`).
 BUILT_IN_METRICS: dict[str, Metric] = {
     m.key: m
     for m in [
@@ -953,6 +1072,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_ANY,
             _collision_any,
             title="Collision (any)",
+            boolean=True,
             text="1 while the ego's bounding box overlaps another vehicle's or "
             "a pedestrian's, else 0 (AlpaSim collision_any)",
         ),
@@ -960,6 +1080,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_FRONT,
             _collision_front,
             title="Collision (front)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's front edge "
             "(AlpaSim collision_front)",
         ),
@@ -967,6 +1088,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_REAR,
             _collision_rear,
             title="Collision (rear)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's rear edge "
             "and not its front (AlpaSim collision_rear)",
         ),
@@ -974,6 +1096,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_LATERAL,
             _collision_lateral,
             title="Collision (lateral)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's and "
             "neither its front nor its rear edge (AlpaSim collision_lateral)",
         ),
@@ -981,13 +1104,14 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_AT_FAULT,
             _collision_at_fault,
             title="Collision at fault",
-            text="1 during a front or a lateral collision "
-            "(AlpaSim collision_at_fault)",
+            boolean=True,
+            text="1 during a front or a lateral collision (AlpaSim collision_at_fault)",
         ),
         Metric(
             OFFROAD,
             _offroad,
             title="Off the road",
+            boolean=True,
             text="1 while a corner of the ego's box is on no driving lane "
             "(AlpaSim offroad)",
         ),
@@ -995,6 +1119,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             OFFROAD_OR_COLLISION,
             _offroad_or_collision,
             title="Off the road or collision",
+            boolean=True,
             text="1 while off the road or in any collision "
             "(AlpaSim offroad_or_collision)",
         ),
@@ -1002,6 +1127,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             OFFROAD_OR_COLLISION_AT_FAULT,
             _offroad_or_collision_at_fault,
             title="Off the road or collision at fault",
+            boolean=True,
             text="1 while off the road or in a collision at fault "
             "(AlpaSim offroad_or_collision_at_fault)",
         ),
@@ -1009,6 +1135,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             WRONG_LANE,
             _wrong_lane,
             title="Against the lane",
+            boolean=True,
             text="1 while the ego heads more than 120 degrees away from the "
             "driving lane under it, else 0; unread off the road "
             "(AlpaSim wrong_lane)",
@@ -1077,6 +1204,98 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             "off, left, right or hazard",
             aggregation="last",
         ),
+        Metric(
+            CRIME_TTC_S,
+            _crime_ttc_s,
+            title="Time to collision (CriMe)",
+            unit="s",
+            text="Seconds until the ego hits a road user ahead in its lane, "
+            "both holding their acceleration; inf when they never meet "
+            "(CriMe TTC)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_THW_S,
+            _crime_thw_s,
+            title="Time headway (CriMe)",
+            unit="s",
+            text="Seconds until the ego reaches where the road user ahead is "
+            "now (CriMe THW)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_HW_M,
+            _crime_hw_m,
+            title="Headway (CriMe)",
+            unit="m",
+            text="From the ego's front to the rear of the road user ahead, "
+            "along the lane (CriMe HW)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_TTB_S,
+            _crime_ttb_s,
+            title="Time to brake (CriMe)",
+            unit="s",
+            text="Seconds left before the ego must brake at full to avoid a "
+            "collision (CriMe TTB)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_TTCE_S,
+            _crime_ttce_s,
+            title="Time to closest encounter (CriMe)",
+            unit="s",
+            text="Seconds until the ego and a road user come closest, both "
+            "going on as they go (CriMe TTCE)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_DCE_M,
+            _crime_dce_m,
+            title="Distance of closest encounter (CriMe)",
+            unit="m",
+            text="Metres between the ego and a road user when they come "
+            "closest; 0 when they would collide (CriMe DCE)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_A_LONG_REQ_MPS2,
+            _crime_a_long_req_mps2,
+            title="Required deceleration (CriMe)",
+            unit="m/s^2",
+            text="The longitudinal acceleration the ego needs not to hit the "
+            "road user ahead, negative to brake (CriMe ALongReq)",
+            aggregation="min",
+        ),
+        Metric(
+            CRIME_A_LAT_REQ_MPS2,
+            _crime_a_lat_req_mps2,
+            title="Required lateral acceleration (CriMe)",
+            unit="m/s^2",
+            text="The lateral acceleration the ego needs to steer clear of a "
+            "road user (CriMe ALatReq)",
+            aggregation="max",
+        ),
+        Metric(
+            REACH_DRIVABLE_AREA_M2,
+            _reach_drivable_area_m2,
+            title="Drivable area (CommonRoad-Reach)",
+            unit="m^2",
+            text="Road the ego can still reach without a collision at the end "
+            "of the horizon; 0 when a collision can no longer be avoided "
+            "(CommonRoad-Reach)",
+            aggregation="min",
+        ),
+        Metric(
+            REACH_DRIVABLE_AREA_SUM_M2,
+            _reach_drivable_area_sum_m2,
+            title="Drivable area over the horizon (CommonRoad-Reach)",
+            unit="m^2",
+            text="The ego's drivable area summed over the horizon's steps "
+            "(CriMe DA, by CommonRoad-Reach)",
+            aggregation="min",
+        ),
     ]
 }
 
@@ -1099,6 +1318,16 @@ _FAILURE_CATEGORIES: dict[str, FailureCategory] = {
     LATERAL_WOBBLE_M: FailureCategory.STABILITY,
     STEERING_REVERSALS: FailureCategory.STABILITY,
     TURN_INDICATOR_CHANGES: FailureCategory.STABILITY,
+    CRIME_TTC_S: FailureCategory.SAFETY_MARGIN,
+    CRIME_THW_S: FailureCategory.SAFETY_MARGIN,
+    CRIME_HW_M: FailureCategory.SAFETY_MARGIN,
+    CRIME_TTB_S: FailureCategory.SAFETY_MARGIN,
+    CRIME_TTCE_S: FailureCategory.SAFETY_MARGIN,
+    CRIME_DCE_M: FailureCategory.SAFETY_MARGIN,
+    CRIME_A_LONG_REQ_MPS2: FailureCategory.SAFETY_MARGIN,
+    CRIME_A_LAT_REQ_MPS2: FailureCategory.SAFETY_MARGIN,
+    REACH_DRIVABLE_AREA_M2: FailureCategory.SAFETY_MARGIN,
+    REACH_DRIVABLE_AREA_SUM_M2: FailureCategory.SAFETY_MARGIN,
 }
 
 
@@ -1111,7 +1340,9 @@ def read_metric(key: str, world: "carla.World") -> Optional[float]:
     """The built-in metric *key* in *world*.
 
     ``None`` when there is nothing to read, the key is not a metric's, or the
-    metric raised.
+    metric raised.  A CommonRoad metric reads nothing here: it is computed
+    from a run's recorded frames once the run is over
+    (:mod:`autoware_carla_scenario.metric_batch`).
     """
     if key not in BUILT_IN_METRICS:
         return None

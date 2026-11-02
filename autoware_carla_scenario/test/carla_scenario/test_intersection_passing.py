@@ -233,6 +233,7 @@ def test_steering_back_too_often_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "value": 5.0,
         "unit": "count",
         "tolerance": 1e-6,
+        "max_ng_seconds": 0.0,
     }
 
 

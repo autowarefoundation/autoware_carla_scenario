@@ -98,8 +98,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import math
 from pathlib import Path
-from typing import IO, Any, Optional
+from typing import IO, Any, Optional, Union
 
 import orjson
 import typesafe_carla.carla as carla
@@ -154,6 +155,18 @@ def _rear_axle(actor: Any) -> Optional[float]:
 
 def _r(value: float) -> float:
     return round(value, 3)
+
+
+def _metric_value(
+    value: Optional[Union[float, bool, str]],
+) -> Optional[Union[float, bool, str]]:
+    """A metric's value as a ``metric`` record holds it: a boolean or a
+    string as it is (a bool is not a number here), a number as a float, null
+    for one that is not finite."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _light_record(tl: Any) -> dict[str, Any]:
@@ -534,6 +547,53 @@ class TrajectoryRecorder:
                     "target_t": _r(arrival.target_t),
                     "actual_t": _r(arrival.actual_t),
                     "error_s": _r(arrival.error_s),
+                }
+            ),
+        )
+
+    def record_metric(
+        self,
+        frame: int,
+        t: float,
+        values: "dict[str, Optional[Union[float, bool, str]]]",
+    ) -> None:
+        """Write the metrics computed once the run was over for the tick of
+        CARLA frame *frame* at *t* (:mod:`~autoware_carla_scenario.metric_batch`).
+
+        A value is a number in the metric's unit, a boolean (a yes/no
+        metric) or a string (a metric that names one of its states); one that
+        reads nothing, or no finite number, is written as null.  Numbers are
+        written as they are, not to the millimetre: an importance-sampling
+        weight is far smaller."""
+        if self._out is None:
+            return
+        written = {key: _metric_value(value) for key, value in values.items()}
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {"type": "metric", "frame": int(frame), "t": _r(t), "values": written}
+            ),
+        )
+
+    def record_condition_at(
+        self, frame: int, t: float, role: str, index: int, label: str, satisfied: bool
+    ) -> None:
+        """Write a condition's state on the tick of CARLA frame *frame* at
+        *t*: a metric condition's, judged once the run was over, whether its
+        metric was NG then."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "condition",
+                    "frame": int(frame),
+                    "t": _r(t),
+                    "role": role,
+                    "index": index,
+                    "label": label,
+                    "satisfied": bool(satisfied),
                 }
             ),
         )

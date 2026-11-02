@@ -19,7 +19,16 @@ from autoware_carla_scenario.authoring.registry import (
     METRIC_OPTIONS,
     get_condition_spec,
 )
-from autoware_carla_scenario.conditions import ComparisonRule, MetricCondition
+from autoware_carla_scenario.conditions import (
+    AndCondition,
+    ComparisonRule,
+    MetricCondition,
+    NotCondition,
+    OrCondition,
+    PersistentCondition,
+    StickyCondition,
+)
+from autoware_carla_scenario.metric_batch import FrameRecorder, evaluate_metrics
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.entity._spawn import SpawnPointIndex
 from autoware_carla_scenario import metrics
@@ -239,6 +248,8 @@ def test_the_metrics_are_alpasim_s() -> None:
         "lateral_wobble_m",
         "steering_reversals",
         "turn_indicator_changes",
+        # Not AlpaSim's: CriMe's and CommonRoad-Reach's, by the worker.
+        *metrics.COMMONROAD_METRICS,
     }
     weight = BUILT_IN_METRICS["importance_sampling_weight"]
     assert (weight.unit, weight.aggregation) == ("ratio", "last")
@@ -251,6 +262,8 @@ def test_the_metrics_are_alpasim_s() -> None:
         )
     for key, metric in BUILT_IN_METRICS.items():
         assert metric.key == key
+        if key in metrics.COMMONROAD_METRICS:
+            continue  # test_commonroad_metrics.py
         if metric.unit not in ("ratio", "count") and metric is not wobble:
             assert metric.aggregation == ("min" if metric.unit == "m" else "max")
     assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]
@@ -727,17 +740,40 @@ def test_the_runner_tracks_the_ego_every_tick() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_event_condition_holds_while_it_happens() -> None:
-    condition = MetricCondition(COLLISION_AT_FAULT, label="collision at fault")
+def _series(world_at: list[tuple[float, _World]], key: str) -> Any:
+    """*key* over the frames of *world_at*, recorded and replayed on their
+    map as the runner does once a run is over."""
+    recorder = FrameRecorder()
+    for t, world in world_at:
+        recorder.record(world, t, None)  # type: ignore[arg-type]
+    road = world_at[0][1]._road
+    return evaluate_metrics(recorder.frames, road, [key])[key]
 
-    apart = _world(_car(2, (10.0, 0.0)))
-    assert condition.check(apart, 1.0) is None  # type: ignore[arg-type]
-    hit = _world(_car(2, (4.5, 0.0)))
-    result = condition.check(hit, 2.0)  # type: ignore[arg-type]
-    assert result is not None
-    assert result.passed
+
+def test_an_event_condition_fails_the_run_at_its_first_frame() -> None:
+    condition = MetricCondition(COLLISION_AT_FAULT, label="collision at fault")
+    apart, hit = _car(2, (10.0, 0.0)), _car(2, (4.5, 0.0))
+    series = _series(
+        [
+            (0.0, _world(apart)),
+            (1.0, _world(apart)),
+            (2.0, _world(hit)),
+            (3.0, _world(apart)),
+        ],
+        COLLISION_AT_FAULT,
+    )
+
+    assert series.values == [0.0, 0.0, 1.0, 0.0]
+    result = condition.judge(series.times, series.values)
+    assert result is not None and result.passed
     assert result.elapsed_seconds == 2.0
     assert "collision_at_fault" in result.message
+    details = condition.get_details()
+    assert (details["ng_seconds"], details["first_ng_at"], details["worst"]) == (
+        1.0,
+        2.0,
+        1.0,
+    )
 
 
 def test_a_distance_condition_compares_in_metres() -> None:
@@ -747,28 +783,104 @@ def test_a_distance_condition_compares_in_metres() -> None:
         1.0,
         label="closer than a metre",
     )
+    series = _series(
+        [(0.0, _world(_car(2, (5.7, 0.0)))), (0.5, _world(_car(2, (5.0, 0.0))))],
+        MIN_DISTANCE_TO_OBSTACLE_M,
+    )
 
-    clear = _world(_car(2, (5.7, 0.0)))
-    assert condition.check(clear, 0.0) is None  # type: ignore[arg-type]
-    close = _world(_car(2, (5.0, 0.0)))
-    result = condition.check(close, 0.0)  # type: ignore[arg-type]
+    result = condition.judge(series.times, series.values)
     assert result is not None and "m less than" in result.message
+    assert result.elapsed_seconds == 0.5
     assert condition.get_details() == {
         "metric": MIN_DISTANCE_TO_OBSTACLE_M,
         "rule": "LESS_THAN",
         "value": 1.0,
         "unit": "m",
         "tolerance": 1e-6,
+        "max_ng_seconds": 0.0,
+        "ng_seconds": 0.0,
+        "first_ng_at": 0.5,
+        "worst": pytest.approx(0.4),
     }
 
 
-def test_nothing_read_does_not_hold() -> None:
+def test_a_condition_fails_once_its_metric_was_ng_long_enough() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=0.25,
+        label="near",
+    )
+    times = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    # NG for 0.2 s, clear, then NG again: 0.25 s are up 0.05 s into it.
+    values: list[Optional[float]] = [0.5, 0.4, 2.0, 0.8, 0.3, 0.9, 2.0]
+    result = condition.judge(times, values)
+    assert result is not None
+    assert result.elapsed_seconds == pytest.approx(0.35)
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.5)
+    assert condition.get_details()["worst"] == 0.3
+    # Under the limit: it holds.
+    assert condition.judge(times[:4], values[:4]) is None
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.2)
+
+
+def test_nothing_read_is_not_ng() -> None:
     condition = MetricCondition(
         MIN_DISTANCE_TO_OBSTACLE_M, ComparisonRule.LESS_THAN, 1.0, label="near"
     )
-
     # Alone: no obstacle to be near.
+    series = _series([(0.0, _world()), (0.1, _world())], MIN_DISTANCE_TO_OBSTACLE_M)
+    assert series.values == [None, None]
+    assert condition.judge(series.times, series.values) is None
     assert condition.check(_world(), 0.0) is None  # type: ignore[arg-type]
+
+
+def test_the_replay_reads_what_the_world_read() -> None:
+    worlds = [
+        _world(_car(2, (10.0, 0.0))),
+        _world(_car(2, (4.5, 0.0))),
+        _world(_car(2, (5.0, 3.5)), at=(0.0, 1.5)),
+        _world(_car(2, (8.0, -3.5), yaw=180.0), yaw=170.0),
+        _world(_car(2, (20.0, 0.0)), at=(0.0, 9.0)),
+    ]
+    keys = [k for k in BUILT_IN_METRICS if k not in metrics.COMMONROAD_METRICS]
+    recorder = FrameRecorder()
+    for i, world in enumerate(worlds):
+        recorder.record(world, float(i), None)  # type: ignore[arg-type]
+    replayed = evaluate_metrics(recorder.frames, _TWO_WAY, keys)
+    for i, world in enumerate(worlds):
+        for key in (
+            "collision_any",
+            "collision_at_fault",
+            "offroad",
+            "wrong_lane",
+            "min_distance_to_obstacle_m",
+            "min_distance_to_lane_boundary_m",
+        ):
+            assert replayed[key].values[i] == _read(key, world), (i, key)
+
+
+def test_a_metric_condition_composes_with_nothing() -> None:
+    condition = MetricCondition(OFFROAD, label="off the road")
+    with pytest.raises(ValueError, match="judged once the run is over"):
+        PersistentCondition(condition, 1.0)
+    with pytest.raises(ValueError, match="judged once the run is over"):
+        NotCondition(condition)
+    with pytest.raises(ValueError, match="judged once the run is over"):
+        AndCondition([condition, MetricCondition(WRONG_LANE, label="wrong")])
+    with pytest.raises(ValueError, match="judged once the run is over"):
+        OrCondition([MetricCondition(WRONG_LANE, label="wrong"), condition])
+    with pytest.raises(ValueError, match="judged once the run is over"):
+        StickyCondition(condition)
+    scenario = _Scenario(
+        EgoConfig(vehicle_type="vehicle.x", spawn_location=SpawnPointIndex(0))
+    )
+    with pytest.raises(ValueError, match="register_fail_condition"):
+        scenario.register_pass_condition(condition)
+    scenario.register_fail_condition(condition)
+    with pytest.raises(ValueError, match="max_ng_seconds"):
+        MetricCondition(OFFROAD, max_ng_seconds=-1.0, label="x")
 
 
 def test_an_unknown_metric_is_refused() -> None:
@@ -784,3 +896,184 @@ def test_the_editor_offers_every_metric() -> None:
     spec = get_condition_spec("metric")
     assert spec is not None
     assert spec.target == "..conditions:MetricCondition"
+
+
+# ---------------------------------------------------------------------------
+# Judged once the run is over
+# ---------------------------------------------------------------------------
+
+
+def _judged_run(
+    *conditions: Any,
+    result: Any,
+    worlds: list[tuple[float, _World]],
+    trajectory: Any = None,
+) -> Any:
+    from autoware_carla_scenario.scenario_runner import _judge_metrics
+
+    scenario = _Scenario(
+        EgoConfig(vehicle_type="vehicle.x", spawn_location=SpawnPointIndex(0))
+    )
+    for condition in conditions:
+        scenario.register_fail_condition(condition)
+    recorder = FrameRecorder()
+    for t, world in worlds:
+        recorder.record(world, t, None)  # type: ignore[arg-type]
+    return _judge_metrics(
+        scenario,
+        recorder,
+        worlds[-1][1],
+        result,
+        "test",
+        trajectory,  # type: ignore[arg-type]
+    )
+
+
+def _hit_at_two() -> list[tuple[float, _World]]:
+    apart, hit = _car(2, (10.0, 0.0)), _car(2, (4.5, 0.0))
+    return [
+        (0.0, _world(apart)),
+        (1.0, _world(apart)),
+        (2.0, _world(hit)),
+        (3.0, _world(hit)),
+    ]
+
+
+def test_a_metric_condition_fails_a_run_that_passed() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+    from autoware_carla_scenario.failure import FailureCategory
+
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    result = _judged_run(
+        MetricCondition(WRONG_LANE, label="wrong lane"),
+        MetricCondition(COLLISION_AT_FAULT, max_ng_seconds=0.5, label="hit"),
+        result=passed,
+        worlds=_hit_at_two(),
+    )
+
+    assert not result.passed
+    assert result.elapsed_seconds == 2.5
+    assert result.failure.condition == "fail[1](hit)"
+    assert result.failure.category is FailureCategory.COLLISION
+    statuses = {s.label: s for s in result.condition_statuses}
+    assert statuses["fail[1](hit)"].satisfied
+    # NG at 2 s and 3 s: the last frame is the run's end, and counts no time.
+    assert statuses["fail[1](hit)"].details["ng_seconds"] == 1.0
+    assert statuses["fail[0](wrong lane)"].message == "not triggered"
+
+
+def test_an_earlier_failure_stands() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+    from autoware_carla_scenario.failure import Failure, FailureCategory
+
+    failed = ScenarioResult(
+        passed=False,
+        message="timed out",
+        elapsed_seconds=1.5,
+        failure=Failure("fail[1](timeout)", FailureCategory.PROGRESS, 1.5, "timed out"),
+    )
+    result = _judged_run(
+        MetricCondition(COLLISION_AT_FAULT, label="hit"),
+        result=failed,
+        worlds=_hit_at_two(),
+    )
+
+    assert result is failed and failed.failure is not None
+    assert failed.failure.condition == "fail[1](timeout)"
+    # What the metric found is in the run's statuses, and among what else held.
+    assert failed.failure.also_triggered == ["fail[0](hit)"]
+    assert [s.label for s in result.condition_statuses] == ["fail[0](hit)"]
+
+
+def test_the_runner_records_frames_and_judges_after_the_loop() -> None:
+    import inspect
+
+    from autoware_carla_scenario.scenario_runner import ScenarioRunner
+
+    source = inspect.getsource(ScenarioRunner.run_scenario)
+    assert "metric_recorder.record(" in source
+    assert source.index("_judge_metrics(") < source.index("coverage.end(world")
+    assert "if is_post_run(condition):" in source
+
+
+class _Log:
+    """What a run's trajectory log is told once the run is over."""
+
+    def __init__(self) -> None:
+        self.metrics: list[tuple[int, float, dict[str, Any]]] = []
+        self.conditions: list[tuple[int, float, str, int, str, bool]] = []
+
+    def record_metric(self, frame: int, t: float, values: dict[str, Any]) -> None:
+        self.metrics.append((frame, t, values))
+
+    def record_condition_at(
+        self, frame: int, t: float, role: str, index: int, label: str, satisfied: bool
+    ) -> None:
+        self.conditions.append((frame, t, role, index, label, satisfied))
+
+
+def test_the_collision_offroad_and_wrong_lane_metrics_are_yes_no() -> None:
+    from autoware_carla_scenario.metrics import (
+        BUILT_IN_METRICS,
+        COLLISION_ANY,
+        COLLISION_FRONT,
+        COLLISION_LATERAL,
+        COLLISION_REAR,
+        OFFROAD,
+        OFFROAD_OR_COLLISION,
+        OFFROAD_OR_COLLISION_AT_FAULT,
+        WRONG_LANE,
+    )
+
+    boolean = {key for key, metric in BUILT_IN_METRICS.items() if metric.boolean}
+    assert boolean == {
+        COLLISION_ANY,
+        COLLISION_FRONT,
+        COLLISION_REAR,
+        COLLISION_LATERAL,
+        COLLISION_AT_FAULT,
+        OFFROAD,
+        OFFROAD_OR_COLLISION,
+        OFFROAD_OR_COLLISION_AT_FAULT,
+        WRONG_LANE,
+    }
+    # Each one an event: no unit, folded with max.
+    assert all(
+        BUILT_IN_METRICS[key].unit == "" and BUILT_IN_METRICS[key].aggregation == "max"
+        for key in boolean
+    )
+
+
+def test_the_metrics_and_their_ng_frames_go_into_the_log() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    log = _Log()
+    _judged_run(
+        MetricCondition(COLLISION_AT_FAULT, label="hit"),
+        MetricCondition(WRONG_LANE, label="wrong lane"),
+        result=ScenarioResult(passed=True, message="done", elapsed_seconds=3.0),
+        worlds=_hit_at_two(),
+        trajectory=log,
+    )
+
+    # A record a frame, every metric judged in it, in frame order; a yes/no
+    # metric (a collision, the wrong lane) as a boolean.
+    assert [(t, values) for _, t, values in log.metrics] == [
+        (0.0, {COLLISION_AT_FAULT: False, WRONG_LANE: False}),
+        (1.0, {COLLISION_AT_FAULT: False, WRONG_LANE: False}),
+        (2.0, {COLLISION_AT_FAULT: True, WRONG_LANE: False}),
+        (3.0, {COLLISION_AT_FAULT: True, WRONG_LANE: False}),
+    ]
+    assert all(
+        type(value) is bool  # not 1.0 or 0.0, which == True or False
+        for _, _, values in log.metrics
+        for value in values.values()
+    )
+    frames = [frame for frame, _, _ in log.metrics]
+    assert frames == sorted(frames) and len(set(frames)) == 4
+    # Each condition on its first frame and whenever it changed.
+    assert [(t, role, i, label, ng) for _, t, role, i, label, ng in log.conditions] == [
+        (0.0, "fail", 0, "hit", False),
+        (2.0, "fail", 0, "hit", True),
+        (0.0, "fail", 1, "wrong lane", False),
+    ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from .base import BaseCondition, ScenarioResult
+from .base import BaseCondition, ScenarioResult, refuse_post_run
 from ..failure import FailureCategory
 
 if TYPE_CHECKING:
@@ -52,6 +52,7 @@ class StickyCondition(BaseCondition):
     _latched_result: Optional[ScenarioResult]
 
     def __init__(self, condition: BaseCondition, *, label: str | None = None) -> None:
+        refuse_post_run(condition, "StickyCondition")
         auto_label = f"{condition.label}_sticky"
         super().__init__(label=label if label is not None else auto_label)
         self._condition = condition

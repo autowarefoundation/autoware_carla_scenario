@@ -4719,13 +4719,25 @@ register_condition_spec(
                     "happens) or 0 for an event."
                 ),
             ),
+            FieldSpec(
+                name="max_ng_seconds",
+                label="Max NG seconds",
+                kind="number",
+                default=0.0,
+                help=(
+                    "How long, in total, the metric may meet the rule before "
+                    "the run fails; 0 fails it at the first frame that does."
+                ),
+            ),
             _tolerance_field("", "0.1 in the metric's unit"),
         ),
         description=(
-            "How the ego drives, read off the world: a collision, leaving the "
-            "road, driving against the lane, how close it comes to other road "
-            "users or the lane edge (AlpaSim's metrics).  Usually a fail "
-            "condition."
+            "How the ego drove, computed once the run is over: a collision, "
+            "leaving the road, driving against the lane, how close it came to "
+            "other road users or the lane edge (AlpaSim's metrics), and how "
+            "critical CriMe and CommonRoad-Reach found it.  A fail condition: "
+            "the run fails when the metric met the rule for longer than the "
+            "max NG seconds."
         ),
     )
 )

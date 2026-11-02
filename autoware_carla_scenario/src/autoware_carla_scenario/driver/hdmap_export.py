@@ -61,6 +61,9 @@ MAP_FORMATS: Dict[str, str] = {
     "opendrive": "roadgen.xodr",
     "osm": "openstreetmap.osm",
     "clipgt": "clipgt",
+    # A CommonRoad 2020a scenario: the lanelets, signs, lights and
+    # intersections, with the planning problem its schema requires.
+    "commonroad": "commonroad.xml",
     # The run's Lanelet2 map as a tier4/e2e-devkit MapResource, for a policy
     # reading T4Scenes (``driver.t4_scene``); never converted by roadgen.
     "t4": "t4_map.pb",

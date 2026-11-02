@@ -20,6 +20,35 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 
+def is_post_run(condition: "BaseCondition") -> bool:
+    """Whether *condition* is judged once the run is over rather than every
+    tick (a :class:`~.metric.MetricCondition`).
+
+    Recognised by the marker that class carries rather than by importing it,
+    and ``hasattr`` rather than ``getattr`` with a default, which the static
+    check cannot compile.
+    """
+    if hasattr(type(condition), "IS_POST_RUN"):
+        if type(condition).IS_POST_RUN:  # type: ignore[attr-defined]
+            return True
+    return False
+
+
+def refuse_post_run(condition: "BaseCondition", owner: str) -> None:
+    """Refuse to wrap *condition* in *owner* when it is judged after the run:
+    a wrapper reads its condition every tick, where such a one reads nothing.
+
+    Raises:
+        ValueError: *condition* is judged after the run.
+    """
+    if is_post_run(condition):
+        raise ValueError(
+            f"{owner}: {condition.label!r} is a MetricCondition, judged once the "
+            "run is over, not every tick: register it on its own with "
+            "register_fail_condition (max_ng_seconds says how long it may hold)"
+        )
+
+
 def find_actor_pair(
     actors: Union[carla.ActorList, list[carla.Actor]],
     source: Union[EntityRole, str],
