@@ -97,68 +97,64 @@ jobs:
 
             core.setOutput('bump_type', bumpType);
 
+      # Bumps master's version and pushes the bump commit. The bump is made
+      # on master's tip, not on this run's merge commit: when another PR
+      # merges while this run is going (or its own release run pushes a bump
+      # first), a commit made on the merge commit could not be pushed
+      # (non-fast-forward), and this PR's bump was lost. A push still rejected
+      # by a race starts over from the new tip. The release this run cuts is
+      # then the bump commit, which may also carry the PRs merged after this
+      # one; their own runs bump again on top of it.
       - name: Bump version
         if: github.event_name == 'push' && steps.pr-labels.outputs.bump_type != 'none'
         id: bump-version
+        env:
+          BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
         run: |
-          bump_type="${{ steps.pr-labels.outputs.bump_type }}"
-
-          # Extract current version from autoware_carla_scenario/pyproject.toml
-          current_version=$(grep '^version = ' autoware_carla_scenario/pyproject.toml | sed 's/version = "\(.*\)"/\1/' || true)
-
-          # Validate version extraction
-          if [ -z "$current_version" ]; then
-            echo "ERROR: Could not extract version from pyproject.toml"
-            exit 1
-          fi
-
-          echo "Current version: $current_version"
-
-          # Parse version components
-          IFS='.' read -r major minor patch <<< "$current_version"
-
-          # Bump version based on label
-          case "$bump_type" in
-            major)
-              major=$((major + 1))
-              minor=0
-              patch=0
-              ;;
-            minor)
-              minor=$((minor + 1))
-              patch=0
-              ;;
-            patch)
-              patch=$((patch + 1))
-              ;;
-          esac
-
-          new_version="${major}.${minor}.${patch}"
-          echo "New version: $new_version"
-
-          # Update autoware_carla_scenario/pyproject.toml
-          sed -i "s/^version = \".*\"/version = \"$new_version\"/" autoware_carla_scenario/pyproject.toml
-
-          # Keep uv.lock in sync with the bumped version. The editable package
-          # entry in uv.lock records the version, so bumping pyproject.toml
-          # without re-locking leaves uv.lock stale and makes every subsequent
-          # non-frozen uv command (uv lock / uv sync / uv pip install) rewrite
-          # the lockfile. `uv lock` keeps every other pin as it is.
-          uv lock
-
-          # Set outputs
-          echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
-          echo "bump_type=${bump_type}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit version bump
-        if: github.event_name == 'push' && steps.pr-labels.outputs.bump_type != 'none'
-        run: |
+          set -euo pipefail
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          git add autoware_carla_scenario/pyproject.toml uv.lock
-          git commit -m "chore: bump version to ${{ steps.bump-version.outputs.new_version }}"
-          git push origin master
+          for attempt in 1 2 3 4 5; do
+            git fetch --quiet origin master
+            git checkout --quiet --force -B master origin/master
+
+            current_version=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
+            if ! [[ "${current_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "ERROR: Could not extract version from pyproject.toml"
+              exit 1
+            fi
+            IFS='.' read -r major minor patch <<< "${current_version}"
+            case "${BUMP_TYPE}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+            esac
+            new_version="${major}.${minor}.${patch}"
+            echo "Current version: ${current_version}"
+            echo "New version: ${new_version}"
+
+            sed -i "s/^version = \".*\"/version = \"${new_version}\"/" autoware_carla_scenario/pyproject.toml
+            # Keep uv.lock in sync with the bumped version. The editable
+            # package entry in uv.lock records the version, so bumping
+            # pyproject.toml without re-locking leaves uv.lock stale and makes
+            # every subsequent non-frozen uv command (uv lock / uv sync /
+            # uv pip install) rewrite the lockfile. `uv lock` keeps every
+            # other pin as it is.
+            uv lock
+
+            git add autoware_carla_scenario/pyproject.toml uv.lock
+            git commit --quiet -m "chore: bump version to ${new_version}"
+            if git push origin master; then
+              echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
+              echo "bump_type=${BUMP_TYPE}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::master moved during attempt ${attempt}; bumping again from its new tip"
+            sleep $((attempt * 5))
+          done
+          echo "ERROR: could not push the version bump after 5 attempts"
+          exit 1
 
       - name: Resolve the version to release
         id: version
@@ -326,21 +322,25 @@ jobs:
 
       - name: Deploy to GitHub Pages with mike
         if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          LATEST: ${{ steps.version.outputs.latest }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Fetch gh-pages branch
-          git fetch origin gh-pages --depth=1 || true
-
-          if [ "${{ steps.version.outputs.latest }}" = "true" ]; then
-            uv run mike deploy --push --update-aliases --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }} latest
-
-            # Set latest as default version
-            uv run mike set-default --push --config-file autoware_carla_scenario/mkdocs.yml latest
+          # Retries a push the Docs workflow raced, and prunes the release
+          # docs that no longer fit on Pages (see the script). An older
+          # release publishes its docs without moving "latest". The script is
+          # read from this run's commit: a manual run has checked out an older
+          # release commit, which may predate it.
+          publish="${RUNNER_TEMP}/publish-docs.sh"
+          git show "${GITHUB_SHA}:.github/scripts/publish-docs.sh" > "${publish}"
+          chmod +x "${publish}"
+          if [ "${LATEST}" = "true" ]; then
+            "${publish}" latest "${VERSION}"
           else
-            # An older release: publish its docs without moving "latest".
-            uv run mike deploy --push --config-file autoware_carla_scenario/mkdocs.yml ${{ steps.version.outputs.version }}
+            "${publish}" older "${VERSION}"
           fi
 
       - name: No version bump needed

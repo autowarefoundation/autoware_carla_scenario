@@ -32,6 +32,7 @@ on:
       # mkdocstrings renders the API reference from the sources.
       - "autoware_carla_scenario/src/**"
       - ".github/actions/build-docs/**"
+      - ".github/scripts/publish-docs.sh"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -108,17 +109,11 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin gh-pages --depth=1 || true
 
+          # Retries a push the Release workflow raced, and prunes the release
+          # docs that no longer fit on Pages (see the script).
           if [ "${RELEASE}" = "true" ]; then
-            uv run mike deploy --push --update-aliases --config-file "${CONFIG}" "${VERSION}" latest
-            uv run mike set-default --push --config-file "${CONFIG}" latest
-            exit 0
-          fi
-
-          uv run mike deploy --push --title "dev (master)" --config-file "${CONFIG}" dev
-          # Point the site root at dev only while there is no release to point at.
-          if ! uv run mike list --json --config-file "${CONFIG}" \
-              | jq -e 'any(.[]; .aliases | index("latest"))' >/dev/null; then
-            uv run mike set-default --push --config-file "${CONFIG}" dev
+            .github/scripts/publish-docs.sh latest "${VERSION}"
+          else
+            .github/scripts/publish-docs.sh dev
           fi
