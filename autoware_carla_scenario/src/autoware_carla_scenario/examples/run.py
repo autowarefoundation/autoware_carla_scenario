@@ -969,22 +969,47 @@ def apply_canvas(*cfgs: DictConfig) -> Path | None:
     return use_canvas(canvas_config(*cfgs))
 
 
+#: ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` as it was before
+#: :func:`apply_metrics` last set it (``None``: unset), and what it set it to.
+_heavy_metrics_env_set: tuple[str | None, str] | None = None
+
+
 def apply_metrics(*cfgs: DictConfig) -> bool:
     """Turn the heavy CommonRoad metrics on or off as the first of *cfgs*
-    that sets ``metrics.heavy`` says (on when none does); whether they are
-    on.  The environment carries it to the runs' own processes."""
+    that sets ``metrics.heavy`` (to ``true`` or ``false``) says; when none
+    does, as ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` says (on unless it is
+    ``0``).  Whether they are on.  The environment carries it to the runs'
+    own processes.
+
+    The variable read is the one the user set, not what an earlier call in
+    this process (a run of a Hydra ``--multirun``) set it to: one case's
+    ``metrics.heavy`` does not carry over to the next case's."""
+    global _heavy_metrics_env_set  # noqa: PLW0603
     from ..commonroad.session import (  # noqa: PLC0415
         HEAVY_METRICS_ENV,
+        _heavy_metrics_default,
         configure_commonroad_metrics,
     )
 
-    heavy = True
+    user_value = os.environ.get(HEAVY_METRICS_ENV)
+    if _heavy_metrics_env_set is not None and user_value == _heavy_metrics_env_set[1]:
+        # Still what the last call set: the user's own value is the one before.
+        user_value = _heavy_metrics_env_set[0]
+    heavy: bool | None = None
     for cfg in cfgs:
         value = (cfg.get("metrics") or {}).get("heavy")
         if value is not None:
             heavy = bool(value)
             break
-    os.environ[HEAVY_METRICS_ENV] = "1" if heavy else "0"
+    if heavy is None:
+        if user_value is None:
+            os.environ.pop(HEAVY_METRICS_ENV, None)
+        else:
+            os.environ[HEAVY_METRICS_ENV] = user_value
+        heavy = _heavy_metrics_default()
+    written = "1" if heavy else "0"
+    os.environ[HEAVY_METRICS_ENV] = written
+    _heavy_metrics_env_set = (user_value, written)
     configure_commonroad_metrics(heavy_metrics=heavy)
     return heavy
 
