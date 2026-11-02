@@ -425,6 +425,8 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
         length = Range.parse(f"{where}.length", raw.get("length"))
         if (length.min or 0.0) < 0.0:
             raise ValueError(f"{where}.length.min must not be negative")
+        if length.max is not None and length.max <= 0.0:
+            raise ValueError(f"{where}.length.max must be positive")
         return JunctionSegmentSpec(
             turn=turn,
             paths=_parse_paths(f"{where}.paths", raw.get("paths")),
@@ -493,20 +495,18 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
     if not segments_raw:
         raise ValueError("a route search needs at least one segment")
     segments = tuple(_parse_segment(i, s) for i, s in enumerate(segments_raw))
-    spawn_s = float(raw.get("ego_spawn_s") or 0.0)
-    margin = float(raw.get("ego_goal_margin") or 0.0)
-    if spawn_s < 0.0:
-        raise ValueError("ego_spawn_s must not be negative")
-    if margin < 0.0:
-        raise ValueError("ego_goal_margin must not be negative")
-    match_index = int(raw.get("match_index") or 0)
+    spawn_s = _distance("ego_spawn_s", raw.get("ego_spawn_s"))
+    margin = _distance("ego_goal_margin", raw.get("ego_goal_margin"))
+    match_index = _whole_number("match_index", raw.get("match_index"))
+    if match_index is None:
+        match_index = 0
     if match_index < 0:
         raise ValueError("match_index must not be negative")
-    raw_max = raw.get("max_matches")
-    max_matches = DEFAULT_MAX_MATCHES if raw_max is None else int(raw_max)
+    max_matches = _whole_number("max_matches", raw.get("max_matches"))
+    if max_matches is None:
+        max_matches = DEFAULT_MAX_MATCHES
     if not 1 <= max_matches <= MAX_MATCHES_LIMIT:
         raise ValueError(f"max_matches must be between 1 and {MAX_MATCHES_LIMIT}")
-    seed_raw = raw.get("seed")
     goal = raw.get("ego_goal", True)
     return RouteSearchSpec(
         segments=segments,
@@ -515,8 +515,59 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
         ego_goal_margin=margin,
         match_index=match_index,
         max_matches=max_matches,
-        seed=None if seed_raw is None else int(seed_raw),
+        seed=_whole_number("seed", raw.get("seed")),
     )
+
+
+def _blank(value: Any) -> bool:
+    """Whether a route search left *value* unset (``None`` or a blank string)."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _distance(name: str, value: Any) -> float:
+    """A finite, non-negative distance (m) the search reads; unset is ``0``.
+
+    ``float()`` alone lets a NaN through (every comparison with it is false)
+    and an infinity, so both are refused here, with the field's name, as the
+    authoring model refuses them.
+    """
+    if _blank(value):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a number, got {value!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be finite, got {value!r}")
+    if number < 0.0:
+        raise ValueError(f"{name} must not be negative, got {value!r}")
+    return number
+
+
+def _whole_number(name: str, value: Any) -> Optional[int]:
+    """A whole number the search reads (``2`` or ``2.0``); unset is ``None``.
+
+    ``int()`` alone truncates ``2.7`` to ``2`` and reads ``True`` as ``1``;
+    both are refused here, as the authoring model refuses them.
+    """
+    if _blank(value):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a whole number, got {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            pass
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a whole number, got {value!r}") from exc
+    if not math.isfinite(number) or not number.is_integer():
+        raise ValueError(f"{name} must be a whole number, got {value!r}")
+    return int(number)
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.authoring.models import RouteSearch
 from autoware_carla_scenario.route.model import (
     JunctionSegmentSpec,
     LaneSegmentSpec,
@@ -108,6 +109,63 @@ class TestParsing:
     ) -> None:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("ego_spawn_s", float("nan"), r"^ego_spawn_s must be finite"),
+            ("ego_spawn_s", float("inf"), r"^ego_spawn_s must be finite"),
+            ("ego_spawn_s", "nan", r"^ego_spawn_s must be finite"),
+            ("ego_spawn_s", -1.0, r"^ego_spawn_s must not be negative"),
+            ("ego_spawn_s", "far", r"^ego_spawn_s must be a number"),
+            ("ego_goal_margin", float("nan"), r"^ego_goal_margin must be finite"),
+            ("ego_goal_margin", float("inf"), r"^ego_goal_margin must be finite"),
+            ("ego_goal_margin", -0.5, r"^ego_goal_margin must not be negative"),
+            ("match_index", 2.7, r"^match_index must be a whole number"),
+            ("match_index", True, r"^match_index must be a whole number"),
+            ("match_index", float("nan"), r"^match_index must be a whole number"),
+            ("match_index", "1.5", r"^match_index must be a whole number"),
+            ("max_matches", 2.5, r"^max_matches must be a whole number"),
+            ("max_matches", False, r"^max_matches must be a whole number"),
+            ("seed", 7.5, r"^seed must be a whole number"),
+        ],
+    )
+    def test_a_malformed_ego_or_count_names_its_field(
+        self, field: str, value: Any, message: str
+    ) -> None:
+        """NaN, infinities and fractional counts are refused by name (#1114)."""
+        search = {"segments": [_lane()], field: value}
+        with pytest.raises(ValueError, match=message):
+            parse_route_search(search)
+        # The authoring model refuses what the run would.
+        with pytest.raises(ValueError, match=field):
+            RouteSearch.model_validate(search)
+
+    def test_whole_floats_are_counts(self) -> None:
+        """YAML or Hydra may hand a count over as ``2.0``; both readers take it."""
+        search = {
+            "segments": [_lane()],
+            "match_index": 2.0,
+            "max_matches": "5",
+            "seed": 7.0,
+        }
+        spec = parse_route_search(search)
+        assert (spec.match_index, spec.max_matches, spec.seed) == (2, 5, 7)
+        assert isinstance(spec.match_index, int) and isinstance(spec.seed, int)
+        model = RouteSearch.model_validate(search)
+        assert (model.match_index, model.max_matches, model.seed) == (2, 5, 7)
+
+    @pytest.mark.parametrize("kind", ["lane", "junction"])
+    @pytest.mark.parametrize("bound", [0, -5])
+    def test_a_segments_length_max_must_be_positive(
+        self, kind: str, bound: int
+    ) -> None:
+        """A junction segment holds length.max to what a lane segment does."""
+        search = {"segments": [{"kind": kind, "length": {"max": bound}}]}
+        with pytest.raises(ValueError, match=r"segments\[0\]\.length\.max must be"):
+            parse_route_search(search)
+        with pytest.raises(ValueError, match="length.max"):
+            RouteSearch.model_validate(search)
 
     def test_a_bare_number_is_a_count_only_when_whole(self) -> None:
         """A bare number is held to ``whole`` as a mapping is (#796)."""

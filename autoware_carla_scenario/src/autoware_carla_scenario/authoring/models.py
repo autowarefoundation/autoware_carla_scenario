@@ -991,8 +991,8 @@ def _tristate_from_yaml(value: Any) -> Any:
 class LengthRange(_Node):
     """An inclusive range of metres; an unset bound is open."""
 
-    min: Optional[float] = Field(default=None, ge=0.0)
-    max: Optional[float] = Field(default=None, gt=0.0)
+    min: Optional[float] = Field(default=None, ge=0.0, allow_inf_nan=False)
+    max: Optional[float] = Field(default=None, gt=0.0, allow_inf_nan=False)
 
 
 class CountRange(_Node):
@@ -1158,12 +1158,23 @@ class RouteSearch(_Node):
     """
 
     segments: list[RouteSegment] = Field(default_factory=list)
-    ego_spawn_s: float = Field(default=0.0, ge=0.0)
+    ego_spawn_s: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     ego_goal: bool = True
-    ego_goal_margin: float = Field(default=0.0, ge=0.0)
+    ego_goal_margin: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     match_index: int = Field(default=0, ge=0)
     max_matches: int = Field(default=64, ge=1, le=1000)
     seed: Optional[int] = None
+
+    @field_validator("match_index", "max_matches", "seed", mode="before")
+    @classmethod
+    def _not_a_bool(cls, value: Any) -> Any:
+        """Refuse ``true`` / ``false`` for a count, which pydantic reads as 1 / 0.
+
+        The route search refuses them too (``route.model.parse_route_search``).
+        """
+        if isinstance(value, bool):
+            raise ValueError("must be a whole number, not a boolean")
+        return value
 
     @property
     def junction_count(self) -> int:
