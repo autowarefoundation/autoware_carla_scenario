@@ -285,7 +285,7 @@ class RerunConverter:
                 )
         from .rerun_metrics import merge_metrics  # noqa: PLC0415
 
-        merge_metrics(trajectory, recording, _label(trajectory))
+        merge_metrics(trajectory, recording, _label(trajectory), converter=self._module)
         return stats
 
     def wait(self) -> list[RerunConversion]:
@@ -421,7 +421,7 @@ def _install(
             )
     from .rerun_metrics import merge_metrics  # noqa: PLC0415
 
-    merge_metrics(trajectory, recording, label)
+    merge_metrics(trajectory, recording, label, converter=require_converter())
     logger.info("[%s] Rerun recording written to %s", label, recording)
     return RerunConversion(label, trajectory, recording, stats=stats)
 
