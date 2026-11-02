@@ -16,7 +16,8 @@ in, which is the point of writing the specification down in the first place.
 from __future__ import annotations
 
 import threading
-from dataclasses import replace
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -46,6 +47,26 @@ from stl_driver.ruleset import RuleSet
 __all__ = ["EgoPolicy", "warmed_up_policy"]
 
 
+@dataclass
+class _RolloutMemory:
+    """What one rollout carries from one step to the next.
+
+    Kept per session, never on the policy: the driver service serves many
+    sessions at once on one policy, and a rollout must neither inherit another's
+    state nor lose its own when another starts or closes. Its fields are read
+    and written under :attr:`EgoPolicy._rollouts_lock`.
+    """
+
+    #: Last step's answer, to start this step's search from.
+    warm_start: torch.Tensor | None = None
+    #: The acceleration the last plan was anchored at, so this one can be
+    #: anchored somewhere the vehicle could actually have got to.
+    anchor_accel_mps2: float | None = None
+    #: Last step's reading of the light, so a stop margin that had to give way
+    #: stays given way for the same line (`read_traffic_light`).
+    light: TrafficLight | None = None
+
+
 class EgoPolicy(BaseDriver):
     """Drive by maximising the robustness of an STL specification.
 
@@ -59,6 +80,14 @@ class EgoPolicy(BaseDriver):
     #: the runtime's ground truth, not over pixels. Keeping this at 1 stops
     #: the service retaining frames nothing will read.
     frame_history_length = 1
+    #: How many sessions' step-to-step memory is kept. Each entry is a few
+    #: floats and a 6-element tensor, dropped when its session closes; the cap
+    #: only bounds sessions that never close (a runtime that died mid-rollout,
+    #: or a ``drive`` that raced its own ``close_session``). The least recently
+    #: driven goes first, so a live session loses its memory -- and plans its
+    #: next step as a session's first -- only after this many others have
+    #: stepped since it last did.
+    max_remembered_rollouts = 256
 
     def __init__(
         self,
@@ -84,38 +113,60 @@ class EgoPolicy(BaseDriver):
         self.optimizer = RobustnessOptimizer(self.rules, self.config)
         self.device = self.optimizer.device
 
-        self._warm_start: torch.Tensor | None = None
-        # The acceleration the last plan was anchored at, so this one can be
-        # anchored somewhere the vehicle could actually have got to. Under the
-        # same lock as the warm start, and for the same reason: gRPC handler
-        # threads and the search both touch it.
-        self._anchor_accel_mps2: float | None = None
-        # Last step's reading of the light, so a stop margin that had to give
-        # way stays given way for the same line (`read_traffic_light`).
-        self._light: TrafficLight | None = None
-        self._warm_start_lock = threading.Lock()
+        # Step-to-step memory by session uuid (`_RolloutMemory`), least
+        # recently driven first. One lock guards the map and every entry's
+        # fields: the service calls `drive` for different sessions -- and for
+        # one session -- from concurrent gRPC handler threads, but holds it
+        # only for reads and writes, never across the search.
+        self._rollouts: OrderedDict[str, _RolloutMemory] = OrderedDict()
+        self._rollouts_lock = threading.Lock()
 
     # -- session hooks -----------------------------------------------------
 
     def on_session_start(self, session: SessionState) -> None:
-        """Reset per-rollout state and pay torch's start-up cost up front.
+        """Reset this rollout's state and pay torch's start-up cost up front.
+
+        Only this session's: others the service is driving keep theirs.
 
         The service calls this before any observation arrives, so the warm-up
         happens in time the runtime is not waiting on -- whereas paying it
         inside the first ``drive`` would show up as a a step that misses its
         deadline.
         """
-        with self._warm_start_lock:
-            self._warm_start = None
-            self._anchor_accel_mps2 = None
-            self._light = None
+        with self._rollouts_lock:
+            self._rollouts.pop(session.uuid, None)
+            self._remember(session.uuid, _RolloutMemory())
         self.warm_up()
 
     def on_session_close(self, session: SessionState) -> None:
-        with self._warm_start_lock:
-            self._warm_start = None
-            self._anchor_accel_mps2 = None
-            self._light = None
+        """Forget this rollout's state, and only this one's."""
+        with self._rollouts_lock:
+            self._rollouts.pop(session.uuid, None)
+
+    def _memory(self, uuid: str) -> _RolloutMemory:
+        """The step-to-step memory of session ``uuid``, made on first use.
+
+        A session the policy was never told about -- driven without
+        `on_session_start`, or after a cap eviction -- starts with an empty
+        memory, as at the start of a session.
+        """
+        with self._rollouts_lock:
+            memory = self._rollouts.get(uuid)
+            if memory is None:
+                memory = self._remember(uuid, _RolloutMemory())
+            else:
+                self._rollouts.move_to_end(uuid)
+            return memory
+
+    def _remember(self, uuid: str, memory: _RolloutMemory) -> _RolloutMemory:
+        """Store ``memory`` as the most recent, dropping the oldest over the cap.
+
+        Called under `_rollouts_lock`.
+        """
+        self._rollouts[uuid] = memory
+        while len(self._rollouts) > max(1, self.max_remembered_rollouts):
+            self._rollouts.popitem(last=False)
+        return memory
 
     def warm_up(self) -> None:
         """Pay the one-off costs before the runtime starts waiting on us.
@@ -140,12 +191,15 @@ class EgoPolicy(BaseDriver):
             axis=1,
         )
         try:
+            # A memory of its own: warming up for one session must not touch
+            # the light another session is holding.
             inputs = self._build_inputs(
                 route_in_rig=straight,
                 anchor=Pose.identity(),
                 renderer_data=None,
                 speed_mps=5.0,
                 accel_mps2=0.0,
+                memory=_RolloutMemory(),
             )
             self.optimizer.prepare(inputs)
         except Exception:  # noqa: BLE001
@@ -157,6 +211,9 @@ class EgoPolicy(BaseDriver):
 
     def drive(self, ctx: DriveContext) -> DriveResult:
         session = ctx.session
+        # This rollout's memory, held for the whole step: should the session
+        # close meanwhile, the step finishes on it and it is dropped with it.
+        memory = self._memory(session.uuid)
         # Hold the lock only for the snapshot: gRPC handler threads write to
         # the session concurrently, but the search must not block them.
         with session.lock:
@@ -165,7 +222,7 @@ class EgoPolicy(BaseDriver):
             speed_mps = session.speed_mps()
             state = session.latest_dynamic_state()
             accel_mps2 = float(state.linear_acceleration.x) if state is not None else 0.0
-        accel_mps2 = self._plausible_acceleration(accel_mps2)
+        accel_mps2 = self._plausible_acceleration(accel_mps2, memory)
 
         if len(route) < 2 or anchor is None:
             # Not an error: the route has not arrived yet.
@@ -185,6 +242,7 @@ class EgoPolicy(BaseDriver):
                 renderer_data=ctx.renderer_data,
                 speed_mps=speed_mps,
                 accel_mps2=accel_mps2,
+                memory=memory,
                 frame=frame,
             )
         except ValueError:
@@ -195,8 +253,8 @@ class EgoPolicy(BaseDriver):
                 debug_scalars={"stl_bad_route": 1.0, "current_speed_mps": speed_mps},
             )
 
-        with self._warm_start_lock:
-            warm_start = self._warm_start
+        with self._rollouts_lock:
+            warm_start = memory.warm_start
         solution = self.optimizer.solve(inputs, warm_start=warm_start)
 
         scalars = self._debug_scalars(solution, inputs, speed_mps)
@@ -205,8 +263,8 @@ class EgoPolicy(BaseDriver):
             # Deliberately not the optimizer's best plan: it violates a rule
             # we said we would never violate, and driving it anyway would make
             # `hard` meaningless.
-            with self._warm_start_lock:
-                self._warm_start = None
+            with self._rollouts_lock:
+                memory.warm_start = None
             # From where the ego is on the route, not from the table's first
             # point: the table reaches back behind the ego (`_locate_ego`).
             table, station0, offset0 = frame
@@ -222,8 +280,8 @@ class EgoPolicy(BaseDriver):
                 debug_scalars=scalars,
             )
 
-        with self._warm_start_lock:
-            self._warm_start = solution.params.detach().clone()
+        with self._rollouts_lock:
+            memory.warm_start = solution.params.detach().clone()
 
         return DriveResult(
             trajectory_in_rig=self._to_trajectory(solution.params, inputs, ctx.time_now_us),
@@ -236,8 +294,11 @@ class EgoPolicy(BaseDriver):
 
     # -- plumbing ----------------------------------------------------------
 
-    def _plausible_acceleration(self, measured_mps2: float) -> float:
+    def _plausible_acceleration(self, measured_mps2: float, memory: _RolloutMemory) -> float:
         """Confine the measured acceleration to the envelope the plan respects.
+
+        ``memory`` is the rollout's own (`_memory`): the anchor is rate-limited
+        from that rollout's last anchor, never from another session's.
 
         The plan's acceleration profile is anchored at this value so that it
         starts from the vehicle's actual state rather than stepping to a new
@@ -284,12 +345,12 @@ class EgoPolicy(BaseDriver):
         lowest, highest = limits.plan_accel_envelope()
         plausible = float(np.clip(measured_mps2, lowest, highest))
 
-        with self._warm_start_lock:
-            previous = self._anchor_accel_mps2
+        with self._rollouts_lock:
+            previous = memory.anchor_accel_mps2
             if previous is not None:
                 step = limits.plan_jerk_limit() * self.config.horizon.step_s
                 plausible = float(np.clip(plausible, previous - step, previous + step))
-            self._anchor_accel_mps2 = plausible
+            memory.anchor_accel_mps2 = plausible
         return plausible
 
     def _locate_ego(self, route_in_rig: np.ndarray) -> tuple[RouteTable, float, float]:
@@ -320,18 +381,20 @@ class EgoPolicy(BaseDriver):
         renderer_data,
         speed_mps: float,
         accel_mps2: float,
+        memory: _RolloutMemory,
         frame: tuple[RouteTable, float, float] | None = None,
     ) -> RolloutInputs:
         """Everything the rollout needs that does not depend on the plan.
 
+        ``memory`` is the rollout's own, whose held light it reads and updates.
         ``frame`` is `_locate_ego`'s answer for ``route_in_rig``, when the
         caller already has it.
         """
         config = self.config
         table, station0, offset0 = frame if frame is not None else self._locate_ego(route_in_rig)
 
-        with self._warm_start_lock:
-            previous = self._light
+        with self._rollouts_lock:
+            previous = memory.light
         light = read_traffic_light(
             renderer_data,
             station0,
@@ -341,8 +404,8 @@ class EgoPolicy(BaseDriver):
             anchor=anchor,
             previous=previous,
         )
-        with self._warm_start_lock:
-            self._light = light
+        with self._rollouts_lock:
+            memory.light = light
         forecast = forecast_actors(renderer_data, anchor, table, station0, config)
 
         speed_limit = 0.0

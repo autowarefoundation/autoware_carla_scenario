@@ -108,7 +108,7 @@ def test_no_measurable_state_can_force_a_jerk_violation(config):
     Swept over the whole envelope and both extremes of the plan, because the
     failure only appeared at its edges.
     """
-    from stl_driver.policy import EgoPolicy
+    from stl_driver.policy import EgoPolicy, _RolloutMemory
     from stl_driver.rollout import knot_step_limit
 
     limits = config.limits
@@ -119,8 +119,7 @@ def test_no_measurable_state_can_force_a_jerk_violation(config):
         # Reset first: the anchor is rate-limited between steps, and this is
         # sweeping states the vehicle might be *in*, not a sequence it passes
         # through.
-        policy._anchor_accel_mps2 = None
-        accel0 = policy._plausible_acceleration(float(measured))
+        accel0 = policy._plausible_acceleration(float(measured), _RolloutMemory())
         inputs = make_inputs(config, speed0_mps=4.0, accel0_mps2=accel0)
         for params in (hardest, -hardest):
             signal = rollout(params, inputs, config)
