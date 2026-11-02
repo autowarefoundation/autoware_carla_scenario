@@ -1572,6 +1572,9 @@ class SumoTrafficBackend(TrafficBackend):
                 if sumo_id in self._driven:
                     del self._driven[sumo_id]
                     self._let_go(sumo_id)
+                    # Published for good: no junction unstick to undo.
+                    self._unstuck.pop(sumo_id, None)
+                    self._standing_since.pop(sumo_id, None)
                     self._hand_over(sumo_id, actor)
                 # Not taken back by a resume() to come, nor routed.
                 self._forget_handed(sumo_id)
@@ -1822,13 +1825,13 @@ class SumoTrafficBackend(TrafficBackend):
             # Not in SUMO yet: start() publishes it rather than driving it.
             return
         self._driven.pop(sumo_id, None)
+        actor = getattr(entity, "actor", None)
+        if actor is None:
+            return
         # Going on through a junction (_unstick_junctions): the speed mode it
         # had before is the one resume() puts back.
         unstuck = self._unstuck.pop(sumo_id, None)
         self._standing_since.pop(sumo_id, None)
-        actor = getattr(entity, "actor", None)
-        if actor is None:
-            return
         modes = self._hand_over(sumo_id, actor)
         if modes is not None:
             speed_mode = modes[0] if unstuck is None else unstuck

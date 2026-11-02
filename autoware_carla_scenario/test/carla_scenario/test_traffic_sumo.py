@@ -795,6 +795,33 @@ def test_a_vehicle_released_while_unstuck_resumes_with_its_own_speed_mode() -> N
     assert backend._unstuck == {}
 
 
+def test_a_vehicle_released_without_its_actor_while_unstuck_gets_its_mode_back() -> (
+    None
+):
+    """Released before its actor is there, an unstuck vehicle is not handed
+    over: _unstick_junctions still gives it its own speed mode back once out
+    of the junction, rather than leave it disregarding the right of way."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig(scenario_vehicles="sumo"))
+    vehicles = _JunctionVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    backend._running = True
+    entity = SimpleNamespace(actor=None, role_name="npc")
+    backend._driven["v0"] = entity
+    backend._external["foe"] = object()
+    backend._unstick_junctions(0.0)
+    backend._unstick_junctions(3.0)
+    assert "v0" in backend._unstuck
+    backend._id_of = lambda e: "v0"  # type: ignore[method-assign,assignment]
+
+    backend.release(entity, None)
+    vehicles.lane["v0"] = "E2_0"
+    backend._unstick_junctions(4.0)
+    assert vehicles.speed_mode["v0"] == 31
+    assert backend._unstuck == {}
+
+
 @needs_sumo
 def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> None:
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
