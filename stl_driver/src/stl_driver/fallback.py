@@ -24,6 +24,7 @@ import numpy as np
 from carla_driver_interface.geometry import Pose, Trajectory
 
 from stl_driver.config import STLDriverConfig
+from stl_driver.frenet import RouteTable
 
 __all__ = ["emergency_brake_plan", "hold_plan"]
 
@@ -52,20 +53,60 @@ def emergency_brake_plan(
     time_now_us: int,
     speed_mps: float,
     config: STLDriverConfig,
-    centreline_xy: np.ndarray | None = None,
+    route: RouteTable | None = None,
+    station0_m: float = 0.0,
+    offset0_m: float = 0.0,
 ) -> Trajectory:
     """Stop as quickly as the vehicle can, along the route if we know it.
 
-    Following the centreline rather than the current heading matters on a
-    bend: braking straight ahead there would leave the lane while stopping.
+    Following the route rather than the current heading matters on a bend:
+    braking straight ahead there would leave the lane while stopping.
+
+    The plan starts where the ego is on the route -- ``station0_m`` and
+    ``offset0_m``, as :func:`~stl_driver.frenet.project_to_frenet` gives them
+    -- not at the table's first point. A table built with ``behind_m`` starts
+    behind the ego, and a plan measured from its first point would be shifted
+    back by the ego's station: below a few metres per second, every pose
+    behind the vehicle.
+
+    The offset is held, not eased back to the centreline. A normal plan
+    starts from the measured offset too, so the two agree where the plan
+    begins; after that, braking must not also swerve -- moving across the
+    lane under maximum braking spends grip the stop needs, and an emergency
+    stop is not the moment to recentre. Held, the path runs parallel to the
+    route, so its heading is the route's tangent at each station; at rest
+    the station stops changing and the heading with it, which is the
+    held-at-rest heading :func:`stl_driver.rollout.plan_xy` gives a normal
+    plan.
+
+    Args:
+        route: the route table; ``None`` brakes straight ahead in the rig
+            frame.
+        station0_m: the ego's station on ``route``.
+        offset0_m: the ego's signed lateral offset from ``route``.
     """
-    return _straight_line_plan(
-        time_now_us,
-        speed_mps,
-        decel_mps2=config.limits.emergency_decel_mps2,
-        config=config,
-        centreline_xy=centreline_xy,
+    travelled = _braking_distances(speed_mps, config.limits.emergency_decel_mps2, config)
+    if route is None or len(route) < 2:
+        return _lay_out_straight(time_now_us, travelled, config)
+
+    positions, tangents = route.frenet_to_xy_many(
+        station0_m + travelled, np.full_like(travelled, offset0_m)
     )
+    headings = np.arctan2(tangents[:, 1], tangents[:, 0])
+    return _trajectory(time_now_us, positions, headings, config)
+
+
+def _braking_distances(speed_mps: float, decel_mps2: float, config: STLDriverConfig) -> np.ndarray:
+    """Distance covered by each plan step under a constant deceleration."""
+    horizon = config.horizon
+    speed = max(0.0, float(speed_mps))
+    travelled = 0.0
+    distances = np.empty(horizon.n_steps, dtype=np.float64)
+    for index in range(horizon.n_steps):
+        speed = max(0.0, speed - decel_mps2 * horizon.step_s)
+        travelled += speed * horizon.step_s
+        distances[index] = travelled
+    return distances
 
 
 def _straight_line_plan(
@@ -73,46 +114,36 @@ def _straight_line_plan(
     speed_mps: float,
     decel_mps2: float,
     config: STLDriverConfig,
-    centreline_xy: np.ndarray | None = None,
 ) -> Trajectory:
-    """Integrate a deceleration profile and lay it out as a trajectory."""
-    horizon = config.horizon
-    step_us = int(round(horizon.step_s * 1e6))
+    """Integrate a deceleration profile and lay it out straight ahead."""
+    return _lay_out_straight(time_now_us, _braking_distances(speed_mps, decel_mps2, config), config)
 
-    speed = max(0.0, float(speed_mps))
-    travelled = 0.0
+
+def _lay_out_straight(
+    time_now_us: int, travelled: np.ndarray, config: STLDriverConfig
+) -> Trajectory:
+    """Distances along the rig's own heading: the rig is at the origin, facing +x."""
+    positions = np.stack([travelled, np.zeros_like(travelled)], axis=1)
+    return _trajectory(time_now_us, positions, np.zeros_like(travelled), config)
+
+
+def _trajectory(
+    time_now_us: int,
+    positions: np.ndarray,
+    headings: np.ndarray,
+    config: STLDriverConfig,
+) -> Trajectory:
+    """Poses at one plan step apart, from one step after `time_now_us`."""
+    step_us = int(round(config.horizon.step_s * 1e6))
     plan = Trajectory.empty()
-
-    for index in range(1, horizon.n_steps + 1):
-        speed = max(0.0, speed - decel_mps2 * horizon.step_s)
-        travelled += speed * horizon.step_s
-        x, y, heading = _point_at(travelled, centreline_xy)
+    for index in range(len(positions)):
         # Strictly increasing and strictly greater than `time_now_us`: the
         # driver service silently drops anything at or before it, and
         # `Trajectory.append` rejects a non-increasing stamp outright.
         plan.append(
-            time_now_us + index * step_us,
-            Pose.from_xyz_yaw(x, y, 0.0, heading),
+            time_now_us + (index + 1) * step_us,
+            Pose.from_xyz_yaw(
+                float(positions[index, 0]), float(positions[index, 1]), 0.0, float(headings[index])
+            ),
         )
     return plan
-
-
-def _point_at(distance_m: float, centreline_xy: np.ndarray | None) -> tuple[float, float, float]:
-    """Position and heading at an arc length, along the route or straight on."""
-    if centreline_xy is None or len(centreline_xy) < 2:
-        return distance_m, 0.0, 0.0
-
-    # The centreline is uniformly spaced, so the index is arithmetic.
-    spacing = float(np.linalg.norm(centreline_xy[1] - centreline_xy[0]))
-    if spacing < 1e-9:
-        return distance_m, 0.0, 0.0
-
-    position = np.clip(distance_m / spacing, 0.0, len(centreline_xy) - 1.0)
-    lower = int(np.floor(position))
-    upper = min(lower + 1, len(centreline_xy) - 1)
-    weight = position - lower
-    point = centreline_xy[lower] * (1.0 - weight) + centreline_xy[upper] * weight
-
-    tangent = centreline_xy[min(upper, len(centreline_xy) - 1)] - centreline_xy[lower]
-    heading = float(np.arctan2(tangent[1], tangent[0])) if np.linalg.norm(tangent) > 1e-9 else 0.0
-    return float(point[0]), float(point[1]), heading
