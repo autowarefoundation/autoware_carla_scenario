@@ -690,6 +690,27 @@ FieldSpec(
 - **Overrides**: a run overrides one record's field with
   `scenario.param_overrides.<node id>.<field>.<index>.<sub>=<value>`.
 
+### "=" compares within a tolerance
+
+A card that measures a continuous quantity -- Speed, Acceleration, Relative
+speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+progress, Metric -- offers `=` among its predicates, and a measured value
+practically never lands exactly on a threshold. Each of these cards has an
+optional **Tolerance (=)** field, in the card's own unit: `=` holds while the
+value is within that much of the threshold, either side, so "Speed = 10 m/s,
+tolerance 0.05" holds from 9.95 to 10.05 m/s. The other predicates ignore it,
+and an `=` card shows its tolerance as `± 0.05` beside the value.
+
+Left blank, the tolerance is the runtime's 1e-6, so a document written before
+the field existed loads and runs as it did; the validator warns about such a
+card instead, since its rule would never fire. A negative tolerance is an
+error. Elapsed time and Road users matching have no tolerance field: the
+scenario clock advances in fixed steps, so `=` holds on the tick that reaches
+a duration that is a whole number of steps (use `≥` for any other), and a
+count is a whole number. The Lanelet
+length spawn constraint has none either, so `=` on it is warned about: bound
+the length with `≥` and `≤` instead.
+
 ### The map path is a document field
 
 `/draft/<id>/map.osm` serves the file the document names, and that name is
