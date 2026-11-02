@@ -1015,7 +1015,15 @@ def test_the_metrics_computed_after_the_run_are_records(tmp_path) -> None:
     world.frame = 101
     recorder.record(world, 0.05)  # type: ignore[arg-type]
     recorder.record_metric(
-        101, 0.05, {"crime_ttc_s": 2.5501, "crime_hw_m": None, "ttc_inf": float("inf")}
+        101,
+        0.05,
+        {
+            "crime_ttc_s": 2.5501,
+            "crime_hw_m": None,
+            "ttc_inf": float("inf"),
+            "offroad": True,
+            "phase": "merging",
+        },
     )
     recorder.record_condition_at(101, 0.05, "fail", 2, "TTC under 3 s", True)
     recorder.close()
@@ -1025,7 +1033,14 @@ def test_the_metrics_computed_after_the_run_are_records(tmp_path) -> None:
         "type": "metric",
         "frame": 101,
         "t": 0.05,
-        "values": {"crime_ttc_s": 2.5501, "crime_hw_m": None, "ttc_inf": None},
+        # A boolean stays one (not 1.0), a string as it is.
+        "values": {
+            "crime_ttc_s": 2.5501,
+            "crime_hw_m": None,
+            "ttc_inf": None,
+            "offroad": True,
+            "phase": "merging",
+        },
     } in records
     assert {
         "type": "condition",
