@@ -4,8 +4,10 @@ A run judged on a :class:`~autoware_carla_scenario.conditions.MetricCondition`
 writes the metrics it computed once it was over into its trajectory log, as
 ``metric`` records (docs/trajectory_log.md), and each metric condition's NG
 frames as ``condition`` records, which the converter draws in its Conditions
-view.  The converter does not know ``metric`` records yet; once it has
-converted the log, :func:`merge_metrics` writes their values as scalars,
+view.  A converter that draws ``metric`` records too (one whose schema has
+them) puts the metrics in itself, with a Metrics view.  For one that does not
+know them yet, once it has converted the log, :func:`merge_metrics` writes
+their values as scalars,
 ``metrics/<key>``, on the converter's timelines (``frame``, ``sim_time``) and
 recording id (the stem), and merges them into ``{stem}.rrd`` (``rerun rrd
 merge``, as the sensors are, :mod:`.rerun_lidar`).  A time series view of
@@ -24,7 +26,13 @@ import math
 from pathlib import Path
 from typing import Any, Optional
 
-__all__ = ["METRICS_ENTITY", "METRICS_SUFFIX", "merge_metrics", "metric_records"]
+__all__ = [
+    "METRICS_ENTITY",
+    "METRICS_SUFFIX",
+    "converter_draws_metrics",
+    "merge_metrics",
+    "metric_records",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +59,29 @@ def metric_records(trajectory: Path) -> list[dict[str, Any]]:
     return records
 
 
+def converter_draws_metrics(converter: Any) -> bool:
+    """Whether the *converter* package draws ``metric`` records itself (its
+    vendored schema has them), with its own Metrics view."""
+    return "metric" in list(getattr(converter, "RECORD_TYPES", ()))
+
+
 def merge_metrics(
-    trajectory: Path, recording: Path, label: str, sdk: Any = None
+    trajectory: Path,
+    recording: Path,
+    label: str,
+    sdk: Any = None,
+    converter: Any = None,
 ) -> bool:
     """Write the metrics of the log *trajectory* into its *recording*, in
-    place; whether there were any to write.
+    place; whether there were any to write.  Nothing when the *converter*
+    that made the recording drew them itself
+    (:func:`converter_draws_metrics`).
 
     Never raises: a recording without its metrics is a recording still, and
     what went wrong is logged.
     """
+    if converter is not None and converter_draws_metrics(converter):
+        return False
     try:
         records = metric_records(trajectory)
     except FileNotFoundError:

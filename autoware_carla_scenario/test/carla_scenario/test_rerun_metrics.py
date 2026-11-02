@@ -131,3 +131,19 @@ def test_a_runs_conversion_puts_its_metrics_in(tmp_path: Path) -> None:
     [conversion] = convert_outputs(trajectory)
     assert conversion.ok
     assert "/metrics/crime_ttc_s" in entities(recording)
+
+
+def test_a_converter_that_draws_metrics_is_left_to_it(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.rerun_metrics import converter_draws_metrics
+
+    knows = SimpleNamespace(RECORD_TYPES=["world", "tick", "metric", "result"])
+    older = SimpleNamespace(RECORD_TYPES=["world", "tick", "result"])
+    assert converter_draws_metrics(knows) and not converter_draws_metrics(older)
+    recording = tmp_path / "s.rrd"
+    recording.write_bytes(b"untouched")
+    assert not merge_metrics(
+        _log(tmp_path / "s.trajectory.jsonl"), recording, "s", converter=knows
+    )
+    assert recording.read_bytes() == b"untouched"
