@@ -1135,6 +1135,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             WRONG_LANE,
             _wrong_lane,
             title="Against the lane",
+            boolean=True,
             text="1 while the ego heads more than 120 degrees away from the "
             "driving lane under it, else 0; unread off the road "
             "(AlpaSim wrong_lane)",
