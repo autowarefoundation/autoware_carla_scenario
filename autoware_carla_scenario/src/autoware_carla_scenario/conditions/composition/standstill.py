@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
@@ -31,7 +32,9 @@ class StandstillCondition(CompositionCondition):
             Defaults to 0.1 m/s.
 
     Raises:
-        ValueError: If *duration* is not positive or *speed_threshold* is negative.
+        ValueError: If *duration* is not positive and finite (NaN fails every
+            comparison, so a NaN duration would never fire), or
+            *speed_threshold* is negative.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -46,8 +49,8 @@ class StandstillCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if duration <= 0:
-            raise ValueError("duration must be positive")
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError("duration must be positive and finite")
         if speed_threshold < 0:
             raise ValueError("speed_threshold must be non-negative")
 

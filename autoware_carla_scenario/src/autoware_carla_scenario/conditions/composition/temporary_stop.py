@@ -11,6 +11,7 @@ lanelets or roads before and after it and combined via :class:`OrCondition`.
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 import numpy as np
@@ -66,7 +67,9 @@ class TemporaryStopCondition(CompositionCondition):
 
     Raises:
         ValueError: If *stop_positions* is empty, *s_margin* is not positive,
-            *speed_threshold* is negative, or *stop_duration* is not positive.
+            *speed_threshold* is negative, or *stop_duration* is not positive
+            and finite (NaN fails every comparison, so a NaN duration would
+            never fire).
     """
 
     def __init__(
@@ -85,8 +88,8 @@ class TemporaryStopCondition(CompositionCondition):
             raise ValueError("s_margin must be positive")
         if speed_threshold < 0:
             raise ValueError("speed_threshold must be non-negative")
-        if stop_duration <= 0:
-            raise ValueError("stop_duration must be positive")
+        if not math.isfinite(stop_duration) or stop_duration <= 0:
+            raise ValueError("stop_duration must be positive and finite")
 
         # list[BaseCondition], not list[PersistentCondition]: OrCondition takes
         # a list of BaseCondition, and Codon does not upcast a list.
