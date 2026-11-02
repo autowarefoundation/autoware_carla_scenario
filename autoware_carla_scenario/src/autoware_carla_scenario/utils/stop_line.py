@@ -13,7 +13,7 @@ the singleton's.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Iterable, Union
+from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 if TYPE_CHECKING:
     from autoware_lanelet2_extension_python.regulatory_elements import (
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         TrafficLight,
         TrafficSign,
     )
+    from lanelet2.routing import RoutingGraph
 
 __all__ = [
     "get_stop_line_linestrings",
@@ -182,6 +183,24 @@ def _road_marking_stop_lines(
     return results
 
 
+def _lanelet(lanelet_map: LaneletMap, lanelet_id: int) -> ConstLanelet:
+    """The lanelet *lanelet_id* of *lanelet_map*.
+
+    Asks the layer whether it holds the id first: looking up a missing one
+    raises lanelet2's ``RuntimeError`` ("Primitive with id ... does not
+    exist"), not a ``KeyError``.
+
+    Raises:
+        ValueError: If the lanelet ID is not found in the map.
+    """
+    layer = lanelet_map.laneletLayer
+    if not layer.exists(int(lanelet_id)):
+        raise ValueError(f"Lanelet ID {lanelet_id} not found in map")
+    # A Lanelet, held as the routing graph's ConstLanelets are.
+    lanelet: ConstLanelet = layer[int(lanelet_id)]
+    return lanelet
+
+
 def get_stop_line_linestrings(
     lanelet_map: LaneletMap, lanelet_id: int
 ) -> list[ConstLineString3d]:
@@ -207,10 +226,7 @@ def get_stop_line_linestrings(
     Raises:
         ValueError: If the lanelet ID is not found in the map.
     """
-    try:
-        lanelet = lanelet_map.laneletLayer[lanelet_id]
-    except (KeyError, IndexError) as exc:
-        raise ValueError(f"Lanelet ID {lanelet_id} not found in map") from exc
+    lanelet = _lanelet(lanelet_map, lanelet_id)
 
     seen_ids: set[int] = set()
     return _collect_stop_lines_from_reg_elems(lanelet.regulatoryElements, seen_ids)
@@ -220,6 +236,8 @@ def get_stop_line_linestrings_with_following(
     lanelet_map: LaneletMap,
     lanelet_id: int,
     depth: int = 1,
+    *,
+    routing_graph: Optional[RoutingGraph] = None,
 ) -> list[tuple[int, ConstLineString3d]]:
     """Return stop line linestrings from the lanelet and its successors.
 
@@ -233,6 +251,10 @@ def get_stop_line_linestrings_with_following(
         depth: How many steps of successors to search.  A spawn walked back
             from a stop line can be more than one lanelet short of it, when
             the lane before the line is short.
+        routing_graph: The routing graph of *lanelet_map* to find the
+            successors in.  Left out, one is built (by German traffic rules,
+            for a vehicle), which reads the whole map: a caller that asks
+            more than once passes the one it holds.
 
     Returns:
         List of ``(owner_lanelet_id, linestring)`` tuples.
@@ -241,13 +263,7 @@ def get_stop_line_linestrings_with_following(
     Raises:
         ValueError: If the lanelet ID is not found in the map.
     """
-    import lanelet2.routing
-    import lanelet2.traffic_rules
-
-    try:
-        lanelet = lanelet_map.laneletLayer[lanelet_id]
-    except (KeyError, IndexError) as exc:
-        raise ValueError(f"Lanelet ID {lanelet_id} not found in map") from exc
+    lanelet = _lanelet(lanelet_map, lanelet_id)
 
     seen_ids: set[int] = set()
 
@@ -257,11 +273,15 @@ def get_stop_line_linestrings_with_following(
         return [(lanelet_id, ls) for ls in results]
 
     # Second: check following lanelets
-    traffic_rules = lanelet2.traffic_rules.create(
-        lanelet2.traffic_rules.Locations.Germany,
-        lanelet2.traffic_rules.Participants.Vehicle,
-    )
-    routing_graph = lanelet2.routing.RoutingGraph(lanelet_map, traffic_rules)
+    if routing_graph is None:
+        import lanelet2.routing  # noqa: PLC0415
+        import lanelet2.traffic_rules  # noqa: PLC0415
+
+        traffic_rules = lanelet2.traffic_rules.create(
+            lanelet2.traffic_rules.Locations.Germany,
+            lanelet2.traffic_rules.Participants.Vehicle,
+        )
+        routing_graph = lanelet2.routing.RoutingGraph(lanelet_map, traffic_rules)
     # A Lanelet, then the routing graph's ConstLanelets.
     frontier: list[ConstLanelet] = []
     frontier.append(lanelet)
