@@ -25,6 +25,12 @@ _REVOLUTION_TOLERANCE_DEG = 1e-3
 #: hundredth of a degree or more from the next).
 _START_TOLERANCE_DEG = 1e-3
 
+#: An arc this close to a whole number of world ticks, relative to it, is
+#: one (simulated times are doubles: their differences are exact to far
+#: less), and one that is not cannot be (the world does not tick at a fixed
+#: step).
+_WHOLE_TICKS = 1e-6
+
 
 def _angles(
     points: np.ndarray[tuple[int, int], np.dtype[np.float32]], fov: float
@@ -43,7 +49,10 @@ def _angles(
 
 
 def _arc_start(
-    points: np.ndarray[tuple[int, int], np.dtype[np.float32]], arc: float, fov: float
+    points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+    arc: float,
+    tick: float,
+    fov: float,
 ) -> float:
     """Where an arc of *arc* degrees (less than *fov*) started, from its points.
 
@@ -51,6 +60,17 @@ def _arc_start(
     degrees or more: the point after the widest gap between them is the
     first of the arc.  -1 when the arc has no points, or no gap that wide
     (missing hits can only widen gaps).
+
+    CARLA measures one world tick, *tick* degrees, per measurement.  An arc
+    of two whole ticks or more whose points span no more than one tick is
+    one whose measurements before were lost on the way (#1128): its points
+    are the last tick's alone, and the first of them is where that tick
+    started, ``arc - tick`` degrees after the arc did.  Any other arc swept
+    all of its points: one tick, a long one where the world does not tick
+    at a fixed step (or ticks longer than *tick* says), or the whole arc
+    where a renderer sweeps the time since the last measurement it rendered
+    (carla_canvas, after a frame it did not render); its first point is
+    where it started.
     """
     if points.shape[0] == 0:
         return -1.0
@@ -59,7 +79,16 @@ def _arc_start(
     widest = int(np.argmax(gaps))
     if float(gaps[widest]) + _REVOLUTION_TOLERANCE_DEG < fov - arc:
         return -1.0
-    return float(angles[(widest + 1) % angles.shape[0]])
+    first = float(angles[(widest + 1) % angles.shape[0]])
+    span = (float(angles[widest]) - first) % fov
+    ticks = round(arc / tick)
+    if (
+        ticks >= 2
+        and abs(arc - ticks * tick) <= _WHOLE_TICKS * arc
+        and span < tick + _START_TOLERANCE_DEG
+    ):
+        return (first - (arc - tick)) % fov
+    return first
 
 
 class LidarRevolution:
@@ -89,7 +118,14 @@ class LidarRevolution:
     first measurements a sensor takes need not arrive (CARLA turns a LiDAR
     from the tick it is spawned on, listened to or not), so where it
     started, at horizontal angle 0, is not where the first arc that arrives
-    does.
+    does.  Nor need the ones right after an arc of a whole revolution: the
+    arc that arrives next spans the lost ticks too but holds the points of
+    its own tick alone (#1128).
+
+    A measurement's ``horizontal_angle`` cannot tell instead: CARLA's
+    ``sensor.lidar.ray_cast`` sends 0 there, always (ARayCastLidar turns the
+    angle of the SemanticLidarData it inherits, and sends a LidarData of its
+    own whose angle nothing sets).
 
     Args:
         rotation_frequency: The blueprint's ``rotation_frequency``, Hz.
@@ -152,7 +188,8 @@ class LidarRevolution:
         swept = before + arc
         fov = self._fov
         if not self._anchored and arc + _REVOLUTION_TOLERANCE_DEG < fov:
-            start = _arc_start(points, arc, fov)
+            tick = self._per_second * self._first_dt
+            start = _arc_start(points, arc, tick, fov)
             if start >= 0.0:
                 self._start = (start - before) % fov
                 self._anchored = True
