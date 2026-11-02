@@ -1603,3 +1603,25 @@ class TestSpeedCard:
 
         assert result is not None
         assert "(10.00 m/s)" in result.message
+
+    def test_lateral_is_positive_to_the_left(self) -> None:
+        """Facing east (+x), left is -y in CARLA's left-handed frame, as on the
+        Acceleration card."""
+        world = _make_world_with_heading("Ego", 0.0, -2.0, 1.0, 0.0)
+
+        leftward = self._card("LATERAL", "greater_than", 1.5).check(world, 1.0)
+
+        assert leftward is not None
+        assert "(2.00 m/s)" in leftward.message
+
+    def test_the_python_api_keeps_the_world_frame(self) -> None:
+        """Only the card changed: a hand-written condition still defaults to WORLD."""
+        condition = SpeedCondition(
+            entity_name="Ego",
+            value=5.0,
+            rule=ComparisonRule.GREATER_THAN,
+            direction=SpeedDirection.LONGITUDINAL,
+            label="python",
+        )
+
+        assert condition.get_details()["coordinate_system"] == "WORLD"

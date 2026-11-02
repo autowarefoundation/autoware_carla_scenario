@@ -1,5 +1,20 @@
 # Migrating
 
+## The Speed card's Longitudinal and Lateral follow the entity
+
+The editor's **Speed** card (`type_id: speed`) now measures its Longitudinal
+and Lateral components along its own entity's heading, as the Acceleration
+card always has: longitudinal is the speed along the way the entity faces
+(negative while reversing), lateral the speed to its left. They used to be
+the world's x and y, so "longitudinal speed above 5" held only while the
+entity drove east ([#1089](https://github.com/autowarefoundation/autoware_carla_scenario/issues/1089)).
+
+A saved document needs no edit, but one that picks Longitudinal or Lateral on
+a Speed card now means the entity's own frame. One written to test a world
+direction meant it only by accident; to keep it, write that condition in
+Python, where `SpeedCondition` still defaults to
+`SpeedCoordinateSystem.WORLD`. Magnitude is unchanged.
+
 ## The viewer and the editor bind 127.0.0.1 by default
 
 `viewer` and `scenario-editor` now take command-line options (`--help`,
