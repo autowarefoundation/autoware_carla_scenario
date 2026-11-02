@@ -165,13 +165,19 @@ _LANE_CHANGE_AHEAD_MAX_WAYPOINTS: int = 4096
 #: gave a vehicle it is taken to have used the path up, and is given its own
 #: lane changes back: a path point's spacing, so it is met between two ticks.
 _ROUTE_END_M: float = ROUTE_POINT_STEP_M
-#: How many path points either side of a vehicle's progress along its path
-#: (:attr:`_Kept.progress`) it is looked for among: a vehicle that comes
+#: How many path points ahead of a vehicle's progress along its path
+#: (:attr:`_Kept.progress`), and behind it for :func:`_ahead_index`, it is
+#: looked for among: a vehicle that comes
 #: within :data:`_ROUTE_END_M` of one of the points ahead of it has come that
 #: far even if it missed the ones before, and a path that comes back near
 #: itself (a loop, a U-turn, a route through a via point and back) is never
 #: matched against its far part (#1105).
 _PROGRESS_WINDOW: int = 8
+#: How far (m) a vehicle is from every point about its progress along its
+#: path for it to be taken as lost from it (driven off it, or round an
+#: obstacle for longer than the window spans): its progress is then looked
+#: for along all the rest of its path, so it does not stall for good.
+_PROGRESS_LOST_M: float = _PROGRESS_WINDOW * ROUTE_POINT_STEP_M
 
 #: How near (m) a point where its path crosses to the lane beside a vehicle is
 #: told to change lanes.
@@ -1851,7 +1857,9 @@ def _progressed(
     it had come to *progress*: past the last of the next
     :data:`_PROGRESS_WINDOW` points within :data:`_ROUTE_END_M` of it, again
     from there while one is (a vehicle that missed a point by a little has
-    still come past it), and never fewer than *progress*."""
+    still come past it), and never fewer than *progress*.  Lost from its path
+    (:data:`_PROGRESS_LOST_M` from every point about *progress*), past the
+    first point of the rest of it within :data:`_ROUTE_END_M` of it."""
     reached = progress
     moved = True
     while moved:
@@ -1861,33 +1869,51 @@ def _progressed(
             if location.distance(path[i]) <= _ROUTE_END_M:
                 reached = i + 1
                 moved = True
+    if reached > progress or reached >= len(path):
+        return reached
+    # Lost from its path: far from every point about its progress, it is
+    # looked for along the rest, the first point it has come near.  Not
+    # sooner: a path that comes back near itself would be matched against
+    # its far part (#1105).
+    end = min(len(path), progress + _PROGRESS_WINDOW)
+    for i in range(max(0, progress - 1), end):
+        if location.distance(path[i]) <= _PROGRESS_LOST_M:
+            return reached
+    for i in range(end, len(path)):
+        if location.distance(path[i]) <= _ROUTE_END_M:
+            return _progressed(path, location, i + 1)
     return reached
 
 
 def _ahead_index(
     path: List["carla.Location"], location: "carla.Location", progress: int
 ) -> int:
-    """Where the points of *path* ahead of *location* start: after the one
-    nearest it among the :data:`_PROGRESS_WINDOW` either side of *progress*
-    (:attr:`_Kept.progress`).
+    """Where the points of *path* ahead of *location* start, a vehicle
+    *progress* points along it (:attr:`_Kept.progress`): after the one
+    nearest it among the last it has come to that are still within
+    :data:`_ROUTE_END_M` of it (back from *progress*, up to
+    :data:`_PROGRESS_WINDOW` of them, to the first that is not), else at
+    *progress*.
 
     Not that nearest one: the TrafficManager waits for each point to come
     within a few metres, and one beside or behind the vehicle may never.
-    Not the nearest on all the path either: one that comes back near its
-    start would be cut after its last point there (#1105).
+    Not the nearest on all the path, nor any further back: one that comes
+    back near itself (a loop, a U-turn) would be cut at its far part, or
+    the vehicle sent back to a point it has passed (#1105).
     """
-    start = max(0, progress - _PROGRESS_WINDOW)
-    end = min(len(path), progress + _PROGRESS_WINDOW)
-    if start >= end:
-        return len(path)
-    nearest = start
+    cut = min(progress, len(path))
     best = float("inf")
-    for i in range(start, end):
+    stop = max(0, progress - _PROGRESS_WINDOW)
+    i = cut - 1
+    while i >= stop:
         gap = location.distance(path[i])
+        if gap > _ROUTE_END_M:
+            break
         if gap < best:
             best = gap
-            nearest = i
-    return nearest + 1
+            cut = i + 1
+        i -= 1
+    return cut
 
 
 def _ahead_of(

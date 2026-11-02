@@ -845,6 +845,42 @@ def test_a_loop_vehicle_re_registered_near_its_start_keeps_its_path(
     assert 5 in backend._lane_locked
 
 
+def test_a_vehicle_driven_off_its_route_picks_it_up_further_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven 20 m off a straight route for 110 m, far past the points about
+    its progress, a vehicle back on it further on goes on from there and gets
+    its lane changes back at the end: its progress does not stall for good."""
+    line = [_PlanePoint(x, 0) for x in range(0, 201, 5)]
+    client, backend, world, npc = _on_a_route(monkeypatch, line)
+
+    drive = [_PlanePoint(x, 20 if 10 < x < 120 else 0) for x in range(0, 201, 2)]
+    locked = _drive(backend, world, npc, drive)
+    assert locked[-1] is False
+    assert locked.index(False) == len(drive) - 3  # At (196, 0), 4 m from its end.
+    assert client.tm.called("auto_lane_change") == [(npc, True)]
+
+
+def test_a_u_turn_vehicle_re_registered_is_not_sent_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-registered on the way back of a U-turn, nearer a point of the way
+    out it has passed than any of the way back, a vehicle is given the rest
+    of its path from where it has come to, not the way out again (#1105)."""
+    out = [_PlanePoint(x, 0) for x in range(0, 41, 5)]
+    back = [_PlanePoint(x, 6) for x in range(40, -1, -5)]
+    poses = out + back
+    client, backend, world, npc = _on_a_route(monkeypatch, poses)
+    # At (30, 6), come to (25, 6) 5 m on; then swung wide, 2 m from (25, 0)
+    # on the way out.
+    _drive(backend, world, npc, poses[:12] + [_PlanePoint(27, 2)])
+    kept = backend._kept[5]
+
+    backend._keep_standing(kept, 0.0, 0.0)
+    backend._keep_standing(kept, 0.0, 61.0)
+    assert client.tm.called("set_path") == [(npc, poses[13:])]
+
+
 def test_a_resumed_vehicle_goes_on_from_where_it_was_driven(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

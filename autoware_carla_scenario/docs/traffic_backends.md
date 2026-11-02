@@ -609,7 +609,10 @@ backend follows each kept vehicle's progress, point by point, coming within 5 m
 of one of the next eight points (released ones too, so a resumed vehicle goes
 on from where it was driven), so a route that ends near where it starts (a
 loop, a U-turn, a route through a via point and back) is not used up at its
-start.
+start. A vehicle lost from its path, 40 m from every point about where it had
+come to (driven off it while released, or round something for longer than
+those points span), is looked for along all the rest of it instead, so it
+picks its path up where it comes back to it.
 
 ### Handing a vehicle back
 
@@ -862,9 +865,10 @@ scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
   points of a path already planned are gone from the path the TrafficManager
   holds (`LocalizationStage::ImportPath`), so the part of the path it was last
   given (`follow_route`, `turn_at_junction`) still ahead of it is given again:
-  from the point after the one nearest it among those either side of its
-  progress along the path, so a path that comes back near itself is not cut at
-  its far part. It drives on as before; it is logged once.
+  from the point after the one nearest it among the last it has come to along
+  the path that are still within 5 m of it (else from the next one it has not
+  come to), so a path that comes back near itself is not cut at its far part,
+  and the vehicle is not sent back to a point it has passed. It drives on as before; it is logged once.
 - **A dead end:** every 0.5 s the road ahead of a kept vehicle is walked down
   every branch (the TrafficManager picks one at random) a little past the
   TrafficManager's horizon, on the run's cached map. Where some branch ends,
