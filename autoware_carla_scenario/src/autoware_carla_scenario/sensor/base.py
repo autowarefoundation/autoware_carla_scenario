@@ -58,9 +58,12 @@ class CameraSensorConfig:
     * **Resolution** -- ``image_width`` and ``image_height`` in pixels.
     * **Field of view** -- horizontal ``fov`` in degrees.
     * **Frame rate** -- ``fps`` (frames per second).
-    * **Extrinsics** -- 6-DOF pose relative to the vehicle ``base_link``
-      frame expressed as ``(position_x, position_y, position_z)`` in metres
-      and ``(roll, pitch, yaw)`` in degrees.
+    * **Extrinsics** -- 6-DOF mount ``(position_x, position_y, position_z)``
+      in metres and ``(roll, pitch, yaw)`` in degrees, relative to the CARLA
+      actor origin (the vehicle's centre, where CARLA attaches the sensor), in
+      CARLA's convention (x forward, y right, z up, degrees), as a LiDAR's
+      are.  This is not Autoware's ``base_link`` (the rear axle, y left): the
+      values go to ``carla.Location`` and ``carla.Rotation`` unchanged.
 
     Intrinsic matrix entries (``fx``, ``fy``, ``cx``, ``cy``) are derived
     automatically from resolution and FOV via :attr:`intrinsic_matrix`.
@@ -81,24 +84,24 @@ class CameraSensorConfig:
     fps: float = 20.0
     """Sensor capture rate in frames per second."""
 
-    # -- Extrinsics (base_link -> camera) -------------------------------------
+    # -- Extrinsics (CARLA actor origin -> camera, CARLA convention) ---------
     position_x: float = 0.0
-    """Forward offset from ``base_link`` in metres (positive = forward)."""
+    """Forward offset from the CARLA actor origin in metres (positive = forward)."""
 
     position_y: float = 0.0
-    """Lateral offset from ``base_link`` in metres (positive = left)."""
+    """Lateral offset from the CARLA actor origin in metres (positive = right)."""
 
     position_z: float = 0.0
-    """Vertical offset from ``base_link`` in metres (positive = up)."""
+    """Vertical offset from the CARLA actor origin in metres (positive = up)."""
 
     roll: float = 0.0
-    """Roll angle in degrees."""
+    """CARLA roll about the forward (x) axis in degrees (positive = right side down)."""
 
     pitch: float = 0.0
-    """Pitch angle in degrees (negative = look down)."""
+    """CARLA pitch about the lateral (y) axis in degrees (negative = look down)."""
 
     yaw: float = 0.0
-    """Yaw angle in degrees."""
+    """CARLA yaw about the vertical (z) axis in degrees (positive = turn right)."""
 
     # -- Derived intrinsic helpers -------------------------------------------
 
