@@ -3329,9 +3329,17 @@ default. The TrafficManager backend turns its own lane changes, which
 <code>follow_route</code> turned off, back to the run's <code>lane_changes</code> (and the vehicle's
 overrides); unset, the TrafficManager's default, on. A route handed over untimed
 ends its action at once, with nothing left to watch it: the TrafficManager
-backend gives the lane changes back itself once the vehicle comes within a path
-point's spacing (5 m) of its path's last point, where the TrafficManager has
-used the path up and drives on as it likes.</p>
+backend gives the lane changes back itself once the vehicle has come along its
+path to within a path point's spacing (5 m) of its last point, where the
+TrafficManager has used the path up and drives on as it likes. Along: the
+backend follows each kept vehicle's progress, point by point, coming within 5 m
+of one of the next eight points (released ones too, so a resumed vehicle goes
+on from where it was driven), so a route that ends near where it starts (a
+loop, a U-turn, a route through a via point and back) is not used up at its
+start. A vehicle lost from its path, 40 m from every point about where it had
+come to (driven off it while released, or round something for longer than
+those points span), is looked for along all the rest of it instead, so it
+picks its path up where it comes back to it.</p>
 <h3 id="handing-a-vehicle-back">Handing a vehicle back<a class="headerlink" href="#handing-a-vehicle-back" title="Permanent link">&para;</a></h3>
 <p><code>release(entity, world)</code> is the one-authority-per-vehicle rule of
 <code>skip_actor_ids</code>, applied during the run: an action that drives a vehicle
@@ -3571,7 +3579,11 @@ scenario authored — is kept from it in <code>tick()</code>; under <code>traffi
   parameters, which survive the switch. Its planned waypoints do not, and the
   points of a path already planned are gone from the path the TrafficManager
   holds (<code>LocalizationStage::ImportPath</code>), so the part of the path it was last
-  given (<code>follow_route</code>, <code>turn_at_junction</code>) still ahead of it is given again. It drives on as before; it is logged once.</li>
+  given (<code>follow_route</code>, <code>turn_at_junction</code>) still ahead of it is given again:
+  from the point after the one nearest it among the last it has come to along
+  the path that are still within 5 m of it (else from the next one it has not
+  come to), so a path that comes back near itself is not cut at its far part,
+  and the vehicle is not sent back to a point it has passed. It drives on as before; it is logged once.</li>
 <li><strong>A dead end:</strong> every 0.5 s the road ahead of a kept vehicle is walked down
   every branch (the TrafficManager picks one at random) a little past the
   TrafficManager's horizon, on the run's cached map. Where some branch ends,
@@ -4046,7 +4058,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 02:43:58 UTC"><span class="timeago" datetime="2026-11-02T02:43:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 02:43:58 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 03:30:15 UTC"><span class="timeago" datetime="2026-11-02T03:30:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 03:30:15 UTC">2026-11-02</span>
   </span>
 
     
