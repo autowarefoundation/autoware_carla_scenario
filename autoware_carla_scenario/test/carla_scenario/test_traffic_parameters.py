@@ -525,6 +525,58 @@ def test_a_speed_set_while_released_is_kept_on_resume() -> None:
     )
 
 
+def test_an_entity_override_after_a_speed_wins_at_the_first_draw() -> None:
+    """The one given last wins: an override of ``speed_factor`` given after
+    the speed, both before the first draw, is sent by it."""
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.9))
+    )
+    backend.set_desired_speed(entity, world, 15.0)  # type: ignore[arg-type]
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_calls(client) == [
+        ("set_desired_speed", 15.0),
+        ("vehicle_percentage_speed_difference", pytest.approx(-30.0)),
+    ]
+    assert backend._exact_kmh == {}
+
+
+def test_a_run_override_after_a_speed_wins_at_the_first_draw() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.9))
+    )
+    backend.set_desired_speed(entity, world, 15.0)  # type: ignore[arg-type]
+    backend.override_vehicle_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(0.8)),
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_calls(client)[-1] == (
+        "vehicle_percentage_speed_difference",
+        pytest.approx(20.0),
+    )
+    assert backend._exact_kmh == {}
+
+
+def test_a_speed_after_an_entity_override_wins_at_the_first_draw() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.9))
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.set_desired_speed(entity, world, 15.0)  # type: ignore[arg-type]
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_calls(client) == [("set_desired_speed", 15.0)]
+    assert backend._exact_kmh == {42: 15.0}
+
+
 def test_a_route_given_before_start_keeps_lane_changes_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -566,6 +618,20 @@ def test_a_route_given_before_start_keeps_lane_changes_off(
     )
     backend.start(world)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, False), (other, True)]
+
+
+def test_a_lane_changes_override_after_a_route_wins_at_the_first_draw() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(lane_changes=True)
+    )
+    backend._lane_locked.add(42)  # as follow_route leaves it
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(lane_changes=True),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, True)]
 
 
 # ---------------------------------------------------------------------------

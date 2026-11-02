@@ -455,7 +455,9 @@ scenario.register_post_tick(
   parameters; several such actions layer in order. That first draw keeps what
   the vehicle was told before it: a speed it was given (a `SetSpeed`, a
   background vehicle's spawn speed) wins over its `speed_factor`, and a route
-  it follows keeps its own lane changes off whatever `lane_changes` says.
+  it follows keeps its own lane changes off whatever `lane_changes` says,
+  unless an override of that field, with or without `entity_name`, came after
+  them: the one given last wins.
 - **The last one wins.** An action without `entity_name` fired after one with
   it replaces that vehicle's override on the fields both set, as it does for a
   vehicle that drew already: every vehicle draws those fields from the new

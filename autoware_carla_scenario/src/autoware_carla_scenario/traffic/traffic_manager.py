@@ -1528,6 +1528,12 @@ class TrafficManagerBackend(TrafficBackend):
         # spent, so a vehicle that draws later draws it from the new
         # parameters, as one that drew already does here.
         overridden = set(overrides.set_fields())
+        for undrawn in list(self._exact_kmh):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
+        for undrawn in list(self._lane_locked):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
         for actor_id in list(self._entity_overrides):
             own = self._entity_overrides[actor_id]
             kept = set(own.set_fields()) - overridden
@@ -1564,6 +1570,17 @@ class TrafficManagerBackend(TrafficBackend):
             self._entity_overrides[actor_id] = overrides
         if actor_id in self._drawn:
             self._draw_for(vehicle, overrides)
+        else:
+            self._given_before_draw(actor_id, overrides)
+
+    def _given_before_draw(self, actor_id: int, overrides: VehicleParameters) -> None:
+        """*overrides*, given vehicle *actor_id* before its first draw, came
+        after the speed or route it was given before them: the one given last
+        wins, so its first draw sends the fields they set (:meth:`_draw_for`)."""
+        if overrides.speed_factor is not None and actor_id in self._exact_kmh:
+            del self._exact_kmh[actor_id]
+        if overrides.lane_changes is not None:
+            self._lane_locked.discard(actor_id)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
