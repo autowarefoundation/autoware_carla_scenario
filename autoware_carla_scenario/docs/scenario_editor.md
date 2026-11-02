@@ -653,6 +653,23 @@ class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. `test_authoring_registry.py` fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.
 
+### A field with no value yet
+
+The inspector posts its whole form on every change, so a control has to be
+able to show a field's stored value, or the next unrelated edit stores
+whatever the control showed instead:
+
+- A `bool` field whose default is `None` and that is not `required` (such as
+  *Lane changes* on Traffic Parameters, where unset means "keep the run's")
+  is a select of *keep the run's* / *On* / *Off*, not a checkbox. The blank
+  choice stores `None`, and a post that leaves the field out keeps the stored
+  value. Any other `bool` is a checkbox, whose absence from a post means off.
+- A `select` field with no value shows a placeholder rather than its first
+  option. When the field is `required` the placeholder cannot be picked back,
+  and the browser posts nothing for it, so the field stays unset and the
+  validator's "is required" is what the author sees. A stored value that is
+  not one of the options is shown as such, and kept.
+
 ### A number's bounds
 
 A `number` or `int` field states the range its runtime constructor accepts:

@@ -8,16 +8,36 @@
 {% macro control(spec, value, document, prefix='', draft=none, params={}) %}
   {%- set name = prefix ~ spec.name -%}
   {%- set current = spec.default if value is none else value -%}
-  {% if spec.kind == 'bool' %}
+  {% if is_nullable_bool(spec) %}
+    {#- Three states -- keep the run's, on, off -- which a checkbox can neither
+        show nor post: an unchecked one would store False. -#}
+    {%- set choice = bool_choice(current) -%}
+    <select name="{{ name }}" class="ed-input">
+      <option value="" {% if choice == '' %}selected{% endif %}>— keep the run's —</option>
+      <option value="on" {% if choice == 'on' %}selected{% endif %}>On</option>
+      <option value="off" {% if choice == 'off' %}selected{% endif %}>Off</option>
+    </select>
+  {% elif spec.kind == 'bool' %}
     <label class="ed-check">
       <input type="checkbox" name="{{ name }}" value="on" {% if current %}checked{% endif %}>
       <span>{{ spec.label }}{% if spec.help %}<span class="ed-help">{{ spec.help }}</span>{% endif %}</span>
     </label>
   {% elif spec.kind == 'select' %}
+    {%- set chosen = '' if current is none else current|string -%}
+    {%- set known = spec.options|selectattr('value', 'equalto', chosen)|list -%}
     <select name="{{ name }}" class="ed-input">
+      {#- With no value the browser would show the first option as chosen, and
+          the next post of the form would store it without the author ever
+          picking it. A placeholder shows the field as unset instead; when it is
+          required it cannot be picked back, and the validator says so. -#}
+      {% if not chosen %}
+        <option value="" selected{% if spec.required %} disabled{% endif %}>— {{ 'choose' if spec.required else 'not set' }} —</option>
+      {% elif not known %}
+        <option value="{{ chosen }}" selected>{{ chosen }} — not an option</option>
+      {% endif %}
       {% for option in spec.options %}
         <option value="{{ option.value }}"
-                {% if current is not none and option.value == current|string %}selected{% endif %}>
+                {% if option.value == chosen %}selected{% endif %}>
           {{ option.label }}
         </option>
       {% endfor %}
@@ -278,13 +298,14 @@
 {% macro field(spec, params, document, prefix='', draft=none) %}
   {%- set value = params.get(spec.name, spec.default) -%}
   <div class="ed-field">
-    {% if spec.kind != 'bool' %}
+    {%- set checkbox = spec.kind == 'bool' and not is_nullable_bool(spec) -%}
+    {% if not checkbox %}
       <label class="ed-label">
         {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
       </label>
     {% endif %}
     {{ control(spec, value, document, prefix, draft, params) }}
-    {% if spec.help and spec.kind != 'bool' %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
+    {% if spec.help and not checkbox %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
   </div>
 {% endmacro %}
 

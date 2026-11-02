@@ -33,6 +33,7 @@ from ..trajectory.authoring import (
     route_trajectory_summary,
     trajectory_summary,
 )
+from .forms import bool_choice, is_nullable_bool
 from .service import EditorError, EditorService, condition_actions, route_yaml
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,10 @@ def create_app(
         relative_trajectory_summary=relative_trajectory_summary,
         format_route_vertices=format_route_vertices,
         route_trajectory_summary=route_trajectory_summary,
+        # A bool whose unset value means "keep the run's" is a three-way
+        # select, not a checkbox, and these say which and what it shows.
+        is_nullable_bool=is_nullable_bool,
+        bool_choice=bool_choice,
     )
 
     application.state.templates = templates
