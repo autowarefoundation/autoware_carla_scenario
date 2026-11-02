@@ -28,6 +28,7 @@ from autoware_carla_scenario.authoring.models import LaneletChoice, ScenarioDocu
 from autoware_carla_scenario.authoring.registry import FieldSpec
 from autoware_carla_scenario.authoring.validator import (
     ValidationReport,
+    _traffic_mean_bounds,
     validate_document,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
@@ -535,3 +536,487 @@ def test_every_accepted_condition_card_builds(
     finally:
         logging.disable(logging.NOTSET)
     assert not failures, "\n".join(failures)
+
+
+# -- a field's bounds are the runtime's (#1111) -------------------------------
+
+
+def _bounded(fields: tuple[FieldSpec, ...]) -> Iterator[FieldSpec]:
+    for spec in fields:
+        if spec.kind == "record_list":
+            yield from _bounded(spec.item_fields)
+        elif (spec.minimum, spec.exclusive_minimum, spec.maximum) != (None,) * 3:
+            yield spec
+
+
+def _outside(spec: FieldSpec) -> list[float]:
+    """Values just outside *spec*'s bounds."""
+    values: list[float] = []
+    if spec.exclusive_minimum is not None:
+        values += [spec.exclusive_minimum, spec.exclusive_minimum - 1.0]
+    if spec.minimum is not None:
+        values.append(spec.minimum - 1.0)
+    if spec.maximum is not None:
+        values.append(spec.maximum + 1.0)
+    return values
+
+
+def _inside(spec: FieldSpec, value: Any) -> bool:
+    return (
+        (spec.exclusive_minimum is None or value > spec.exclusive_minimum)
+        and (spec.minimum is None or value >= spec.minimum)
+        and (spec.maximum is None or value <= spec.maximum)
+    )
+
+
+_ALL_SPECS: list[Any] = [*registry.action_specs(), *registry.condition_specs()]
+
+
+@pytest.mark.parametrize("card", _ALL_SPECS, ids=lambda s: s.type_id)
+def test_a_bounded_fields_default_is_within_its_bounds(card: Any) -> None:
+    for spec in _bounded(card.fields):
+        assert spec.kind in ("number", "int"), spec.name
+        if spec.default is not None:
+            assert _inside(spec, spec.default), (card.type_id, spec.name)
+
+
+def _issue_paths(
+    type_id: str, fields: tuple[FieldSpec, ...], name: str, value: float
+) -> list[str]:
+    params = registry.default_params(fields)
+    for spec in fields:
+        if spec.kind == "record_list" and any(i.name == name for i in spec.item_fields):
+            params[spec.name] = [
+                {**registry.default_params(spec.item_fields), name: value}
+            ]
+    if name in params:
+        params[name] = value
+    if registry.get_action_spec(type_id) is not None:
+        action_spec = registry.get_action_spec(type_id)
+        assert action_spec is not None
+        actor = None
+        if action_spec.scope != "environment":
+            actor = _ENTITIES[action_spec.actor_kinds[0]]
+        document = _card(type_id, actor, **params)
+    else:
+        node: dict[str, Any] = {"type": type_id, "params": params}
+        condition_spec = registry.get_condition_spec(type_id)
+        assert condition_spec is not None
+        if condition_spec.min_children:
+            node["children"] = [
+                {"type": "elapsed_time", "params": {"duration_seconds": 1.0}}
+            ] * condition_spec.min_children
+        document = _document(trigger=node)
+    return [i.path for i in validate_document(document).errors]
+
+
+@pytest.mark.parametrize(
+    ("card", "name", "value"),
+    [
+        (card, spec.name, value)
+        for card in _ALL_SPECS
+        for spec in _bounded(card.fields)
+        for value in _outside(spec)
+    ],
+    ids=lambda v: getattr(v, "type_id", str(v)),
+)
+def test_the_validator_refuses_a_value_outside_a_fields_bounds(
+    card: Any, name: str, value: float
+) -> None:
+    paths = _issue_paths(card.type_id, card.fields, name, value)
+    assert any(p.endswith(f".{name}") for p in paths), paths
+
+
+def test_the_bound_messages_say_what_the_runtime_says() -> None:
+    document = _document(
+        trigger={
+            "type": "standstill",
+            "params": {"entity": "car", "duration": 0.0, "speed_threshold": -1.0},
+        }
+    )
+    messages = {i.path.rsplit(".", 1)[-1]: i.message for i in document_errors(document)}
+    assert messages["duration"] == "Duration must be positive."
+    assert messages["speed_threshold"].endswith("must not be negative.")
+    document = _document(
+        trigger={"type": "off_road_fraction", "params": {"fraction": 1.5}}
+    )
+    messages = {i.path.rsplit(".", 1)[-1]: i.message for i in document_errors(document)}
+    assert messages["fraction"] == "Fraction must be in (0, 1]."
+
+
+def document_errors(document: ScenarioDocument) -> list[Any]:
+    return list(validate_document(document).errors)
+
+
+@pytest.mark.usefixtures("unchecked")
+@pytest.mark.parametrize(
+    ("condition", "field"),
+    [
+        (
+            {"type": "elapsed_time", "params": {"duration_seconds": 0.0}},
+            "duration_seconds",
+        ),
+        (
+            {"type": "elapsed_time", "params": {"duration_seconds": -2.0}},
+            "duration_seconds",
+        ),
+        (
+            {"type": "standstill", "params": {"entity": "car", "duration": 0.0}},
+            "duration",
+        ),
+        (
+            {"type": "standstill", "params": {"entity": "car", "duration": -1.0}},
+            "duration",
+        ),
+        (
+            {
+                "type": "standstill",
+                "params": {"entity": "car", "speed_threshold": -0.1},
+            },
+            "speed_threshold",
+        ),
+        (
+            {
+                "type": "persistent",
+                "params": {"duration": 0.0},
+                "children": [
+                    {"type": "elapsed_time", "params": {"duration_seconds": 1.0}}
+                ],
+            },
+            "duration",
+        ),
+        (
+            {
+                "type": "persistent",
+                "params": {"duration": -1.0},
+                "children": [
+                    {"type": "elapsed_time", "params": {"duration_seconds": 1.0}}
+                ],
+            },
+            "duration",
+        ),
+        (
+            {
+                "type": "temporary_stop",
+                "params": {
+                    "entity": "car",
+                    "stop_lanelets": [_LANELET],
+                    "stop_duration": 0.0,
+                },
+            },
+            "stop_duration",
+        ),
+        (
+            {
+                "type": "temporary_stop",
+                "params": {
+                    "entity": "car",
+                    "stop_lanelets": [_LANELET],
+                    "stop_duration": -1.0,
+                },
+            },
+            "stop_duration",
+        ),
+        (
+            {
+                "type": "temporary_stop",
+                "params": {
+                    "entity": "car",
+                    "stop_lanelets": [_LANELET],
+                    "s_margin": 0.0,
+                },
+            },
+            "s_margin",
+        ),
+        ({"type": "timeout", "params": {"timeout_seconds": 0.0}}, "timeout_seconds"),
+        (
+            {"type": "lane_ends", "params": {"entity": "car", "distance": 0.0}},
+            "distance",
+        ),
+        ({"type": "off_road_fraction", "params": {"fraction": 0.0}}, "fraction"),
+        ({"type": "off_road_fraction", "params": {"fraction": 1.5}}, "fraction"),
+        (
+            {"type": "place_clear", "params": {"lanelet_id": _LANELET, "width": 0.0}},
+            "width",
+        ),
+        (
+            {"type": "place_clear", "params": {"lanelet_id": _LANELET, "margin": -1.0}},
+            "margin",
+        ),
+        ({"type": "entity_count", "params": {"count": -1}}, "count"),
+        (
+            {"type": "entity_count", "params": {"min_distance_m": -1.0}},
+            "min_distance_m",
+        ),
+        (
+            {
+                "type": "entity_count",
+                "params": {"min_distance_m": 30.0, "max_distance_m": 10.0},
+            },
+            "min_distance_m",
+        ),
+        (
+            {
+                "type": "entity_count",
+                "params": {"min_ahead_m": 5.0, "max_ahead_m": -5.0},
+            },
+            "min_ahead_m",
+        ),
+    ],
+)
+def test_validator_refuses_a_bound_the_condition_refuses(
+    condition: dict[str, Any], field: str
+) -> None:
+    spec = registry.get_condition_spec(condition["type"])
+    assert spec is not None
+    condition = {
+        **condition,
+        "params": {**registry.default_params(spec.fields), **condition["params"]},
+    }
+    document = _document(trigger=condition)
+    report = validate_document(document)
+    paths = [i.path for i in report.errors]
+    assert any(p.endswith(f".{field}") for p in paths), _errors(report)
+    with pytest.raises(ValueError):
+        compiled = compile_document(document.model_copy(deep=True))
+        instantiate_condition(compiled.pass_conditions[0], BuildContext(scenario=None))
+
+
+@pytest.mark.usefixtures("unchecked")
+@pytest.mark.parametrize(
+    ("type_id", "actor", "params", "field"),
+    [
+        ("communication_loss", "ego", {"duration": 0.0}, "duration"),
+        ("walk_straight", "ped", {"speed_ms": -1.0}, "speed_ms"),
+        ("walk_straight", "ped", {"turn_back_within_m": -1.0}, "turn_back_within_m"),
+        ("walk_straight", "ped", {"turn_back_ttc_s": -1.0}, "turn_back_ttc_s"),
+        ("smart_pedestrian", "ped", {"speed_ms": 0.0}, "speed_ms"),
+        ("smart_pedestrian", "ped", {"duration_s": 0.0}, "duration_s"),
+        ("smart_pedestrian", "ped", {"prompts": [{"time_s": -1.0}]}, "time_s"),
+        ("set_speed", "car", {"target_speed_kmh": -1.0}, "target_speed_kmh"),
+        ("set_speed", "car", {"rate_kmh_s": 0.0}, "rate_kmh_s"),
+        ("spawn", "car", {"length": -1.0}, "length"),
+        (
+            "stalled_object",
+            "car",
+            {"lanelet_id": _LANELET, "start_time": -1.0},
+            "start_time",
+        ),
+        (
+            "construction_zone",
+            None,
+            {"lanelet_id": _LANELET, "start_time": -1.0},
+            "start_time",
+        ),
+        (
+            "urban_construction_zone",
+            None,
+            {"lanelet_id": _LANELET, "start_time": -1.0},
+            "start_time",
+        ),
+        ("traffic_source", None, {"vehicles_per_minute": -1.0}, "vehicles_per_minute"),
+        ("traffic_source", None, {"initial_vehicles": -1}, "initial_vehicles"),
+        (
+            "routing",
+            "car",
+            {"goal_lanelet_id": _LANELET, "walking_speed": 0.0},
+            "walking_speed",
+        ),
+        (
+            "routing",
+            "car",
+            {"goal_lanelet_id": _LANELET, "initial_distance_offset": -1.0},
+            "initial_distance_offset",
+        ),
+        ("traffic_parameters", None, {"speed_factor_mean": 0.0}, "speed_factor_mean"),
+        ("traffic_parameters", None, {"ignore_lights_mean": 1.5}, "ignore_lights_mean"),
+        (
+            "traffic_parameters",
+            None,
+            {"speed_factor_mean": 1.0, "speed_factor_std": -0.1},
+            "speed_factor_std",
+        ),
+        (
+            "traffic_parameters",
+            None,
+            {"pedestrian_min_gap_m_mean": -1.0},
+            "pedestrian_min_gap_m_mean",
+        ),
+        (
+            "traffic_parameters",
+            None,
+            {"bicycle_max_speed_mps_mean": 0.1},
+            "bicycle_max_speed_mps_mean",
+        ),
+        ("vehicle_parameters", "car", {"decel_mean": 0.0}, "decel_mean"),
+        (
+            "adversarial_traffic",
+            None,
+            {"adversities": [{"kind": "brake_check", "probability": 1.5}]},
+            "probability",
+        ),
+    ],
+)
+def test_validator_refuses_a_bound_the_action_refuses(
+    type_id: str,
+    actor: Optional[str],
+    params: dict[str, Any],
+    field: str,
+    samples: dict[tuple[str, str], Any],
+) -> None:
+    spec = registry.get_action_spec(type_id)
+    assert spec is not None
+    for key, value in samples.items():
+        if key[0] == type_id:
+            params = {key[1]: value, **params}
+    for record in spec.fields:
+        if record.kind == "record_list" and record.name in params:
+            defaults = registry.default_params(record.item_fields)
+            params[record.name] = [{**defaults, **row} for row in params[record.name]]
+    document = _card(type_id, actor, **params)
+    report = validate_document(document)
+    paths = [i.path for i in report.errors]
+    assert any(p.endswith(f".{field}") for p in paths), _errors(report)
+    with pytest.raises(ValueError):
+        _build(document)
+
+
+def test_every_traffic_mean_field_has_the_runtimes_bounds() -> None:
+    bounds = _traffic_mean_bounds()
+    for type_id in ("traffic_parameters", "vehicle_parameters"):
+        spec = registry.get_action_spec(type_id)
+        assert spec is not None
+        means = {f.name for f in spec.fields if f.name.endswith("_mean")}
+        assert means <= set(bounds), means - set(bounds)
+
+
+def _on_the_bounds(spec: FieldSpec) -> list[float]:
+    """Values on or just inside *spec*'s bounds, which the runtime takes."""
+    values: list[float] = []
+    if spec.exclusive_minimum is not None:
+        values.append(spec.exclusive_minimum + 1e-3)
+    if spec.minimum is not None:
+        values.append(spec.minimum)
+    if spec.maximum is not None:
+        values.append(spec.maximum)
+    return values
+
+
+#: What a card needs beyond its defaults to build, so a value on a bound is
+#: built and not only validated.
+_BOUNDS_BASE: dict[str, dict[str, Any]] = {
+    "construction_zone": {"start_s": 0.0, "end_s": 50.0},
+    "urban_construction_zone": {"start_s": 0.0, "end_s": 50.0},
+    "traffic_source": {"constraints": "[{type: is_junction}]"},
+    "routing": {"goal_lanelet_id": _LANELET},
+    "spawn": {"name": None},
+}
+
+
+def _with_value(
+    type_id: str,
+    fields: tuple[FieldSpec, ...],
+    name: str,
+    value: float,
+    samples: dict[tuple[str, str], Any],
+) -> dict[str, Any]:
+    """The card's defaults, its blank required fields sampled, with *name* (a
+    field or a record's) set."""
+    params = registry.default_params(fields)
+    for spec in fields:
+        blank = params.get(spec.name) in (None, "", [], ())
+        if spec.kind == "lanelet" and not params.get(spec.name):
+            blank = True
+        if spec.required and blank:
+            params[spec.name] = _sample(type_id, spec, samples)
+    params.update(_BOUNDS_BASE.get(type_id, {}))
+    if name.endswith("_std"):
+        # A std is given with its mean: the least mean the runtime takes.
+        mean = name[: -len("_std")] + "_mean"
+        params[mean] = _traffic_mean_bounds()[mean][0]
+    for spec in fields:
+        if spec.kind == "record_list" and any(i.name == name for i in spec.item_fields):
+            rows = params.get(spec.name) or [registry.default_params(spec.item_fields)]
+            params[spec.name] = [{**row, name: value} for row in rows]
+    if name in params:
+        params[name] = value
+    return params
+
+
+@pytest.mark.parametrize(
+    ("card", "name", "value"),
+    [
+        (card, spec.name, value)
+        for card in _ALL_SPECS
+        for spec in _bounded(card.fields)
+        for value in _on_the_bounds(spec)
+    ],
+    ids=lambda v: getattr(v, "type_id", str(v)),
+)
+def test_a_value_on_a_fields_bounds_is_accepted_and_builds(
+    card: Any, name: str, value: float, samples: dict[tuple[str, str], Any]
+) -> None:
+    """The validator is no stricter than the runtime: a value on a bound (or
+    just inside an exclusive one) is no error, and the card builds."""
+    params = _with_value(card.type_id, card.fields, name, value, samples)
+    action_spec = registry.get_action_spec(card.type_id)
+    logging.disable(logging.CRITICAL)
+    try:
+        if action_spec is not None:
+            actor = None
+            if action_spec.scope != "environment":
+                actor = _ENTITIES[action_spec.actor_kinds[0]]
+            document = _card(card.type_id, actor, **params)
+            report = validate_document(document)
+            assert not [
+                i for i in report.errors if i.path.endswith(f".{name}")
+            ], _errors(report)
+            if report.ok:
+                assert _built_or_failure(lambda: _build(document)) is None
+        else:
+            node: dict[str, Any] = {"type": card.type_id, "params": params}
+            if card.min_children:
+                node["children"] = [
+                    {"type": "elapsed_time", "params": {"duration_seconds": 1.0}}
+                ] * card.min_children
+            document = _document(trigger=node)
+            report = validate_document(document)
+            assert not [
+                i for i in report.errors if i.path.endswith(f".{name}")
+            ], _errors(report)
+            if report.ok:
+                compiled = compile_document(document).pass_conditions[0]
+                assert (
+                    _built_or_failure(
+                        lambda: instantiate_condition(
+                            compiled, BuildContext(scenario=None)
+                        )
+                    )
+                    is None
+                )
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        (name, value)
+        for name, (low, high) in sorted(_traffic_mean_bounds().items())
+        for value in ([low] if high == float("inf") else [low, high])
+    ],
+)
+def test_a_traffic_mean_on_its_bounds_is_accepted_and_builds(
+    name: str, value: float
+) -> None:
+    document = _card("traffic_parameters", None, **{name: value})
+    report = validate_document(document)
+    assert report.ok, _errors(report)
+    _build(document)
+
+
+def test_a_whole_number_too_large_for_a_float_does_not_break_the_validator() -> None:
+    document = _document(
+        trigger={"type": "entity_count", "params": {"count": "9" * 400}}
+    )
+    validate_document(document)

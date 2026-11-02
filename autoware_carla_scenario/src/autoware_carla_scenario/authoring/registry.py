@@ -210,6 +210,16 @@ class FieldSpec:
             destination differently from a place merely watched.
         item_fields: For a ``record_list`` field, the fields of each record,
             checked and coerced as a primitive's own are.
+        minimum: For a ``number`` or whole-number field, the least value it
+            may hold, inclusive (``0.0``: not negative).
+        exclusive_minimum: For a ``number`` or whole-number field, a value it
+            must stay above (``0.0``: positive).
+        maximum: For a ``number`` or whole-number field, the most it may
+            hold, inclusive.
+
+    The bounds are the runtime's: a constructor that raises for a value is
+    stated here, so the validator refuses the document that would carry it
+    instead of the scenario failing as it starts (#1111).
     """
 
     name: str
@@ -222,6 +232,9 @@ class FieldSpec:
     required: bool = True
     place: LaneletPlace = "watched"
     item_fields: tuple["FieldSpec", ...] = ()
+    minimum: Optional[float] = None
+    exclusive_minimum: Optional[float] = None
+    maximum: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -717,6 +730,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="s_margin",
             label="Margin",
             kind="number",
+            exclusive_minimum=0.0,
             default=5.0,
             unit="m",
             help=f"How far either side of {place} still counts.",
@@ -725,6 +739,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="stop_duration",
             label="Held for",
             kind="number",
+            exclusive_minimum=0.0,
             default=1.0,
             unit="s",
         ),
@@ -732,6 +747,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="speed_threshold",
             label="Counts as stopped below",
             kind="number",
+            minimum=0.0,
             default=0.1,
             unit="m/s",
         ),
@@ -1092,6 +1108,7 @@ register_action_spec(
                 name="duration",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1175,6 +1192,7 @@ register_action_spec(
                 name="initial_vehicles",
                 label="Vehicles at start",
                 kind="int",
+                minimum=0,
                 default=10,
                 help="Placed at once, on the first tick it runs.",
             ),
@@ -1182,6 +1200,7 @@ register_action_spec(
                 name="vehicles_per_minute",
                 label="Then, per minute",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 help="Added while it runs; 0 places only the ones at start.",
             ),
@@ -1189,6 +1208,7 @@ register_action_spec(
                 name="max_vehicles",
                 label="At most on the road",
                 kind="int",
+                minimum=0,
                 default=None,
                 required=False,
                 help="Every background vehicle counts, whichever source made it.",
@@ -1265,6 +1285,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_ttc_s",
         label="Turn back at TTC",
         kind="number",
+        minimum=0.0,
         default=None,
         required=False,
         unit="s",
@@ -1277,6 +1298,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_distance_m",
         label="Turn back at distance",
         kind="number",
+        minimum=0.0,
         default=None,
         required=False,
         unit="m",
@@ -1289,6 +1311,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_within_m",
         label="Turn back within",
         kind="number",
+        minimum=0.0,
         default=1.0,
         unit="m",
         help=(
@@ -1312,6 +1335,7 @@ register_action_spec(
                 name="speed_ms",
                 label="Walking speed",
                 kind="number",
+                minimum=0.0,
                 default=1.4,
                 unit="m/s",
                 help=(
@@ -1353,6 +1377,7 @@ register_action_spec(
                 name="fps",
                 label="Frame rate",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="fps",
@@ -1369,6 +1394,7 @@ register_action_spec(
                 name="duration_s",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1428,7 +1454,7 @@ register_action_spec(
                 default=(),
                 help="Texts that take over at a time into the motion.",
                 item_fields=(
-                    FieldSpec("time_s", "From", "number", 0.0, unit="s"),
+                    FieldSpec("time_s", "From", "number", 0.0, unit="s", minimum=0.0),
                     FieldSpec("text", "What it does", "text", ""),
                 ),
             ),
@@ -1447,6 +1473,7 @@ register_action_spec(
                 name="speed_ms",
                 label="Speed",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.3,
                 unit="m/s",
                 help="How fast it walks along the waypoints.",
@@ -1466,6 +1493,7 @@ register_action_spec(
                 name="duration_s",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1655,6 +1683,7 @@ register_action_spec(
                 name="length",
                 label="Footprint length",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 required=False,
                 unit="m",
@@ -1668,6 +1697,7 @@ register_action_spec(
                 name="width",
                 label="Footprint width",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 required=False,
                 unit="m",
@@ -1768,6 +1798,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2050,6 +2081,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2088,6 +2120,7 @@ register_action_spec(
                 name="spacing",
                 label="Spacing",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=20.0,
                 unit="m",
                 help="Between the objects; 0.7 of it in a taper, 0.8 in the buffer.",
@@ -2237,6 +2270,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2275,6 +2309,7 @@ register_action_spec(
                 name="spacing",
                 label="Spacing",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=10.0,
                 unit="m",
                 help="Between the work zone's objects; half of it in the merge taper.",
@@ -2376,6 +2411,8 @@ register_action_spec(
                         "number",
                         0.001,
                         help="Naturalistic, a tick, when its trigger holds.",
+                        minimum=0.0,
+                        maximum=1.0,
                     ),
                 ),
             ),
@@ -2469,6 +2506,7 @@ register_action_spec(
                 name="target_speed_kmh",
                 label="Target speed",
                 kind="number",
+                minimum=0.0,
                 default=30.0,
                 unit="km/h",
                 help=(
@@ -2480,6 +2518,7 @@ register_action_spec(
                 name="rate_kmh_s",
                 label="Rate",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="km/h/s",
@@ -2586,6 +2625,7 @@ def _spread_fields(
                 required=False,
                 unit=unit,
                 help="Spread between road users; empty or 0: all the same.",
+                minimum=0.0,
             )
         )
     return tuple(fields)
@@ -2993,6 +3033,7 @@ register_action_spec(
                 name="initial_distance_offset",
                 label="Start this far along",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="m",
                 help=(
@@ -3018,6 +3059,7 @@ register_action_spec(
                 name="walking_speed",
                 label="Walking speed",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.4,
                 required=False,
                 unit="m/s",
@@ -3291,6 +3333,7 @@ register_condition_spec(
                 name="duration",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.0,
                 unit="s",
             ),
@@ -3384,6 +3427,8 @@ def _entity_filter_fields() -> tuple[FieldSpec, ...]:
     a condition looks at, by name, kind, place and relative to a reference."""
 
     def bound(name: str, label: str, help_text: str) -> FieldSpec:
+        # A distance is not negative (EntityFilter.__post_init__); an offset
+        # ahead or to the left is signed.
         return FieldSpec(
             name=name,
             label=label,
@@ -3392,6 +3437,7 @@ def _entity_filter_fields() -> tuple[FieldSpec, ...]:
             unit="m",
             required=False,
             help=help_text,
+            minimum=0.0 if name.endswith("_distance_m") else None,
         )
 
     return (
@@ -3504,7 +3550,7 @@ register_condition_spec(
         fields=(
             *_entity_filter_fields(),
             _rule_field("greater_than_or_equal"),
-            FieldSpec(name="count", label="Count", kind="int", default=1),
+            FieldSpec(name="count", label="Count", kind="int", default=1, minimum=0),
         ),
         description=(
             "How many road users pass a filter: by name pattern, kind, place, "
@@ -4039,12 +4085,18 @@ register_condition_spec(
         fields=(
             _entity_field("entity", "Subject"),
             FieldSpec(
-                name="duration", label="Duration", kind="number", default=1.0, unit="s"
+                name="duration",
+                label="Duration",
+                kind="number",
+                exclusive_minimum=0.0,
+                default=1.0,
+                unit="s",
             ),
             FieldSpec(
                 name="speed_threshold",
                 label="Speed threshold",
                 kind="number",
+                minimum=0.0,
                 default=0.1,
                 unit="m/s",
                 required=False,
@@ -4438,6 +4490,8 @@ register_condition_spec(
                 name="fraction",
                 label="Fraction",
                 kind="number",
+                exclusive_minimum=0.0,
+                maximum=1.0,
                 default=0.3,
                 help=(
                     "Of the 15 points of a 5 x 3 grid over the bounding box, "
@@ -4473,6 +4527,7 @@ register_condition_spec(
                 name="distance",
                 label="Look-ahead",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=10.0,
                 unit="m",
             ),
@@ -4507,6 +4562,7 @@ register_condition_spec(
                 name="duration_seconds",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=5.0,
                 unit="s",
             ),
@@ -4597,6 +4653,7 @@ register_condition_spec(
                 name="length",
                 label="Length",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=4.6,
                 unit="m",
                 help="Along its heading: a car's, a walker's, whatever is to stand there.",
@@ -4605,6 +4662,7 @@ register_condition_spec(
                 name="width",
                 label="Width",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=2.0,
                 unit="m",
             ),
@@ -4612,6 +4670,7 @@ register_condition_spec(
                 name="margin",
                 label="Margin",
                 kind="number",
+                minimum=0.0,
                 default=0.3,
                 required=False,
                 unit="m",
@@ -4714,6 +4773,7 @@ register_condition_spec(
                 name="timeout_seconds",
                 label="Timeout",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=30.0,
                 unit="s",
             ),
