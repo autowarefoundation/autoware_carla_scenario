@@ -419,6 +419,10 @@ class SumoTrafficBackend(TrafficBackend):
         #: released to an adversity (#417); its actor is in ``_external``
         #: meanwhile.
         self._handed_ambient: dict[str, tuple[int, int]] = {}
+        #: SUMO id of a released vehicle (an entity's or an ambient one's) ->
+        #: the vehicle overrides given it while CARLA drove it, layered (the
+        #: one given last wins): drawn for it when SUMO drives it again.
+        self._released_overrides: dict[str, VehicleParameters] = {}
         #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
@@ -631,7 +635,11 @@ class SumoTrafficBackend(TrafficBackend):
         """Give *entity*'s vehicle alone a new draw of the fields *overrides*
         sets: in SUMO when SUMO drives it, else through the TrafficManager."""
         sumo_id = self._id_of(entity)
-        if sumo_id is not None:
+        released = self._handed.get(id(entity))
+        if sumo_id is None and released is not None and self._running:
+            # Released: CARLA drives it now; drawn for it at resume().
+            self._keep_released_overrides(released[0], overrides)
+        elif sumo_id is not None:
             if self._is_bicycle(sumo_id):
                 logger.warning(
                     "SUMO: %s is a bicycle, which rides as traffic.bicycles "
@@ -661,6 +669,11 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in self._traci.vehicle.getIDList():
             if sumo_id not in self._external:
                 self._draw_vehicle(sumo_id, overrides)
+        # The released ones draw them when SUMO drives them again.
+        for handed in self._handed.values():
+            self._keep_released_overrides(handed[0], overrides)
+        for sumo_id in self._handed_ambient:
+            self._keep_released_overrides(sumo_id, overrides)
         # The visibility is held anew, from the new draws (or not at all).
         for sumo_id in list(self._max_speeds):
             self._hold_to_sight(sumo_id, None)
@@ -702,6 +715,23 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in self._traci.vehicle.getIDList():
             if sumo_id not in self._external and self._is_bicycle(sumo_id):
                 self._draw_bicycle(sumo_id, overrides)
+
+    def _keep_released_overrides(
+        self, sumo_id: str, overrides: VehicleParameters
+    ) -> None:
+        """Keep *overrides*, given released *sumo_id*, over those it was
+        given before, for when SUMO drives it again."""
+        previous = self._released_overrides.get(sumo_id)
+        self._released_overrides[sumo_id] = (
+            overrides if previous is None else previous.overridden_by(overrides)
+        )
+
+    def _draw_released_overrides(self, sumo_id: str) -> None:
+        """Give *sumo_id*, taken back, a draw of the overrides it was given
+        while released: its lane-change rule replaces the one it had."""
+        overrides = self._released_overrides.pop(sumo_id, None)
+        if overrides is not None:
+            self._draw_vehicle(sumo_id, overrides)
 
     @staticmethod
     def _warn_dropped(overrides: VehicleParameters, shared: VehicleParameters) -> None:
@@ -1090,6 +1120,7 @@ class SumoTrafficBackend(TrafficBackend):
         for entity_id, handed in list(self._handed.items()):
             if handed[0] == sumo_id:
                 del self._handed[entity_id]
+        self._released_overrides.pop(sumo_id, None)
 
     def _waits(self, entity: Any, *, settling: bool = True) -> bool:
         """Whether *entity*'s vehicle is not on SUMO's road yet -- the run
@@ -1225,6 +1256,7 @@ class SumoTrafficBackend(TrafficBackend):
                 pass
         self._persons = {}
         self._handed_ambient = {}
+        self._released_overrides = {}
         for entity in self._driven.values():
             actor = getattr(entity, "actor", None)
             if actor is not None:
@@ -1540,6 +1572,9 @@ class SumoTrafficBackend(TrafficBackend):
                 if sumo_id in self._driven:
                     del self._driven[sumo_id]
                     self._let_go(sumo_id)
+                    # Published for good: no junction unstick to undo.
+                    self._unstuck.pop(sumo_id, None)
+                    self._standing_since.pop(sumo_id, None)
                     self._hand_over(sumo_id, actor)
                 # Not taken back by a resume() to come, nor routed.
                 self._forget_handed(sumo_id)
@@ -1793,9 +1828,14 @@ class SumoTrafficBackend(TrafficBackend):
         actor = getattr(entity, "actor", None)
         if actor is None:
             return
+        # Going on through a junction (_unstick_junctions): the speed mode it
+        # had before is the one resume() puts back.
+        unstuck = self._unstuck.pop(sumo_id, None)
+        self._standing_since.pop(sumo_id, None)
         modes = self._hand_over(sumo_id, actor)
         if modes is not None:
-            self._handed[id(entity)] = (sumo_id, modes[0], modes[1])
+            speed_mode = modes[0] if unstuck is None else unstuck
+            self._handed[id(entity)] = (sumo_id, speed_mode, modes[1])
         logger.info("SUMO: %s released; it is published from CARLA now", sumo_id)
 
     def resume(self, entity: Any, world: Any) -> None:
@@ -1823,6 +1863,7 @@ class SumoTrafficBackend(TrafficBackend):
             _DRIVEN_COLOR,
         )
         self._driven[sumo_id] = entity
+        self._draw_released_overrides(sumo_id)
         logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
 
     # ------------------------------------------------------------------
@@ -2019,6 +2060,7 @@ class SumoTrafficBackend(TrafficBackend):
         if sumo_id is None or sumo_id not in self._handed_ambient:
             return
         modes = self._handed_ambient.pop(sumo_id)
+        overrides = self._released_overrides.pop(sumo_id, None)
         if not self._take_back(sumo_id, modes, -1.0):
             # Gone from SUMO while CARLA drove it (its route ended): the
             # mirror has nothing left to follow.
@@ -2028,6 +2070,8 @@ class SumoTrafficBackend(TrafficBackend):
                 pass
             return
         self._ambient[sumo_id] = actor
+        if overrides is not None:
+            self._draw_vehicle(sumo_id, overrides)
         logger.info("SUMO: ambient %s resumed; SUMO drives it again", sumo_id)
 
     @staticmethod
@@ -2970,6 +3014,9 @@ class SumoTrafficBackend(TrafficBackend):
         (:meth:`_guard_speed`)."""
         tc = self._traci
         for sumo_id in list(self._unstuck):
+            if sumo_id in self._external:
+                # Published: CARLA drives it, and its speed mode is release()'s.
+                continue
             try:
                 on_road = not str(tc.vehicle.getLaneID(sumo_id)).startswith(":")
             except Exception:  # noqa: BLE001 - gone from SUMO
