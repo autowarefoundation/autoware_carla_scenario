@@ -2597,7 +2597,24 @@ passes on it, and a warning says so. They are on by default; turn them off
 with <code>metrics.heavy=false</code>, <code>$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0</code>, or
 <code>configure_commonroad_metrics(heavy_metrics=False)</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span>metrics.heavy<span class="o">=</span><span class="nb">false</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
 </code></pre></div>
+<p>The <code>scenario</code> command (a single run, a batch, a sweep, and the SLURM tasks
+alike) decides in this order:</p>
+<ol>
+<li><code>metrics.heavy</code> when a config sets it to <code>true</code> or <code>false</code> (the first
+   case's of a batch that does): it overrides the environment variable;</li>
+<li>otherwise <code>$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS</code>: off when it is <code>0</code>,
+   <code>false</code>, <code>off</code> or <code>no</code>;</li>
+<li>otherwise on.</li>
+</ol>
+<p>The shipped <code>config.yaml</code> leaves <code>metrics.heavy</code> <code>null</code>, so the environment
+variable decides unless the command line or a scenario's config says
+otherwise. The command then sets the variable to what it decided (<code>1</code> or
+<code>0</code>), which carries it to the runs' own processes and to the SLURM jobs.
+A batch decides once, for all its cases; the cases of a Hydra <code>--multirun</code>
+(<code>scenario=a,b</code>) each decide for themselves, from the variable as you set it,
+not as an earlier case's <code>metrics.heavy</code> left it.</p>
 <p>The workers are started with, in order, the command in
 <code>$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER</code>, <code>commonroad-metrics-worker</code> on
 the <code>PATH</code>, or, in a checkout, <code>uv run --project commonroad_metrics
@@ -2776,7 +2793,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 15:40:18 UTC"><span class="timeago" datetime="2026-11-02T15:40:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 15:40:18 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 16:36:31 UTC"><span class="timeago" datetime="2026-11-02T16:36:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 16:36:31 UTC">2026-11-02</span>
   </span>
 
     
