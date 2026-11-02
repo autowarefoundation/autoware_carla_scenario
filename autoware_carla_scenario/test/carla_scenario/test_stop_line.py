@@ -92,9 +92,7 @@ class TestGetStopLineLinestrings:
         from autoware_carla_scenario.utils.stop_line import get_stop_line_linestrings
 
         lanelet_map = MagicMock()
-        lanelet_map.laneletLayer.__getitem__ = MagicMock(
-            side_effect=KeyError("not found")
-        )
+        lanelet_map.laneletLayer.exists = MagicMock(return_value=False)
 
         with pytest.raises(ValueError, match="Lanelet ID 999 not found"):
             get_stop_line_linestrings(lanelet_map, 999)

@@ -35,6 +35,9 @@ def get_stop_line_linestrings(lanelet_id: int) -> list[ConstLineString3d]:
 
     Requires :class:`MapManager` to be initialised.  Pass a map explicitly to
     :func:`..utils.stop_line.get_stop_line_linestrings` to avoid that.
+
+    Raises:
+        ValueError: If the lanelet ID is not found in the map.
     """
     return _linestrings_of(MapManager.get_instance().lanelet_map, lanelet_id)
 
@@ -45,10 +48,18 @@ def get_stop_line_linestrings_with_following(
     """Return stop lines for *lanelet_id* and its successors in the loaded map,
     up to *depth* steps of successors.
 
+    Successors are found in the :attr:`MapManager.routing_graph` (by German
+    traffic rules, for a vehicle, as one built for the call would be), which
+    is built once for the run rather than on every call.
+
     Requires :class:`MapManager` to be initialised.
+
+    Raises:
+        ValueError: If the lanelet ID is not found in the map.
     """
+    mm = MapManager.get_instance()
     return _linestrings_of_with_following(
-        MapManager.get_instance().lanelet_map, lanelet_id, depth
+        mm.lanelet_map, lanelet_id, depth, routing_graph=mm.routing_graph
     )
 
 
