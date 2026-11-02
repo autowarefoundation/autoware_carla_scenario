@@ -50,11 +50,10 @@ class TimeHeadwayCondition(CompositionCondition):
     straight-line offset onto the direction of travel.  On a straight road that
     is the along-lane gap.  On a curve it reads short, and the error grows with
     the curvature: for a leader 20 m ahead along the lane it gives 19.5 m at a
-    50 m radius, 17.9 m at 25 m and 14.6 m at 15 m.  Past a quarter turn it
+    50 m radius, 17.9 m at 25 m and 14.6 m at 15 m (``R * sin(L / R)`` for an
+    arc *L* on radius *R*).  Past a half turn (an arc of ``pi * R`` or more) it
     does worse than under-read -- the projection goes negative, the target is
-    taken to be *not ahead*, and the condition stops firing at all, so on a
-    roundabout a leader directly in front in-lane is invisible to it for the
-    whole manoeuvre.
+    taken to be *not ahead*, and the condition stops firing at all.
 
     :attr:`~DistanceCoordinateSystem.LANE` measures along the road instead,
     which is what `scenario_simulator_v2` does and what OpenSCENARIO's
@@ -193,9 +192,9 @@ class TimeHeadwayCondition(CompositionCondition):
         if ahead <= _SPEED_EPSILON:
             # Behind, or exactly abeam: there is no gap in front to close.
             #
-            # In the entity frame a curve sharper than a quarter turn also
-            # reaches here with a leader that *is* ahead along the lane,
-            # because the straight-line projection has gone negative by then.
+            # In the entity frame a leader more than a half turn round a curve
+            # also reaches here although it *is* ahead along the lane, because
+            # the straight-line projection has gone negative by then.
             # That is the cost of that frame, and what the lane one removes;
             # see the class docstring.
             return None

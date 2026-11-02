@@ -504,8 +504,8 @@ classDiagram
 > - `ENTITY` (the default, so existing documents keep their meaning) is a
 >   world-frame offset projected onto the subject's heading or direction of
 >   travel. It equals the along-lane gap on a straight road, under-reads on a
->   curve, and past a quarter turn inverts — at which point a headway stops
->   firing for a leader that is directly in front.
+>   curve, and past a half turn (an arc of π·R or more) inverts — at which
+>   point a headway stops firing for a leader that is ahead along the lane.
 > - `LANE` projects both entities onto the OpenDRIVE road they share and
 >   compares their `s`, which is what `scenario_simulator_v2` measures. For
 >   TTC the closing speed is resolved onto the road too, so a vehicle's
