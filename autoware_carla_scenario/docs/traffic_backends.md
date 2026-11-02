@@ -447,7 +447,14 @@ scenario.register_post_tick(
   The ODD's probes read the merged parameters from then on.
 - **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
   changed fields again; the run's parameters stay as they were. An entity is a
-  vehicle, so `pedestrians` and `bicycles` cannot be given with it.
+  vehicle, so `pedestrians` and `bicycles` cannot be given with it. Under the
+  TrafficManager, a vehicle not yet on autopilot (one the scenario drives
+  first) keeps the override for its first draw, which takes it over the run's
+  parameters; several such actions layer in order.
+- **The last one wins.** An action without `entity_name` fired after one with
+  it replaces that vehicle's override on the fields both set, as it does for a
+  vehicle that drew already: every vehicle draws those fields from the new
+  spread.
 - **Refused before the run.** A field the backend cannot change during a run
   is refused when the action is registered on the scenario, with a
   `TrafficParameterError`:

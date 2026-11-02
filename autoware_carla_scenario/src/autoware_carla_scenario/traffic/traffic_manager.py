@@ -274,6 +274,7 @@ class TrafficManagerBackend(TrafficBackend):
     _visibility: Optional[float]
     _draws: Optional[random.Random]
     _drawn: set[int]
+    _entity_overrides: dict[int, VehicleParameters]
     _autopiloted: dict[int, "carla.Actor"]
     _speed_differences: dict[int, float]
     _exact_kmh: dict[int, float]
@@ -351,6 +352,10 @@ class TrafficManagerBackend(TrafficBackend):
         #: that have theirs.
         self._draws = None
         self._drawn = set()
+        #: Actor id -> what the entity overrides of its vehicle
+        #: (:meth:`override_entity_parameters`) set, layered in order: its
+        #: draws take these over the run's parameters, whenever they are made.
+        self._entity_overrides = {}
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
         #: The speed (m/s) each vehicle was last asked to hold, by actor id.
@@ -566,6 +571,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._sight_kmh = -1.0
         self._sight_due = 0.0
         self._drawn = set()
+        # Actor ids are reused across runs: none keeps a finished run's.
+        self._entity_overrides = {}
         self._draws = None
         self._kept = {}
         self._desired_mps = {}
@@ -686,6 +693,7 @@ class TrafficManagerBackend(TrafficBackend):
         if handle not in self._background:
             return
         actor = self._background.pop(handle)
+        self._forget_overrides(int(actor.id))
         try:
             actor.destroy()
         except RuntimeError:
@@ -1129,7 +1137,7 @@ class TrafficManagerBackend(TrafficBackend):
             self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
-            self._draw_for(actor, self.vehicle_parameters)
+            self._draw_for(actor, self._parameters_of(actor))
         if self._sight_kmh >= 0.0:
             # Held to sight at once, not at the next update: one resumed after
             # a speed was set on it while released would drive at that speed
@@ -1137,6 +1145,22 @@ class TrafficManagerBackend(TrafficBackend):
             tm = self._require_tm("follow_visibility")
             if tm is not None:
                 self._hold_to_sight(tm, actor, self._sight_kmh)
+
+    def _parameters_of(self, actor: "carla.Actor") -> VehicleParameters:
+        """The run's parameters, overridden by those of *actor*'s entity
+        overrides: what a draw of all of them for it is made from."""
+        actor_id = int(actor.id)
+        if actor_id in self._entity_overrides:
+            return self.vehicle_parameters.overridden_by(
+                self._entity_overrides[actor_id]
+            )
+        return self.vehicle_parameters
+
+    def _forget_overrides(self, actor_id: int) -> None:
+        """Drop the entity overrides of the actor *actor_id*, which is gone."""
+        if actor_id in self._entity_overrides:
+            del self._entity_overrides[actor_id]
+        self._drawn.discard(actor_id)
 
     def _draw_for(self, actor: "carla.Actor", parameters: VehicleParameters) -> None:
         """Give *actor* its own draw of each field *parameters* sets."""
@@ -1460,6 +1484,17 @@ class TrafficManagerBackend(TrafficBackend):
         parameters too."""
         self._remember_parameters()
         self._vehicle_parameters = self.vehicle_parameters.overridden_by(overrides)
+        # The one given last wins: an entity override of a field this sets is
+        # spent, so a vehicle that draws later draws it from the new
+        # parameters, as one that drew already does here.
+        overridden = set(overrides.set_fields())
+        for actor_id in list(self._entity_overrides):
+            own = self._entity_overrides[actor_id]
+            kept = set(own.set_fields()) - overridden
+            if kept:
+                self._entity_overrides[actor_id] = own.restricted_to(kept)
+            else:
+                del self._entity_overrides[actor_id]
         for driven in world.get_actors().filter("vehicle.*"):
             # The ones that drew already: a vehicle not yet on autopilot draws
             # from the new parameters when it is put on it.
@@ -1469,11 +1504,25 @@ class TrafficManagerBackend(TrafficBackend):
     def override_entity_parameters(
         self, world: "carla.World", overrides: VehicleParameters, entity: DrivenEntity
     ) -> None:
-        """Give *entity*'s vehicle alone a new draw of the fields *overrides* sets."""
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides* sets.
+
+        Kept for it, layered over the overrides it was given before: a vehicle
+        not yet on autopilot draws them when it is put on it, in place of the
+        run's parameters, rather than lose them to its first draw.
+        """
         actor = _require_actor(entity, "override_entity_parameters")
-        if actor is not None:
-            # A typed local: Codon unwraps the Optional here.
-            vehicle: "carla.Actor" = actor
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        actor_id = int(vehicle.id)
+        if actor_id in self._entity_overrides:
+            self._entity_overrides[actor_id] = self._entity_overrides[
+                actor_id
+            ].overridden_by(overrides)
+        else:
+            self._entity_overrides[actor_id] = overrides
+        if actor_id in self._drawn:
             self._draw_for(vehicle, overrides)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
