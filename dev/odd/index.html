@@ -3123,12 +3123,12 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <tr>
 <td><code>in_junction</code></td>
 <td>bool</td>
-<td>CARLA waypoint</td>
+<td>Lanelet2 <code>turn_direction</code> tag of the ego's lanelet, else (no Lanelet2 map) the CARLA waypoint</td>
 </tr>
 <tr>
 <td><code>lane_count</code></td>
 <td>int</td>
-<td>Driving lanes in the ego's direction (CARLA, outside junctions)</td>
+<td>Driving lanes in the ego's direction, outside junctions: the ego's lanelet and its neighbours in the Lanelet2 routing graph, else (no Lanelet2 map) the CARLA waypoint's OpenDRIVE road</td>
 </tr>
 <tr>
 <td><code>illumination</code></td>
@@ -3166,7 +3166,12 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <td></td>
 </tr>
 <tr>
-<td>Without one they return nothing.</td>
+<td>Without one they return nothing, except <code>in_junction</code> and <code>lane_count</code>, which</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>then read the CARLA waypoint.</td>
 <td></td>
 <td></td>
 </tr>
@@ -4772,12 +4777,12 @@ is.</p>
 <tr>
 <td><code>in_junction</code></td>
 <td>The lanelet has a <code>turn_direction</code> tag (Autoware tags every lanelet in an intersection with one; the sweeper's <code>is_junction</code> reads it the same way)</td>
-<td>CARLA waypoint <code>is_junction</code></td>
+<td>The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint <code>is_junction</code></td>
 </tr>
 <tr>
 <td><code>lane_count</code></td>
 <td>The lanelet and every same-direction neighbour, walked left and right in the routing graph (<code>left</code>/<code>right</code>, else <code>adjacentLeft</code>/<code>adjacentRight</code>, so lanes behind a solid line count too); nothing in a junction</td>
-<td>CARLA OpenDRIVE waypoints: driving lanes of the same sign</td>
+<td>The same, on the ego's lanelet; without a Lanelet2 map, the driving lanes of the same sign on the CARLA waypoint's OpenDRIVE road</td>
 </tr>
 <tr>
 <td><code>speed_limit_kph</code></td>
@@ -4791,10 +4796,12 @@ is.</p>
 </tr>
 </tbody>
 </table>
-<p>Route lane counts come from Lanelet2 and run-time lane counts come from
-CARLA's OpenDRIVE waypoints. The two maps are converted from each other but
-not always lane for lane, so they can disagree; so can the two junction
-criteria.</p>
+<p>A run with a Lanelet2 map reads the junction and the lane count off the
+ego's lanelet, as the route check does, so the two agree. A run without one
+falls back to CARLA's OpenDRIVE waypoints. The two maps are converted from
+each other but not always lane for lane (two lane-change neighbours on the
+Lanelet2 map can be the single lanes of two OpenDRIVE roads), so there the
+route check and the run can disagree.</p>
 <p>The report also gives the <strong>expected coverage</strong>: the metres the route spends
 in each bucket of each attribute (<code>&lt;undecided&gt;</code> and <code>&lt;missing&gt;</code> collect the
 metres where the map cannot or does not say). The start lanelet counts from
@@ -4871,7 +4878,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 01:17:50 UTC"><span class="timeago" datetime="2026-11-02T01:17:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 01:17:50 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 04:27:30 UTC"><span class="timeago" datetime="2026-11-02T04:27:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 04:27:30 UTC">2026-11-02</span>
   </span>
 
     
