@@ -28,7 +28,7 @@ from carla_driver_interface.protocol import Quat as QuatProto
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.frenet import build_route_table, project_to_frenet
-from stl_driver.perception import forecast_actors, read_traffic_light
+from stl_driver.perception import SAME_STOP_LINE_M, forecast_actors, read_traffic_light
 from tests.conftest import curved_route, straight_route
 
 CONFIG = STLDriverConfig()
@@ -397,7 +397,7 @@ def test_a_vehicle_level_with_our_back_half_is_not_the_lead():
 )
 def test_a_stopping_light_yields_a_stop_station(state):
     light = read_traffic_light(
-        renderer(light=state, light_distance_m=22.0), station0_m=5.0, config=CONFIG
+        renderer(light=state, light_distance_m=22.0), station0_m=5.0, config=CONFIG, speed_mps=0.0
     )
     assert light.active
     assert light.stop_station_m == pytest.approx(5.0 + 22.0 - CONFIG.limits.stop_line_margin_m)
@@ -414,7 +414,7 @@ def test_a_stopping_light_yields_a_stop_station(state):
 )
 def test_a_non_stopping_light_imposes_nothing(state):
     light = read_traffic_light(
-        renderer(light=state, light_distance_m=22.0), station0_m=0.0, config=CONFIG
+        renderer(light=state, light_distance_m=22.0), station0_m=0.0, config=CONFIG, speed_mps=0.0
     )
     assert not light.active
     assert math.isinf(light.stop_station_m)
@@ -426,6 +426,7 @@ def test_a_negative_distance_means_no_light_applies():
         renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=-1.0),
         station0_m=0.0,
         config=CONFIG,
+        speed_mps=0.0,
     )
     assert not light.active
 
@@ -443,7 +444,7 @@ def test_no_renderer_data_is_handled_rather_than_assumed_away():
     assert forecast.centres.shape == (CONFIG.horizon.n_steps, 0, 2)
     assert not np.isfinite(forecast.lead_station_m).any()
 
-    light = read_traffic_light(None, 0.0, CONFIG)
+    light = read_traffic_light(None, 0.0, CONFIG, speed_mps=0.0)
     assert not light.active
     assert math.isinf(light.stop_station_m)
 
@@ -485,6 +486,7 @@ def test_a_stop_line_inside_the_margin_is_still_satisfiable():
         renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=1.5),
         station0_m=station0,
         config=CONFIG,
+        speed_mps=0.0,
     )
     assert light.active
     assert light.stop_station_m >= station0
@@ -495,8 +497,79 @@ def test_a_stop_line_beyond_the_margin_keeps_its_margin():
         renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=30.0),
         station0_m=5.0,
         config=CONFIG,
+        speed_mps=0.0,
     )
     assert light.stop_station_m == pytest.approx(5.0 + 30.0 - CONFIG.limits.stop_line_margin_m)
+
+
+def test_a_margin_that_gave_way_is_held_for_the_same_line():
+    """Read afresh each step, a margin that had to shrink grew back (#1147).
+
+    Once braking, the room to stop shrinks faster than the distance, so the
+    stop station slid back to the very edge of what could still be reached,
+    and the first plan short of the hardest allowed stop violated the hard
+    rule. For the same line it is held; a different line, or a light that
+    stopped governing us, starts afresh.
+    """
+    limits = CONFIG.limits
+    red = TrafficLightState.TRAFFIC_LIGHT_STATE_RED
+    speed = 6.5
+    distance = limits.stop_room_m(speed) + 1.5  # 1.5 m of the margin left
+    first = read_traffic_light(
+        renderer(light=red, light_distance_m=distance),
+        0.0,
+        CONFIG,
+        speed,
+        anchor=Pose.identity(),
+    )
+    assert first.margin_m == pytest.approx(1.5)
+    assert first.line_xy == pytest.approx([distance, 0.0])
+
+    # A step later, braking hard and two metres on: the same line, 2 m nearer.
+    moved = Pose.from_xyz_yaw(2.0, 0.0, 0.0, 0.0)
+    lowest, _ = limits.plan_accel_envelope()
+
+    def later(previous):
+        return read_traffic_light(
+            renderer(light=red, light_distance_m=distance - 2.0),
+            2.0,
+            CONFIG,
+            5.0,
+            lowest,
+            anchor=moved,
+            previous=previous,
+        )
+
+    afresh = later(None)
+    assert afresh.margin_m > first.margin_m + 0.5  # what read afresh would have done
+    held = later(first)
+    assert held.margin_m == pytest.approx(first.margin_m)
+    assert held.stop_station_m == pytest.approx(first.stop_station_m)
+
+    # A line elsewhere is a different light.
+    elsewhere = Pose.from_xyz_yaw(2.0, 2.0 * SAME_STOP_LINE_M, 0.0, 0.0)
+    other = read_traffic_light(
+        renderer(light=red, light_distance_m=distance - 2.0),
+        2.0,
+        CONFIG,
+        5.0,
+        lowest,
+        anchor=elsewhere,
+        previous=first,
+    )
+    assert other.margin_m == pytest.approx(afresh.margin_m)
+
+    # And a light that went green in between starts afresh too.
+    green = read_traffic_light(
+        renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_GREEN, light_distance_m=distance),
+        0.0,
+        CONFIG,
+        speed,
+        anchor=Pose.identity(),
+        previous=first,
+    )
+    assert not green.active
+    assert later(green).margin_m == pytest.approx(afresh.margin_m)
 
 
 def test_a_line_already_crossed_stops_governing_us():
@@ -509,6 +582,7 @@ def test_a_line_already_crossed_stops_governing_us():
         renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=-2.0),
         station0_m=40.0,
         config=CONFIG,
+        speed_mps=0.0,
     )
     assert not light.active
     assert math.isinf(light.stop_station_m)
@@ -611,28 +685,122 @@ def test_a_vehicle_overtaking_from_behind_reappears_once_it_is_ahead():
 def test_the_stop_margin_never_demands_more_room_than_there_is():
     """CARLA reports a light only from inside its trigger volume.
 
-    On Town10HD that first sighting can be four metres out. A fixed four-metre
-    margin would ask a moving vehicle to stop where it stands, which no plan
-    can do, so every candidate violates the rule and the fallback engages on a
-    perfectly stoppable approach.
+    On Town10HD that first sighting can be four metres out, and a light can
+    turn red just as close. A fixed four-metre margin would ask a moving
+    vehicle to stop where it stands, which no plan can do, so every candidate
+    violates the rule and the fallback engages on a perfectly stoppable
+    approach. Wherever the line itself can still be stopped short of, the stop
+    station leaves at least the room `stop_on_red` will ask for -- and where
+    it cannot, the line, not a point past it.
     """
-    for distance in (1.0, 2.0, 4.0, 8.0):
-        light = read_traffic_light(
-            renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=distance),
+    limits = CONFIG.limits
+    for speed in (0.0, 2.0, 4.0, 6.0, 8.0):
+        for accel in (-3.0, 0.0, 1.5):
+            room = limits.stop_room_m(speed, accel)
+            for distance in (1.0, 2.0, 4.0, 8.0, 12.0, 16.0, 24.0):
+                light = read_traffic_light(
+                    renderer(
+                        light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=distance
+                    ),
+                    station0_m=0.0,
+                    config=CONFIG,
+                    speed_mps=speed,
+                    accel_mps2=accel,
+                )
+                allowed = light.stop_station_m
+                case = (speed, accel, distance, allowed, room)
+                assert allowed <= distance, case  # never past the line
+                assert allowed >= distance - limits.stop_line_margin_m - 1e-9, case
+                if distance >= room:
+                    assert allowed >= room - 1e-9, case
+                else:
+                    assert allowed == pytest.approx(distance), case  # the line itself
+
+    # Far out, the full margin applies at any of these speeds.
+    for speed in (0.0, 8.0):
+        far = read_traffic_light(
+            renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=40.0),
             station0_m=0.0,
             config=CONFIG,
+            speed_mps=speed,
         )
-        allowed = light.stop_station_m
-        assert allowed >= distance / 2 - 1e-9  # at least half the gap is usable
-        assert allowed <= distance  # and never past the line
+        assert far.stop_station_m == pytest.approx(40.0 - limits.stop_line_margin_m)
 
-    # Far out, the full margin applies.
-    far = read_traffic_light(
-        renderer(light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=40.0),
-        station0_m=0.0,
-        config=CONFIG,
-    )
-    assert far.stop_station_m == pytest.approx(40.0 - CONFIG.limits.stop_line_margin_m)
+
+def test_the_room_to_stop_is_what_the_rule_charges_at_its_peak():
+    """`stop_room_m` against `stopping_distance_m`, which it bounds from above.
+
+    Equal at rest and when already braking at the plan's bound -- nothing of
+    the ramp is left to charge twice -- and larger from a cruise, by more the
+    faster the cruise.
+    """
+    limits = CONFIG.limits
+    lowest, _ = limits.plan_accel_envelope()
+    assert limits.stop_room_m(0.0) == 0.0
+    previous_excess = 0.0
+    for speed in (2.0, 4.0, 6.0, 8.0):
+        stopping = limits.stopping_distance_m(speed)
+        assert limits.stop_room_m(speed, lowest) == pytest.approx(stopping)
+        excess = limits.stop_room_m(speed) - stopping
+        assert excess > previous_excess
+        previous_excess = excess
+        assert limits.stop_room_m(speed, 1.0) > limits.stop_room_m(speed)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [TrafficLightState.TRAFFIC_LIGHT_STATE_RED, TrafficLightState.TRAFFIC_LIGHT_STATE_YELLOW],
+)
+def test_the_stop_station_does_not_creep_forward_with_the_vehicle(state):
+    """The regression test for #1147.
+
+    The margin used to be ``min(margin, 0.5 * distance)`` of the *live*
+    distance, so within two margins of the line the stop station sat halfway
+    to it and moved half a metre on for every metre crept: closed loop, a red
+    light 30 m ahead stopped the rear axle at 28.1 m instead of 26 m.
+
+    Read from rest at every point on the way in, the stop station has to be
+    the same place in the world -- the line less the full margin -- until the
+    vehicle is inside the margin, where it is held where it stands.
+    """
+    line = 30.0
+    target = line - CONFIG.limits.stop_line_margin_m
+    for station0 in np.arange(18.0, 29.75, 0.25):
+        light = read_traffic_light(
+            renderer(light=state, light_distance_m=line - station0),
+            station0_m=float(station0),
+            config=CONFIG,
+            speed_mps=0.0,
+        )
+        assert light.active
+        assert light.stop_station_m == pytest.approx(max(target, station0)), station0
+
+
+def test_a_braking_approach_keeps_the_full_margin():
+    """Moving, the margin gives way only to what can no longer be stopped short of.
+
+    A vehicle with just the room to stop at ``line - margin`` -- on its
+    braking curve, or still cruising towards it -- is asked to stop exactly
+    there, at every speed down to rest.
+    """
+    limits = CONFIG.limits
+    lowest, _ = limits.plan_accel_envelope()
+    line = 30.0
+    for accel in (lowest, 0.0):
+        for speed in np.linspace(8.0, 0.0, 17):
+            room = limits.stop_room_m(float(speed), accel)
+            distance = limits.stop_line_margin_m + room + 0.01
+            light = read_traffic_light(
+                renderer(
+                    light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED, light_distance_m=distance
+                ),
+                station0_m=line - distance,
+                config=CONFIG,
+                speed_mps=float(speed),
+                accel_mps2=accel,
+            )
+            expected = line - limits.stop_line_margin_m
+            assert light.stop_station_m == pytest.approx(expected), (accel, speed)
 
 
 # ---------------------------------------------------------------------------

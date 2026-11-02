@@ -13,6 +13,7 @@ import math
 
 import pytest
 import torch
+from carla_driver_interface.protocol import CarlaRendererData, TrafficLightState
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.optimizer import (
@@ -22,6 +23,7 @@ from stl_driver.optimizer import (
     RobustnessOptimizer,
     _accel_params,
 )
+from stl_driver.perception import read_traffic_light
 from stl_driver.rollout import N_PARAMS, rollout
 from stl_driver.rules import RuleSet, build_rules
 from stl_driver.signals import Col, signal_from_columns
@@ -155,6 +157,37 @@ def test_it_stops_before_a_red_light(optimizer):
     # replanned at 10 Hz and only has to keep the line ahead of it -- but it
     # must clearly be slowing for the light.
     assert speeds(solution)[-1].item() < speeds(solution)[0].item() * 0.75
+
+
+@pytest.mark.parametrize("speed", [4.0, 6.5, 8.0])
+def test_a_light_turning_red_inside_the_margin_still_leaves_a_plan(optimizer, speed):
+    """Perception and the search together, where the full margin is out of reach.
+
+    A metre more than the room to stop, from a cruise: the line can be stopped
+    short of, just not a whole margin short of it. The stop station
+    `read_traffic_light` sets has to be one some candidate satisfies, or the
+    emergency fallback takes a perfectly stoppable approach (#1147). Halving
+    the distance, as the margin used to, left every candidate violating it:
+    at these speeds that kept 3.1 to 4 m of margin where 1 m was all there
+    was.
+    """
+    distance = CONFIG.limits.stop_room_m(speed) + 1.0
+    light = read_traffic_light(
+        CarlaRendererData(
+            ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED,
+            ego_traffic_light_distance_m=distance,
+        ),
+        0.0,
+        CONFIG,
+        speed,
+    )
+    inputs = make_inputs(
+        CONFIG, speed0_mps=speed, stop_station_m=light.stop_station_m, light_active=True
+    )
+    solution = optimizer.solve(inputs)
+
+    assert not solution.needs_fallback
+    assert float(solution.per_rule["stop_on_red"]) >= 0.0
 
 
 def test_it_drives_through_a_green_light(optimizer):
