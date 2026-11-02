@@ -78,8 +78,10 @@ of them, which every pedestrian of SUMO's own demand is.  Every numeric
 parameter is drawn per vehicle and per pedestrian from its spread.  SUMO's own traffic sees only as far as the run's weather lets
 its drivers see (``follow_visibility``, on by default,
 :mod:`autoware_carla_scenario.visibility`): night, rain and fog hold each
-vehicle to the speed it can stop from within that distance, worked out from
-its ``reaction_time_s`` and ``decel``.  The TrafficManager follows it too
+vehicle to the speed its driver keeps in that distance -- the weather rules'
+``sight_speed``, which reads the visibility, at the driver's own quantile,
+scaled to its ``reaction_time_s`` and ``decel`` and never above the speed it
+can stop from within it.  The TrafficManager follows it too
 with ``follow_visibility: true``.
 
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
@@ -100,7 +102,7 @@ from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
-from ...visibility import sight_speed, world_visibility
+from ...visibility import driver_quantile, sight_speed_at, world_visibility
 from ...world_reset import episode_of
 from ..base import (
     LaneChangeDirection,
@@ -4193,8 +4195,11 @@ class SumoTrafficBackend(TrafficBackend):
                 self._hold_to_sight(sumo_id, seen)
 
     def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
-        """Cap *sumo_id*'s maximum speed at the one it stops from within
-        *seen* metres; ``None`` gives it its own back."""
+        """Cap *sumo_id*'s maximum speed at the one its driver keeps in
+        *seen* metres -- the weather rules' ``sight_speed`` at the driver's
+        own quantile, scaled to the vehicle's braking and reaction, never
+        above the speed it stops from within them; ``None`` gives it its own
+        back."""
         vehicle = self._traci.vehicle
         if seen is None:
             if sumo_id in self._max_speeds:
@@ -4209,7 +4214,7 @@ class SumoTrafficBackend(TrafficBackend):
                 vehicle.getTau(sumo_id),
             )
         own, decel, tau = held
-        limit = sight_speed(seen, decel, tau)
+        limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
         # Never to a standstill: a car in thick fog still creeps on.  Nor
         # above its own: a background vehicle capped below the creep keeps
         # its cap (#967).
