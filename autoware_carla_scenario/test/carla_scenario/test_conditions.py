@@ -254,6 +254,12 @@ class TestElapsedTimeCondition:
         with pytest.raises(ValueError, match="duration_seconds must be positive"):
             ElapsedTimeCondition(duration_seconds=-5.0, label="test_elapsed")
 
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
+    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
+        """A NaN duration fails every comparison, so it would never fire (#1109)."""
+        with pytest.raises(ValueError, match="positive and finite"):
+            ElapsedTimeCondition(duration_seconds=duration, label="test_elapsed")
+
 
 class TestElapsedTimeConditionWithRule:
     """ElapsedTimeCondition with explicit ComparisonRule."""

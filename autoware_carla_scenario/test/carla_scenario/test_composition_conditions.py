@@ -221,6 +221,12 @@ class TestPersistentCondition:
         with pytest.raises(ValueError, match="duration must be positive"):
             PersistentCondition(AlwaysPassCondition(), duration=-1.0)
 
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
+    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
+        """A NaN duration fails every comparison, so it would never fire (#1109)."""
+        with pytest.raises(ValueError, match="positive and finite"):
+            PersistentCondition(AlwaysPassCondition(), duration=duration)
+
     def test_child_always_none(self) -> None:
         """Always returns None when child never triggers."""
         cond = PersistentCondition(AlwaysNoneCondition(), duration=1.0)
@@ -329,6 +335,12 @@ class TestStandstillConditionComposition:
         with pytest.raises(ValueError, match="duration must be positive"):
             StandstillCondition("ego", duration=-1.0, label="test_standstill")
 
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
+    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
+        """A NaN duration fails every comparison, so it would never fire (#1109)."""
+        with pytest.raises(ValueError, match="positive and finite"):
+            StandstillCondition("ego", duration=duration, label="test_standstill")
+
     def test_invalid_speed_threshold_raises(self) -> None:
         with pytest.raises(ValueError, match="speed_threshold must be non-negative"):
             StandstillCondition(
@@ -393,6 +405,24 @@ class TestTemporaryStopCondition:
         with pytest.raises(ValueError, match="stop_duration must be positive"):
             TemporaryStopCondition(
                 "ego", stop_positions=[od], stop_duration=0.0, label="test_temp_stop"
+            )
+
+    @pytest.mark.parametrize(
+        "stop_duration", [float("nan"), float("inf"), float("-inf")]
+    )
+    def test_refuses_a_stop_duration_that_is_not_finite(
+        self, stop_duration: float
+    ) -> None:
+        """A NaN duration fails every comparison, so it would never fire (#1109)."""
+        od = OpenDrivePose(road_id="1", lane_id=-1, s=50.0)
+        with pytest.raises(
+            ValueError, match="stop_duration must be positive and finite"
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[od],
+                stop_duration=stop_duration,
+                label="test_temp_stop",
             )
 
     def test_single_opendrive_pose(self) -> None:
