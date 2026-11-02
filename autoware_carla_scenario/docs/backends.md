@@ -66,9 +66,10 @@ ardy: 24000 MiB of GPU memory needed, 9120 MiB free on the roomiest GPU (0)
 a backend is said to take (backends.<name>.gpu_memory_mb / memory_mb).
 ```
 
-Each backend is placed on the GPU with the most room left, and starts on that
-GPU. A container set to one GPU (`gpus: device=N`) is checked on that GPU, and
-one with `gpus: none` needs no GPU at all.
+A container set to one GPU (`gpus: device=N`) is placed first, and checked on
+that GPU. Then each of the others, the largest first, is placed on the GPU with
+the most room left, and starts on that GPU. One with `gpus: none` needs no GPU
+at all.
 
 The check is a snapshot of what is free when the backends start. It cannot see
 what others are about to take:

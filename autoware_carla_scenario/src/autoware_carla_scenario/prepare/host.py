@@ -83,8 +83,13 @@ def assign_gpus(
         )
     free = {gpu.index: gpu.free_mb for gpu in host.gpus}
     placed: dict[str, Optional[Gpu]] = {}
-    # The largest first, each onto the GPU with the most room left.
-    for name, need in sorted(needs, key=lambda item: -item[1].gpu_memory_mb):
+    # The backends set to a GPU first, so one that is free to go anywhere
+    # cannot take their room; then the rest, the largest first, each onto
+    # the GPU with the most room left.
+    by_size = sorted(needs, key=lambda item: -item[1].gpu_memory_mb)
+    order = [item for item in by_size if item[1].gpu is not None]
+    order.extend(item for item in by_size if item[1].gpu is None)
+    for name, need in order:
         if need.gpu_memory_mb <= 0:
             placed[name] = None
             continue
