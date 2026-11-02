@@ -4768,8 +4768,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-265 of the package's 392
-modules (68%; about 79,600 of
+267 of the package's 392
+modules (68%; about 79,900 of
 138,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4782,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 265 CHECKED modules</summary>
+<summary>The 267 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5018,6 +5018,14 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>canvas</code></td>
 <td>Sensors rendered by carla_canvas instead of the CARLA server (<code>canvas.config</code>).</td>
+</tr>
+<tr>
+<td><code>commonroad.frame</code></td>
+<td>A frame of the world as the CommonRoad worker reads it.</td>
+</tr>
+<tr>
+<td><code>commonroad.map</code></td>
+<td>The world's map as a CommonRoad scenario, converted by roadgen and cached.</td>
 </tr>
 <tr>
 <td><code>conditions</code></td>
@@ -5854,8 +5862,8 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>126 functions and methods of those modules are <code>UNCALLED</code>
-(34 of them protected helpers, see <em>What is
+<p>129 functions and methods of those modules are <code>UNCALLED</code>
+(35 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5867,7 +5875,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 126 UNCALLED functions and methods, and why</summary>
+<summary>The 129 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5876,6 +5884,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>authoring.framework_pin.Pin.uv_source</code>: builds the <code>[tool.uv.sources]</code> entry, a dict[str, Any] of str and bool values (<code>{"path": ..., "editable": True}</code>), which Codon cannot express</li>
 <li><code>autoware_stack.bridge_node.bridge_command</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; CommandAutowareLauncher.start() and DockerAutowareLauncher.start() call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node.bridge_ros_args</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
+<li><code>commonroad.frame._state</code>: builds a road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express</li>
+<li><code>commonroad.frame.read_frame</code>: builds the ego's and the other road users' states with _state(), JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
+<li><code>commonroad.map.commonroad_map</code>: imports roadgen (the <code>map</code> extra) inside it, which has no Codon model</li>
 <li><code>conditions.adversity_active.AdversityActiveCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.and_condition.AndCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.base.BaseCondition.__init_subclass__</code>: wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for</li>
@@ -5997,7 +6008,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 127 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 125 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6026,7 +6037,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 127 EXCLUDED modules, and why</summary>
+<summary>The 125 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.play_motion</code>: imports pedestrian.soma, which is neither checked nor modelled</li>
@@ -6052,11 +6063,9 @@ the first:</p>
 <li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, autoware_vehicle_msgs, geometry_msgs, grpc</li>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>)</li>
-<li><code>commonroad</code>: re-exports commonroad.map, commonroad.session and commonroad.worker, which are not checked</li>
-<li><code>commonroad.frame</code>: builds each road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express, and reads a blueprint's attributes with <code>.get()</code></li>
-<li><code>commonroad.map</code>: imports roadgen, and more of tempfile than its shim declares (<code>mkdtemp()</code>)</li>
-<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.frame, commonroad.map (roadgen) and commonroad.worker, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>)</li>
-<li><code>commonroad.worker</code>: imports shlex, and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
+<li><code>commonroad</code>: re-exports commonroad.session and commonroad.worker, which are not checked</li>
+<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>)</li>
+<li><code>commonroad.worker</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6078,7 +6087,7 @@ the first:</p>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked; holds the composed config as <code>Any</code>, which Codon cannot express</li>
-<li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib) and, inside a function, sweeper.expand (omegaconf), which are neither checked nor modelled; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code>, <code>AutowareEgoEntity</code>, <code>GrpcAutowareBridgeServer</code> and <code>CarlaDriverEntity</code>) from the package, and <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code> and <code>decode_case()</code> from odd.route and odd.sampler, which the package and odd models do not declare; what it reads off the command line and the environment is the checked examples.argv's</li>
+<li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib) and, inside functions, sweeper.expand (omegaconf) and commonroad.session (concurrent.futures), which are neither checked nor modelled; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code>, <code>AutowareEgoEntity</code>, <code>GrpcAutowareBridgeServer</code> and <code>CarlaDriverEntity</code>) from the package, and <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code> and <code>decode_case()</code> from odd.route and odd.sampler, which the package and odd models do not declare; what it reads off the command line and the environment is the checked examples.argv's</li>
 <li><code>hils</code>: re-exports hils.config (yaml), which is neither checked nor modelled</li>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension), and typesafe_carla's CPython package inside HilsBridge; holds hilspy channels and CARLA measurements typed <code>Any</code>, and builds on canvas (carla_canvas) and hils.config (yaml), which are neither checked nor modelled</li>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled</li>
@@ -6124,7 +6133,7 @@ the first:</p>
 <li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
-<li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
+<li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>ODD_CASE_KEY</code>, <code>encode_case()</code>, <code>search_from_config()</code> and <code>with_tire_friction()</code> from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm; its cases are forked, stopped and waited for by the checked sweeper.isolation</li>
