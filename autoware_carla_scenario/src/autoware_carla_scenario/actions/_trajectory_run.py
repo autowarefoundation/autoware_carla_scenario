@@ -155,9 +155,9 @@ class TrajectoryRun(BaseAction):
     vehicle has reached the vertex within :data:`ARRIVAL_TOLERANCE_M` of it
     along the path (a walker within 0.3 m), and waits there on the brake (a
     walker standing).  On a closed path ``FOLLOW`` finds where the entity is
-    by projecting it near where it was, which does not wrap from the end of
-    the path to its start, so its gates are reliable on the first lap only;
-    ``POSITION`` re-arms them on every lap.
+    by projecting it near where it was, a search that wraps from the end of
+    the path to its start, so its gates are re-armed on every lap, as
+    ``POSITION``'s are.
 
     **End.**  The run is
     :attr:`~autoware_carla_scenario.action_state.ActionState.RUNNING` until the

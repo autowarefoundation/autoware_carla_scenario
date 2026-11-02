@@ -308,6 +308,78 @@ class TestAlongThePath:
                     x, y, near, window
                 ), (near, window)
 
+    def test_project_near_wraps_on_a_closed_path(self) -> None:
+        """Past the first vertex of a closed loop longer than the window, the
+        entity is found on its next lap, not at the end of the closing
+        segment; and before the first vertex, on the closing segment (#1168)."""
+        square = _big_square()
+        assert square.length == pytest.approx(400.0)
+        near = 398.0
+        for x in (1.0, 3.0, 5.0, 10.0, 20.0, 40.0):
+            near = square.project(x, 0.2, near=near)
+            assert near == pytest.approx(x)
+        # Backwards over the seam: the closing segment, a lap before.
+        assert square.project(0.2, 5.0, near=2.0) == pytest.approx(395.0)
+        # A near laps on (the distance an untimed run counts up) is the same
+        # place on the loop.
+        assert square.project(1.0, 0.2, near=798.0) == pytest.approx(1.0)
+        assert square.project(0.2, 5.0, near=-2.0) == pytest.approx(395.0)
+
+    def test_project_near_on_a_closed_path_answers_as_a_wrapped_scan(self) -> None:
+        """The wrapped window is the one a test of each segment against the
+        window taken modulo the length gives.  The first vertex is both ``0``
+        and ``length`` along, so the answers are compared modulo the length."""
+        import random
+
+        rng = random.Random(11)
+        square = _big_square()
+        length = square.length
+
+        def scanned(x: float, y: float, near: float, window: float) -> float:
+            arc = square._arc
+            best, along = math.inf, 0.0
+            for i in range(len(arc) - 1):
+                inside = any(
+                    arc[i + 1] >= near - window + shift
+                    and arc[i] <= near + window + shift
+                    for shift in (-length, 0.0, length)
+                )
+                if not inside:
+                    continue
+                x0, y0 = square.xs[i], square.ys[i]
+                dx, dy = square.xs[i + 1] - x0, square.ys[i + 1] - y0
+                squared = dx * dx + dy * dy
+                f = min(max(((x - x0) * dx + (y - y0) * dy) / squared, 0.0), 1.0)
+                gap = math.hypot(x0 + f * dx - x, y0 + f * dy - y)
+                if gap < best:
+                    best, along = gap, arc[i] + f * math.sqrt(squared)
+            return along
+
+        for _ in range(300):
+            centre = rng.uniform(0.0, length)
+            x, y = rng.uniform(-20.0, 120.0), rng.uniform(-20.0, 120.0)
+            for window in (3.0, 30.0, 150.0):
+                found = square.project(x, y, near=centre, window=window)
+                assert 0.0 <= found <= length
+                apart = (found - scanned(x, y, centre, window)) % length
+                assert min(apart, length - apart) == pytest.approx(0.0, abs=1e-9), (
+                    centre,
+                    window,
+                    x,
+                    y,
+                )
+
+
+def _big_square() -> ResolvedTrajectory:
+    """A closed 100 m square: a 400 m loop, much longer than the window."""
+    return ResolvedTrajectory(
+        xs=[0.0, 100.0, 100.0, 0.0],
+        ys=[0.0, 0.0, 100.0, 100.0],
+        zs=[0.0] * 4,
+        yaws=[None] * 4,
+        closed=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Placing a trajectory in CARLA
