@@ -487,3 +487,92 @@ def test_revolutions_start_where_the_first_arc_that_arrives_does(lost: int) -> N
             rays = sorted(int(r) for r in whole[whole[:, 2] == channel, 3])
             begin = first + 720 * index
             assert rays == list(range(begin, begin + 720))
+
+
+class _FovSensor:
+    """A ray-cast LiDAR with a ``horizontal_fov``, as RayCastSemanticLidar.cpp
+    turns it (#1125).
+
+    Its horizontal angle grows by ``rotation_frequency * fov * dt`` a tick,
+    modulo ``fov``; a ray at angle ``h`` points at yaw ``h - fov / 2``, so the
+    rays cover azimuths [-fov/2, fov/2).  Rays are ``step`` degrees apart on
+    multiples of ``step`` of the angle turned since the sensor was spawned;
+    each point's intensity is that ray's index, its z the channel.
+    """
+
+    def __init__(
+        self,
+        rotation_frequency: float,
+        fov: float,
+        channels: int = 2,
+        step: float = 0.5,
+    ) -> None:
+        self.per_second = fov * rotation_frequency
+        self.fov = fov
+        self.channels = channels
+        self.step = step
+        self.turned = 0.0  # unbounded: the angle is this modulo fov
+
+    def tick(self, dt: float) -> FloatPoints:
+        arc = self.per_second * dt
+        first = math.ceil(self.turned / self.step - 1e-9)
+        end = math.ceil((self.turned + arc) / self.step - 1e-9)
+        self.turned += arc
+        rays = np.tile(np.arange(first, end, dtype=np.float64), self.channels)
+        channel = np.repeat(np.arange(self.channels, dtype=np.float64), end - first)
+        yaw = np.radians(np.fmod(rays * self.step, self.fov) - 0.5 * self.fov)
+        return np.stack(
+            [10.0 * np.cos(yaw), 10.0 * np.sin(yaw), channel, rays], axis=1
+        ).astype(np.float32)
+
+
+@pytest.mark.parametrize("horizontal_fov", [-1.0, 0.0, 360.5, 720.0, math.nan])
+def test_a_field_of_view_outside_a_revolution_is_refused(
+    horizontal_fov: float,
+) -> None:
+    with pytest.raises(ValueError, match="horizontal_fov must be in"):
+        LidarRevolution(10.0, 0.05, horizontal_fov)
+
+
+@pytest.mark.parametrize("lost", [0, 1, 3])
+@pytest.mark.parametrize(
+    ("horizontal_fov", "rotation_frequency", "dt"),
+    [
+        (180.0, 15.0, 0.05),  # 135 degrees a tick
+        (180.0, 10.0, 0.05),  # 90, dividing the field of view
+        (120.0, 7.0, 0.05),  # 42
+        (90.0, 19.0, 0.05),  # 85.5
+        (270.0, 25.0, 1.0 / 30.0),  # 225
+        (359.0, 15.0, 0.05),  # 269.25
+    ],
+)
+def test_each_revolution_sweeps_the_field_of_view_once(
+    horizontal_fov: float, rotation_frequency: float, dt: float, lost: int
+) -> None:
+    """A revolution is one sweep of ``horizontal_fov`` degrees, not 360."""
+    sensor = _FovSensor(rotation_frequency, horizontal_fov)
+    for _ in range(lost):  # measured before the bridge listened
+        sensor.tick(dt)
+    began = sensor.turned  # where the first arc to arrive starts
+    first = math.ceil(began / sensor.step - 1e-9)  # its first ray
+    per_revolution = int(round(horizontal_fov / sensor.step))
+    revolution = LidarRevolution(rotation_frequency, dt, horizontal_fov)
+    emitted: List[FloatPoints] = []
+    for tick in range(1, 61):
+        whole = revolution.add(dt * tick, sensor.tick(dt))
+        if whole is not None:
+            emitted.append(whole)
+    assert len(emitted) == int((sensor.turned - began) / horizontal_fov + 1e-9)
+    for index, whole in enumerate(emitted):
+        begin = first + index * per_revolution
+        for channel in range(sensor.channels):
+            assert _rays(whole, channel) == list(range(begin, begin + per_revolution))
+
+
+def test_an_arc_of_the_whole_field_of_view_is_one_revolution() -> None:
+    # 180 degrees at 20 Hz, 20 Hz ticks: the field of view a tick.
+    sensor = _FovSensor(20.0, 180.0)
+    revolution = LidarRevolution(20.0, 0.05, 180.0)
+    for tick in range(1, 5):
+        points = sensor.tick(0.05)
+        assert revolution.add(0.05 * tick, points) is points
