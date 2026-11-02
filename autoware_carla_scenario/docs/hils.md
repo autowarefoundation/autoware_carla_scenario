@@ -301,11 +301,12 @@ front_camera:
 - **LiDAR** (`sensor.lidar.ray_cast`, with a `lidar:MODEL` codec: Hesai
   Pandar and Velodyne models). CARLA measures the arc a LiDAR sweeps in one
   tick; the bridge gathers the arcs into whole revolutions (by
-  `rotation_frequency` and the time between measurements) and hilspy encodes
-  each revolution into the model's UDP packets, paced over the revolution as
-  the sensor streams them. Points go from CARLA's sensor frame (y right) to
-  the sensor's (y left). Match `channels`, the field of view and
-  `rotation_frequency` to the model.
+  `rotation_frequency` and the time between measurements, splitting the arc
+  that completes one by each point's azimuth, so each covers 360 degrees
+  once) and hilspy encodes each revolution into the model's UDP packets,
+  paced over the revolution as the sensor streams them. Points go from
+  CARLA's sensor frame (y right) to the sensor's (y left). Match
+  `channels`, the field of view and `rotation_frequency` to the model.
 - **Cameras** (`sensor.camera.*`, codec `raw`). Each image is one frame,
   in `encoding`: `bgra` (CARLA's raw image), `bgr`, `rgb`, `jpeg` or `png`.
   `v4l2://` makes it a V4L2 camera any client on the PC sees (hilspy built
