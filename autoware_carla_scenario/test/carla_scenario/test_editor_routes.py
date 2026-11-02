@@ -13,6 +13,7 @@ import math
 import re
 import threading
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -71,6 +72,89 @@ def _action(store: DraftStore, draft_id: str, action_id: str) -> ActionNode:
 def _condition(store: DraftStore, draft_id: str, node_id: str) -> ConditionNode:
     """Return a stored condition, failing the test when it is gone."""
     return _present(_document(store, draft_id).condition(node_id), node_id)
+
+
+class _FormPost(HTMLParser):
+    """What a browser posts for the form whose ``hx-post`` is *target*.
+
+    A checkbox posts only when checked, a select posts its selected option (or,
+    with none marked, its first), and a select whose chosen option is disabled
+    posts nothing -- which is what a test of "the form round-trips unchanged"
+    must reproduce, rather than what the template meant to say.
+    """
+
+    def __init__(self, target: str) -> None:
+        super().__init__()
+        self._target = target
+        self._inside = False
+        self._select: list[Any] | None = None
+        self._textarea: list[str] | None = None
+        self.data: dict[str, Any] = {}
+        self.found = False
+
+    def _post(self, name: str, value: str) -> None:
+        previous = self.data.get(name)
+        if previous is None:
+            self.data[name] = value
+        elif isinstance(previous, list):
+            previous.append(value)
+        else:
+            self.data[name] = [previous, value]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = {k: v or "" for k, v in attrs}
+        if tag == "form":
+            self._inside = a.get("hx-post") == self._target
+            self.found = self.found or self._inside
+        if not self._inside:
+            return
+        name = a.get("name")
+        if tag == "input" and name:
+            kind = a.get("type", "text")
+            if kind in ("checkbox", "radio"):
+                if "checked" in a:
+                    self._post(name, a.get("value", "on"))
+            elif kind not in ("submit", "button"):
+                self._post(name, a.get("value", ""))
+        elif tag == "select" and name:
+            # name, first option, the selected option
+            self._select = [name, None, None]
+        elif tag == "option" and self._select is not None:
+            option = (a.get("value", ""), "disabled" in a)
+            if self._select[1] is None:
+                self._select[1] = option
+            if "selected" in a:
+                self._select[2] = option
+        elif tag == "textarea" and name:
+            self._textarea = [name, ""]
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "select" and self._select is not None:
+            name, first, chosen = self._select
+            value, disabled = chosen or first or ("", False)
+            if not disabled:
+                self._post(name, value)
+            self._select = None
+        elif tag == "textarea" and self._textarea is not None:
+            self._post(*self._textarea)
+            self._textarea = None
+        elif tag == "form":
+            self._inside = False
+
+    def handle_data(self, data: str) -> None:
+        if self._textarea is not None:
+            self._textarea[1] += data
+
+
+def _inspector_post(
+    client: TestClient, draft_id: str, kind: str, node_id: str
+) -> dict[str, Any]:
+    """What the node's inspector form posts if the author changes nothing."""
+    target = f"/draft/{draft_id}/{kind}/{node_id}"
+    form = _FormPost(target)
+    form.feed(client.get(f"/draft/{draft_id}/inspector/{node_id}").text)
+    assert form.found, f"no inspector form posting to {target}"
+    return form.data
 
 
 @pytest.fixture
@@ -870,6 +954,132 @@ class TestActionEditing:
         assert {a.id for a in after_document.actions} == {
             a.id for a in document.actions
         }
+
+
+class TestFieldsAFormCannotLeaveUnset:
+    """A post of the inspector stores only what the author chose (#1135).
+
+    The form auto-posts on every change, so a control that cannot show a
+    field's stored value posts something else on the next unrelated edit.
+    """
+
+    @pytest.mark.parametrize(
+        ("type_id", "actor"),
+        [("traffic_parameters", ""), ("vehicle_parameters", "npc1")],
+    )
+    def test_a_nullable_bool_round_trips_as_unset(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+        type_id: str,
+        actor: str,
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": type_id, "actor": actor}
+        )
+        node = next(a for a in _document(store, draft_id).actions if a.type == type_id)
+        assert node.params["lane_changes"] is None
+        assert node.params["follow_visibility"] is None
+
+        data = _inspector_post(client, draft_id, "action", node.id)
+        # A three-way select, showing "keep the run's", not a checkbox.
+        assert data["lane_changes"] == ""
+        assert data["follow_visibility"] == ""
+        data["speed_factor_mean"] = "1.2"
+        client.post(f"/draft/{draft_id}/action/{node.id}", data=data)
+
+        params = _action(store, draft_id, node.id).params
+        assert params["speed_factor_mean"] == 1.2
+        assert params["lane_changes"] is None
+        assert params["follow_visibility"] is None
+
+    def test_a_nullable_bool_stores_on_off_and_unset(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/action", data={"type_id": "traffic_parameters"})
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "traffic_parameters"
+        )
+        url = f"/draft/{draft_id}/action/{node.id}"
+
+        client.post(url, data={"lane_changes": "off", "follow_visibility": "on"})
+        params = _action(store, draft_id, node.id).params
+        assert params["lane_changes"] is False
+        assert params["follow_visibility"] is True
+        # The inspector shows what is stored, so the next post keeps it.
+        data = _inspector_post(client, draft_id, "action", node.id)
+        assert (data["lane_changes"], data["follow_visibility"]) == ("off", "on")
+
+        # A post that leaves the field out keeps the stored value ...
+        client.post(url, data={"speed_factor_mean": "0.9"})
+        params = _action(store, draft_id, node.id).params
+        assert params["lane_changes"] is False
+        assert params["follow_visibility"] is True
+
+        # ... and only the blank choice puts it back to the run's.
+        client.post(url, data={"lane_changes": "", "follow_visibility": ""})
+        params = _action(store, draft_id, node.id).params
+        assert params["lane_changes"] is None
+        assert params["follow_visibility"] is None
+
+    def test_a_required_select_with_no_value_stores_nothing(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """An unset ``location`` shows a placeholder, not its first option."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "adversarial_brake", "actor": "npc1"},
+        )
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "adversarial_brake"
+        )
+        assert node.params["location"] is None
+
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="location"')[1].split("</select>")[0]
+        assert re.search(r'<option value="" selected disabled>', select)
+        assert len(re.findall(r"\bselected\b", select)) == 1
+
+        data = _inspector_post(client, draft_id, "action", node.id)
+        assert "location" not in data
+        client.post(f"/draft/{draft_id}/action/{node.id}", data=data)
+        assert _action(store, draft_id, node.id).params["location"] is None
+        issues = validate_document(_document(store, draft_id)).issues
+        assert any(
+            i.object_id == node.id and i.message == "Where is required." for i in issues
+        )
+
+        client.post(f"/draft/{draft_id}/action/{node.id}", data={"location": "any"})
+        assert _action(store, draft_id, node.id).params["location"] == "any"
+        select = (
+            client.get(f"/draft/{draft_id}/inspector/{node.id}")
+            .text.split('name="location"')[1]
+            .split("</select>")[0]
+        )
+        assert "disabled" not in select
+        assert re.search(r'<option value="any"\s+selected>', select)
+
+    def test_a_select_shows_a_stored_value_it_does_not_offer(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-edited value outside the options round-trips, not the first."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "adversarial_brake", "actor": "npc1"},
+        )
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "adversarial_brake"
+        )
+        client.post(f"/draft/{draft_id}/action/{node.id}", data={"location": "parking"})
+        data = _inspector_post(client, draft_id, "action", node.id)
+        assert data["location"] == "parking"
 
 
 class TestPredicateEditing:

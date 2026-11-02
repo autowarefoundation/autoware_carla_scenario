@@ -25,7 +25,9 @@ from ..authoring.registry import (
 )
 
 __all__ = [
+    "bool_choice",
     "field_present",
+    "is_nullable_bool",
     "parse_int_list",
     "parse_params",
     "parse_records",
@@ -46,6 +48,35 @@ _MAX_RECORDS = 1000
 
 #: Separators accepted in a list-of-integers field: commas, spaces, newlines.
 _LIST_SEPARATORS = re.compile(r"[,\s]+")
+
+
+#: What a nullable bool's three-way select posts for each choice: keep the
+#: run's setting (``None``), on, off.
+_KEEP = ""
+_ON = "on"
+_OFF = "off"
+
+
+def is_nullable_bool(spec: FieldSpec) -> bool:
+    """Whether *spec* is a bool whose unset value means "keep the run's".
+
+    Such a field has three states, which a checkbox cannot show or post, so the
+    inspector renders it as a select of keep / on / off instead.
+    """
+    return spec.kind == "bool" and spec.default is None and not spec.required
+
+
+def bool_choice(value: Any) -> str:
+    """Return the option of a nullable bool's select that *value* stands for.
+
+    ``None`` and blank text are "keep the run's"; anything else is read as the
+    compiler reads a bool.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return _KEEP
+    if isinstance(value, bool):
+        return _ON if value else _OFF
+    return _ON if str(value).strip().lower() in TRUTHY_VALUES else _OFF
 
 
 def parse_int_list(raw: Any) -> Any:
@@ -69,6 +100,10 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
         present: Whether the key was present at all -- the only way to read an
             unchecked checkbox, which submits nothing.
     """
+    if is_nullable_bool(spec):
+        # A three-way select: blank keeps the run's setting.
+        choice = bool_choice(raw) if present else _KEEP
+        return None if choice == _KEEP else choice == _ON
     if spec.kind == "bool":
         return (
             present and str(raw if raw is not None else "on").lower() in TRUTHY_VALUES
@@ -129,8 +164,13 @@ def field_present(spec: FieldSpec, form: Mapping[str, Any]) -> bool:
     """Whether *form* posts *spec*'s field at all.
 
     A checkbox always counts -- an unchecked one posts nothing, and absence is
-    its value -- and a ``record_list`` counts when it posts its row count.
+    its value -- and a ``record_list`` counts when it posts its row count.  A
+    nullable bool is a select, not a checkbox, so it counts only when posted:
+    a form that leaves it out keeps the stored value rather than storing
+    ``False``.
     """
+    if is_nullable_bool(spec):
+        return spec.name in form
     if spec.kind == "bool":
         return True
     if spec.kind == "record_list":
