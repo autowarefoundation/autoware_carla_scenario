@@ -222,11 +222,11 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.weather_rules": _each(
         "DEFAULT_RULES EGO_KEY QUANTITIES RulesError WEATHER_INPUTS default_rules "
-        "rule_values use_weather_rules weather_rule_files",
+        "rule_values use_weather_rules vehicle_range weather_rule_files",
         "reads rule files with openodd (a Rust extension) and takes "
         "`environment.rules` as `Mapping[str, Any]`, the runner's; a scenario "
         "sets the weather, not the rules (weather_rules.codon models what "
-        "visibility and actions.environment read the ranges through)",
+        "visibility and actions.environment read the rules through)",
     ),
     f"{_PACKAGE}.environment": {
         "write": (

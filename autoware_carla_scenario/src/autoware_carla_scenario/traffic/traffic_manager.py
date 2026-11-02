@@ -43,7 +43,8 @@ from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
     DEFAULT_REACTION_S,
-    sight_speed,
+    driver_quantile,
+    sight_speed_at,
     world_visibility,
 )
 
@@ -433,9 +434,12 @@ class TrafficManagerBackend(TrafficBackend):
         its vehicles know where every actor is, fog or not
         (:mod:`autoware_carla_scenario.visibility`).  With
         ``follow_visibility: true`` each vehicle it drives is held to the
-        speed it stops from within the visibility the run's weather set
-        (:func:`~autoware_carla_scenario.visibility.sight_speed`, for SUMO's
-        default car's reaction and braking), never faster than it drives
+        speed its driver keeps in the visibility the run's weather set: the
+        weather rules' ``sight_speed``, which reads the visibility, at the
+        driver's own quantile
+        (:func:`~autoware_carla_scenario.visibility.sight_speed_at`, for SUMO's
+        default car's reaction and braking; never above the speed it stops
+        from within the visibility), never faster than it drives
         anyway, worked out again every :data:`SIGHT_UPDATE_S` and whenever the
         visibility changes.  A vehicle given a speed of its own
         (``set_desired_speed``, a background vehicle's spawn speed) is given
@@ -456,7 +460,9 @@ class TrafficManagerBackend(TrafficBackend):
         # visibility any more, or follow_visibility turned off during the run).
         limit_kmh = -1.0
         if follows and seen is not None:
-            limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+            # The default car's median: each vehicle is held to its own
+            # (_sight_limit_kmh).
+            limit_kmh = sight_speed_at(seen) * 3.6
         if limit_kmh < 0.0 and len(self._held) == 0:
             self._sight_kmh = limit_kmh
             return
@@ -477,9 +483,19 @@ class TrafficManagerBackend(TrafficBackend):
             if actor_id in self._released:
                 continue
             try:
-                self._hold_to_sight(tm, actor, limit_kmh)
+                self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
             except RuntimeError:
                 continue  # destroyed under us: forgotten at the next update
+
+    def _sight_limit_kmh(self, actor_id: int) -> float:
+        """The speed, km/h, vehicle *actor_id*'s driver keeps in the
+        visibility it is held to: the weather rules' ``sight_speed`` at the
+        driver's own quantile (:func:`~autoware_carla_scenario.visibility.driver_quantile`),
+        for SUMO's default car; negative when nothing holds it."""
+        seen = self._visibility
+        if self._sight_kmh < 0.0 or seen is None:
+            return -1.0
+        return sight_speed_at(seen, driver_quantile(str(actor_id))) * 3.6
 
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
@@ -529,11 +545,12 @@ class TrafficManagerBackend(TrafficBackend):
             logger.info("TrafficManager: no visibility set any more")
             return
         logger.info(
-            "TrafficManager: drivers see %.0f m, so traffic %s at most %.0f km/h "
-            "(braking at %.1f m/s² after %.1f s)%s",
+            "TrafficManager: drivers see %.0f m, so traffic %s about %.0f km/h "
+            "(the weather rules' sight_speed, its median for a car braking at "
+            "%.1f m/s² after %.1f s; each driver keeps its own)%s",
             seen,
             "drives" if follows else "that follows it would drive",
-            sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6,
+            sight_speed_at(seen) * 3.6,
             DEFAULT_DECEL,
             DEFAULT_REACTION_S,
             ""
@@ -869,13 +886,14 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._held:
             del self._held[actor_id]
         sent = speed_kmh
+        limit_kmh = self._sight_limit_kmh(actor_id)
         if (
-            self._sight_kmh >= 0.0
-            and speed_kmh > self._sight_kmh
+            limit_kmh >= 0.0
+            and speed_kmh > limit_kmh
             and actor_id in self._autopiloted
             and actor_id not in self._released
         ):
-            sent = self._sight_kmh
+            sent = limit_kmh
             self._held[actor_id] = sent
         tm.set_desired_speed(_vehicle(actor), sent)
 
@@ -1144,7 +1162,7 @@ class TrafficManagerBackend(TrafficBackend):
             # until then.
             tm = self._require_tm("follow_visibility")
             if tm is not None:
-                self._hold_to_sight(tm, actor, self._sight_kmh)
+                self._hold_to_sight(tm, actor, self._sight_limit_kmh(int(actor.id)))
 
     def _parameters_of(self, actor: "carla.Actor") -> VehicleParameters:
         """The run's parameters, overridden by those of *actor*'s entity
@@ -1193,7 +1211,7 @@ class TrafficManagerBackend(TrafficBackend):
                 and actor_id not in self._released
             ):
                 # Held, it is held again from this at once.
-                self._hold_to_sight(tm, actor, self._sight_kmh)
+                self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
         min_gap = parameters.min_gap_m
         if min_gap is not None:
             tm.distance_to_leading_vehicle(
