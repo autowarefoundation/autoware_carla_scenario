@@ -26,6 +26,7 @@ from autoware_carla_scenario.driver.observation import (
     route_reference_trajectory,
     route_waypoints_in_rig,
     to_local_pose,
+    to_local_vector,
 )
 
 
@@ -440,6 +441,79 @@ def test_at_the_start_of_the_road_the_route_starts_where_it_can() -> None:
     )
 
     assert np.allclose(route[0], [1.4, 0.0, 0.0], atol=1e-6)
+
+
+class _SplitWaypoint:
+    """Road 1 along CARLA's +x; at x = 10 road 2 splits off it, heading 30
+    degrees towards CARLA's +y. *station* is along the waypoint's own road."""
+
+    _SPLIT = 10.0
+    _YAW = math.radians(30.0)
+
+    def __init__(self, road: int, station: float) -> None:
+        self.road_id = road
+        self.is_junction = False
+        self.station = station
+        if road == 1:
+            x, y = station, 0.0
+        else:
+            x = self._SPLIT + station * math.cos(self._YAW)
+            y = station * math.sin(self._YAW)
+        self.transform = SimpleNamespace(location=SimpleNamespace(x=x, y=y, z=0.0))
+
+    def next(self, step: float) -> list:
+        ahead = self.station + step
+        if self.road_id == 1 and self.station < self._SPLIT <= ahead:
+            # Road 1 listed first, so taking the first way fails.
+            return [_SplitWaypoint(1, ahead), _SplitWaypoint(2, ahead - self._SPLIT)]
+        return [_SplitWaypoint(self.road_id, ahead)]
+
+    def previous(self, step: float) -> list:
+        behind = self.station - step
+        if self.road_id == 2 and behind < 0.0:
+            return [_SplitWaypoint(1, self._SPLIT + behind)]
+        return [_SplitWaypoint(self.road_id, behind)]
+
+
+@pytest.mark.parametrize("roads", [None, {"1", "2"}], ids=["no route", "both roads"])
+def test_stepped_back_over_a_fork_the_route_stays_on_the_egos_lane(
+    roads: Optional[set[str]],
+) -> None:
+    """The actor is 1 m onto road 2, the rig still 0.4 m short of the split:
+    walking on from the rig, the route must take road 2 again, the lane
+    ``get_waypoint`` put the ego on, not the first way at the fork."""
+    on_lane = _SplitWaypoint(2, 1.0)
+    location = on_lane.transform.location
+    transform = _transform(x=location.x, y=location.y, yaw=30.0)
+    carla_map = MagicMock()
+    carla_map.get_waypoint.return_value = on_lane
+    rig = to_local_pose(transform, rear_axle_offset_m=-1.4)
+
+    route = route_waypoints_in_rig(
+        carla_map,
+        _actor(transform),
+        rig,
+        horizon_m=8.0,
+        resolution_m=2.0,
+        route_roads=roads,
+    )
+
+    expected = [_SplitWaypoint(1, 9.6)] + [
+        _SplitWaypoint(2, 1.6 + 2.0 * index) for index in range(3)
+    ]
+    expected_in_rig = rig.inverse().transform_points(
+        np.stack(
+            [
+                to_local_vector(
+                    way.transform.location.x,
+                    way.transform.location.y,
+                    way.transform.location.z,
+                )
+                for way in expected
+            ]
+        )
+    )
+    assert np.allclose(route, expected_in_rig, atol=1e-6)
 
 
 def _map_with_a_fork() -> MagicMock:

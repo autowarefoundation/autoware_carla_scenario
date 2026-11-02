@@ -54,6 +54,10 @@ _MAX_PLAUSIBLE_AXLE_OFFSET_M: float = 5.0
 #: start the route as it is: closer than this, there is nothing to step back.
 _ALREADY_LEVEL_M: float = 1e-3
 
+#: How close (metres) two waypoints reached along different ways must be to
+#: be the same lane point.
+_SAME_POINT_M: float = 0.25
+
 #: Fallback when a fork in the road offers no continuation within the horizon.
 _MIN_ROUTE_POINTS: int = 2
 
@@ -437,8 +441,11 @@ def _in_rig(
     )[0]
 
 
-def _back_to_the_rig(waypoint: "carla.Waypoint", ego_pose: Pose) -> "carla.Waypoint":
-    """The waypoint level with the rig, *waypoint* stepped back along its lane.
+def _back_to_the_rig(
+    waypoint: "carla.Waypoint", ego_pose: Pose
+) -> "tuple[carla.Waypoint, float]":
+    """The waypoint level with the rig, *waypoint* stepped back along its lane,
+    and how far back that is (zero when *waypoint* is kept).
 
     ``get_waypoint`` is asked for the actor's location, its origin at the
     vehicle centre, while the rig the route is published in is the rear axle,
@@ -451,10 +458,10 @@ def _back_to_the_rig(waypoint: "carla.Waypoint", ego_pose: Pose) -> "carla.Waypo
     to_rig = ego_pose.inverse()
     ahead = float(_in_rig(waypoint, to_rig)[0])
     if ahead <= _ALREADY_LEVEL_M:
-        return waypoint
+        return waypoint, 0.0
     behind = list(waypoint.previous(ahead))
     if not behind:
-        return waypoint
+        return waypoint, 0.0
     best = behind[0]
     best_distance_sq = math.inf
     for way in behind:
@@ -463,7 +470,27 @@ def _back_to_the_rig(waypoint: "carla.Waypoint", ego_pose: Pose) -> "carla.Waypo
         if distance_sq < best_distance_sq:
             best = way
             best_distance_sq = distance_sq
-    return best
+    return best, ahead
+
+
+def _passes_through(
+    way: "carla.Waypoint", lane_point: "carla.Waypoint", past_m: float
+) -> bool:
+    """Whether *way*, *past_m* along its lane past *lane_point* (behind it when
+    negative), is on *lane_point*'s lane: whether stepping back to it lands
+    there."""
+    if past_m > _ALREADY_LEVEL_M:
+        ends = list(way.previous(past_m))
+    elif past_m < -_ALREADY_LEVEL_M:
+        ends = list(way.next(-past_m))
+    else:
+        ends = [way]
+    target = lane_point.transform.location
+    for end in ends:
+        location = end.transform.location
+        if math.hypot(location.x - target.x, location.y - target.y) < _SAME_POINT_M:
+            return True
+    return False
 
 
 def route_waypoints_in_rig(
@@ -479,7 +506,8 @@ def route_waypoints_in_rig(
     Walks CARLA's road graph forward from the ego's current waypoint, the lane
     point level with the rig (the rear axle, *ego_pose*'s origin): the first
     waypoint is the rig's projection onto its lane, at rig ``x`` of about zero,
-    and the walk covers *horizon_m* from there.  At a fork it
+    and the walk covers *horizon_m* from there, keeping to the actor's lane
+    over a fork it passes before reaching the actor.  At a fork further on it
     takes the continuation onto one of *route_roads* -- the OpenDRIVE roads of the
     route the scenario sends the ego along, outside its junctions -- or, into a
     junction, the lane through it that comes out on one; the first one when none
@@ -502,7 +530,8 @@ def route_waypoints_in_rig(
     if waypoint is None:
         logger.warning("Ego is not on a drivable waypoint; sending an empty route")
         return np.zeros((0, 3))
-    waypoint = _back_to_the_rig(waypoint, ego_pose)
+    on_lane = waypoint
+    waypoint, back_m = _back_to_the_rig(waypoint, ego_pose)
 
     step = max(resolution_m, 0.1)
     points: List[np.ndarray[tuple[int], np.dtype[np.float64]]] = []
@@ -511,9 +540,18 @@ def route_waypoints_in_rig(
     while travelled < horizon_m:
         location = current.transform.location
         points.append(to_local_vector(location.x, location.y, location.z))
-        following = current.next(step)
+        following = list(current.next(step))
         if not following:
             break
+        if travelled < back_m and len(following) > 1:
+            # Stepped back over a fork: the lane the ego is on is the one
+            # ``get_waypoint`` found, whatever the route would take.
+            past_m = travelled + step - back_m
+            on_the_way = [
+                way for way in following if _passes_through(way, on_lane, past_m)
+            ]
+            if on_the_way:
+                following = on_the_way
         current = following[0]
         if route_roads is not None and len(following) > 1:
             for way in following:

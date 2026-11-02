@@ -625,10 +625,11 @@ local frame and is converted to the rig frame before the controller tracks it.
 The route starts **level with the rig**: its first waypoint is the rear axle's
 projection onto the ego's lane, at rig `x` of about zero, not the actor origin's,
 which is `rear_axle_offset_m` further ahead. From there the waypoints follow the lane
-`route_resolution_m` apart, for `route_horizon_m`. At the very start of the road
-network, where no lane leads in, it starts at the actor origin's waypoint instead, so
-a policy should project the rig onto the route rather than assume it sits on the first
-point.
+`route_resolution_m` apart, for `route_horizon_m`; where a lane splits between the
+rig and the actor origin, the route keeps to the lane the actor is on. At the very
+start of the road network, where no lane leads in, it starts at the actor origin's
+waypoint instead, so a policy should project the rig onto the route rather than assume
+it sits on the first point.
 
 ## Early termination
 
