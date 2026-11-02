@@ -186,15 +186,31 @@ A slow metric is evaluated less often than every `period_s` (0.1 s): at its
 own period, `metric_periods_s`, by default 0.5 s for `crime_ttr_s`
 (`DEFAULT_METRIC_PERIODS_S`). A frame is asked only the metrics due on it, and
 a metric condition counts each NG sample until the next, so `max_ng_seconds`
-is still simulated time. Set the periods of any CommonRoad metric -- merged
-into those set so far, `None` going back to `period_s`:
+is still simulated time. Set the periods of any CommonRoad metric; the
+dictionary given replaces the one set, so start from it to keep the others':
 
 ```python
-from autoware_carla_scenario.commonroad import configure_commonroad_metrics
+from autoware_carla_scenario.commonroad import (
+    commonroad_settings,
+    configure_commonroad_metrics,
+)
 
 configure_commonroad_metrics(
-    metric_periods_s={"crime_ttr_s": 1.0, "crime_wttr_s": 0.3},
+    metric_periods_s={**commonroad_settings().metric_periods_s, "crime_wttr_s": 0.3},
 )
+```
+
+A CommonRoad metric is computed only when a metric condition reads it, so a
+heavy one costs nothing until a scenario judges on it. The heavy ones
+(`HEAVY_METRICS`, `crime_ttr_s` today) can also be turned off for a run that
+should not wait on them, a quick iteration on a scenario that judges on TTR:
+a metric condition on one is then not judged -- the run neither fails nor
+passes on it, and a warning says so. They are on by default; turn them off
+with `metrics.heavy=false`, `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0`, or
+`configure_commonroad_metrics(heavy_metrics=False)`:
+
+```bash
+uv run scenario scenario=intersection_passing/straight metrics.heavy=false
 ```
 
 The workers are started with, in order, the command in

@@ -187,6 +187,7 @@ class Evaluator:
 
         self.settings = settings or EvaluatorSettings()
         self._config: Any = None
+        self._reach_config: Any = None
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             scenario, _ = CommonRoadFileReader(map_xml).open(lanelet_assignment=False)
@@ -443,9 +444,7 @@ class Evaluator:
         from commonroad.planning.goal import GoalRegion
         from commonroad.planning.planning_problem import PlanningProblem
         from commonroad.scenario.state import InitialState
-        from commonroad_reach.data_structure.configuration_builder import (
-            ConfigurationBuilder,
-        )
+        from commonroad_reach.data_structure.reach import reach_set_cpp
         from commonroad_reach.data_structure.reach.reach_interface import (
             ReachableSetInterface,
         )
@@ -472,23 +471,50 @@ class Evaluator:
         # Past every road user's id.
         problem = PlanningProblem(self._id_base * 2 + 1 + ego.id, initial, goal)
 
-        config = ConfigurationBuilder().build_configuration(str(frame.others.scenario_id))
-        # Reach saves its configuration under ./output/ every computation.
-        config.debug.save_config = False
-        config.planning.dt = self.settings.dt
+        config = copy.deepcopy(self._reach_base_config())
         config.planning.steps_computation = horizon - start
         config.vehicle.ego.length = ego.length
         config.vehicle.ego.width = ego.width
         config.vehicle.ego.v_max = max(config.vehicle.ego.v_max, speed + 1.0)
         config.vehicle.ego.v_lon_max = max(config.vehicle.ego.v_lon_max, speed + 1.0)
-        for section, overrides in self.settings.reach_settings.items():
-            target = getattr(config, section)
-            for name, value in overrides.items():
-                setattr(target, name, value)
         config.update(scenario=frame.others, planning_problem=problem, CLCS=frame.clcs)
-        interface = ReachableSetInterface(config)
+        if frame.checker is None:
+            # One collision checker for every reachable set of the frame: the
+            # road users' occupancies over the whole horizon, by absolute step,
+            # do not depend on where the set starts.
+            planning = config.planning
+            planned = planning.step_start, planning.steps_computation
+            planning.step_start, planning.steps_computation = 0, horizon
+            frame.checker = reach_set_cpp.CollisionChecker(config)
+            planning.step_start, planning.steps_computation = planned
+        made = reach_set_cpp.CollisionChecker
+        reach_set_cpp.CollisionChecker = lambda _config: frame.checker  # type: ignore[assignment,misc]
+        try:
+            interface = ReachableSetInterface(config)
+        finally:
+            reach_set_cpp.CollisionChecker = made  # type: ignore[misc]
         interface.compute_reachable_sets(verbose=False)
         return interface
+
+    def _reach_base_config(self) -> Any:
+        """CommonRoad-Reach's configuration with the settings applied, made
+        once (from its YAML files, through omegaconf) and copied for each
+        reachable set."""
+        if self._reach_config is None:
+            from commonroad_reach.data_structure.configuration_builder import (
+                ConfigurationBuilder,
+            )
+
+            config = ConfigurationBuilder().build_configuration(str(self._scenario_id))
+            # Reach saves its configuration under ./output/ every computation.
+            config.debug.save_config = False
+            config.planning.dt = self.settings.dt
+            for section, overrides in self.settings.reach_settings.items():
+                target = getattr(config, section)
+                for name, value in overrides.items():
+                    setattr(target, name, value)
+            self._reach_config = config
+        return self._reach_config
 
     def _reachable_areas(self, frame: _ReachFrame, ego: Actor) -> list[float]:
         """The area of the ego's drivable area at each step of the horizon."""
@@ -532,6 +558,9 @@ class _ReachFrame:
     ego_obstacle: Any
     others: Any
     clcs: Any
+    #: CommonRoad-Reach's collision checker of the frame, made by its first
+    #: reachable set (:meth:`Evaluator._reachable_set`).
+    checker: Any = None
 
     @classmethod
     def of(cls, scenario: Any, ego: Actor, id_base: int) -> _ReachFrame:
@@ -573,32 +602,21 @@ class _ReachFrame:
         it hits no one within *horizon* steps.  Unlike CriMe's TTC*, the road's
         boundary is no obstacle: the ego's prediction goes straight on, and
         would leave every bend."""
-        import commonroad_dc.pycrcc as pycrcc
         from commonroad_dc.collision.collision_detection.pycrcc_collision_dispatch import (
-            create_collision_checker,
+            create_collision_object,
+        )
+        from commonroad_dc.collision.trajectory_queries.trajectory_queries import (
+            trajectories_collision_dynamic_obstacles,
         )
 
         if not self.others.dynamic_obstacles:
             return None
-        checker = create_collision_checker(self.others)
-        shape = self.ego_obstacle.obstacle_shape
-        for step in range(horizon + 1):
-            state = self.ego_obstacle.state_at_time(step)
-            if state is None:
-                break
-            box = pycrcc.TimeVariantCollisionObject(step)
-            box.append_obstacle(
-                pycrcc.RectOBB(
-                    0.5 * shape.length,
-                    0.5 * shape.width,
-                    float(state.orientation),
-                    float(state.position[0]),
-                    float(state.position[1]),
-                )
-            )
-            if checker.collide(box):
-                return step
-        return None
+        step = trajectories_collision_dynamic_obstacles(
+            [create_collision_object(self.ego_obstacle)],
+            [create_collision_object(o) for o in self.others.dynamic_obstacles],
+            method="fcl",
+        )[0]
+        return None if step < 0 or step > horizon else int(step)
 
 
 @contextmanager

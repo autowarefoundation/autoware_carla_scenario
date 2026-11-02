@@ -11,6 +11,7 @@ one when the ``commonroad_metrics`` environment is there.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -378,15 +379,11 @@ def test_ttr_is_evaluated_every_half_second_by_default() -> None:
     assert settings.period_for(CRIME_TTC_S) == settings.period_s == 0.1
 
 
-def test_the_periods_are_merged_and_checked() -> None:
+def test_the_periods_are_replaced_and_checked() -> None:
     settings = cr_session.configure_commonroad_metrics(
         metric_periods_s={CRIME_WTTR_S: 0.3}
     )
     assert settings.period_for(CRIME_WTTR_S) == 0.3
-    assert settings.period_for(CRIME_TTR_S) == 0.5  # kept
-    settings = cr_session.configure_commonroad_metrics(
-        metric_periods_s={CRIME_TTR_S: None}
-    )
     assert settings.period_for(CRIME_TTR_S) == settings.period_s
     with pytest.raises(ValueError, match="not a CommonRoad metric"):
         cr_session.configure_commonroad_metrics(metric_periods_s={"offroad": 1.0})
@@ -508,3 +505,66 @@ def test_crime_and_reach_through_the_real_worker(
     ):
         metric = series[condition.metric]
         assert condition.judge(metric.times, metric.values) is not None
+
+
+# ---------------------------------------------------------------------------
+# Turning the heavy metrics off
+# ---------------------------------------------------------------------------
+
+
+def test_the_heavy_metrics_are_on_unless_the_environment_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert cr_session.HEAVY_METRICS == {CRIME_TTR_S}
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
+    assert cr_session.CommonRoadSettings().heavy_metrics
+    for off in ("0", "false", "OFF", "no"):
+        monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, off)
+        settings = cr_session.CommonRoadSettings()
+        assert not settings.heavy_metrics
+        assert not settings.evaluates(CRIME_TTR_S)
+        assert settings.evaluates(CRIME_WTTR_S)
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
+    assert cr_session.CommonRoadSettings().evaluates(CRIME_TTR_S)
+
+
+def test_a_condition_on_a_heavy_metric_turned_off_is_not_judged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    from .test_metrics import _hit_at_two, _judged_run
+
+    # Workers that cannot start: the run fails if they are asked for.
+    cr_session.configure_commonroad_metrics(
+        command=(str(tmp_path / "no-such-worker"),),
+        cache_dir=tmp_path / "maps",
+        heavy_metrics=False,
+    )
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    with caplog.at_level(logging.WARNING):
+        result = _judged_run(
+            MetricCondition(CRIME_TTR_S, ComparisonRule.LESS_THAN, 1.0, label="ttr"),
+            result=passed,
+            worlds=_hit_at_two(),
+        )
+    assert result.passed
+    assert "crime_ttr_s is a heavy metric, and the heavy metrics are off" in caplog.text
+
+
+def test_metrics_heavy_turns_them_off_for_the_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
+    assert not apply_metrics(OmegaConf.create({"metrics": {"heavy": False}}))
+    assert not cr_session.commonroad_settings().heavy_metrics
+    # Carried to the runs' own processes.
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+    assert not cr_session.CommonRoadSettings().heavy_metrics
+    # On when no config sets it.
+    assert apply_metrics(OmegaConf.create({}))
+    assert cr_session.commonroad_settings().heavy_metrics

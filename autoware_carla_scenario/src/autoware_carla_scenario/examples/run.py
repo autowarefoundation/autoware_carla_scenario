@@ -969,6 +969,26 @@ def apply_canvas(*cfgs: DictConfig) -> Path | None:
     return use_canvas(canvas_config(*cfgs))
 
 
+def apply_metrics(*cfgs: DictConfig) -> bool:
+    """Turn the heavy CommonRoad metrics on or off as the first of *cfgs*
+    that sets ``metrics.heavy`` says (on when none does); whether they are
+    on.  The environment carries it to the runs' own processes."""
+    from ..commonroad.session import (  # noqa: PLC0415
+        HEAVY_METRICS_ENV,
+        configure_commonroad_metrics,
+    )
+
+    heavy = True
+    for cfg in cfgs:
+        value = (cfg.get("metrics") or {}).get("heavy")
+        if value is not None:
+            heavy = bool(value)
+            break
+    os.environ[HEAVY_METRICS_ENV] = "1" if heavy else "0"
+    configure_commonroad_metrics(heavy_metrics=heavy)
+    return heavy
+
+
 def rerun_errors(
     results: list[ScenarioResult], conversions: list[RerunConversion]
 ) -> dict[int, str]:
@@ -1506,6 +1526,7 @@ def run_batch(
         canvas_config(*configs)
     else:
         apply_canvas(*configs)
+    apply_metrics(*configs)
 
     # Log detailed execution plan before building anything.
     _log_batch_plan(
@@ -1865,6 +1886,7 @@ def run_scenario(
     build_t4scene_exporter(cfg)
     try:
         apply_canvas(cfg)
+        apply_metrics(cfg)
         return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
     finally:
         _finish_rerun(rerun)
