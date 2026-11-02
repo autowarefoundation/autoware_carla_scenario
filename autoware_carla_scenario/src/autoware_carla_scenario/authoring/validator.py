@@ -184,11 +184,15 @@ def _check_field(
                 f"{spec.label} must be a whole number.",
                 object_id,
             )
+        else:
+            _check_bounds(out, path, spec, float(int(str(value).strip())), object_id)
     elif spec.kind == "number":
         if not _coercible_float(value):
             out.error(
                 f"{path}.{spec.name}", f"{spec.label} must be a number.", object_id
             )
+        else:
+            _check_bounds(out, path, spec, float(str(value).strip()), object_id)
     elif spec.kind == "select":
         allowed = {o.value for o in spec.options}
         if str(value) not in allowed:
@@ -242,6 +246,47 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers or {MAP_EXCLUSION_REF}.",
                 object_id,
             )
+
+
+def _check_bounds(
+    out: _Collector,
+    path: str,
+    spec: FieldSpec,
+    number: float,
+    object_id: str | None,
+) -> None:
+    """Refuse a number outside the bounds its :class:`FieldSpec` declares.
+
+    The bounds are the runtime constructor's, so a value it would raise for
+    at scenario setup is a document error here instead (#1111).  The message
+    says it as the constructor does: "must be positive" for a bound above 0,
+    "must not be negative" for one at 0.
+    """
+    low, high = spec.exclusive_minimum, spec.maximum
+    inclusive = spec.minimum
+    if (
+        (low is None or number > low)
+        and (inclusive is None or number >= inclusive)
+        and (high is None or number <= high)
+    ):
+        return
+    out.error(f"{path}.{spec.name}", f"{spec.label} {_bounds_text(spec)}.", object_id)
+
+
+def _bounds_text(spec: FieldSpec) -> str:
+    """What :func:`_check_bounds` asks of *spec*'s value, as a predicate."""
+    low, inclusive, high = spec.exclusive_minimum, spec.minimum, spec.maximum
+    if high is not None and (low is not None or inclusive is not None):
+        opening = f"({low:g}" if low is not None else f"[{inclusive:g}"
+        return f"must be in {opening}, {high:g}]"
+    if high is not None:
+        return f"must be at most {high:g}"
+    if low is not None:
+        return "must be positive" if low == 0 else f"must be above {low:g}"
+    assert inclusive is not None  # noqa: S101 -- only called out of bounds
+    return (
+        "must not be negative" if inclusive == 0 else f"must be at least {inclusive:g}"
+    )
 
 
 def _check_records(
@@ -377,6 +422,7 @@ def _check_condition(
         )
 
     _check_collision_names_one_target(out, path, node)
+    _check_filter_ranges(out, path, node)
     _check_condition_frame(out, path, node)
     _check_equal_tolerance(out, path, spec, node)
 
@@ -408,6 +454,25 @@ def _check_collision_names_one_target(
             "would have to be ignored.",
             node.id,
         )
+
+
+#: An entity filter's bounds, in pairs: the runtime's EntityFilter refuses a
+#: lower bound above its upper one.
+_FILTER_RANGES = ("distance", "ahead", "left")
+
+
+def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> None:
+    """An entity filter's lower bound is not above its upper one, as
+    :class:`~..conditions.EntityFilter` asks (#1111)."""
+    for what in _FILTER_RANGES:
+        low = _number(node.params, f"min_{what}_m")
+        high = _number(node.params, f"max_{what}_m")
+        if low is not None and high is not None and low > high:
+            out.error(
+                f"{path}.min_{what}_m",
+                f"min_{what}_m ({low:g}) is above max_{what}_m ({high:g}).",
+                node.id,
+            )
 
 
 def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
@@ -929,6 +994,44 @@ def _check_traffic_parameters(out: _Collector, path: str, node: ActionNode) -> N
             "value, or remove the card.",
             node.id,
         )
+    bounds = _traffic_mean_bounds()
+    labels = {f.name: f.label for f in spec.fields} if spec is not None else {}
+    for name in names:
+        given = _number(params, name)
+        if given is None or name not in bounds:
+            continue
+        low, high = bounds[name]
+        if low <= given <= high:
+            continue
+        wanted = (
+            f"at least {low:g}" if math.isinf(high) else f"within [{low:g}, {high:g}]"
+        )
+        out.error(f"{path}.{name}", f"{labels[name]} must be {wanted}.", node.id)
+
+
+def _traffic_mean_bounds() -> dict[str, tuple[float, float]]:
+    """``*_mean`` field of a Traffic/Vehicle Parameters card -> the
+    ``(low, high)`` its parameter's mean must lie in.
+
+    The bounds are the runtime's own tables (``VEHICLE_BOUNDS`` and the
+    rest), which the parameter classes check every mean against when the
+    action is built; the field names are what ``traffic.authoring`` maps
+    onto them (a pedestrian's gap is ``pedestrian_min_gap_m``, every bicycle
+    field ``bicycle_*``).
+    """
+    from ..traffic.parameters import (  # noqa: PLC0415
+        BICYCLE_BOUNDS,
+        PEDESTRIAN_BOUNDS,
+        VEHICLE_BOUNDS,
+    )
+
+    bounds = {f"{name}_mean": span for name, span in VEHICLE_BOUNDS.items()}
+    for name, span in PEDESTRIAN_BOUNDS.items():
+        field_name = "pedestrian_min_gap_m" if name == "min_gap_m" else name
+        bounds[f"{field_name}_mean"] = span
+    for name, span in BICYCLE_BOUNDS.items():
+        bounds[f"bicycle_{name}_mean"] = span
+    return bounds
 
 
 def _check_traffic_constraints(out: _Collector, path: str, node: ActionNode) -> None:

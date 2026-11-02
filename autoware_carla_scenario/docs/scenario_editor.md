@@ -653,6 +653,24 @@ class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. `test_authoring_registry.py` fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.
 
+### A number's bounds
+
+A `number` or `int` field states the range its runtime constructor accepts:
+`minimum` (inclusive), `exclusive_minimum` and `maximum` (inclusive). The
+validator refuses a value outside it, in the constructor's words, so a document
+it accepts does not fail only when the scenario starts:
+
+```python
+FieldSpec("stop_duration", "Held for", "number", 1.0, unit="s",
+          exclusive_minimum=0.0)  # "Held for must be positive."
+FieldSpec("speed_threshold", "Counts as stopped below", "number", 0.1,
+          minimum=0.0)            # "... must not be negative."
+```
+
+A field whose constructor raises for a value needs the matching bound;
+`test_authoring_accepted_builds.py` checks each bound is refused and each
+default lies inside it.
+
 ### A list of records
 
 A field of kind `record_list` holds an ordered list of records, each a mapping
