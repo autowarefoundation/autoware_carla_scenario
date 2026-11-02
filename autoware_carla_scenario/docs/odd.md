@@ -223,8 +223,8 @@ These live in `autoware_carla_scenario.odd`:
 | `lanelet_speed_limit_kph` | float, km/h | Lanelet2 `speed_limit` tag |
 | `lanelet_location` | str | Lanelet2 `location` tag (`urban`, `nonurban`, ...) |
 | `lanelet_subtype` | str | Lanelet2 `subtype` tag (`road`, `highway`, ...) |
-| `in_junction` | bool | CARLA waypoint |
-| `lane_count` | int | Driving lanes in the ego's direction (CARLA, outside junctions) |
+| `in_junction` | bool | Lanelet2 `turn_direction` tag of the ego's lanelet, else (no Lanelet2 map) the CARLA waypoint |
+| `lane_count` | int | Driving lanes in the ego's direction, outside junctions: the ego's lanelet and its neighbours in the Lanelet2 routing graph, else (no Lanelet2 map) the CARLA waypoint's OpenDRIVE road |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
@@ -232,7 +232,8 @@ These live in `autoware_carla_scenario.odd`:
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
 | `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
-Without one they return nothing.
+Without one they return nothing, except `in_junction` and `lane_count`, which
+then read the CARLA waypoint.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
@@ -1517,15 +1518,17 @@ What the lanelet forms read, and where that differs from the run:
 
 | Probe | On a lanelet | At run time |
 |---|---|---|
-| `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | CARLA waypoint `is_junction` |
-| `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | CARLA OpenDRIVE waypoints: driving lanes of the same sign |
+| `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint `is_junction` |
+| `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | The same, on the ego's lanelet; without a Lanelet2 map, the driving lanes of the same sign on the CARLA waypoint's OpenDRIVE road |
 | `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a number) undecided | The tag, else CARLA's `get_speed_limit()` |
 | `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |
 
-Route lane counts come from Lanelet2 and run-time lane counts come from
-CARLA's OpenDRIVE waypoints. The two maps are converted from each other but
-not always lane for lane, so they can disagree; so can the two junction
-criteria.
+A run with a Lanelet2 map reads the junction and the lane count off the
+ego's lanelet, as the route check does, so the two agree. A run without one
+falls back to CARLA's OpenDRIVE waypoints. The two maps are converted from
+each other but not always lane for lane (two lane-change neighbours on the
+Lanelet2 map can be the single lanes of two OpenDRIVE roads), so there the
+route check and the run can disagree.
 
 The report also gives the **expected coverage**: the metres the route spends
 in each bucket of each attribute (`<undecided>` and `<missing>` collect the

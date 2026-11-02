@@ -16,6 +16,7 @@ import pytest
 
 import lanelet2.geometry
 
+from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose
 from autoware_carla_scenario.odd import (
@@ -39,6 +40,8 @@ from autoware_carla_scenario.odd.route import MISSING_BUCKET, UNDECIDED_BUCKET
 from autoware_carla_scenario.scenario_runner import ScenarioRunner
 from autoware_carla_scenario.sweeper.constraints import create_routing_graph
 from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+from ._fake_world import ActorsById, FakeActorList
 
 DATA = Path(__file__).resolve().parents[3] / "data"
 OSM_PATH = DATA / "nishishinjuku.osm"
@@ -1135,3 +1138,148 @@ class TestSuccessiveLaneChanges:
         assert _driven(leg, _lengths(lanelets), graph) == pytest.approx(
             [(5.0, 15.0), (15.0, 15.0), (15.0, 27.0)]
         )
+
+
+# ---------------------------------------------------------------------------
+# The run reads the map-decided probes as the route check does
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def loaded_map_manager() -> Iterator[MapManager]:
+    """The nishishinjuku fixture map, loaded into the MapManager as a run loads it."""
+    saved = MapManager._instance
+    MapManager.reset()
+    manager = MapManager.get_instance()
+    manager.initialize(XODR_PATH, OSM_PATH)
+    yield manager
+    manager._lanelet_map = None
+    manager._routing_graph = None
+    manager._road_network = None
+    MapManager._instance = saved
+
+
+class _Ego:
+    """The ego, standing at a CARLA transform."""
+
+    def __init__(self, transform: Any) -> None:
+        self.id = 1
+        self.is_alive = True
+        self.type_id = "vehicle.ego"
+        self.attributes = {"role_name": str(EGO_ROLE_NAME)}
+        self._transform = transform
+
+    def get_transform(self) -> Any:
+        return self._transform
+
+    def get_location(self) -> Any:
+        return self._transform.location
+
+
+class _RunWorld(ActorsById):
+    """A world with the ego on a lanelet, and a CARLA waypoint that says
+    otherwise: one lane on its OpenDRIVE road, not a junction."""
+
+    def __init__(self, ego: _Ego) -> None:
+        self._ego = ego
+        self.frame = 1
+        self.waypoint = SimpleNamespace(
+            road_id=1,
+            section_id=0,
+            lane_id=-1,
+            lane_type=2,
+            is_junction=False,
+            get_left_lane=lambda: None,
+            get_right_lane=lambda: None,
+        )
+
+    def get_snapshot(self) -> Any:
+        return SimpleNamespace(frame=self.frame)
+
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList([self._ego])
+
+    def get_map(self) -> Any:
+        return SimpleNamespace(get_waypoint=lambda location: self.waypoint)
+
+
+class TestTheRunReadsTheLaneletMap:
+    """``in_junction`` and ``lane_count`` read at run time what the route
+    check reads off the ego's lanelet, not the CARLA waypoint (#1108)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self) -> Iterator[None]:
+        probes.reset_probes()
+        yield
+        probes.reset_probes()
+
+    def _world_on(self, manager: MapManager, lanelet_id: int) -> _RunWorld:
+        from autoware_carla_scenario.coordinate import to_carla_world
+        from autoware_carla_scenario.coordinate.transform import lanelet_length
+
+        pose = Lanelet2Pose(lanelet_id=lanelet_id, s=lanelet_length(lanelet_id) / 2)
+        return _RunWorld(_Ego(to_carla_world(pose).to_carla_transform()))
+
+    def _route_check(self, manager: MapManager, probe: Any, lanelet_id: int) -> Any:
+        lanelet = manager.lanelet_map.laneletLayer[lanelet_id]
+        return probe.on_lanelet(lanelet, manager.lanelet_map, manager.routing_graph)
+
+    @pytest.mark.parametrize("lanelet_id", [37, 38])
+    def test_lane_change_neighbours_on_two_opendrive_roads(
+        self, loaded_map_manager: MapManager, lanelet_id: int
+    ) -> None:
+        # 37 and 38 are lane-change neighbours on the Lanelet2 map, but each
+        # is the one lane of its own OpenDRIVE road (16 and 17).
+        manager = loaded_map_manager
+        assert (
+            manager.routing_graph.right(manager.lanelet_map.laneletLayer[37]).id == 38
+        )
+        world = self._world_on(manager, lanelet_id)
+        assert self._route_check(manager, probes.lane_count, lanelet_id) == 2
+        assert probes.lane_count(world) == 2
+        assert probes.in_junction(world) is False
+
+    def test_a_turn_direction_lanelet_is_a_junction_on_any_road(
+        self, loaded_map_manager: MapManager
+    ) -> None:
+        # 554 is tagged turn_direction=left; the OpenDRIVE road it projects
+        # onto (181) is not a junction road.
+        manager = loaded_map_manager
+        lanelet = manager.lanelet_map.laneletLayer[554]
+        assert lanelet.attributes["turn_direction"] == "left"
+        world = self._world_on(manager, 554)
+        assert self._route_check(manager, probes.in_junction, 554) is True
+        assert probes.in_junction(world) is True
+        assert probes.lane_count(world) is None
+
+    def test_the_lane_count_is_worked_out_once_per_lanelet(
+        self, loaded_map_manager: MapManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        world = self._world_on(loaded_map_manager, 37)
+        counted: list[int] = []
+        count_on_lanelet = probes._lane_count_on_lanelet
+
+        def counting(lanelet: Any, lanelet_map: Any, graph: Any) -> Any:
+            counted.append(lanelet.id)
+            return count_on_lanelet(lanelet, lanelet_map, graph)
+
+        monkeypatch.setattr(probes, "_lane_count_on_lanelet", counting)
+        for frame in range(3):
+            world.frame = frame
+            assert probes.lane_count(world) == 2
+        assert counted == [37]
+
+    def test_without_a_lanelet2_map_the_waypoint_decides(self) -> None:
+        saved = MapManager._instance
+        MapManager.reset()
+        try:
+            transform = SimpleNamespace(location=SimpleNamespace(x=0.0, y=0.0, z=0.0))
+            world = _RunWorld(_Ego(transform))
+            assert probes.lane_count(world) == 1
+            assert probes.in_junction(world) is False
+            world.frame = 2
+            world.waypoint.is_junction = True
+            assert probes.in_junction(world) is True
+            assert probes.lane_count(world) is None
+        finally:
+            MapManager._instance = saved
