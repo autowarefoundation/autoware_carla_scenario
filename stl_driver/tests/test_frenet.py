@@ -123,3 +123,52 @@ def test_projection_handles_points_behind_the_route_start():
     station, offset = project_to_frenet(table, np.array([[-2.0, 0.0]]))
     assert station[0] == pytest.approx(0.0, abs=1e-6)
     assert offset[0] == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("ds", [1.0, 2.0])
+def test_station_is_exact_between_grid_points_on_a_straight_route(ds):
+    """Every point of a segment, not only its front half (issue #1134).
+
+    Projecting only onto the segment ahead of the nearest vertex clamped
+    every point in the back half of a segment onto that vertex, so 36.7 m
+    came back as 37 m -- an error of up to ds/2 with a jump at each midpoint.
+    """
+    table = table_for(straight_route(), ds=ds)
+    true_station = np.arange(0.0, 90.0, 0.05)
+    lateral = np.where(np.arange(len(true_station)) % 3 == 0, 0.8, -0.5)
+    station, offset = project_to_frenet(table, np.stack([true_station, lateral], axis=1))
+    assert np.allclose(station, true_station, atol=1e-6)
+    assert np.allclose(offset, lateral, atol=1e-6)
+
+
+def test_station_is_exact_between_grid_points_on_a_curve():
+    """Centreline points of a tight bend project back onto their own station."""
+    table = table_for(curved_route(radius_m=20.0, sweep_rad=1.5), ds=1.0, length_m=40.0)
+    true_station = np.arange(0.0, 29.0, 0.1)
+    points = table.frenet_to_xy_many(true_station, np.zeros_like(true_station))[0]
+    station, offset = project_to_frenet(table, points)
+    assert np.allclose(station, true_station, atol=1e-6)
+    assert np.allclose(offset, 0.0, atol=1e-6)
+
+
+def test_projection_round_trips_off_grid_on_a_curve():
+    """Off the centreline and off the grid, the bend's own geometry bounds it.
+
+    The residual error is the angle between the chord and the interpolated
+    normal -- a few centimetres at 1.5 m on a 20 m bend -- not the half
+    segment that clamping onto the vertex used to cost.
+    """
+    table = table_for(curved_route(radius_m=20.0, sweep_rad=1.5), ds=1.0, length_m=40.0)
+    stations = np.array([10.7, 10.7, 10.9, 15.55, 20.95])
+    offsets = np.array([0.0, 1.5, -1.5, 0.9, -0.7])
+    points = table.frenet_to_xy_many(stations, offsets)[0]
+    recovered_s, recovered_d = project_to_frenet(table, points)
+    assert np.allclose(recovered_s, stations, atol=0.05)
+    assert np.allclose(recovered_d, offsets, atol=0.01)
+
+
+def test_projection_handles_points_beyond_the_table_end():
+    table = table_for(straight_route(), ds=1.0, length_m=50.0)
+    station, offset = project_to_frenet(table, np.array([[table.table_length_m + 3.0, 0.4]]))
+    assert station[0] == pytest.approx(table.table_length_m, abs=1e-6)
+    assert offset[0] == pytest.approx(0.4, abs=1e-6)

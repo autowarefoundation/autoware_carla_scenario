@@ -196,32 +196,56 @@ def project_to_frenet(table: RouteTable, points_xy: np.ndarray) -> tuple[np.ndar
     """
     points = np.asarray(points_xy, dtype=np.float64).reshape(-1, 2)
 
-    # Nearest grid station first, then an exact projection onto the segment it
-    # belongs to. The two-step approach costs one distance matrix and is exact
-    # to within the segment, which a nearest-vertex answer would not be.
+    # Nearest grid station first, then an exact projection onto the polyline
+    # around it. The foot of the perpendicular lies on one of the two segments
+    # that meet at the nearest vertex -- the one behind it when the point is in
+    # the back half of that segment, the one ahead when it is in the front
+    # half -- so both are tried and the closer foot kept. Trying only the one
+    # ahead clamps every back-half point onto the vertex, an error of up to
+    # ds/2 that jumps at each segment midpoint. At the first and last vertex
+    # the two candidates coincide, so the clamp there still projects a point
+    # beyond either end of the table onto that end.
     deltas = points[:, None, :] - table.xy[None, :, :]
     nearest = np.argmin(np.einsum("nmk,nmk->nm", deltas, deltas), axis=1)
-    nearest = np.clip(nearest, 0, len(table.xy) - 2)
+    last_segment = len(table.xy) - 2
+    candidates = np.stack(
+        [np.clip(nearest - 1, 0, last_segment), np.clip(nearest, 0, last_segment)], axis=1
+    )
 
-    base = table.xy[nearest]
-    segment = table.xy[nearest + 1] - base
-    segment_length_sq = np.einsum("nk,nk->n", segment, segment)
+    base = table.xy[candidates]
+    segment = table.xy[candidates + 1] - base
+    segment_length_sq = np.einsum("nck,nck->nc", segment, segment)
 
-    offset_vector = points - base
-    # Fraction along the segment, clamped so a point beyond either end
+    offset_vector = points[:, None, :] - base
+    # Fraction along each segment, clamped so a point beyond either end
     # projects onto the endpoint rather than off the segment.
     fraction = np.where(
         segment_length_sq > 1e-12,
-        np.einsum("nk,nk->n", offset_vector, segment) / np.maximum(segment_length_sq, 1e-12),
+        np.einsum("nck,nck->nc", offset_vector, segment) / np.maximum(segment_length_sq, 1e-12),
         0.0,
     )
     fraction = np.clip(fraction, 0.0, 1.0)
 
-    station = (nearest + fraction) * table.ds
+    foot = base + fraction[..., None] * segment
+    residual = points[:, None, :] - foot
+    # Ties (a point exactly level with the vertex) go to the segment ahead,
+    # which reproduces the vertex's own station either way.
+    distance_sq = np.einsum("nck,nck->nc", residual, residual)
+    choice = (distance_sq[:, 1] <= distance_sq[:, 0]).astype(np.int64)
+    rows = np.arange(len(points))
+    index = candidates[rows, choice]
+    weight = fraction[rows, choice]
+    residual = residual[rows, choice]
 
-    foot = base + fraction[:, None] * segment
-    residual = points - foot
-    tangent = table.tangent[nearest]
+    station = (index + weight) * table.ds
+
+    # The tangent interpolated at the foot, as `RouteTable.frenet_to_xy_many`
+    # uses for the inverse; unlike a vertex tangent it does not jump when the
+    # foot crosses from one segment to the next.
+    tangent = (
+        table.tangent[index] * (1.0 - weight[:, None]) + table.tangent[index + 1] * weight[:, None]
+    )
+    tangent = tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
     # 2-D cross product: positive when the point lies to the left of the
     # tangent, matching the rig frame's +y.
     offset = tangent[:, 0] * residual[:, 1] - tangent[:, 1] * residual[:, 0]
