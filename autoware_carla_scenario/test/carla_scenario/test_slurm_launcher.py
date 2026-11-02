@@ -1543,6 +1543,32 @@ def test_a_failing_collect_job_is_reported_not_raised(
     _wait_for(lambda: _jobs_done(fake_slurm), 120, "the array")
 
 
+def test_an_unwritable_collect_script_is_reported_not_raised(
+    fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The array is submitted before the collect job's script is written: a
+    failure to write it is reported like a refused sbatch (#1159)."""
+    from autoware_carla_scenario.slurm import submit
+
+    real = submit._write_script
+
+    def write(path: Path, text: str) -> None:
+        if path.name.endswith("-collect.sh"):
+            raise OSError(28, "No space left on device")
+        real(path, text)
+
+    fake_slurm.monkeypatch.setattr(submit, "_write_script", write)
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
+    captured = capsys.readouterr()
+    assert status == 1
+    submission = BatchLayout(batch).read_submission(0)
+    assert submission["job_id"] and submission["collect_job_id"] is None
+    assert "No space left on device" in submission["collect_error"]
+    assert "scenario-slurm collect" in captured.err
+    assert "Traceback" not in captured.err
+    _wait_for(lambda: _jobs_done(fake_slurm), 120, "the array")
+
+
 def test_interrupt_waits_for_the_cancelled_tasks_before_collecting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -370,12 +370,14 @@ def submit_cases(
     )
     if not settings.wait and settings.collect_job:
         collect_path = layout.root / "jobs" / f"{index}-collect.sh"
-        _write_script(collect_path, collect_script(manifest, settings, layout))
-        collect = _collect_command(
-            layout, manifest, settings, submission["job_id"], collect_path
-        )
-        submission["collect_sbatch"] = collect
         try:
+            # Inside the try: the array is submitted already, so a script
+            # that cannot be written is reported like a refused sbatch.
+            _write_script(collect_path, collect_script(manifest, settings, layout))
+            collect = _collect_command(
+                layout, manifest, settings, submission["job_id"], collect_path
+            )
+            submission["collect_sbatch"] = collect
             submission["collect_job_id"] = _run_sbatch(collect)
         except (RuntimeError, OSError) as exc:
             # The array runs all the same: say how to collect it by hand.
