@@ -26,7 +26,7 @@ from carla_driver_interface.protocol import Pose as PoseProto
 from carla_driver_interface.protocol import Quat as QuatProto
 
 from stl_driver.config import STLDriverConfig
-from stl_driver.policy import EgoPolicy
+from stl_driver.policy import EgoPolicy, _RolloutMemory
 from tests.conftest import curved_route, straight_route
 
 TIME_NOW_US = 1_700_000_000_000_000
@@ -47,8 +47,9 @@ def context(
     accel_mps2: float = 0.0,
     renderer_data: CarlaRendererData | None = None,
     time_now_us: int = TIME_NOW_US,
+    uuid: str = "s",
 ) -> DriveContext:
-    session = SessionState(uuid="s", seed=0, scene_id="t", cameras={})
+    session = SessionState(uuid=uuid, seed=0, scene_id="t", cameras={})
     if route is not None:
         session.route_waypoints_in_rig = np.asarray(route, dtype=np.float64)
     session.ego_trajectory = Trajectory([time_now_us], [Pose.identity()])
@@ -184,10 +185,9 @@ def test_an_implausible_measured_acceleration_is_confined(policy, measured):
 
 def test_the_acceleration_clamp_keeps_ordinary_readings_intact(policy):
     for reading in (1.2, -3.0):
-        policy._anchor_accel_mps2 = None  # as at the start of a session
-        assert policy._plausible_acceleration(reading) == pytest.approx(reading)
-    policy._anchor_accel_mps2 = None
-    assert policy._plausible_acceleration(float("nan")) == 0.0
+        memory = _RolloutMemory()  # as at the start of a session
+        assert policy._plausible_acceleration(reading, memory) == pytest.approx(reading)
+    assert policy._plausible_acceleration(float("nan"), _RolloutMemory()) == 0.0
 
 
 def test_the_anchor_moves_no_faster_than_the_vehicle_could(policy):
@@ -205,25 +205,25 @@ def test_the_anchor_moves_no_faster_than_the_vehicle_could(policy):
     limits = CONFIG.limits
     step = limits.plan_jerk_limit() * CONFIG.horizon.step_s
 
-    policy._anchor_accel_mps2 = None
-    settled = policy._plausible_acceleration(0.0)
+    memory = _RolloutMemory()
+    settled = policy._plausible_acceleration(0.0, memory)
     assert settled == pytest.approx(0.0)
 
     # A reading that jumps the whole envelope in one step is not acceleration.
-    jumped = policy._plausible_acceleration(-3.9)
+    jumped = policy._plausible_acceleration(-3.9, memory)
     assert jumped == pytest.approx(-step, abs=1e-6)
 
     # But a real change is followed, at the rate a real vehicle would make it.
     for _ in range(40):
-        following = policy._plausible_acceleration(-3.9)
+        following = policy._plausible_acceleration(-3.9, memory)
     assert following == pytest.approx(-3.9, abs=0.05)
 
     # And the ramp never exceeds what the plan itself may command.
-    policy._anchor_accel_mps2 = None
-    previous = policy._plausible_acceleration(0.0)
+    memory = _RolloutMemory()
+    previous = policy._plausible_acceleration(0.0, memory)
     for reading in (3.0, -3.0, 3.0, -3.0):
         for _ in range(3):
-            current = policy._plausible_acceleration(reading)
+            current = policy._plausible_acceleration(reading, memory)
             assert abs(current - previous) <= step + 1e-6
             previous = current
 
@@ -293,6 +293,7 @@ def inputs_for(policy, route, *, renderer_data=None, speed_mps=0.0):
         renderer_data=renderer_data,
         speed_mps=speed_mps,
         accel_mps2=0.0,
+        memory=_RolloutMemory(),
     )
 
 
@@ -418,9 +419,136 @@ def test_a_new_session_does_not_compile_again(policy):
 
 def test_a_new_session_clears_the_warm_start(policy):
     policy.drive(context(route=straight_route()))
-    assert policy._warm_start is not None
-    policy.on_session_start(SessionState(uuid="s2", seed=1, scene_id="t", cameras={}))
-    assert policy._warm_start is None
+    assert policy._memory("s").warm_start is not None
+    policy.on_session_start(SessionState(uuid="s", seed=1, scene_id="t", cameras={}))
+    assert policy._memory("s").warm_start is None
+
+
+# ---------------------------------------------------------------------------
+# Concurrent sessions on one policy (#1158)
+#
+# The driver service serves every session on one policy, `stl-driver serve`
+# with eight workers. Step-to-step state is the rollout's, not the policy's.
+# ---------------------------------------------------------------------------
+
+
+def session(uuid: str) -> SessionState:
+    return SessionState(uuid=uuid, seed=0, scene_id="t", cameras={})
+
+
+def test_interleaved_sessions_keep_their_own_acceleration_anchor(policy):
+    """A cruising rollout must not be anchored at another one's braking."""
+    policy.on_session_start(session("anchor-a"))
+    policy.on_session_start(session("anchor-b"))
+    for _ in range(20):
+        braking = policy._plausible_acceleration(-2.5, policy._memory("anchor-a"))
+    assert braking == pytest.approx(-2.5)
+
+    # B's first reading is its own, within the envelope: nothing to rate-limit
+    # it from, as at the start of any session.
+    cruising = policy._plausible_acceleration(1.0, policy._memory("anchor-b"))
+    assert cruising == pytest.approx(1.0)
+    # And A carries on from where it was, not from B.
+    assert policy._plausible_acceleration(-2.5, policy._memory("anchor-a")) == pytest.approx(-2.5)
+
+
+def test_interleaved_drives_keep_their_own_warm_start_and_light(policy):
+    policy.on_session_start(session("drive-a"))
+    policy.on_session_start(session("drive-b"))
+
+    policy.drive(
+        context(
+            route=straight_route(), speed_mps=6.0, renderer_data=red_light(40.0), uuid="drive-a"
+        )
+    )
+    held = policy._memory("drive-a")
+    assert held.light is not None and held.light.active
+    a_warm_start = held.warm_start
+    assert a_warm_start is not None
+    # B has not driven: it starts as a fresh session does, A's state unseen.
+    fresh = policy._memory("drive-b")
+    assert fresh.warm_start is None
+    assert fresh.light is None
+    assert fresh.anchor_accel_mps2 is None
+
+    policy.drive(context(route=straight_route(), speed_mps=3.0, uuid="drive-b"))
+    other = policy._memory("drive-b")
+    assert other.light is not None and not other.light.active
+    assert other.warm_start is not None
+    # B's step changed nothing of A's.
+    assert policy._memory("drive-a").light is held.light
+    assert policy._memory("drive-a").warm_start is a_warm_start
+
+
+def test_closing_or_starting_one_session_leaves_the_other_alone(policy):
+    policy.on_session_start(session("keep"))
+    policy.drive(
+        context(
+            route=straight_route(),
+            speed_mps=6.0,
+            accel_mps2=-1.0,
+            renderer_data=red_light(40.0),
+            uuid="keep",
+        )
+    )
+    kept = policy._memory("keep")
+    before = (kept.warm_start, kept.anchor_accel_mps2, kept.light)
+    assert all(value is not None for value in before)
+
+    policy.on_session_start(session("other"))
+    policy.drive(context(route=straight_route(), accel_mps2=1.0, uuid="other"))
+    policy.on_session_close(session("other"))
+    assert "other" not in policy._rollouts
+
+    after = policy._memory("keep")
+    assert after is kept
+    assert (after.warm_start, after.anchor_accel_mps2, after.light) == before
+
+
+def test_closing_a_session_forgets_it_and_the_memory_is_bounded():
+    driver = EgoPolicy()
+    driver.max_remembered_rollouts = 3
+    for index in range(5):
+        driver.on_session_start(session(f"never-closed-{index}"))
+    # The least recently driven go first.
+    assert list(driver._rollouts) == [f"never-closed-{index}" for index in (2, 3, 4)]
+    driver._memory("never-closed-2")  # driving one makes it the most recent
+    driver.on_session_start(session("newest"))
+    assert list(driver._rollouts) == ["never-closed-4", "never-closed-2", "newest"]
+
+    driver.on_session_close(session("newest"))
+    driver.on_session_close(session("unknown"))  # closing twice is harmless
+    assert list(driver._rollouts) == ["never-closed-4", "never-closed-2"]
+
+
+def test_sessions_on_concurrent_threads_follow_their_own_readings(policy):
+    """The service drives sessions from concurrent gRPC handler threads."""
+    import threading
+
+    readings = {f"thread-{index}": value for index, value in enumerate((-3.0, -1.0, 0.5, 1.5))}
+    for uuid in readings:
+        policy.on_session_start(session(uuid))
+    barrier = threading.Barrier(len(readings))
+    failures: list[str] = []
+
+    def run(uuid: str, reading: float) -> None:
+        barrier.wait()
+        previous = None
+        for _ in range(400):
+            anchored = policy._plausible_acceleration(reading, policy._memory(uuid))
+            if previous is None:
+                if anchored != pytest.approx(reading):
+                    failures.append(f"{uuid}: first anchor {anchored} != {reading}")
+            elif abs(anchored - previous) > 1e-9:
+                failures.append(f"{uuid}: anchor moved {previous} -> {anchored}")
+            previous = anchored
+
+    threads = [threading.Thread(target=run, args=item) for item in readings.items()]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not failures, failures[:5]
 
 
 def test_actors_reach_the_policy(policy):
