@@ -62,11 +62,15 @@ def _arc_start(
     (missing hits can only widen gaps).
 
     CARLA measures one world tick, *tick* degrees, per measurement.  An arc
-    of two whole ticks or more is one whose measurements before were lost on
-    the way (#1128): its points are the last tick's alone, and the first of
-    them is where that tick started, ``arc - tick`` degrees after the arc
-    did.  Any other arc is one tick, a long one where the world does not
-    tick at a fixed step, and its first point is where it started.
+    of two whole ticks or more whose points span no more than one tick is
+    one whose measurements before were lost on the way (#1128): its points
+    are the last tick's alone, and the first of them is where that tick
+    started, ``arc - tick`` degrees after the arc did.  Any other arc swept
+    all of its points: one tick, a long one where the world does not tick
+    at a fixed step (or ticks longer than *tick* says), or the whole arc
+    where a renderer sweeps the time since the last measurement it rendered
+    (carla_canvas, after a frame it did not render); its first point is
+    where it started.
     """
     if points.shape[0] == 0:
         return -1.0
@@ -76,8 +80,13 @@ def _arc_start(
     if float(gaps[widest]) + _REVOLUTION_TOLERANCE_DEG < fov - arc:
         return -1.0
     first = float(angles[(widest + 1) % angles.shape[0]])
+    span = (float(angles[widest]) - first) % fov
     ticks = round(arc / tick)
-    if ticks >= 2 and abs(arc - ticks * tick) <= _WHOLE_TICKS * arc:
+    if (
+        ticks >= 2
+        and abs(arc - ticks * tick) <= _WHOLE_TICKS * arc
+        and span < tick + _START_TOLERANCE_DEG
+    ):
         return (first - (arc - tick)) % fov
     return first
 

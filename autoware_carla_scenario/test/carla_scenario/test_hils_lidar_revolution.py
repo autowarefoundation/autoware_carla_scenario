@@ -688,6 +688,39 @@ def test_a_long_tick_after_a_whole_revolution_starts_at_its_first_point() -> Non
             assert _rays(whole, channel) == want
 
 
+@pytest.mark.parametrize("ticks", [2, 3, 5])
+@pytest.mark.parametrize("horizontal_fov", [360.0, 270.0, 120.0])
+def test_an_arc_of_whole_ticks_that_swept_its_points_starts_at_its_first_point(
+    horizontal_fov: float, ticks: int
+) -> None:
+    """An arc of whole ticks after a whole revolution whose points span more
+    than a tick swept them all: a renderer that sweeps the time since the
+    last measurement it rendered (carla_canvas, after a frame it did not
+    render), or a long tick.  Its first point is where it started (#1128)."""
+    sensor = _FovSensor(3.0, horizontal_fov)  # 0.15 of the fov a tick
+    revolution = LidarRevolution(3.0, 0.05, horizontal_fov)
+    time = 0.0
+    for dt in (0.05, 0.05, 0.05, 0.4):  # the last: 1.2 revolutions
+        time += dt
+        revolution.add(time, sensor.tick(dt))
+    began = sensor.turned
+    first = math.ceil(began / sensor.step - 1e-9)
+    per_revolution = int(round(horizontal_fov / sensor.step))
+    time += 0.05 * ticks
+    assert revolution.add(time, sensor.tick(0.05 * ticks)) is None
+    emitted: List[FloatPoints] = []
+    for _ in range(20):
+        time += 0.05
+        whole = revolution.add(time, sensor.tick(0.05))
+        if whole is not None:
+            emitted.append(whole)
+    assert len(emitted) >= 3
+    for index, whole in enumerate(emitted):
+        begin = first + index * per_revolution
+        for channel in range(sensor.channels):
+            assert _rays(whole, channel) == list(range(begin, begin + per_revolution))
+
+
 @pytest.mark.parametrize("seed", range(6))
 @pytest.mark.parametrize("horizontal_fov", [360.0, 270.0, 120.0])
 def test_revolutions_start_where_the_sweep_did_whatever_was_lost(
