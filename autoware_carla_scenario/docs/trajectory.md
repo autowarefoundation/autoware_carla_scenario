@@ -77,7 +77,7 @@ A trajectory has the same four parts as OpenSCENARIO's trajectory following:
 | `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, advance=None)` | A vertex's time is its departure condition, `advance=TrajectoryTimeCondition(t)` (read back as `vertex.time`); any other condition can take its place -- see [Waypoint conditions](#waypoint-conditions). Either every vertex has a time or none has, a vertex with another condition counting as having one. |
 | `TimeReference` | `time_reference=None` or `TrajectoryTiming(domain, scale, offset)` | `None` is `<None/>`: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time `τ` is reached at `τ * scale + offset` seconds after the scenario (`ABSOLUTE`) or the action (`RELATIVE`) started. |
 | `TrajectoryFollowingMode` | `mode=RoutingMode.POSITION` or `FOLLOW` (or `DRIVER`) | See below. |
-| `initialDistanceOffset` | `initial_distance_offset` | Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point. |
+| `initialDistanceOffset` | `initial_distance_offset` | Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point, when the first vertex is due (`τ * scale + offset` for its time `τ`): the entity waits at the point until then -- out of the world with `hidden_outside_trajectory` -- and the rest of the trajectory is brought forward by the time the part skipped takes, in either domain, gated or not. |
 
 A vertex's position may be written in any frame the framework addresses:
 

@@ -314,6 +314,137 @@ class TestPositionWithTiming:
         assert entity.released == 1
 
 
+def _late_line(first: float, *, gated: bool) -> Trajectory:
+    """:func:`_line` with its first vertex at *first*: 20 m at 10 m/s from then.
+
+    *gated* replaces the last vertex's time with another condition, which
+    puts the run on its departure timeline (at the action's speed, 10 m/s,
+    the same motion).
+    """
+    vertices = []
+    for i in range(5):
+        advance: Any = TrajectoryTimeCondition(first + 0.5 * i)
+        if gated and i == 4:
+            advance = AlwaysTrueCondition(label="go")
+        vertices.append(
+            TrajectoryVertex(CarlaWorldPose(5.0 * i, 0.0, 0.0, yaw=0.0), advance)
+        )
+    return Trajectory("line", vertices)
+
+
+class TestInitialOffsetWithALateFirstVertex:
+    """#1169: a first vertex after 0 and an initial distance offset.
+
+    The run starts at the offset point, waits there (at rest) until the first
+    vertex is due, then goes on from it -- the rest of the trajectory brought
+    forward by the time the skipped part takes -- gated or not, in either
+    domain.  The action starts at 0.5 s: the first vertex (1 s) is due at
+    1.0 s on an absolute clock and at 1.5 s on a relative one.
+    """
+
+    @pytest.mark.parametrize("gated", [False, True], ids=["timed", "gated"])
+    @pytest.mark.parametrize(
+        ("domain", "departure"),
+        [(ReferenceContext.RELATIVE, 1.5), (ReferenceContext.ABSOLUTE, 1.0)],
+        ids=["relative", "absolute"],
+    )
+    def test_it_starts_at_the_offset_point(
+        self,
+        entity: _Entity,
+        domain: ReferenceContext,
+        departure: float,
+        gated: bool,
+    ) -> None:
+        action = _route(
+            "npc1",
+            _late_line(1.0, gated=gated),
+            TrajectoryTiming(domain),
+            initial_distance_offset=10.0,
+            speed=10.0,
+        )
+        elapsed = _run(action, entity.actor, 0.05, start=0.5)
+        assert entity.actor.x == pytest.approx(10.0)
+        assert entity.actor.speed == 0.0
+        # Waiting there, not replaying the part skipped.
+        elapsed = _run(action, entity.actor, departure - elapsed, start=elapsed)
+        assert entity.actor.x == pytest.approx(10.0)
+        # Then on from it at 10 m/s: the pose set at 0.45 s past the departure,
+        # carried a tick on.
+        _run(action, entity.actor, 0.5, start=elapsed)
+        assert entity.actor.x == pytest.approx(15.0)
+        assert entity.actor.speed == pytest.approx(10.0)
+
+    @pytest.mark.parametrize("gated", [False, True], ids=["timed", "gated"])
+    def test_hidden_it_appears_at_the_offset_point(
+        self, entity: _Entity, gated: bool
+    ) -> None:
+        action = TrajectoryRun(
+            "npc1",
+            _late_line(1.0, gated=gated),
+            TrajectoryTiming(ReferenceContext.ABSOLUTE),
+            initial_distance_offset=10.0,
+            speed=10.0,
+            hidden_outside_trajectory=True,
+        )
+        elapsed = _run(action, entity.actor, 1.0)
+        # Out of the world until the first vertex is due, under the point it
+        # will appear at.
+        assert entity.actor.physics is False
+        assert entity.actor.x == pytest.approx(10.0)
+        assert entity.actor.z < 0.0
+        _run(action, entity.actor, 0.05, start=elapsed)
+        assert entity.actor.physics is True
+        assert entity.actor.x == pytest.approx(10.5)
+        assert entity.actor.z == pytest.approx(0.0)
+
+    def test_a_timing_offset_delays_the_start_from_the_offset_point(
+        self, entity: _Entity
+    ) -> None:
+        """A first vertex at 0 due 1 s after the action starts: the same wait."""
+        action = _route(
+            "npc1",
+            _late_line(0.0, gated=False),
+            TrajectoryTiming(offset=1.0),
+            initial_distance_offset=10.0,
+        )
+        elapsed = _run(action, entity.actor, 0.5)
+        assert entity.actor.x == pytest.approx(10.0)
+        assert entity.actor.speed == 0.0
+        elapsed = _run(action, entity.actor, 0.5, start=elapsed)
+        assert entity.actor.x == pytest.approx(10.0)
+        _run(action, entity.actor, 0.5, start=elapsed)
+        assert entity.actor.x == pytest.approx(15.0)
+
+    def test_a_following_walker_waits_for_the_first_vertex(self) -> None:
+        walker = _Entity(_Actor(x=10.0, type_id="walker.pedestrian.0001"))
+        register_entity("walker1", walker)
+        try:
+            action = _route(
+                "walker1",
+                _late_line(1.0, gated=False),
+                TrajectoryTiming(),
+                RoutingMode.FOLLOW,
+                initial_distance_offset=10.0,
+            )
+            elapsed = _run(action, walker.actor, 0.95)
+            assert walker.actor.walker_controls[-1].speed == 0.0
+            _run(action, walker.actor, 0.1, start=elapsed)
+            assert walker.actor.walker_controls[-1].speed > 0.0
+        finally:
+            unregister_entity("walker1")
+
+    def test_a_first_vertex_at_zero_is_as_before(self, entity: _Entity) -> None:
+        """No wait: the clock starts where the trajectory is at the offset."""
+        action = _route(
+            "npc1",
+            _late_line(0.0, gated=False),
+            TrajectoryTiming(ReferenceContext.ABSOLUTE),
+            initial_distance_offset=10.0,
+        )
+        _run(action, entity.actor, 0.05)
+        assert entity.actor.x == pytest.approx(10.5)
+
+
 class TestPositionWithoutTiming:
     def test_it_goes_at_the_speed_it_had(self, entity: _Entity) -> None:
         entity.actor.vx = entity.actor.speed = 4.0
