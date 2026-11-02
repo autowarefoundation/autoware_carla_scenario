@@ -4768,9 +4768,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-265 of the package's 385
-modules (69%; about 78,800 of
-136,200 lines) are <code>CHECKED</code>: the kinematics, the
+265 of the package's 392
+modules (68%; about 79,400 of
+138,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5137,7 +5137,7 @@ first paragraph of its docstring:</p>
 </tr>
 <tr>
 <td><code>conditions.metric</code></td>
-<td>A condition on a metric: how the ego drives, read off the world.</td>
+<td>A condition on a metric: how the ego drove, judged once the run is over.</td>
 </tr>
 <tr>
 <td><code>conditions.not_condition</code></td>
@@ -5854,8 +5854,8 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>123 functions and methods of those modules are <code>UNCALLED</code>
-(31 of them protected helpers, see <em>What is
+<p>126 functions and methods of those modules are <code>UNCALLED</code>
+(34 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5867,7 +5867,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 123 UNCALLED functions and methods, and why</summary>
+<summary>The 126 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5947,6 +5947,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
 <li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
 <li><code>scenario_runner._collect_condition_statuses</code>: builds ConditionStatus values, which hold a condition's details (<code>dict[str, Any]</code>), which Codon cannot express; _condition_statuses calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._judge_metrics</code>: evaluates the recorded frames with metric_batch (duck-typed actors replayed as a world, and the CommonRoad workers, processes spoken to in JSON), which is not checked; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._metric_recorder</code>: builds metric_batch's FrameRecorder, which is not checked (it records duck-typed actors); run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._record_metrics</code>: writes metric_batch's series (not checked) into the trajectory log; only _judge_metrics, itself uncalled, calls it</li>
 <li><code>scenario_runner._traffic_record</code>: reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._write_result</code>: merges the traffic record (<code>Any</code>) and environment.write()'s record (environment is EXCLUDED: platform, importlib.metadata) into the result document, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>signals.controller._group_members</code>: reads the authoring package's pydantic signal groups (<code>list[Any]</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
@@ -5994,7 +5997,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 120 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 127 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6023,7 +6026,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 120 EXCLUDED modules, and why</summary>
+<summary>The 127 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.play_motion</code>: imports pedestrian.soma, which is neither checked nor modelled</li>
@@ -6049,6 +6052,11 @@ the first:</p>
 <li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, autoware_vehicle_msgs, geometry_msgs, grpc</li>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>)</li>
+<li><code>commonroad</code>: re-exports commonroad.map, commonroad.session and commonroad.worker, which are not checked</li>
+<li><code>commonroad.frame</code>: builds each road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express, and reads a blueprint's attributes with <code>.get()</code></li>
+<li><code>commonroad.map</code>: imports roadgen, and more of tempfile than its shim declares (<code>mkdtemp()</code>)</li>
+<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.frame, commonroad.map (roadgen) and commonroad.worker, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>)</li>
+<li><code>commonroad.worker</code>: imports shlex, and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6080,6 +6088,7 @@ the first:</p>
 <li><code>hils.protocol</code>: imports socket (LineReader reads the bridge's socket); what needs none is hils.wire, which it re-exports</li>
 <li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
 <li><code>maps.road_network_cache</code>: imports pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
+<li><code>metric_batch</code>: replays recorded frames as a world of duck-typed actors (SimpleNamespace transforms, a list subclass for ActorList) through the checked metrics module, and evaluates the CommonRoad metrics with commonroad.session (worker processes), which is not checked</li>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
 <li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
@@ -6104,6 +6113,7 @@ the first:</p>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>, under <code>TYPE_CHECKING</code>) and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold</li>
 <li><code>rerun</code>: imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
 <li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; entity.carla_driver_entity (itself excluded) and rerun use it</li>
+<li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>)</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
