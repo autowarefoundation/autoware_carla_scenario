@@ -490,3 +490,10 @@ def test_what_the_action_refuses() -> None:
         ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, start_time=-1.0)
     with pytest.raises(ValueError):
         ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, start_time=5.0, end_time=5.0)
+
+
+@pytest.mark.parametrize("start_time", [float("nan"), float("inf"), float("-inf")])
+def test_refuses_a_start_time_that_is_not_finite(start_time: float) -> None:
+    """A NaN start time fails every comparison, so the zone would never appear."""
+    with pytest.raises(ValueError, match="start_time must be finite"):
+        ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, start_time=start_time)

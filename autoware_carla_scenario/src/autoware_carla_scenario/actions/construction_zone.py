@@ -97,8 +97,8 @@ class ConstructionZoneAction(_BackendAction):
         label: Human-readable identifier.
 
     Raises:
-        ValueError: *end_s* not after *start_s*, a negative *start_time*, or an
-            *end_time* not after it.
+        ValueError: *end_s* not after *start_s*, a negative or non-finite
+            *start_time*, or an *end_time* not after it.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -135,8 +135,9 @@ class ConstructionZoneAction(_BackendAction):
     ) -> None:
         if not end_s > start_s:
             raise ValueError(f"{label}: end_s must be after start_s")
-        if start_time < 0.0:
-            raise ValueError(f"{label}: start_time must not be negative")
+        # NaN fails every comparison, so a NaN start_time would never place it.
+        if not math.isfinite(start_time) or start_time < 0.0:
+            raise ValueError(f"{label}: start_time must be finite and not negative")
         if end_time is not None and not end_time > start_time:
             raise ValueError(f"{label}: end_time must be after start_time")
         end: BaseCondition = _Cleared(self, label)
