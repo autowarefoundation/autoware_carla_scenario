@@ -1498,3 +1498,108 @@ class TestSpeedConditionValidation:
             label="test_speed",
         )
         assert cond is not None
+
+
+# ---------------------------------------------------------------------------
+# The Speed authoring card -- its components are in the subject's own frame
+# ---------------------------------------------------------------------------
+
+
+def _make_world_with_heading(
+    name: str, vx: float, vy: float, fwd_x: float, fwd_y: float
+) -> MagicMock:
+    """Return a mock world with one actor moving at (vx, vy), facing (fwd_x, fwd_y)."""
+    vel = MagicMock()
+    vel.x, vel.y, vel.z = vx, vy, 0.0
+    fwd = MagicMock()
+    fwd.x, fwd.y, fwd.z = fwd_x, fwd_y, 0.0
+    transform = MagicMock()
+    transform.get_forward_vector.return_value = fwd
+    actor = MagicMock()
+    actor.attributes = {"role_name": name}
+    actor.type_id = "vehicle.tesla.model3"
+    actor.get_velocity.return_value = vel
+    actor.get_transform.return_value = transform
+    world = MagicMock()
+    world.get_actors.return_value = [actor]
+    return world
+
+
+class TestSpeedCard:
+    """The ``speed`` card measures Longitudinal/Lateral along its subject's heading.
+
+    It used to leave ``SpeedCondition`` in the WORLD frame, where
+    "longitudinal" is world +x, so "ego longitudinal speed > 5" fired only
+    while the ego drove east (#1089).
+    """
+
+    @staticmethod
+    def _card(direction: str, rule: str, value: float) -> SpeedCondition:
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.authoring._builders_generated import (
+            build_speed_condition,
+        )
+
+        compiled = SimpleNamespace(
+            params={
+                "entity": "Ego",
+                "rule": rule,
+                "value": value,
+                "direction": direction,
+            },
+            label="card",
+        )
+        condition = build_speed_condition(compiled, [], None)  # type: ignore[arg-type]
+        assert isinstance(condition, SpeedCondition)
+        return condition
+
+    def test_the_card_measures_in_its_subjects_frame(self) -> None:
+        details = self._card("LONGITUDINAL", "greater_than", 5.0).get_details()
+
+        assert details["coordinate_system"] == "ENTITY"
+        assert details["reference_entity_name"] == "Ego"
+
+    @pytest.mark.parametrize(
+        ("heading", "fwd"),
+        [("east", (1.0, 0.0)), ("north", (0.0, -1.0)), ("west", (-1.0, 0.0))],
+    )
+    def test_longitudinal_is_forward_speed_whichever_way_it_drives(
+        self, heading: str, fwd: tuple[float, float]
+    ) -> None:
+        card = self._card("LONGITUDINAL", "greater_than", 5.0)
+        world = _make_world_with_heading("Ego", 10.0 * fwd[0], 10.0 * fwd[1], *fwd)
+
+        result = card.check(world, elapsed=1.0)
+
+        assert result is not None, f"driving {heading} at 10 m/s"
+        assert "(10.00 m/s)" in result.message
+
+    @pytest.mark.parametrize(
+        "fwd", [(1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)], ids=["east", "north", "west"]
+    )
+    def test_lateral_is_zero_driving_straight_ahead(
+        self, fwd: tuple[float, float]
+    ) -> None:
+        card = self._card("LATERAL", "less_than", 0.5)
+        world = _make_world_with_heading("Ego", 10.0 * fwd[0], 10.0 * fwd[1], *fwd)
+
+        assert card.check(world, elapsed=1.0) is not None
+        assert self._card("LATERAL", "greater_than", -0.5).check(world, 1.0)
+
+    def test_reversing_reads_negative_longitudinal(self) -> None:
+        """Facing west and backing east: forward speed is -10, whatever world +x says."""
+        world = _make_world_with_heading("Ego", 10.0, 0.0, -1.0, 0.0)
+
+        assert self._card("LONGITUDINAL", "greater_than", 5.0).check(world, 1.0) is None
+        reversing = self._card("LONGITUDINAL", "less_than", -5.0).check(world, 1.0)
+        assert reversing is not None
+        assert "(-10.00 m/s)" in reversing.message
+
+    def test_magnitude_is_unchanged(self) -> None:
+        world = _make_world_with_heading("Ego", 10.0, 0.0, -1.0, 0.0)
+
+        result = self._card("MAGNITUDE", "greater_than", 5.0).check(world, 1.0)
+
+        assert result is not None
+        assert "(10.00 m/s)" in result.message
