@@ -363,6 +363,12 @@
       {% if rule %}<span class="cond-op">{{ rule_symbol(rule) }}</span>{% endif %}
       {% if value is not none %}{{ value }}{% if visual.unit %} <span class="cond-unit">{{ visual.unit }}</span>{% endif %}
       {% elif visual.value_label %}{{ visual.value_label }}{% endif %}
+      {#- An "=" reads its tolerance, so two cards differing only in it must
+          not draw alike; the old 1e-6 is the unset case and says nothing. -#}
+      {%- set tolerance = node.params.get('tolerance') if rule == 'equal_to' else none -%}
+      {%- if tolerance is not none and tolerance|string|trim and tolerance|float > 1e-6 %}
+        <span class="cond-unit">&plusmn; {{ tolerance }}</span>
+      {%- endif %}
     </div>
   {% else %}
     <div class="cond-metric" style="color:var(--fail)">Unknown condition “{{ node.type }}”</div>

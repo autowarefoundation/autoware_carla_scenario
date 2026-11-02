@@ -178,3 +178,86 @@ class TestARoutePose:
             assert condition.check(_world(_actor("Ego", (99, 0, 0))), 1.0) is None
             assert condition.check(_world(_actor("Ego", (99, 0, 0))), 2.0) is None
         assert resolve.call_count == 1
+
+
+class TestAPlaceWithoutHeight:
+    """A place with no z stands on the road under it, not at CARLA z = 0 (#1030)."""
+
+    @staticmethod
+    def _condition(vertical: bool = True) -> EntityPositionDistanceCondition:
+        from autoware_carla_scenario.trajectory.model import MapPose
+
+        return EntityPositionDistanceCondition(
+            entity_name="Ego",
+            position=MapPose(x=5.0, y=-5.0),
+            value=1.0,
+            vertical=vertical,
+            label="at_place",
+        )
+
+    @staticmethod
+    def _measure(condition, road, at=(5.0, -5.0, -10.0)):
+        from unittest.mock import patch
+
+        reads: list[tuple[float, float]] = []
+
+        def ground(_carla_map):
+            def height(x: float, y: float):
+                reads.append((x, y))
+                return road
+
+            return height
+
+        with (
+            patch(
+                "autoware_carla_scenario.trajectory.resolve.resolve_position",
+                return_value=(5.0, -5.0, None, None),
+            ),
+            patch("autoware_carla_scenario.trajectory.resolve.road_height", ground),
+        ):
+            first = condition._measure(_world(_actor("Ego", at)))
+            second = condition._measure(_world(_actor("Ego", at)))
+        return first, second, reads
+
+    def test_the_height_is_measured_from_the_road_surface(self) -> None:
+        condition = self._condition()
+        first, second, reads = self._measure(condition, road=-10.0)
+        assert first is not None and math.isclose(first, 0.0, abs_tol=1e-9)
+        assert second is not None and math.isclose(second, 0.0, abs_tol=1e-9)
+        assert reads == [(5.0, -5.0)]  # read once, then cached
+        assert math.isclose(condition.get_details()["target_z"], -10.0)
+
+    def test_the_height_above_the_road_still_counts(self) -> None:
+        condition = self._condition()
+        first, _, _ = self._measure(condition, road=-10.0, at=(5.0, -5.0, -7.0))
+        assert first is not None and math.isclose(first, 3.0)
+
+    def test_an_unreadable_road_leaves_the_height_out(self) -> None:
+        condition = self._condition()
+        first, _, reads = self._measure(condition, road=None)
+        assert first is not None and math.isclose(first, 0.0, abs_tol=1e-9)
+        assert len(reads) == 1
+        assert "target_z" not in condition.get_details()
+
+    def test_a_reset_reads_the_road_afresh(self) -> None:
+        condition = self._condition()
+        self._measure(condition, road=None)
+        condition.reset()
+        first, _, reads = self._measure(condition, road=-10.0, at=(5.0, -5.0, -8.0))
+        assert first is not None and math.isclose(first, 2.0)
+        assert len(reads) == 1
+
+    def test_an_explicit_height_is_kept(self) -> None:
+        from unittest.mock import patch
+
+        condition = EntityPositionDistanceCondition(
+            entity_name="Ego",
+            position=CarlaWorldPose(x=0.0, y=0.0, z=0.0),
+            value=1.0,
+            vertical=True,
+            label="explicit",
+        )
+        with patch("autoware_carla_scenario.trajectory.resolve.road_height") as ground:
+            distance = condition._measure(_world(_actor("Ego", (0, 0, -10.0))))
+        assert distance is not None and math.isclose(distance, 10.0)
+        ground.assert_not_called()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import weakref
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import typesafe_carla.carla as carla
@@ -17,6 +18,9 @@ from autoware_carla_scenario import (
     ScenarioRunner,
     SpawnTransform,
 )
+from autoware_carla_scenario.run_outputs import run_output_paths
+from autoware_carla_scenario.scenario_runner import _run_file_stem
+from autoware_carla_scenario.slurm.stems import sequential_stems
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +633,113 @@ def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
     assert events == ["prepare", "start", "runner", "close", "stop"]
 
 
+def _fixture_queue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, runner: object
+) -> tuple[ScenarioQueue, list[str]]:
+    """A queue for as_fixture() whose start() hands it *runner* and whose
+    start() and stop() are recorded."""
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    monkeypatch.setattr(
+        CarlaServerManager, "executable", classmethod(lambda cls: tmp_path)
+    )
+    events: list[str] = []
+    queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=0)
+
+    def start() -> None:
+        events.append("start")
+        queue._runner = runner  # type: ignore[assignment]
+
+    monkeypatch.setattr(queue, "start", start)
+    monkeypatch.setattr(queue, "stop", lambda: events.append("stop"))
+    return queue, events
+
+
+def test_a_fixture_whose_scenario_raises_fails_only_that_scenario(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A scenario that raises on every attempt does not skip the session
+    (#1035): its result is a failed one, the others pass, and the queue is
+    stopped when the session ends."""
+    runner = _SecondCaseRaises(
+        AttributeError("'NoneType' object has no attribute 'lanelet_id'")
+    )
+    queue, events = _fixture_queue(monkeypatch, tmp_path, runner)
+    good = _NullScenario(_make_ego_config())
+    broken = _NullScenario(_make_ego_config())
+    queue.add(good)
+    queue.add(broken)
+    runner.failing = broken
+
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        yielded = next(generator)
+    except pytest.skip.Exception as exc:
+        # Raised in this test, a skip would skip it rather than fail it.
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    assert yielded is queue
+    assert queue.result_for(good).passed
+    errored = queue.result_for(broken)
+    assert not errored.passed
+    assert "lanelet_id" in errored.message
+    assert queue.errored_indices() == [1]
+    assert events == ["start"]
+
+    with pytest.raises(StopIteration):
+        next(generator)
+    assert events == ["start", "stop"]
+
+
+def test_a_result_fixture_of_an_errored_scenario_fails_its_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A CarlaScenarioFixture whose scenario raised on every attempt fails the
+    tests that use it, naming the error, rather than hand them a result a
+    test reading only, say, elapsed_seconds would pass on (#1035)."""
+    from autoware_carla_scenario import CarlaScenarioFixture
+
+    runner = _SecondCaseRaises(RuntimeError("no ground under the spawn point"))
+    queue, _ = _fixture_queue(monkeypatch, tmp_path, runner)
+    ego = _make_ego_config()
+    good = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    broken = CarlaScenarioFixture(_NullScenario, ego, queue=queue)
+    runner.failing = broken._scenario
+
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        next(generator)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the fixture skipped the session: {exc}")
+    request = MagicMock()
+    good_fixture = good.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    broken_fixture = broken.as_fixture().__wrapped__  # type: ignore[attr-defined]
+    assert good_fixture(request).passed
+    with pytest.raises(pytest.fail.Exception, match="no ground under"):
+        broken_fixture(request)
+    request.getfixturevalue.assert_called_with("carla_queue")
+
+
+def test_a_fixture_whose_queue_fails_to_start_skips_without_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """Only a failed start() (no CARLA session) skips the session; nothing
+    runs and the fixture does not stop the queue a second time."""
+    runner = MagicMock()
+    queue, events = _fixture_queue(monkeypatch, tmp_path, runner)
+    queue.add(_NullScenario(_make_ego_config()))
+
+    def failing_start() -> None:
+        events.append("start")
+        raise ConnectionError("CARLA did not answer")
+
+    monkeypatch.setattr(queue, "start", failing_start)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    with pytest.raises(pytest.skip.Exception, match="CARLA did not answer"):
+        next(generator)
+    runner.run_scenario.assert_not_called()
+    assert events == ["start"]
+
+
 def test_a_failed_stop_does_not_hide_why_start_failed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: object
 ) -> None:
@@ -681,3 +792,119 @@ class TestScenarioQueueIntegration:
     ) -> None:
         for result in carla_queue._results:
             assert isinstance(result, ScenarioResult)
+
+
+# ---------------------------------------------------------------------------
+# Retries and the files a failed attempt left (issue #1028)
+# ---------------------------------------------------------------------------
+
+
+class _FirstAttemptFailsMidRun:
+    """A runner that names its files as ScenarioRunner does: it opens the
+    trajectory log and the T4 dataset under the stem, and its first attempt
+    then fails.  It records, per attempt, the stem and whether the T4 dataset
+    directory was already there (the T4 writer refuses to write over one)."""
+
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+        self.attempts: list[tuple[str, bool]] = []
+
+    def run_scenario(
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: float | None = None,
+        case: object = None,
+        reset_world: bool = True,
+        file_stem: str | None = None,
+    ) -> ScenarioResult:
+        stem = file_stem or _run_file_stem(self.output_dir, type(scenario).__name__)
+        dataset = self.output_dir / f"{stem}.t4" / "0" / "annotation"
+        self.attempts.append((stem, dataset.exists()))
+        dataset.mkdir(parents=True, exist_ok=True)
+        attempt = len(self.attempts)
+        (self.output_dir / f"{stem}.trajectory.jsonl").write_text(f"{attempt}\n")
+        if attempt == 1:
+            raise RuntimeError("CARLA went away")
+        (self.output_dir / f"{stem}_result.json").write_text(f"{attempt}\n")
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self) -> None:
+        pass
+
+
+def test_a_local_retry_keeps_its_stem_and_replaces_what_the_attempt_left(
+    tmp_path: Path,
+) -> None:
+    """A case named by its class keeps its stem when retried: the failed
+    attempt's partial outputs make way for the retry's, and the next run of
+    the class takes the next stem, as slurm.stems names them."""
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=1
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()))
+    queue.add(_NullScenario(_make_ego_config()))
+
+    results = queue.run_all(release=True, continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert queue.errored_indices() == []
+    first, second = "_NullScenario", "_NullScenario-1"
+    assert runner.attempts == [(first, False), (first, False), (second, False)]
+    assert sequential_stems(["_NullScenario", "_NullScenario"]) == [first, second]
+    # The retry's, not the failed attempt's.
+    assert (tmp_path / f"{first}.trajectory.jsonl").read_text() == "2\n"
+    assert (tmp_path / f"{first}_result.json").read_text() == "2\n"
+    assert (tmp_path / f"{second}_result.json").read_text() == "3\n"
+    assert not (tmp_path / "_NullScenario-2.trajectory.jsonl").exists()
+
+
+def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
+    tmp_path: Path,
+) -> None:
+    """A SLURM case (a stem given) retried after a failed attempt finds none
+    of that attempt's outputs, its T4 dataset included; the outputs of other
+    stems stay."""
+    stem = "_NullScenario-3"
+    neighbour = run_output_paths(tmp_path, "_NullScenario-4")
+    neighbour[0].write_text("other case\n")
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=2
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem=stem)
+
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert result.passed
+    assert runner.attempts == [(stem, False), (stem, False)]
+    assert (tmp_path / f"{stem}.trajectory.jsonl").read_text() == "2\n"
+    assert neighbour[0].read_text() == "other case\n"
+
+
+def test_a_retry_waits_for_the_failed_attempts_recording_first(
+    tmp_path: Path,
+) -> None:
+    """The failed attempt's log is converted in the background: the queue
+    waits for that before it removes the attempt's outputs, so the
+    conversion neither reads the retry's log nor writes over its recording."""
+    rerun = MagicMock()
+    seen: list[bool] = []
+    rerun.wait.side_effect = lambda: seen.append(
+        (tmp_path / "_NullScenario.trajectory.jsonl").exists()
+    )
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=1, rerun=rerun
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()))
+
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert result.passed
+    # Once, between the attempts, with the failed attempt's log still there.
+    assert seen == [True]

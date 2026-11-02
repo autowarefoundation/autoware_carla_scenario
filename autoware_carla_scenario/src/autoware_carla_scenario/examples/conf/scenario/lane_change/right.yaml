@@ -22,7 +22,7 @@ sweep:
           - type: has_adjacent
             value: right
           # Long enough to finish the change before the road ends: the pass
-          # condition looks for the target lane on the road the ego starts on.
+          # condition looks for the target lane only up to the next junction.
           - type: lanelet_length
             rule: greater_than_or_equal
             value: 30.0

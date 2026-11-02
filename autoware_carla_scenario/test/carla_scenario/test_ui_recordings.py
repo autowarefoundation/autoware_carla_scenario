@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tarfile
+import time
 import types
 from pathlib import Path
 from typing import Any
@@ -236,6 +237,87 @@ def test_a_recording_older_than_its_log_is_made_again(
     rrd.write_bytes(b"old")
     os.utime(rrd, (1, 1))
     assert recordings.ensure_recording(log).read_bytes() == b"RRF2fake"
+    # Made into the cache: the one beside the log is left as it was.
+    assert rrd.read_bytes() == b"old"
+
+
+def test_a_stale_recording_with_sensors_beside_the_log_is_never_replaced(
+    tmp_path: Path, converter: _FakeConverter, _cache: Path
+) -> None:
+    # A run with rerun.lidar / rerun.cameras merged its sensors into Case.rrd;
+    # a copy that does not keep the times (cp -r) left the log newer.
+    _write_case(tmp_path, "Case", None)
+    log = tmp_path / "Case.trajectory.jsonl"
+    rrd = tmp_path / "Case.rrd"
+    rrd.write_bytes(b"trajectory + LiDAR + cameras")
+    now = time.time()
+    os.utime(rrd, (now - 5, now - 5))
+    os.utime(log, (now, now))
+    made = recordings.ensure_recording(log)
+    assert made.parent == _cache / "recordings"
+    assert made.read_bytes() == b"RRF2fake"
+    assert rrd.read_bytes() == b"trajectory + LiDAR + cameras"
+    # Served from the cache from now on, without converting again.
+    assert recordings.ensure_recording(log) == made
+    assert len(converter.calls) == 1
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name != "cache") == [
+        "Case.rrd",
+        "Case.trajectory.jsonl",
+    ]
+
+
+def test_the_cache_keeps_one_recording_a_log(
+    tmp_path: Path, converter: _FakeConverter, _cache: Path
+) -> None:
+    _write_case(tmp_path, "Case", None)
+    log = tmp_path / "Case.trajectory.jsonl"
+    rrd = tmp_path / "Case.rrd"
+    rrd.write_bytes(b"made by the run")
+    os.utime(rrd, (1, 1))
+    first = recordings.ensure_recording(log)
+    # The log changes again: the cached recording is made again, in place.
+    os.utime(first, (2, 2))
+    second = recordings.ensure_recording(log)
+    assert second == first
+    assert len(converter.calls) == 2
+    assert [p.name for p in (_cache / "recordings").iterdir()] == [first.name]
+    assert rrd.read_bytes() == b"made by the run"
+
+
+def test_a_recording_the_run_writes_during_the_conversion_is_kept(
+    tmp_path: Path, converter: _FakeConverter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_case(tmp_path, "Case", None)
+    log = tmp_path / "Case.trajectory.jsonl"
+    rrd = tmp_path / "Case.rrd"
+    convert = converter.convert
+
+    def run_writes_meanwhile(jsonl: str, out_rrd: str, **kwargs: Any) -> Any:
+        # scenario-run converts its log and merges its sensors meanwhile.
+        rrd.write_bytes(b"trajectory + LiDAR")
+        return convert(jsonl, out_rrd, **kwargs)
+
+    monkeypatch.setattr(converter, "convert", run_writes_meanwhile)
+    assert recordings.ensure_recording(log) == rrd
+    assert rrd.read_bytes() == b"trajectory + LiDAR"
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".rrd")] == [
+        "Case.rrd"
+    ]
+
+
+def test_a_fresh_recording_beside_the_log_wins_over_the_cache(
+    tmp_path: Path, converter: _FakeConverter
+) -> None:
+    _write_case(tmp_path, "Case", None)
+    log = tmp_path / "Case.trajectory.jsonl"
+    rrd = tmp_path / "Case.rrd"
+    rrd.write_bytes(b"old")
+    os.utime(rrd, (1, 1))
+    recordings.ensure_recording(log)
+    # Converted again beside the log (python -m autoware_carla_scenario.rerun).
+    rrd.write_bytes(b"converted again, sensors kept")
+    assert recordings.ensure_recording(log) == rrd
+    assert len(converter.calls) == 1
 
 
 def test_a_recording_already_there_needs_no_converter(

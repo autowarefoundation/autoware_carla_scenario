@@ -15,7 +15,7 @@ Nothing here imports CARLA, Lanelet2 or Hydra.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -176,6 +176,21 @@ def resolve_map_paths(
         )
         if resolved is not None:
             name = name or resolved.name
+
+    if (
+        resolved is not None
+        and name
+        and name != resolved.name
+        and (resolved.xodr_path is None or resolved.xodr_is_derived)
+    ):
+        # The resolver looks for an OpenDRIVE taken from CARLA under the map
+        # directory's name; a run on a differently named CARLA map wrote it
+        # under that name instead (MapPaths.derived_xodr).  One captured under
+        # the directory's name is another town's, so it is never used here.
+        captured = resolved.cached_derived_xodr(name)
+        resolved = replace(
+            resolved, xodr_path=captured, xodr_is_derived=captured is not None
+        )
 
     return MapPaths(
         name=name,

@@ -7,14 +7,18 @@ a T4Scene, the Protobuf exchange contract of tier4/e2e-devkit
 (``t4_scene.proto``, contract 0.1.0): the ego's poses and motion, every other
 road user near it as a box, and the lights' states on the lanelets they
 govern, on one uniform time grid, in Autoware's ``map`` frame, with the
-Lanelet2 map the run was on as a separate ``MapResource``.
+Lanelet2 map the run was on as a separate ``MapResource``.  With the map, the
+scene's route is the lanelets the ego drove along: its ``base_link`` walked
+along the map's lane graph as a live scene's road ahead is
+(:meth:`RouteGraph.match`).
 
 The ego's velocity is its ``base_link``'s, like its pose: the actor origin's
 the log records plus the lever arm ``w x r`` of its angular velocity, which
 the log records from version 2's ``angular_velocity`` field (a log written
 before it keeps the origin's velocity, and has no angular velocity to write).
 What the log does not hold is left out, not invented: the ego's acceleration
-and steering, a route and a goal; a vehicle's
+and steering, the route it was given (the scene's is the one it drove) and a
+goal; a vehicle's
 class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``);
 a light's bulbs beyond its one round lamp's colour.
 A tick the log does not have (it skips a tick without road users) is a row
@@ -83,6 +87,11 @@ _TURN_INDICATORS = {"off": 1, "left": 2, "right": 3, "hazard": 4}
 #: that took its lights from there is shown the same lanelets lit.
 _LIGHT_SEARCH_M = 50.0
 _JOIN_M = 0.3
+
+#: The ego's ``base_link`` points closer than this to the last one kept are
+#: passed over before its route is walked: a stop would pile them up, and
+#: :meth:`RouteGraph.match` takes a point's heading from its neighbours.
+_ROUTE_SPACING_M = 1.0
 
 _TICK_NS = round(FIXED_DELTA_SECONDS * 1e9)
 _DTYPES = {
@@ -848,6 +857,7 @@ def trajectory_log_to_t4_scene(
     lanelet2_path: Optional[Path | str] = None,
     xodr_path: Optional[Path | str] = None,
     projector_type: Optional[str] = None,
+    with_route: bool = True,
 ) -> T4SceneExport:
     """Convert a trajectory log into a T4Scene and the map resource it names.
 
@@ -870,6 +880,8 @@ def trajectory_log_to_t4_scene(
         xodr_path: The OpenDRIVE file read for the map's origin, likewise.
         projector_type: The projection to read the map with, instead of the
             run's.
+        with_route: With the map, write the lanelets the ego drove along as
+            the scene's route, the same on every row (:func:`driven_route`).
 
     Raises:
         ValueError: If the log has no tick or no ego, or *step_s* or
@@ -902,9 +914,46 @@ def trajectory_log_to_t4_scene(
         rear_axle_offset_m=rear_axle_offset_m,
         source=str(path),
     )
+    if with_route and loaded is not None and loaded.route is not None:
+        _fill_route(scene, driven_route(scene, loaded.route))
     return T4SceneExport(
         scene=scene, map_resource=None if loaded is None else loaded.resource
     )
+
+
+def driven_route(scene: pb.T4Scene, graph: RouteGraph) -> list[int]:
+    """The lanelets the ego of *scene* drove along, in order: its ``base_link``
+    on the rows it is on, a point every :data:`_ROUTE_SPACING_M` metres, walked
+    along *graph* (:meth:`RouteGraph.match`) -- straight on, through a
+    junction's branch and across a lane change, as a live scene's road ahead
+    is.  Empty when the ego hardly moved or drove on no lanelet.
+
+    The log does not say what route the ego was given -- the scenario's
+    waypoints, or the one Autoware planned -- so this is the route as driven:
+    Autoware's route would also hold the lanelets beside it that it could
+    have changed to.
+    """
+    ego = scene.ego
+    rows = int(scene.timestamps_ns.shape[0])
+    poses = np.frombuffer(ego.poses.data, dtype="<f8").reshape(rows, 3)
+    available = np.frombuffer(ego.available.data, dtype=np.bool_)
+    kept: list[npt.NDArray[np.float64]] = []
+    for xy in poses[available, :2]:
+        if not kept or float(np.linalg.norm(xy - kept[-1])) >= _ROUTE_SPACING_M:
+            kept.append(xy)
+    if len(kept) < 2:
+        return []
+    return graph.match(np.array(kept))
+
+
+def _fill_route(scene: pb.T4Scene, lanelet_ids: Sequence[int]) -> None:
+    """Write *lanelet_ids* as the route of every row, as a live scene writes
+    its route; nothing when there are none."""
+    if not lanelet_ids:
+        return
+    rows = int(scene.timestamps_ns.shape[0])
+    route = pb.RouteData(lane_ids=_array(list(lanelet_ids), "i8"))
+    scene.routes.rows.extend(pb.RouteRow(value=route) for _ in range(rows))
 
 
 def ego_of(log: _Log, source: str = "the log") -> int:

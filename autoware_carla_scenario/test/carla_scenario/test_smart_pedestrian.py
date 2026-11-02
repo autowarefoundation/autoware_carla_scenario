@@ -30,6 +30,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.entity.pedestrian_entity import walker_control_speed
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
+from autoware_carla_scenario.kinematics.walker_motion import WalkerVelocities
 from autoware_carla_scenario.pedestrian._proto import pedestrian_motion_pb2 as pb
 from autoware_carla_scenario.pedestrian._proto import (
     pedestrian_motion_pb2_grpc as pb_grpc,
@@ -430,6 +431,26 @@ class TestSmartPedestrianControllerAction:
         assert (control.direction.x, control.direction.y) == pytest.approx(
             (0.0, 1.0), abs=1e-6
         )
+
+    def test_a_step_aside_is_measured_where_it_is_not_reported(
+        self, scene: _Scene
+    ) -> None:
+        # Facing +y, the motion steps along +x: told only the way it faces,
+        # the walker reports standing (CARLA, #957), and what reads a
+        # walker's velocity measures the step from where it stands.
+        poser = WalkerPoser("walker1", "test")
+        assert poser.begin(upper_body_only=False)
+        velocities = WalkerVelocities()
+        for tick in range(3):
+            poser.place(
+                directions_from_joints(_BODY, 0.0),
+                carla.Location(x=10.0 + 0.8 * DT * tick, y=5.0, z=1.0),
+                90.0,
+                carla.Vector3D(0.8, 0.0, 0.0),
+            )
+            assert scene.walker.controls[-1].speed == 0.0
+            measured = velocities.walker(scene.walker, DT * tick)  # type: ignore[arg-type]
+        assert (measured.x, measured.y) == pytest.approx((0.8, 0.0))
 
     def test_a_missing_pedestrian_moves_nothing(self, generator: _Generator) -> None:
         action = SmartPedestrianControllerAction("nobody", duration_s=1.0)

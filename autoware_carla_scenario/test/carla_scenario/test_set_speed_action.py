@@ -420,7 +420,7 @@ class TestInitPhase:
 
 class TestConstruction:
     def test_a_negative_target_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="must not be negative"):
+        with pytest.raises(ValueError, match="must be finite and not negative"):
             SetSpeedAction(entity_name="npc1", target_speed_kmh=-1.0)
 
     def test_a_zero_rate_is_refused_rather_than_never_arriving(self) -> None:
@@ -430,6 +430,29 @@ class TestConstruction:
     def test_a_negative_rate_is_refused(self) -> None:
         with pytest.raises(ValueError, match="must be positive"):
             SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=-1.0)
+
+    @pytest.mark.parametrize("target", [math.nan, math.inf])
+    def test_a_non_finite_target_is_refused(self, target: float) -> None:
+        """NaN fails every comparison, so a rate-limited walk to it would never
+        arrive and would send `set_desired_speed(nan)` every tick."""
+        with pytest.raises(
+            ValueError, match="target_speed_kmh must be finite and not negative"
+        ):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=target)
+        with pytest.raises(
+            ValueError, match="target_speed_kmh must be finite and not negative"
+        ):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=target, rate_kmh_s=1.0)
+
+    @pytest.mark.parametrize("rate", [math.nan, math.inf])
+    def test_a_non_finite_rate_is_refused(self, rate: float) -> None:
+        """An unbounded rate is `None`; NaN and inf are not rates."""
+        with pytest.raises(ValueError, match="rate_kmh_s must be positive and finite"):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=rate)
+
+    def test_a_target_of_zero_without_a_rate_is_accepted(self) -> None:
+        SetSpeedAction(entity_name="npc1", target_speed_kmh=0.0)
+        SetSpeedAction(entity_name="npc1", target_speed_kmh=0.0, rate_kmh_s=5.0)
 
     def test_a_rate_that_is_told_not_to_reissue_is_refused(self) -> None:
         """The seam carries a target and not a rate, so the walk must re-send.

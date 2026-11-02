@@ -223,7 +223,11 @@ class _Vehicle:
     def __init__(self) -> None:
         self.routes: list[tuple[Lanelet2Pose, tuple[Lanelet2Pose, ...]]] = []
         self.speeds: list[float] = []
+        self.ended: int = 0
         self.actor = None
+
+    def end_route(self, world):  # noqa: ANN001, ANN201
+        self.ended += 1
 
     def route_to(
         self, world, goal, *, initial_pose=None, ground_projection=None, waypoints=()
@@ -1746,12 +1750,80 @@ def test_a_driven_vehicle_at_its_route_end_stops_if_asked(
     )
     action._path = ResolvedTrajectory([0.0, 20.0], [0.0, 0.0], [0.0, 0.0], [None, None])
     action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    vehicle.finish_at = lambda world, points: True  # type: ignore[attr-defined]
     at_end = SimpleNamespace(
         get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=20.0, y=0.0)),
         get_speed_limit=lambda: 50.0,
     )
     action._pace_vehicle(_WORLD, vehicle, at_end)  # type: ignore[arg-type]
     assert vehicle.speeds[-1] == pytest.approx(told)
+
+
+def _paced_to(action: RoutingAction, length: float) -> None:
+    """Put *action* mid-run on a paced route of *length* m, as a timed
+    ``driver`` run is once its vehicle was given the route."""
+    from autoware_carla_scenario.actions._route_pacing import RoutePacer
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    action._path = ResolvedTrajectory(
+        [0.0, length], [0.0, 0.0], [0.0, 0.0], [None, None]
+    )
+    action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    action._stepping = True
+    action._route_held = True
+
+
+def _standing_at(x: float):  # noqa: ANN202
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=x, y=0.0)),
+        get_speed_limit=lambda: 50.0,
+        get_world=lambda: _WORLD,
+    )
+
+
+class TestTheRouteIsEnded:
+    """A watched ``driver`` route is ended on its vehicle (``end_route``),
+    once, however its run ends, so that its backend gives back the lane
+    changes the route turned off (#1100)."""
+
+    def test_on_arrival(self, vehicle: _Vehicle) -> None:
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(10.0))  # type: ignore[arg-type]
+        assert vehicle.ended == 0  # on its way
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(20.0))  # type: ignore[arg-type]
+        assert action._finished
+        assert vehicle.ended == 1
+        action.close()
+        assert vehicle.ended == 1  # once
+
+    def test_when_overridden(self, vehicle: _Vehicle) -> None:
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(10.0))  # type: ignore[arg-type]
+        action._stop_overridden(_WORLD, "other")
+        assert vehicle.ended == 1
+        action._stopped(_WORLD)
+        assert vehicle.ended == 1
+
+    def test_when_closed_mid_route(self, vehicle: _Vehicle) -> None:
+        vehicle.actor = _standing_at(10.0)  # type: ignore[assignment]
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action.close()
+        assert vehicle.ended == 1
+
+    def test_not_an_untimed_route_handed_over(self, vehicle: _Vehicle) -> None:
+        """Handed over untimed, the route is its driver's to the end: its run
+        ends at once, and the route with it would be left mid-way."""
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0))
+        action.tick(_WORLD, 0.0)
+        action.tick(_WORLD, 0.05)
+        assert vehicle.routes
+        action.close()
+        assert vehicle.ended == 0
 
 
 def test_a_vehicle_stopping_at_its_goal_is_driven_there_exactly(
@@ -1845,6 +1917,28 @@ def test_a_vehicle_stopping_at_its_goal_is_driven_from_before_its_last_lane_chan
     assert routing_module._finish_from(across) == pytest.approx(
         across.length - crossing_at + 5.0
     )
+
+
+def test_a_goal_route_is_driven_only_from_a_lane_change_near_its_goal() -> None:
+    """A route to a goal, planned on the lanes, is driven from before its last
+    lane change only when that is near the goal: one 180 m before it is its
+    driver's to make, and the last _FINISH_M are driven as ever."""
+    from autoware_carla_scenario.actions import routing as routing_module
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    far = ResolvedTrajectory(
+        [0.0, 20.0, 22.0, 200.0], [0.0, 0.0, 3.5, 3.5], [0.0] * 4, [None] * 4
+    )
+    within = routing_module._OFF_LANE_WITHIN_M
+    assert routing_module._finish_from(far, None, within) == routing_module._FINISH_M
+    near = ResolvedTrajectory(
+        [0.0, 20.0, 30.0, 50.0], [0.0, 0.0, 3.5, 3.5], [0.0] * 4, [None] * 4
+    )
+    assert routing_module._finish_from(near, None, within) == pytest.approx(
+        near.length - near.vertex_distance(1) + 5.0
+    )
+    # A route written out keeps its rule: from before the change, however far.
+    assert routing_module._finish_from(far) > 150.0
 
 
 def test_a_spawn_at_speed_keeps_its_place_behind_one_driving_away(

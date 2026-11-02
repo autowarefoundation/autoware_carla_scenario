@@ -11,7 +11,10 @@ directories).  A trailing ``**`` means everything below it: it is read as
 ``lane_change/`` and ``scenario/``.  A ``**`` inside a component
 (``lane_change/**left``) is refused with a :class:`ValueError` naming the
 pattern, the same on every Python (3.10-3.12 would raise their own error,
-3.13+ would read it as ``*``).  A name without glob characters
+3.13+ would read it as ``*``).  So is a pattern that could reach outside
+``scenario/``: one that starts with ``/`` (which :meth:`pathlib.Path.glob`
+would refuse with :class:`NotImplementedError`) or has a ``..``
+component.  A name without glob characters
 (:func:`is_scenario_glob`) matches its one file.  The names are
 Hydra config paths relative to ``scenario/`` without the ``.yaml`` suffix
 (``"lane_change/left"``), each once, in plain string order.  The viewer's
@@ -53,11 +56,22 @@ def scenario_dirs(conf_dirs: list[Path]) -> list[Path]:
 def _glob_pattern(pattern: str) -> str:
     """*pattern* as :meth:`pathlib.Path.glob` reads it alike on every Python.
 
-    A trailing ``**`` component becomes ``**/*`` (everything below); a
-    ``**`` that is not a whole component raises :class:`ValueError`.
+    A trailing ``**`` component becomes ``**/*`` (everything below).  A
+    pattern that starts with ``/`` or has a ``..`` component, or a ``**``
+    that is not a whole component, raises :class:`ValueError`.
     """
+    if pattern.startswith("/"):
+        raise ValueError(
+            f"invalid scenario pattern {pattern!r}: it must be relative to "
+            "'scenario/' (e.g. 'lane_change/*'), not start with '/'"
+        )
     parts = pattern.split("/")
     for part in parts:
+        if part == "..":
+            raise ValueError(
+                f"invalid scenario pattern {pattern!r}: '..' cannot be a path "
+                "component (patterns stay within 'scenario/')"
+            )
         if part != "**" and "**" in part:
             raise ValueError(
                 f"invalid scenario pattern {pattern!r}: '**' can only be an "
@@ -77,7 +91,8 @@ def resolve_scenario_glob(pattern: str, conf_dirs: list[Path]) -> list[str]:
 
     Raises:
         ValueError: *pattern* has a ``**`` that is not a whole path
-            component (``lane_change/**left``).
+            component (``lane_change/**left``), starts with ``/``
+            (``/lane_change/*``) or has a ``..`` component (``../*``).
     """
     glob = _glob_pattern(pattern)
     names: set[str] = set()

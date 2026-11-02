@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult, refuse_post_run
@@ -26,7 +27,8 @@ class PersistentCondition(BaseCondition):
             this condition passes.
 
     Raises:
-        ValueError: If *duration* is not positive.
+        ValueError: If *duration* is not positive, or not finite: NaN fails
+            every comparison, so a NaN duration would never fire.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -37,8 +39,8 @@ class PersistentCondition(BaseCondition):
     def __init__(
         self, condition: BaseCondition, duration: float, *, label: str | None = None
     ) -> None:
-        if duration <= 0:
-            raise ValueError("duration must be positive")
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError("duration must be positive and finite")
         refuse_post_run(condition, "PersistentCondition")
         super().__init__(label=label if label is not None else condition.label)
         self._condition = condition

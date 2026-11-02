@@ -298,19 +298,19 @@ controls: {}
 # that sets `rain`, `wetness` or `precipitation_deposits` scales every
 # vehicle's tire friction into the range that water leaves -- a wet road
 # about 0.65-0.85 of the dry grip, a flooded one 0.45-0.65 -- at
-# `tire_friction_quantile` (0-1, the middle when null; an odd_sample sweep
+# `tire_friction_quantile` (0-1, the median when null; an odd_sample sweep
 # draws it per case). `tire_friction` fixes the share of the dry grip instead.
 #
 # How far drivers see follows the weather too (docs/odd.md): a run that sets
 # `rain`, `precipitation`, `fog_density` or `sun_altitude_angle` records the
 # visibility its weather leaves -- a clear day 250-400 m, night 50-150 m,
-# heavy fog 15-40 m -- at `visibility_quantile` (0-1, the middle when null; an
+# heavy fog 15-40 m -- at `visibility_quantile` (0-1, the median when null; an
 # odd_sample sweep draws it per case). `visibility_m` fixes it instead. The
 # `sumo` traffic backend holds its traffic to the speed it can stop from
 # within it (traffic.vehicles.follow_visibility, on by default there); the
 # TrafficManager does so with follow_visibility:
 # true, and only logs it otherwise.
-# The ranges of the grip and of the visibility are fuzzy rules
+# The grip and the visibility follow conditional distributions
 # (autoware_carla_scenario/weather_rules.yaml, docs/odd.md "Weather rules"):
 # `rules` names a rule file -- a path (relative to where the run starts) or
 # an https:// URL -- merged over the default rules (it names only what it

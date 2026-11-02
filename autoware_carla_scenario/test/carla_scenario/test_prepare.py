@@ -286,6 +286,94 @@ class TestAssignGpus:
         placed = assign_gpus([("a", Resources(gpu_memory_mb=24000, gpu=0))], host)
         assert placed == {"a": host.gpus[0]}
 
+    def test_a_backend_set_to_a_gpu_is_placed_before_the_others(self) -> None:
+        # The larger unpinned backend would take GPU 0's room first (#1121).
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 10000), Gpu(1, "GPU-b", 9000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [
+                ("policy", Resources(gpu_memory_mb=8000)),
+                ("perception", Resources(gpu_memory_mb=5000, gpu=0)),
+            ],
+            host,
+        )
+        assert placed == {"policy": host.gpus[1], "perception": host.gpus[0]}
+
+    def test_a_backend_set_to_a_gpu_too_small_is_still_refused(self) -> None:
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 4000), Gpu(1, "GPU-b", 9000)), memory_mb=1000
+        )
+        with pytest.raises(
+            InsufficientResourcesError,
+            match="perception: 5000 MiB of GPU memory needed, 4000 MiB free "
+            r"on the GPU it is set to \(0\)",
+        ):
+            assign_gpus(
+                [
+                    ("policy", Resources(gpu_memory_mb=8000)),
+                    ("perception", Resources(gpu_memory_mb=5000, gpu=0)),
+                ],
+                host,
+            )
+
+    def test_the_backend_that_fits_nowhere_is_the_one_named(self) -> None:
+        # The pinned backend fits its GPU; the unpinned one fits no GPU.
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 10000), Gpu(1, "GPU-b", 3000)), memory_mb=1000
+        )
+        with pytest.raises(InsufficientResourcesError) as raised:
+            assign_gpus(
+                [
+                    ("policy", Resources(gpu_memory_mb=8000)),
+                    ("perception", Resources(gpu_memory_mb=5000, gpu=0)),
+                ],
+                host,
+            )
+        message = str(raised.value)
+        assert (
+            "policy: 8000 MiB of GPU memory needed, 5000 MiB free on the "
+            "roomiest GPU (0)" in message
+        )
+        assert "perception: 5000 MiB of GPU memory needed" not in message
+
+    def test_a_placement_the_greedy_one_misses_is_found(self) -> None:
+        # Pinned first, the roomiest GPU each time leaves "small" out:
+        # perception and policy on GPU 0, "large" on GPU 1, no room for
+        # "small". Placing policy beside perception instead fits them all.
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 11000), Gpu(1, "GPU-b", 11000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [
+                ("policy", Resources(gpu_memory_mb=9000)),
+                ("large", Resources(gpu_memory_mb=6000)),
+                ("small", Resources(gpu_memory_mb=5000)),
+                ("perception", Resources(gpu_memory_mb=1000, gpu=0)),
+            ],
+            host,
+        )
+        assert placed == {
+            "perception": host.gpus[0],
+            "policy": host.gpus[0],
+            "large": host.gpus[1],
+            "small": host.gpus[1],
+        }
+
+    def test_the_greedy_placement_is_kept_when_it_fits(self) -> None:
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 8000), Gpu(1, "GPU-b", 8000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [
+                ("a", Resources(gpu_memory_mb=3000)),
+                ("b", Resources(gpu_memory_mb=2000)),
+                ("c", Resources(gpu_memory_mb=1000)),
+            ],
+            host,
+        )
+        assert placed == {"a": host.gpus[0], "b": host.gpus[1], "c": host.gpus[1]}
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")

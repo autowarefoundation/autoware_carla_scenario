@@ -56,7 +56,7 @@ class DespawnAction(BaseAction):
 
     Raises:
         ValueError: For the ego, which a run is measured on; for neither or
-            both of *entity_name* and *name*.
+            both of *entity_name* and *name* (a blank *name* is none).
     """
 
     _entity_name: str
@@ -73,7 +73,13 @@ class DespawnAction(BaseAction):
         once: bool = True,
         name: Optional[str] = None,
     ) -> None:
-        if (entity_name is None) == (name is None or name == ""):
+        # A blank name (what a card's empty text field may hold) is none.
+        prop_name = ""
+        if name is not None:
+            given_name: str = name
+            if given_name.strip() != "":
+                prop_name = given_name
+        if (entity_name is None) == (prop_name == ""):
             raise ValueError(
                 f"{label}: despawn an entity or a prop (a name), one of the two"
             )
@@ -81,7 +87,7 @@ class DespawnAction(BaseAction):
             raise ValueError(f"{label}: the ego cannot be despawned")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = "" if entity_name is None else str(entity_name)
-        self._name = "" if name is None else name
+        self._name = prop_name
         self._despawned = []
 
     @property

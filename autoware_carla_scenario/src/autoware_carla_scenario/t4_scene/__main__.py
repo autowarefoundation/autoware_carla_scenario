@@ -71,6 +71,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--no-map", action="store_true", help="write the scene without a map"
     )
     parser.add_argument(
+        "--no-route",
+        action="store_true",
+        help="leave out the route (with a map, the lanelets the ego drove along)",
+    )
+    parser.add_argument(
         "--lanelet2",
         type=Path,
         help="the Lanelet2 map, when it has moved since the run",
@@ -107,6 +112,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 with_map=not args.no_map,
                 lanelet2_path=args.lanelet2,
                 xodr_path=args.xodr,
+                with_route=not args.no_route,
             )
         except Exception as error:  # noqa: BLE001 - one bad log does not stop the rest
             print(f"{log}: {error}", file=sys.stderr)  # noqa: T201

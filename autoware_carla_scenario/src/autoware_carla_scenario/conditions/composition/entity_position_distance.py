@@ -81,6 +81,8 @@ class EntityPositionDistanceCondition(CompositionCondition):
     # through it (docs/typecheck.md).
     _at: TrajectoryVertex
     _target: Optional[Vector3]
+    # False when the place has no height: neither its own nor the road's.
+    _height_known: bool
     _unplaced: bool
     _placed_on_build: bool
     _vertical: bool
@@ -113,6 +115,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
         super().__init__(entity_name=entity_name, label=label)
         self._at = TrajectoryVertex(position)
         self._target = None
+        self._height_known = True
         self._unplaced = False
         # A map pose now (a lanelet the map lacks fails here); any other
         # when it is first measured to.  Named as the class: Codon does not
@@ -141,9 +144,9 @@ class EntityPositionDistanceCondition(CompositionCondition):
         details = super().get_details()
         target = self._target
         if target is not None:
-            details.update(
-                {"target_x": target.x, "target_y": target.y, "target_z": target.z}
-            )
+            details.update({"target_x": target.x, "target_y": target.y})
+            if self._height_known:
+                details["target_z"] = target.z
         else:
             details["position"] = type(self._at.position).__name__
         details.update(
@@ -163,14 +166,21 @@ class EntityPositionDistanceCondition(CompositionCondition):
         self._unplaced = False
         if not self._placed_on_build:
             self._target = None
+            self._height_known = True
 
-    def _place(self) -> Optional[Vector3]:
+    def _place(self, world: "carla.World") -> Optional[Vector3]:
         """The place in CARLA's world, placed the first time it is asked for;
-        ``None`` (said once) when it cannot be."""
+        ``None`` (said once) when it cannot be.
+
+        A place with no height of its own (a :class:`MapPose` without ``z``, a
+        crosswalk or roadside pose) stands on the road under it, read once from
+        the run's map; where none can be read the height is unknown and left
+        out of a vertical measurement."""
         target = self._target
         if target is not None or self._unplaced:
             return target
-        from ...trajectory.resolve import resolve_position  # noqa: PLC0415
+        from ...coordinate.map_manager import run_carla_map  # noqa: PLC0415
+        from ...trajectory.resolve import resolve_position, road_height  # noqa: PLC0415
 
         try:
             x, y, z, _yaw = resolve_position(self._at.position)
@@ -182,6 +192,12 @@ class EntityPositionDistanceCondition(CompositionCondition):
         height = 0.0
         if z is not None:
             height = float(z)
+        else:
+            surface = road_height(run_carla_map(world))(float(x), float(y))
+            if surface is not None:
+                height = float(surface)
+            else:
+                self._height_known = False
         placed = Vector3(float(x), float(y), height)
         self._target = placed
         return placed
@@ -192,12 +208,14 @@ class EntityPositionDistanceCondition(CompositionCondition):
         entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
-        target = self._place()
+        target = self._place(world)
         if target is None:
             return None
 
         location = entity.get_location()
-        dz = (target.z - location.z) if self._vertical else 0.0
+        dz = 0.0
+        if self._vertical and self._height_known:
+            dz = target.z - location.z
         offset = Vector3(
             target.x - location.x,
             target.y - location.y,

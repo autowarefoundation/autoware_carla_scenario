@@ -2,8 +2,10 @@
 
 A pedestrian waits at the kerb 35 m ahead of the ego and runs out across its
 lane once the ego is within 20 m. The ego must not hit them -- on every lane at
-the right-hand edge of a road, where the pedestrian steps straight off the kerb
-into it.
+the kerb of a road, where the pedestrian steps straight off the kerb into it.
+The kerb is on the side the road's traffic keeps to: the right of the lane in
+right-hand traffic, the left in left-hand traffic, as the OpenDRIVE road's
+`rule` says.
 
 ```bash
 # Every case on the map, one run each
@@ -19,8 +21,8 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a lane with no lane on its right, not in a junction, at least 55 m long, excluding the map's lanelets with no 3D model. 5 m along it, 30 km/h. Goal *from the search*: 50 m along the matched lanelet, past the crossing. |
-| **Pedestrian** | On *the matched lanelet* -- the ego's -- 40 m along it, 3 m to the right of its centre, turned 90&deg; to face across the lane. A walker CARLA refuses inside the kerb is tried again higher up. |
+| **Ego** | Constraint search: a lane with no lane on its kerb side (its left, set for the left-hand-traffic Nishi-Shinjuku; see below), not in a junction, at least 55 m long, excluding the map's lanelets with no 3D model. 5 m along it, 30 km/h. Goal *from the search*: 50 m along the matched lanelet, past the crossing. |
+| **Pedestrian** | On *the matched lanelet* -- the ego's -- 40 m along it, 3 m from its centre on the kerb side, turned 90&deg; to face across the lane. A walker CARLA refuses inside the kerb is tried again higher up. |
 | **Initialization** | Every traffic light green. |
 | **Pedestrian, once the ego is within 20 m** | Walk straight ahead at 2 m/s. With `turn_back_ttc_s` or `turn_back_distance_m` set, it turns back to the kerb when a vehicle comes that close along the road while it is still within `turn_back_within_m` of the kerb (see below). |
 | **Pass** | The ego has come within 3 m of the point 50 m along its lane, 10 m past the crossing. |
@@ -31,7 +33,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | Parameter | Value |
 |---|---|
 | Pedestrian ahead of the ego | 35 m (at s = 40 m) |
-| Off the lane's centre | 3 m to the right |
+| Off the lane's centre (`pedestrian_offset_m`) | 3 m, on the kerb side (the sign is ignored) |
 | Runs out when the ego is within | 20 m |
 | Walking speed | 2 m/s |
 | Passed once within 3 m of | 10 m past the crossing (s = 50 m) |
@@ -40,6 +42,22 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | Turn back at TTC (`turn_back_ttc_s`) | off |
 | Turn back at distance (`turn_back_distance_m`) | off |
 | Turn back within (`turn_back_within_m`) | 1 m of the kerb |
+
+## The kerb side in the sweep
+
+The pedestrian's side is read from the map, but the sweep's `has_adjacent`
+constraint cannot read the traffic rule: the shipped file asks for lanes with
+no lane on their **left**, the kerb lanes of Nishi-Shinjuku, which drives on
+the left. To sweep a right-hand-traffic map such as Town10HD_Opt, use a copy of
+`pedestrian_dart_out.yaml` with `value: right` in that constraint.
+
+The constraint sets `include_forks: true`: a turn pocket that forks off the
+same lanelet as the lane beside it counts as that lane's neighbour, though
+the two share no boundary and the routing graph gives neither a neighbour. On
+Nishi-Shinjuku that keeps the right-turn pockets 160, 185, 213 and 556 out of
+the sweep, as they lie beside 159, 184, 215 and 555. The other sweeps that
+ask `has_adjacent` (lane_change, lane_change_fail, cut_in) leave it off: a
+lane change needs the lane the routing graph can change into.
 
 ## A pedestrian who turns back
 
@@ -65,4 +83,4 @@ uv run scenario scenario=pedestrian_dart_out/pedestrian_dart_out map=<map> \
 
 <video controls muted playsinline width="100%" src="../media/pedestrian_dart_out.mp4"></video>
 
-*Town10HD_Opt, the first case: the search matched lanelet 324, where the ego starts. Result: PASSED.*
+*Town10HD_Opt, swept with `value: right`, the first case: the search matched lanelet 324, where the ego starts. Result: PASSED.*

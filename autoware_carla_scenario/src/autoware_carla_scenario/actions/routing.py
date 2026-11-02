@@ -58,7 +58,7 @@ from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
 from ..control_domain import ControlDomain, movement_of
-from .base import BaseAction, TickTiming
+from .base import TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -201,18 +201,28 @@ def _beside(
 
 
 def _finish_from(
-    path: ResolvedTrajectory, written: Optional[ResolvedTrajectory] = None
+    path: ResolvedTrajectory,
+    written: Optional[ResolvedTrajectory] = None,
+    change_within: Optional[float] = None,
 ) -> float:
     """How far (m) before *path*'s end a stop_at_goal vehicle is driven the
     rest of the way itself: :data:`_FINISH_M`, or from before the route's last
     change to the lane beside -- which its driver, keeping to its lane, would
-    leave to the last metres (vehicle_134, crossing behind a lorry)."""
+    leave to the last metres (vehicle_134, crossing behind a lorry) -- when
+    that is no more than *change_within* m (``None``: any distance) before
+    the end: a route to a goal, planned on the lanes, changes lanes wherever
+    the lanes do, and its driver makes a change far from the goal itself."""
     changes = lane_changes(list(path.xs), list(path.ys))
     last = changes[-1][0] if changes else -1
     finish = _FINISH_M
     if last >= 0:
-        before = path.length - path.vertex_distance(last) + _BEFORE_LANE_CHANGE_M
-        finish = max(finish, before)
+        left = path.length - path.vertex_distance(last)
+        near = True
+        if change_within is not None:
+            within: float = change_within
+            near = left <= within
+        if near:
+            finish = max(finish, left + _BEFORE_LANE_CHANGE_M)
     if written is not None:
         # And from before where its trajectory as written leaves its lanes'
         # middle (vehicle_96, moved over early to pass a bus's corner, which
@@ -320,11 +330,15 @@ class RoutingAction(TrajectoryRun):
             pedestrian walks this route.
         trajectory: The waypoints, the last one the goal, instead of *goal*
             and *waypoints*.
-        mode: Who moves the entity (:class:`RoutingMode`).
+        mode: Who moves the entity (:class:`RoutingMode`); a route to a
+            *goal* is ``driver`` only.
         time_reference: How the waypoints' times map onto the scenario clock;
             ``None`` ignores them.
-        initial_distance_offset: Start this many metres along the trajectory.
-        until: Overrides what ends the run.
+        initial_distance_offset: Start this many metres along the trajectory
+            (a *trajectory* only: a goal's stops are no way to start along).
+        until: Overrides what ends the run.  A ``follow`` or ``position``
+            run it ends before the end of the trajectory stops the entity and
+            gives a vehicle back to its driver, as an override does.
         control_config: Gains for ``follow`` mode.
         speed: The speed (m/s) the entity goes at where no time paces it;
             ``None`` takes its own (``follow``/``position``: the speed it has
@@ -335,11 +349,14 @@ class RoutingAction(TrajectoryRun):
             and hold it there (its driver asked for no speed) rather than let
             its driver drive on at its own speed (the default): a road user
             replayed from a recording waits where it was last seen going.
+            A route to a goal is then followed to its end, as a timed one is:
+            the run goes on until the vehicle arrives.
 
     Raises:
         ValueError: Without a goal or a trajectory, with both, with
-            waypoints beside a trajectory, a walking speed that is not
-            positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
+            waypoints beside a trajectory, a goal with a mode other than
+            ``driver`` or a positive *initial_distance_offset*, a walking
+            speed that is not positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
     _stop_at_goal: bool
@@ -369,6 +386,7 @@ class RoutingAction(TrajectoryRun):
     _start_pose: Optional[CarlaWorldPose]
     _warned_off: bool
     _route_start: Optional[Lanelet2Pose]
+    _route_held: bool
 
     def __init__(
         self,
@@ -415,6 +433,23 @@ class RoutingAction(TrajectoryRun):
                 f"{label}: give a route a goal (with its waypoints) or a "
                 "trajectory, one of the two"
             )
+        if goal is not None and mode is not RoutingMode.DRIVER:
+            # A goal is a destination for the entity's driver to route to:
+            # the trajectory standing for it is only its stops, with no legs
+            # between them for a controller to follow or a pose to place.
+            raise ValueError(
+                f"{label}: a route to a goal is driven by the entity's driver; "
+                "write the waypoints out as a trajectory to follow or place it "
+                "along, or choose driver mode"
+            )
+        if goal is not None and initial_distance_offset > 0.0:
+            # Refused rather than ignored, as the validator refuses it: the
+            # stops stand for no distance along a way, so an offset would drop
+            # them all and the run would end without routing anywhere.
+            raise ValueError(
+                f"{label}: a route to a goal has no trajectory to start along; "
+                "give initial_distance_offset only with a trajectory"
+            )
         stops = tuple(waypoints)
         route: Trajectory = _goal_route(label, stops, goal, trajectory)
         if trajectory is not None and stops:
@@ -457,6 +492,7 @@ class RoutingAction(TrajectoryRun):
         self._mode = mode
         self._walking = False
         self._stepping = False
+        self._route_held = False
         self._pacer = None
         self._path = None
         self._here = 0.0
@@ -472,6 +508,22 @@ class RoutingAction(TrajectoryRun):
     def reset(self) -> None:
         """Forget the earlier runs' routes (:meth:`TrajectoryRun.reset`)."""
         super().reset()
+        self._clear_run()
+        self._arrivals = []
+        self._stop_vertices = []
+        self._mark_points = []
+        self._mark_lanes = []
+        self._start_pose = None
+        self._route_held = False
+
+    def _clear_run(self) -> None:
+        """Forget the last run's progress, as a new run starts: by
+        :meth:`reset` between scenario runs and by :meth:`execute` between
+        the runs of a repeating (``once=False``) action.  Its arrivals not
+        taken yet are kept apart, by :meth:`_keep`."""
+        # Raised to where the entity stood when a run began (_begin_route):
+        # the next run starts from the offset given, not from that.
+        self._initial_distance_offset = self._given_offset
         self._finishing = False
         self._finish_m = None
         self._from_where_it_stands = False
@@ -481,11 +533,6 @@ class RoutingAction(TrajectoryRun):
         self._path = None
         self._here = 0.0
         self._sent = -1.0
-        self._arrivals = []
-        self._stop_vertices = []
-        self._mark_points = []
-        self._mark_lanes = []
-        self._start_pose = None
         self._warned_off = False
         self._route_start = None
 
@@ -499,16 +546,23 @@ class RoutingAction(TrajectoryRun):
             self._stop_walk()
 
     def _stopped(self, world: "carla.World") -> None:
-        """Overridden mid-walk: the pedestrian's walk is stopped, and CARLA's
-        walker controller with it, as on arrival."""
+        """Overridden mid-run: the pedestrian's walk is stopped, and CARLA's
+        walker controller with it, as on arrival; an entity a ``follow`` or
+        ``position`` run took from its driver is stopped and given back
+        (:meth:`TrajectoryRun._stopped`)."""
         self._stop_walk()
+        self._end_route(world)
+        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
+        TrajectoryRun._stopped(self, world)
 
     def close(self) -> None:
-        """Stop a pedestrian's walk the run ends in the middle of, and close
-        the conditions (:meth:`BaseAction.close`)."""
+        """Stop a pedestrian's walk the run ends in the middle of, end a
+        vehicle's route it ends in the middle of (:meth:`_end_route`), and
+        close the conditions (:meth:`TrajectoryRun.close`)."""
         self._stop_walk()
-        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
-        BaseAction.close(self)
+        self._end_route_at_close()
+        # Named, not super(), as _stopped is.
+        TrajectoryRun.close(self)
 
     def _stop_walk(self) -> None:
         """Stop the walk this action's ``driver`` run gave a pedestrian, if it
@@ -521,6 +575,41 @@ class RoutingAction(TrajectoryRun):
         if pedestrian is not None:
             walker: PedestrianEntity = pedestrian
             walker.stop_walk()
+
+    def _end_route_at_close(self) -> None:
+        """:meth:`_end_route` from :meth:`close`, which is given no world:
+        the vehicle's own."""
+        if not self._route_held:
+            return
+        actor = _entity_actor(str(self._entity_name))
+        if actor is None:
+            self._route_held = False
+            return
+        found: "carla.Actor" = actor
+        try:
+            world = found.get_world()
+        except RuntimeError:
+            self._route_held = False
+            return  # the actor is gone from the world
+        self._end_route(world)
+
+    def _end_route(self, world: "carla.World") -> None:
+        """End the route this action's ``driver`` run gave a vehicle and
+        watched (:meth:`BackendDriven.end_route`), once: it arrived, or the
+        run was stopped, overridden or closed before it did.  Its backend
+        gives back what the route changed -- its own lane changes -- as the
+        run's settings say."""
+        if not self._route_held:
+            return
+        self._route_held = False
+        vehicle = find_vehicle_entity(self._entity_name)
+        if vehicle is None:
+            return
+        driven: BackendDriven = vehicle
+        try:
+            driven.end_route(world)
+        except RuntimeError:
+            pass  # the actor is gone from the world
 
     # ------------------------------------------------------------------
     # Public state
@@ -553,12 +642,13 @@ class RoutingAction(TrajectoryRun):
 
     @property
     def needs_tick_loop(self) -> bool:
-        """Anything but a vehicle handed an untimed route keeps acting."""
+        """Anything but a vehicle handed an untimed route keeps acting; a
+        vehicle to stop at its goal is watched until it arrives there."""
         if self._mode is not RoutingMode.DRIVER:
             return True
         if self._goal is None:
             return True  # a route written out is followed to its end
-        if self._timed():
+        if self._timed() or self._stop_at_goal:
             return True
         return self._walks_pedestrian()
 
@@ -615,13 +705,7 @@ class RoutingAction(TrajectoryRun):
 
         if self.state is ActionState.STANDBY:
             self._keep(self._pacer)
-            self._pacer = None
-            self._path = None
-            self._stepping = False
-            self._walking = False
-            self._sent = -1.0
-            self._warned_off = False
-            self._route_start = None
+            self._clear_run()
         super().execute(world)
 
     def _drive_target(self, world: "carla.World") -> None:
@@ -746,7 +830,8 @@ class RoutingAction(TrajectoryRun):
         start = self._start_pose
         # A route written out is followed to its end, timed or not: what
         # ends the run (and so what a despawn after it waits for) is arrival.
-        follows = self._timed() or self._goal is None
+        # So is one to stop at its goal, which is told no speed on arrival.
+        follows = self._timed() or self._goal is None or self._stop_at_goal
         if actor is not None and start is not None and stops and follows:
             vehicle: "carla.Actor" = actor
             here: CarlaWorldPose = start
@@ -758,6 +843,10 @@ class RoutingAction(TrajectoryRun):
             self._finished = True
             return
         self._stepping = True
+        # Watched to its end: the route is ended there (_end_route).  One
+        # handed over untimed is ended by its backend, where the vehicle uses
+        # its path up (the TrafficManager's _end_route_at_path_end).
+        self._route_held = True
 
     def _hand_route(
         self,
@@ -814,10 +903,14 @@ class RoutingAction(TrajectoryRun):
         try:
             poses = route_poses(route, mm.lanelet_map, mm.routing_graph, _PACE_STEP_M)
         except RouteError as error:
+            unstopped = ""
+            if self._stop_at_goal:
+                unstopped = ", nor stopped at its goal"
             logger.warning(
-                "%s: '%s' cannot be paced to its waypoints' times: %s",
+                "%s: '%s' cannot be paced along its route%s: %s",
                 self.label,
                 str(self._entity_name),
+                unstopped,
                 error,
             )
             return
@@ -892,6 +985,7 @@ class RoutingAction(TrajectoryRun):
             elif paced.paced or self._given_speed is not None:
                 # Arrived: the driver's own speed again from here on.
                 entity.set_desired_speed(world, cruise * 3.6)
+            self._end_route(world)
             self._finished = True
             self._stepping = False
             return
@@ -914,7 +1008,12 @@ class RoutingAction(TrajectoryRun):
     def _finish_distance(self, planned: ResolvedTrajectory) -> float:
         """:func:`_finish_from` for *planned*, worked out once."""
         if self._finish_m is None:
-            self._finish_m = _finish_from(planned, self._resolved)
+            within: Optional[float] = None
+            if self._resolved is None:
+                # A route to a goal: only a change near it, which its driver
+                # would leave to the last metres.
+                within = _OFF_LANE_WITHIN_M
+            self._finish_m = _finish_from(planned, self._resolved, within)
         finish: float = self._finish_m
         return finish
 
@@ -928,6 +1027,10 @@ class RoutingAction(TrajectoryRun):
 
         self._finishing = True
         resolved = self._resolved
+        if resolved is None:
+            # A route to a goal, with no trajectory written: the middle of
+            # the lanes it is paced along, which ends at the goal.
+            resolved = self._path
         if resolved is None:
             return
         written: ResolvedTrajectory = resolved

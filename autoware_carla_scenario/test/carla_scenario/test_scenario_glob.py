@@ -373,3 +373,80 @@ def test_the_viewer_runs_every_config_below_a_double_star(
     response = client.post("/api/run", json={"scenario": "x/**"})
     assert response.json() == {"status": "started"}
     assert seen == [[[f"scenario={name}"] for name in _EVERY_X]]
+
+
+# Patterns that would reach outside ``scenario/`` (#1040): an absolute one made
+# ``Path.glob`` raise NotImplementedError (a 500 in the viewer, a traceback in
+# the CLIs), and a ``..`` component matched configs beside ``scenario/``.
+_OUTSIDE = ("/x/*", "/*", "/**", "../*", "x/../*", "x/..", "../scenario/x/*")
+
+
+@pytest.mark.parametrize("pattern", _OUTSIDE)
+def test_a_pattern_outside_scenario_is_refused(
+    star_star_conf: Path, pattern: str
+) -> None:
+    (star_star_conf / "secret.yaml").write_text("{}\n")
+    with pytest.raises(ValueError, match="invalid scenario pattern") as excinfo:
+        resolve_scenario_glob(pattern, [star_star_conf])
+    assert repr(pattern) in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("x/?", ["x/a"]),
+        ("[xy]/*", ["x/a", "y/d"]),
+        ("x/**/[bc]", ["x/sub/b", "x/sub/deep/c"]),
+        ("x/..a", []),
+        ("x/a..", []),
+    ],
+)
+def test_legitimate_patterns_still_match(
+    star_star_conf: Path, pattern: str, expected: list[str]
+) -> None:
+    assert resolve_scenario_glob(pattern, [star_star_conf]) == expected
+
+
+@pytest.mark.parametrize("pattern", _OUTSIDE)
+def test_the_cli_reports_a_pattern_outside_scenario(
+    pattern: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        run._resolve_scenario_glob(pattern)
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Error: invalid scenario pattern")
+    assert repr(pattern) in out
+
+
+@pytest.mark.parametrize("pattern", _OUTSIDE)
+def test_compose_errors_reports_a_pattern_outside_scenario(
+    pattern: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``scenario-check`` and ``scenario-expand`` exit 2 on ``None``."""
+    assert compose_errors.resolve_scenarios(pattern) is None
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"Error: invalid scenario pattern {pattern!r}")
+
+
+def test_the_odd_cli_reports_a_pattern_outside_scenario() -> None:
+    with pytest.raises(ValueError, match="invalid scenario pattern '/x/\\*'"):
+        odd_cli._scenario_configs(["scenario=/x/*"])
+
+
+@pytest.mark.parametrize("pattern", ["/x/*", "../*"])
+def test_the_viewer_answers_a_pattern_outside_scenario_with_an_error(
+    star_star_conf: Path, monkeypatch: pytest.MonkeyPatch, pattern: str
+) -> None:
+    def no_run(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("nothing should run")
+
+    monkeypatch.setattr(runner, "start_run", no_run)
+    monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
+    client = TestClient(app_module.app)
+    response = client.post("/api/run", json={"scenario": pattern})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert f"invalid scenario pattern {pattern!r}" in body["message"]

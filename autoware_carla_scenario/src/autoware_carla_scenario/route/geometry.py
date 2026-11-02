@@ -251,7 +251,7 @@ class MapFeatures:
     ]
     _conflicting: dict[int, list[ConstLanelet]]
     _stops: dict[int, list[tuple[float, int]]]
-    _merges: dict[int, bool]
+    _merges: dict[tuple[int, str], bool]
 
     def __init__(self, lanelet_map: LaneletMap, routing_graph: RoutingGraph) -> None:
         self.map = lanelet_map
@@ -477,37 +477,41 @@ class MapFeatures:
             current = beside
         return current
 
-    def _ends_into_left(self, lanelet: ConstLanelet) -> bool:
+    def _ends_into(self, lanelet: ConstLanelet, side: str) -> bool:
         """Whether it ends, or runs into what follows it, beside a lane on
-        its left that goes on."""
-        left = self.neighbour(lanelet, "left")
-        if left is None:
+        its *side* that goes on."""
+        neighbour = self.neighbour(lanelet, side)
+        if neighbour is None:
             return False
         # A typed local: Codon unwraps the Optional here, not at each use.
-        beside: ConstLanelet = left
+        beside: ConstLanelet = neighbour
         goes_on = {int(ll.id) for ll in self.graph.following(beside)}
         if not goes_on:
             return False
         own = self.graph.following(lanelet)
         return not own or any(int(ll.id) in goes_on for ll in own)
 
-    def merges(self, lanelet: ConstLanelet) -> bool:
+    def merges(self, lanelet: ConstLanelet, side: str = "either") -> bool:
         """Whether it is a merging lane (TeraSim's ramp, without SUMO's names).
 
-        A lane that ends into the lane on its left -- ends beside it, or
+        A lane that ends into the lane on its *side* -- ends beside it, or
         shares what follows with it -- there or, along its straightest
-        successors, within :data:`MERGE_WINDOW_M`.
+        successors, within :data:`MERGE_WINDOW_M`.  *side* is ``"left"``
+        (an on-ramp where traffic keeps right), ``"right"`` (one where
+        traffic keeps left), or ``"either"`` (the default).
         """
-        key = int(lanelet.id)
+        if side != "left" and side != "right":
+            return self.merges(lanelet, "left") or self.merges(lanelet, "right")
+        key = (int(lanelet.id), side)
         known = self._merges.get(key)
         if known is not None:
             return known
         found = False
         current: ConstLanelet = lanelet
         travelled = 0.0
-        seen = {key}
+        seen = {int(lanelet.id)}
         while True:
-            found = self._ends_into_left(current)
+            found = self._ends_into(current, side)
             travelled += self.length(current)
             following = self.straightest_following(current)
             if found or following is None or travelled > MERGE_WINDOW_M:

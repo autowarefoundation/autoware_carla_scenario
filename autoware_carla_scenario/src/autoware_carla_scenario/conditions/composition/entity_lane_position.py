@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import (
+    lane_change_target_lanelets,
+    lanelet_length,
     on_lanelet,
     project_onto_lanelet,
     project_onto_road,
@@ -91,6 +93,7 @@ class EntityLanePositionCondition(CompositionCondition):
     _road_id: str
     _lane_id: Optional[int]
     _lanelet_id: Optional[int]
+    _lanelet_ids: list[int]
     _rules: list[ScalarComparisonRule]
 
     def __init__(
@@ -110,6 +113,11 @@ class EntityLanePositionCondition(CompositionCondition):
         self._lanelet_id = (
             position.lanelet_id if isinstance(position, Lanelet2Pose) else None
         )
+        # The lanelets the entity may be on, any one of them: the one named.
+        lanelet_ids: list[int] = []
+        if isinstance(position, Lanelet2Pose):
+            lanelet_ids.append(position.lanelet_id)
+        self._lanelet_ids = lanelet_ids
         # Not `rules or []`, which Codon cannot give one type.
         rule_list: list[ScalarComparisonRule] = []
         if rules:
@@ -284,14 +292,27 @@ class EntityLanePositionCondition(CompositionCondition):
     def _check_on_lanelet(
         self, carla_pose: CarlaWorldPose, elapsed: float
     ) -> Optional[ScenarioResult]:
-        """The Lanelet2 half of :meth:`_check`: on the lanelet, in its frame."""
-        assert self._lanelet_id is not None
-        if not on_lanelet(carla_pose, self._lanelet_id):
+        """The Lanelet2 half of :meth:`_check`: on one of the lanelets, in its frame.
+
+        The first of ``_lanelet_ids`` the entity is on and whose rules hold
+        decides; with none of them, the condition never holds.
+        """
+        for lanelet_id in self._lanelet_ids:
+            result = self._check_on_one_lanelet(carla_pose, lanelet_id, elapsed)
+            if result is not None:
+                return result
+        return None
+
+    def _check_on_one_lanelet(
+        self, carla_pose: CarlaWorldPose, lanelet_id: int, elapsed: float
+    ) -> Optional[ScenarioResult]:
+        """On *lanelet_id*, with the rules holding in its frame."""
+        if not on_lanelet(carla_pose, lanelet_id):
             logger.debug(
                 "EntityLanePositionCondition: '%s' not on lanelet %d at "
                 "(%.1f, %.1f, %.1f) t=%.2fs",
                 self._entity_name,
-                self._lanelet_id,
+                lanelet_id,
                 carla_pose.x,
                 carla_pose.y,
                 carla_pose.z,
@@ -299,7 +320,7 @@ class EntityLanePositionCondition(CompositionCondition):
             )
             return None
 
-        ll2_pose = project_onto_lanelet(carla_pose, self._lanelet_id)
+        ll2_pose = project_onto_lanelet(carla_pose, lanelet_id)
         field_values = {"s": ll2_pose.s, "t": ll2_pose.t}
         for rule in self._rules:
             actual = field_values[rule.field]
@@ -311,20 +332,20 @@ class EntityLanePositionCondition(CompositionCondition):
                     rule.field,
                     rule.rule.name,
                     rule.value,
-                    self._lanelet_id,
+                    lanelet_id,
                     actual,
                     elapsed,
                 )
                 return None
 
         msg = (
-            f"Entity '{self._entity_name}' is on lanelet {self._lanelet_id}"
+            f"Entity '{self._entity_name}' is on lanelet {lanelet_id}"
             f" (s={ll2_pose.s:.2f}, t={ll2_pose.t:.2f}) at {elapsed:.2f}s"
         )
         logger.info(
             "EntityLanePositionCondition: MATCHED — '%s' on lanelet %d (s=%.2f, t=%.2f)",
             self._entity_name,
-            self._lanelet_id,
+            lanelet_id,
             ll2_pose.s,
             ll2_pose.t,
         )
@@ -372,7 +393,7 @@ def beside_lane_id(lane_id: int, side: str, traffic_rule: str = "RHT") -> int:
 
 
 class EntityLaneOfCondition(EntityLanePositionCondition):
-    """The entity is on the OpenDRIVE lane of a position, beside it, or on its road.
+    """The entity is on the lane of a position, beside it, or on its road.
 
     Where :class:`EntityLanePositionCondition` takes the lane it names, this
     one takes a *position* -- a spawn, the start of a junction lanelet -- and a
@@ -382,16 +403,25 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
       Wider than the lanelet the position is on, which ends where the lanelet
       does.
     * ``left`` / ``right``: the lane beside it, where a lane change from the
-      position ends (:func:`beside_lane_id`, by the road's traffic rule).
-      The lane need not exist: a
-      scenario asserting that a change is *refused* names one that does not.
+      position ends.  For a :class:`Lanelet2Pose` it is read in the Lanelet2
+      frame (:func:`~autoware_carla_scenario.coordinate.lane_change_target_lanelets`):
+      the lanelet beside the position's -- the routing graph's ``left`` /
+      ``right``, else its ``adjacentLeft`` / ``adjacentRight`` -- and the
+      lanelets ahead of it before the next junction, less any the position's
+      own lane reaches too; the entity is on any one of them.  With no lane
+      beside, the condition never holds: a scenario asserting that a change
+      is *refused* may name a side with no lane.  For an
+      :class:`OpenDrivePose` or a :class:`CarlaWorldPose` it is the OpenDRIVE
+      lane beside the one under the position, on the same road
+      (:func:`beside_lane_id`, by the road's traffic rule).  An OpenDRIVE map
+      may build a carriageway as one road per lane, with the lane beside on
+      another road, which is why a lanelet is not resolved that way (#1085).
     * ``any``: any lane of the road under the position
       (:meth:`EntityLanePositionCondition.anywhere_on_road`).
 
     Args:
         entity_name: The ``role_name`` attribute of the actor to track.
-        position: The reference position.  Only the road and lane under it
-            are used.
+        position: The reference position.  Only the lane under it is used.
         lane: One of :data:`LANE_RELATIONS`.
         label: Human-readable name for the condition.
 
@@ -401,6 +431,7 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
 
     # Declared for the static check (docs/typecheck.md).
     _relation: str
+    _beside_lanelets: bool
 
     def __init__(
         self,
@@ -412,18 +443,40 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
     ) -> None:
         if lane not in LANE_RELATIONS:
             raise ValueError(f"lane must be one of {LANE_RELATIONS}, got {lane!r}")
-        address = to_opendrive(position)
-        if lane in ("left", "right"):
-            beside = beside_lane_id(
-                address.lane_id, lane, road_traffic_rule(address.road_id)
-            )
-            address = replace(address, lane_id=beside)
-        super().__init__(entity_name, address, label=label)
+        beside_lanelets = False
+        if isinstance(position, Lanelet2Pose) and lane in ("left", "right"):
+            beside_lanelets = True
+            reference: Lanelet2Pose = position
+            targets = lane_change_target_lanelets(reference.lanelet_id, lane)
+            # Named by the first target, beside the position, so the road and
+            # lane the details report are where the change ends; with no
+            # target, by the position itself, and matching on no lanelet.
+            named = reference
+            if targets:
+                along = min(reference.s, lanelet_length(targets[0]))
+                named = Lanelet2Pose(lanelet_id=targets[0], s=along)
+            super().__init__(entity_name, named, label=label)
+            self._lanelet_ids = targets
+        else:
+            address = to_opendrive(position)
+            if lane in ("left", "right"):
+                beside = beside_lane_id(
+                    address.lane_id, lane, road_traffic_rule(address.road_id)
+                )
+                address = replace(address, lane_id=beside)
+            super().__init__(entity_name, address, label=label)
         self._relation = lane
+        self._beside_lanelets = beside_lanelets
         if lane == "any":
             self._match_any_lane()
 
     def get_details(self) -> dict[str, Any]:
         details = super().get_details()
         details["relation"] = self._relation
+        if self._beside_lanelets:
+            # Every lanelet the entity may be on; the first, if any, is the
+            # one the road and lane are read off.
+            details["lanelet_ids"] = list(self._lanelet_ids)
+            if not self._lanelet_ids:
+                details.update({"lanelet_id": None, "road_id": None, "lane_id": None})
         return details

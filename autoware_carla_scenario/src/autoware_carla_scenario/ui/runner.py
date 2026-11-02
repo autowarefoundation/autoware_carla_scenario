@@ -196,7 +196,10 @@ def _run_worker(
                     cmd,
                     cwd=cwd,
                     capture_output=True,
-                    text=True,
+                    # A job may print bytes that are not UTF-8: replace them
+                    # rather than fail to read the output (#1073).
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 status: Status = "passed" if result.returncode == 0 else "failed"
                 if result.returncode != 0:
@@ -210,7 +213,10 @@ def _run_worker(
                 if multirun_dir:
                     base = Path(cwd) if cwd else Path.cwd()
                     _save_raw_output(result, base / multirun_dir / str(i))
-            except OSError as exc:
+            except Exception as exc:
+                # Whatever stops one job from being launched or collected (an
+                # OSError, or anything unexpected) fails that job, not the
+                # run: the next jobs still run (#1073).
                 status = "failed"
                 logger.error("Failed to run scenario %s: %s", scenario_name, exc)
 

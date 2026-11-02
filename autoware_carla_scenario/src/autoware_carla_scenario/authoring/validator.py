@@ -37,8 +37,10 @@ from ..trajectory.authoring import (
 from ..constants import MIN_BACKGROUND_SPEED_KMH
 from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from .registry import (
+    EQUAL_TO_DEFAULT_TOLERANCE,
     INT_KINDS,
     INT_LIST_KINDS,
+    ActionSpec,
     ConditionSpec,
     FieldSpec,
     get_action_spec,
@@ -182,11 +184,17 @@ def _check_field(
                 f"{spec.label} must be a whole number.",
                 object_id,
             )
+        else:
+            # Compared as an int: a whole number too large for a float is
+            # still one, and float() of it would raise.
+            _check_bounds(out, path, spec, int(str(value).strip()), object_id)
     elif spec.kind == "number":
         if not _coercible_float(value):
             out.error(
                 f"{path}.{spec.name}", f"{spec.label} must be a number.", object_id
             )
+        else:
+            _check_bounds(out, path, spec, float(str(value).strip()), object_id)
     elif spec.kind == "select":
         allowed = {o.value for o in spec.options}
         if str(value) not in allowed:
@@ -240,6 +248,47 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers or {MAP_EXCLUSION_REF}.",
                 object_id,
             )
+
+
+def _check_bounds(
+    out: _Collector,
+    path: str,
+    spec: FieldSpec,
+    number: float,
+    object_id: str | None,
+) -> None:
+    """Refuse a number outside the bounds its :class:`FieldSpec` declares.
+
+    The bounds are the runtime constructor's, so a value it would raise for
+    at scenario setup is a document error here instead (#1111).  The message
+    says it as the constructor does: "must be positive" for a bound above 0,
+    "must not be negative" for one at 0.
+    """
+    low, high = spec.exclusive_minimum, spec.maximum
+    inclusive = spec.minimum
+    if (
+        (low is None or number > low)
+        and (inclusive is None or number >= inclusive)
+        and (high is None or number <= high)
+    ):
+        return
+    out.error(f"{path}.{spec.name}", f"{spec.label} {_bounds_text(spec)}.", object_id)
+
+
+def _bounds_text(spec: FieldSpec) -> str:
+    """What :func:`_check_bounds` asks of *spec*'s value, as a predicate."""
+    low, inclusive, high = spec.exclusive_minimum, spec.minimum, spec.maximum
+    if high is not None and (low is not None or inclusive is not None):
+        opening = f"({low:g}" if low is not None else f"[{inclusive:g}"
+        return f"must be in {opening}, {high:g}]"
+    if high is not None:
+        return f"must be at most {high:g}"
+    if low is not None:
+        return "must be positive" if low == 0 else f"must be above {low:g}"
+    assert inclusive is not None  # noqa: S101 -- only called out of bounds
+    return (
+        "must not be negative" if inclusive == 0 else f"must be at least {inclusive:g}"
+    )
 
 
 def _check_records(
@@ -375,6 +424,9 @@ def _check_condition(
         )
 
     _check_collision_names_one_target(out, path, node)
+    _check_filter_ranges(out, path, node)
+    _check_condition_frame(out, path, node)
+    _check_equal_tolerance(out, path, spec, node)
 
     for index, child in enumerate(node.children):
         _check_condition(out, f"{path}.children[{index}]", child, refs, owner)
@@ -406,6 +458,25 @@ def _check_collision_names_one_target(
         )
 
 
+#: An entity filter's bounds, in pairs: the runtime's EntityFilter refuses a
+#: lower bound above its upper one.
+_FILTER_RANGES = ("distance", "ahead", "left")
+
+
+def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> None:
+    """An entity filter's lower bound is not above its upper one, as
+    :class:`~..conditions.EntityFilter` asks (#1111)."""
+    for what in _FILTER_RANGES:
+        low = _number(node.params, f"min_{what}_m")
+        high = _number(node.params, f"max_{what}_m")
+        if low is not None and high is not None and low > high:
+            out.error(
+                f"{path}.min_{what}_m",
+                f"min_{what}_m ({low:g}) is above max_{what}_m ({high:g}).",
+                node.id,
+            )
+
+
 def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
     """Validate one spawn-constraint subtree."""
     spec = get_constraint_spec(node.type)
@@ -427,6 +498,18 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
     elif limit is not None and count > limit:
         out.error(
             path, f"{spec.title} takes at most {limit} child constraint(s).", node.id
+        )
+
+    if node.type == "lanelet_length" and str(node.params.get("rule")) == "equal_to":
+        # The sweeper's LaneletLengthConstraint has no tolerance to give it, and
+        # a measured centerline length is never a round number: the "=" rule
+        # matches no lanelet.  A warning, so a document that used it still loads.
+        out.warn(
+            f"{path}.rule",
+            'A lanelet length "=" a value matches within 1e-6 m, so it matches '
+            "practically no lanelet: bound the length with ≥ and ≤ "
+            "(an And of two Lanelet length constraints) instead.",
+            node.id,
         )
 
     for index, child in enumerate(node.constraints):
@@ -501,6 +584,14 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         _check_routing(out, path, node)
     if node.type == "spawn":
         _check_spawn(out, path, node)
+    if node.type in ("spawn", "despawn"):
+        _check_spawn_target(out, path, node)
+    if node.type in ("construction_zone", "urban_construction_zone", "stalled_object"):
+        _check_spans(out, path, node)
+    if node.type in ("traffic_parameters", "vehicle_parameters"):
+        _check_traffic_parameters(out, path, node)
+    if node.type in ("traffic_source", "traffic_sink"):
+        _check_traffic_constraints(out, path, node)
     if node.type == "traffic_source":
         _check_traffic_source(out, path, node)
 
@@ -675,6 +766,28 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
                 "to apply to: write the waypoints out, or choose None.",
                 node.id,
             )
+        if params.get("mode", "driver") != "driver":
+            # The trajectory a goal stands for is only stops for a driver to
+            # route between: no legs to follow or to place the entity on.
+            out.error(
+                f"{path}.mode",
+                "A route to a goal is driven by the entity's own driver: "
+                "write the waypoints out to have it followed or placed, or "
+                "choose Driver.",
+                node.id,
+            )
+        offset = params.get("initial_distance_offset")
+        if (
+            not _is_blank(offset)
+            and _coercible_float(offset)
+            and float(str(offset)) > 0.0
+        ):
+            out.error(
+                f"{path}.initial_distance_offset",
+                "A route to a goal has no trajectory to start along: write "
+                "the waypoints out, or set Start this far along to 0.",
+                node.id,
+            )
     elif params.get("waypoint_lanelet_ids"):
         out.error(
             f"{path}.waypoint_lanelet_ids",
@@ -751,6 +864,289 @@ def _check_spawn(out: _Collector, path: str, node: ActionNode) -> None:
         value = params.get(key)
         if not _is_blank(value) and _coercible_float(value) and float(str(value)) < 0.0:
             out.error(f"{path}.{key}", f"{what} must not be negative.", node.id)
+
+
+def _check_spawn_target(out: _Collector, path: str, node: ActionNode) -> None:
+    """A Spawn or Despawn card acts on a declared entity (its actor) or on a
+    prop (its name), exactly one of the two, as SpawnAction and DespawnAction
+    ask (#1021).  A prop Spawn card also needs a place of its own: a route
+    pose, or a lanelet -- lanelet 0 means an entity's declared spawn, which a
+    prop does not have.
+    """
+    params = node.params
+    named = not _is_blank(params.get("name"))
+    verb = "Spawn" if node.type == "spawn" else "Despawn"
+    if node.actor is not None and named:
+        out.error(
+            f"{path}.name",
+            f"A {verb} card acts on an entity (its actor) or on a prop (its "
+            "name), not both: clear the prop name to act on the entity, or "
+            "the actor to act on the prop.",
+            node.id,
+        )
+    elif node.actor is None and not named:
+        out.error(
+            f"{path}.actor",
+            f"A {verb} card needs an entity (an actor) or a prop (a prop "
+            "name), exactly one of the two.",
+            node.id,
+        )
+    if node.type != "spawn" or node.actor is not None or not named:
+        return
+    if not _has_place(node):
+        out.error(
+            f"{path}.lanelet_id",
+            "A prop needs a place: give it a lanelet (and s) or a route pose. "
+            "No lanelet means an entity's declared spawn, which a prop does "
+            "not have.",
+            node.id,
+        )
+
+
+def _has_place(node: ActionNode | ConditionNode) -> bool:
+    """Whether a card's place fields (``route_pose``, ``lanelet_id``) name a
+    place: a route pose, a lanelet above 0 (0 is the empty field), or a
+    lanelet the sweep searches for or derives (a missing default is
+    :func:`_check_lanelet_slots`'s warning)."""
+    params = node.params
+    route = params.get("route_pose")
+    if route and not _is_blank(route):
+        return True
+    choice = node.searches.get("lanelet_id")
+    if choice is not None and (choice.searching or choice.deriving):
+        return True
+    lanelet = params.get("lanelet_id")
+    if _is_blank(lanelet) or not _coercible_float(lanelet):
+        return False
+    return int(float(str(lanelet))) > 0
+
+
+def _number(params: dict[str, Any], key: str) -> Optional[float]:
+    """The finite number a field holds; ``None`` when blank or not a number
+    (the field check's to report)."""
+    value = params.get(key)
+    if _is_blank(value) or not _coercible_float(value):
+        return None
+    return float(str(value).strip())
+
+
+def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
+    """A construction zone ends after it starts, along its lane and in time;
+    a stalled object is taken away after it is put down, as the actions ask
+    (an end of ``1e9`` s or more is "never", which the empty field says)."""
+    params = node.params
+    if node.type != "stalled_object":
+        start_s, end_s = _number(params, "start_s"), _number(params, "end_s")
+        if start_s is not None and end_s is not None and not end_s > start_s:
+            out.error(
+                f"{path}.end_s",
+                "The zone's end (end_s) must be further along than its start "
+                "(start_s).",
+                node.id,
+            )
+    start, end = _number(params, "start_time"), _number(params, "end_time")
+    if start is None or end is None:
+        return
+    if not end > start:
+        out.error(
+            f"{path}.end_time",
+            "The end time must be after the start time; leave it empty for never.",
+            node.id,
+        )
+    elif node.type == "stalled_object" and end > _stalled_forever_s():
+        out.error(
+            f"{path}.end_time",
+            f"An end time past {_stalled_forever_s():g} s is never: leave it empty.",
+            node.id,
+        )
+
+
+def _stalled_forever_s() -> float:
+    from ..actions.stalled_object import FOREVER_S  # noqa: PLC0415
+
+    return FOREVER_S
+
+
+def _check_traffic_parameters(out: _Collector, path: str, node: ActionNode) -> None:
+    """A Traffic/Vehicle Parameters card sets at least one parameter (a mean,
+    or a yes/no field), and gives a std only with its mean, as
+    TrafficParametersAction and its spreads ask."""
+    params = node.params
+    spec = get_action_spec(node.type)
+    names = [f.name for f in spec.fields] if spec is not None else []
+    sets_one = False
+    for name in names:
+        if _is_blank(params.get(name)) or name.endswith("_std"):
+            continue
+        sets_one = True
+    for name in names:
+        if not name.endswith("_std") or _is_blank(params.get(name)):
+            continue
+        mean = name[: -len("_std")] + "_mean"
+        if _is_blank(params.get(mean)):
+            out.error(
+                f"{path}.{name}",
+                f"A std is the spread around a mean: give {mean} too.",
+                node.id,
+            )
+    if not sets_one:
+        out.error(
+            path,
+            "The card sets no parameter: give at least one mean or yes/no "
+            "value, or remove the card.",
+            node.id,
+        )
+    bounds = _traffic_mean_bounds()
+    labels = {f.name: f.label for f in spec.fields} if spec is not None else {}
+    for name in names:
+        given = _number(params, name)
+        if given is None or name not in bounds:
+            continue
+        low, high = bounds[name]
+        if low <= given <= high:
+            continue
+        wanted = (
+            f"at least {low:g}" if math.isinf(high) else f"within [{low:g}, {high:g}]"
+        )
+        out.error(f"{path}.{name}", f"{labels[name]} must be {wanted}.", node.id)
+
+
+def _traffic_mean_bounds() -> dict[str, tuple[float, float]]:
+    """``*_mean`` field of a Traffic/Vehicle Parameters card -> the
+    ``(low, high)`` its parameter's mean must lie in.
+
+    The bounds are the runtime's own tables (``VEHICLE_BOUNDS`` and the
+    rest), which the parameter classes check every mean against when the
+    action is built; the field names are what ``traffic.authoring`` maps
+    onto them (a pedestrian's gap is ``pedestrian_min_gap_m``, every bicycle
+    field ``bicycle_*``).
+    """
+    from ..traffic.parameters import (  # noqa: PLC0415
+        BICYCLE_BOUNDS,
+        PEDESTRIAN_BOUNDS,
+        VEHICLE_BOUNDS,
+    )
+
+    bounds = {f"{name}_mean": span for name, span in VEHICLE_BOUNDS.items()}
+    for name, span in PEDESTRIAN_BOUNDS.items():
+        field_name = "pedestrian_min_gap_m" if name == "min_gap_m" else name
+        bounds[f"{field_name}_mean"] = span
+    for name, span in BICYCLE_BOUNDS.items():
+        bounds[f"bicycle_{name}_mean"] = span
+    return bounds
+
+
+def _check_traffic_constraints(out: _Collector, path: str, node: ActionNode) -> None:
+    """A Traffic Source's or Sink's constraints parse as the action parses
+    them: a YAML list (or one mapping) of sweep constraints it knows.  A
+    blank one is the field check's."""
+    value = node.params.get("constraints")
+    if _is_blank(value):
+        return
+    from ..actions.background_traffic import constraints_from_text  # noqa: PLC0415
+
+    try:
+        constraints_from_text(str(value))
+    except Exception as exc:  # noqa: BLE001 -- yaml's and the parser's errors alike
+        out.error(
+            f"{path}.constraints",
+            f"The constraints do not parse: {exc}",
+            node.id,
+        )
+
+
+def _check_equal_tolerance(
+    out: _Collector, path: str, spec: ConditionSpec, node: ConditionNode
+) -> None:
+    """An ``=`` rule needs a tolerance it can be met within (#1091).
+
+    A negative tolerance is refused when the condition is built, so it is an
+    error here.  An ``=`` left at the runtime's 1e-6 on a card measuring a
+    physical quantity (its tolerance field has a unit) is only a warning: a
+    document written before the field existed must still load and run as it
+    did, but a measured speed or distance practically never lands that close
+    to the threshold, so the rule would never fire.
+    """
+    field_spec = next((f for f in spec.fields if f.name == "tolerance"), None)
+    if field_spec is None:
+        return
+    tolerance = _number(node.params, "tolerance")
+    if tolerance is not None and tolerance < 0:
+        out.error(
+            f"{path}.tolerance",
+            f"{field_spec.label} must not be negative.",
+            node.id,
+        )
+        return
+    if str(node.params.get("rule")) != "equal_to" or not field_spec.unit:
+        return
+    if tolerance is None or tolerance <= EQUAL_TO_DEFAULT_TOLERANCE:
+        out.warn(
+            f"{path}.tolerance",
+            f'{spec.title} "=" compares within {EQUAL_TO_DEFAULT_TOLERANCE:g} '
+            f"{field_spec.unit}, which a measured value practically never "
+            f"lands in, so the rule would never fire: give a tolerance "
+            f"(say 0.1 {field_spec.unit}), or use ≤ or ≥.",
+            node.id,
+        )
+
+
+def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> None:
+    """A Distance condition measures to a place it names (a route pose or a
+    lanelet: lanelet 0 is the empty field); an Entity Distance's signed
+    distance is ahead or behind along the road, so it is measured in the lane
+    frame.  Along the road, a distance is one-dimensional (no lateral
+    component) and neither it nor a TTC can be taken between bounding boxes
+    (#1097).  All are refused when the condition is built, at setup."""
+    params = node.params
+    if node.type == "temporary_stop" and params.get("stop_lanelets", []) in ([], ()):
+        out.error(
+            f"{path}.stop_lanelets",
+            "Temporary Stop needs at least one lanelet to stop on.",
+            node.id,
+        )
+    if node.type == "distance" and not _has_place(node):
+        out.error(
+            f"{path}.lanelet_id",
+            "A distance needs a place to measure to: give a lanelet (and s) "
+            "or a route pose.",
+            node.id,
+        )
+    if (
+        node.type == "entity_distance"
+        and params.get("signed") is True
+        and str(params.get("measure", "entity")) != "lane"
+    ):
+        out.error(
+            f"{path}.signed",
+            "A signed distance is ahead or behind along the road: measure it "
+            "in the lane frame (measure: lane), or clear signed.",
+            node.id,
+        )
+    in_lane = str(params.get("measure", "entity")) == "lane"
+    if (
+        node.type == "entity_distance"
+        and in_lane
+        and str(params.get("distance_type", "EUCLIDEAN")) == "LATERAL"
+    ):
+        out.error(
+            f"{path}.distance_type",
+            "Along the road a distance is one-dimensional, so it has no "
+            "lateral component: measure the lateral offset in a straight "
+            "line, or choose another component.",
+            node.id,
+        )
+    if (
+        node.type in ("entity_distance", "ttc")
+        and in_lane
+        and params.get("edge_to_edge") is True
+    ):
+        out.error(
+            f"{path}.edge_to_edge",
+            "Between bounding boxes cannot be measured along the road: "
+            "measure in a straight line, or clear Between bounding boxes.",
+            node.id,
+        )
 
 
 def _check_traffic_source(out: _Collector, path: str, node: ActionNode) -> None:
@@ -1230,6 +1626,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
         )
 
     _check_lanelet_slots(out, document)
+    _check_required_lanelets(out, document)
     _check_sweep_shape(out, document)
     _check_signal_controllers(out, document)
     _check_route(out, document)
@@ -1405,6 +1802,37 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
             )
         for index, constraint in enumerate(choice.constraints):
             _check_constraint(out, f"{slot.key}.constraints[{index}]", constraint)
+
+
+def _check_required_lanelets(out: _Collector, document: ScenarioDocument) -> None:
+    """A required lanelet parameter of a card holds a lanelet: 0 (or less) is
+    the empty field, which the action or condition cannot be built on
+    (#1021).  A searched or derived one is :func:`_check_lanelet_slots`'s,
+    and a blank or non-numeric one the field check's."""
+    for slot in document.lanelet_slots():
+        holder = slot.holder
+        spec: ActionSpec | ConditionSpec | None = None
+        if isinstance(holder, ActionNode):
+            spec = get_action_spec(holder.type)
+        elif isinstance(holder, ConditionNode):
+            spec = get_condition_spec(holder.type)
+        if spec is None or slot.searching or slot.deriving:
+            continue
+        field_spec = next((f for f in spec.fields if f.name == slot.field), None)
+        if (
+            field_spec is None
+            or not field_spec.required
+            or field_spec.kind != "lanelet"
+        ):
+            continue
+        raw = holder.params.get(slot.field, field_spec.default)
+        if _is_blank(raw) or not _coercible_int(raw) or int(str(raw).strip()) > 0:
+            continue
+        out.error(
+            slot.key,
+            f"{field_spec.label} is required: pick a lanelet ({spec.title}).",
+            slot.owner_id,
+        )
 
 
 def _check_derived_slot(out: _Collector, slot: LaneletSlot, *, searched: bool) -> None:

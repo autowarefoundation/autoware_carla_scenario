@@ -1,6 +1,6 @@
 # @package _global_
 # Logical: a pedestrian runs out in front of the ego, on every lane at the
-# right-hand edge of the map's roads, one concrete scenario each.
+# kerb of the map's roads, one concrete scenario each.
 #
 #   scenario-expand scenario=pedestrian_dart_out/pedestrian_dart_out map=<map>
 #
@@ -8,18 +8,23 @@
 # Nishi-Shinjuku case. The lanelet is replaced per case.
 scenario:
   name: pedestrian_dart_out
-  # At the kerb 35 m ahead, half a lane and a bit off the lane's centre.
+  # At the kerb 35 m ahead, half a lane and a bit off the lane's centre. The
+  # kerb side follows the road's traffic rule (the OpenDRIVE road's `rule`):
+  # the right in right-hand traffic, the left in left-hand traffic.
   pedestrian_ahead_m: 35.0
-  pedestrian_offset_m: -3.0
+  pedestrian_offset_m: 3.0
   # Runs out at 2 m/s once the ego is within 20 m.
   trigger_distance_m: 20.0
   walk_speed_ms: 2.0
   pass_beyond_m: 10.0
   timeout_seconds: 25.0
 
+# Lanelet 19: the kerb lane of its road (Nishi-Shinjuku drives on the left,
+# and 19 has no lane on its left). Its neighbour 20 is the lane by the centre
+# line, with the oncoming lanelet 28 on its right.
 ego:
   initial_speed_kmh: 30.0
-  spawn_lanelet_id: 20
+  spawn_lanelet_id: 19
   spawn_s: 5.0
 
 # What this scenario's parameters set, by scenario measure (measures.py), for
@@ -42,12 +47,22 @@ sweep:
     ego.spawn_lanelet_id:
       - type: and
         constraints:
-          # The rightmost lane: no lane on its right, so the pedestrian
-          # steps straight off the kerb into it.
+          # The lane at the kerb: no lane on its kerb side, so the
+          # pedestrian steps straight off the kerb into it. The constraint
+          # cannot read the map's traffic rule, so the side is set for the
+          # default map, Nishi-Shinjuku, which drives on the left: `left`.
+          # On a right-hand-traffic map (Town10HD_Opt) it is `right`: sweep
+          # a copy of this file with `value: right` (a command-line override
+          # cannot reach it, as the key `ego.spawn_lanelet_id` has a dot).
+          # A turn pocket that forks off beside a lane counts as a lane on
+          # that side too (`include_forks`, #1066): the pocket shares no
+          # boundary with the lane, so the routing graph gives neither a
+          # neighbour, yet the pocket is no kerb lane.
           - type: not
             constraint:
               type: has_adjacent
-              value: right
+              value: left
+              include_forks: true
           - type: not
             constraint:
               type: is_junction

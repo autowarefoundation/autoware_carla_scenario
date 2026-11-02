@@ -506,9 +506,15 @@ def _odd_world(weather: Any = "default") -> _OddWorld:
 
 @pytest.fixture(autouse=True)
 def _fresh_probes() -> Any:
+    # No Lanelet2 map: these worlds' probes read the CARLA waypoint.
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    saved = MapManager._instance
+    MapManager._instance = None
     reset_probes()
     yield
     reset_probes()
+    MapManager._instance = saved
 
 
 def _hits(world: Any, odd: OddDefinition | None = None) -> dict[str, list[str]]:

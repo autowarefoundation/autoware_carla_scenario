@@ -55,6 +55,7 @@ previous/following neighbours via the routing graph::
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
@@ -391,9 +392,32 @@ class HasAdjacentConstraint(Constraint):
           constraint:
             type: has_adjacent
             value: left
+
+    With ``include_forks: true`` a lane that forks off beside the lanelet,
+    or joins beside it, counts too (#1066).  A turn pocket that forks off the
+    same predecessor as its through lane overlaps that lane but shares no
+    boundary with it, so the routing graph gives neither a neighbour; the
+    option makes the pocket the through lane's neighbour, and the through
+    lane the pocket's.  A *fork* is another lanelet that follows one of the
+    lanelet's predecessors, a *join* one that precedes one of its
+    successors; either counts when it is not a junction lanelet (no
+    ``turn_direction``: a movement through a junction is not a lane beside
+    another) and its centreline, a little way from the shared end, lies on
+    that side of the lanelet's centreline, in the lanelet's own frame (the
+    sign of ``t``).  It is off by default: a lane-change sweep must not pick
+    a lane the routing graph cannot change out of, so only a sweep that asks
+    for the lane at the kerb (``pedestrian_dart_out``) sets it::
+
+        - type: not
+          constraint:
+            type: has_adjacent
+            value: left
+            include_forks: true
     """
 
     value: str = "left"
+    #: Count a non-junction lanelet that forks off or joins beside it too.
+    include_forks: bool = False
 
     def __post_init__(self) -> None:
         if self.value not in ("left", "right"):
@@ -418,12 +442,15 @@ class HasAdjacentConstraint(Constraint):
         # Codon cannot type one of two).
         left = self.value == "left"
         result: set[int] = set()
-        for lanelet in lanelet_map.laneletLayer:
+        for each in lanelet_map.laneletLayer:
+            lanelet: ConstLanelet = each
             if left:
                 beside = routing_graph.left(lanelet)
             else:
                 beside = routing_graph.right(lanelet)
             if beside is not None:
+                result.add(lanelet.id)
+            elif self.include_forks and _forks_beside(lanelet, routing_graph, left):
                 result.add(lanelet.id)
         return result
 
@@ -435,6 +462,88 @@ class HasAdjacentConstraint(Constraint):
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed adjacent set."""
         return lanelet.id in self._cached_ids
+
+
+#: How far (m) from the shared end a fork's or join's centreline is sampled
+#: to tell which side of the lanelet it lies on: at most half the shorter of
+#: the two lanelets.
+_FORK_SAMPLE_M = 10.0
+#: How far (m) off the lanelet's centreline that sample must be to lie on a
+#: side: two lanelets that run on top of each other are on neither.
+_FORK_MIN_OFFSET_M = 0.1
+
+
+def _forks_beside(
+    lanelet: ConstLanelet, routing_graph: RoutingGraph, left: bool
+) -> bool:
+    """Whether a non-junction lanelet forks off, or joins, on that side of
+    *lanelet* (:class:`HasAdjacentConstraint`'s ``include_forks``)."""
+    for before in routing_graph.previous(lanelet):
+        for sibling in routing_graph.following(before):
+            if _lies_beside(lanelet, sibling, True, left):
+                return True
+    for after in routing_graph.following(lanelet):
+        for sibling in routing_graph.previous(after):
+            if _lies_beside(lanelet, sibling, False, left):
+                return True
+    return False
+
+
+def _lies_beside(
+    lanelet: ConstLanelet, other: ConstLanelet, from_start: bool, left: bool
+) -> bool:
+    """Whether *other*, sharing *lanelet*'s start (or its end), lies on that
+    side of it near the shared end, by the sign of ``t`` in its frame."""
+    import lanelet2.core
+    import lanelet2.geometry
+
+    if other.id == lanelet.id or "turn_direction" in other.attributes:
+        return False
+    points = [(float(p.x), float(p.y)) for p in other.centerline]
+    if len(points) < 2:
+        return False
+    if not from_start:
+        points.reverse()
+    reach = min(
+        _FORK_SAMPLE_M,
+        0.5 * _polyline_length(points),
+        0.5 * float(lanelet2.geometry.length2d(lanelet)),
+    )
+    x, y = _point_along(points, reach)
+    arc = lanelet2.geometry.toArcCoordinates(
+        lanelet2.geometry.to2D(lanelet.centerline), lanelet2.core.BasicPoint2d(x, y)
+    )
+    # Lanelet2's arc distance is positive on the left of the centreline.
+    t = float(arc.distance)
+    if left:
+        return t > _FORK_MIN_OFFSET_M
+    return t < -_FORK_MIN_OFFSET_M
+
+
+def _polyline_length(points: list[tuple[float, float]]) -> float:
+    """The length (m) of the polyline through *points*."""
+    total = 0.0
+    for i in range(1, len(points)):
+        total += math.hypot(
+            points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]
+        )
+    return total
+
+
+def _point_along(
+    points: list[tuple[float, float]], distance: float
+) -> tuple[float, float]:
+    """The point *distance* (m) along the polyline through *points*."""
+    travelled = 0.0
+    for i in range(1, len(points)):
+        x0, y0 = points[i - 1]
+        x1, y1 = points[i]
+        span = math.hypot(x1 - x0, y1 - y0)
+        if span > 0.0 and travelled + span >= distance:
+            fraction = (distance - travelled) / span
+            return x0 + fraction * (x1 - x0), y0 + fraction * (y1 - y0)
+        travelled += span
+    return points[-1]
 
 
 # ---------------------------------------------------------------------------

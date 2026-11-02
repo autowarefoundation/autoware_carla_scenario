@@ -179,6 +179,9 @@ class _Entity:
     def release_from_traffic(self, world: Any) -> None:
         self.released += 1
 
+    def resume_traffic(self, world: Any) -> None:
+        pass
+
 
 class _World:
     def get_map(self) -> Any:

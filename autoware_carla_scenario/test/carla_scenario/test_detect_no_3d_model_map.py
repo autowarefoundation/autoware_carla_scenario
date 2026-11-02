@@ -214,6 +214,50 @@ def test_overwrite_xodr_installs_the_opendrive(
     assert destination.read_bytes() == _XODR.read_bytes()
 
 
+def test_overwrite_xodr_expands_a_tilde_in_the_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1031: the destination is read the way installed_xodr reads it."""
+    config = _write(
+        tmp_path / "map.yaml",
+        "map:\n"
+        "  name: NishishinjukuMap\n"
+        f"  xodr_path: {_XODR}\n"
+        f"  lanelet2_path: {_OSM}\n"
+        "  overwrite_xodr: true\n",
+    )
+    paths = _resolve_map_config(config)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(map_asset_env_var("NishishinjukuMap"), "~/installed.xodr ")
+
+    _load_world(_FakeClient(), paths)  # type: ignore[arg-type]
+
+    assert (tmp_path / "installed.xodr").read_bytes() == _XODR.read_bytes()
+    assert not (tmp_path / "~").exists()
+
+
+def test_overwrite_xodr_with_a_blank_destination_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _write(
+        tmp_path / "map.yaml",
+        "map:\n"
+        "  name: NishishinjukuMap\n"
+        f"  xodr_path: {_XODR}\n"
+        f"  lanelet2_path: {_OSM}\n"
+        "  overwrite_xodr: true\n",
+    )
+    paths = _resolve_map_config(config)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(map_asset_env_var("NishishinjukuMap"), "  ")
+    client = _FakeClient()
+
+    with pytest.raises(MapConfigError, match="NISHISHINJUKU_MAP_PATH"):
+        _load_world(client, paths)  # type: ignore[arg-type]
+    assert client.loaded == []
+
+
 def test_overwrite_xodr_without_destination_is_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

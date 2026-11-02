@@ -63,3 +63,8 @@ def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitR
 def urlunsplit(components) -> str:
     scheme, netloc, path, query, fragment = components
     return scheme + "://" + netloc + path + query + fragment
+
+
+# Python's: %XX escapes decoded, as UTF-8 by default.  Typed only.
+def unquote(string: str, encoding: str = "utf-8", errors: str = "replace") -> str:
+    return string

@@ -256,6 +256,124 @@ def lanelets_ahead(lanelet_id: int, distance_m: float) -> list[int]:
     return done
 
 
+def lanes_ahead_before_junction(lanelet_id: int, distance_m: float) -> list[int]:
+    """*lanelet_id* and the lanelets ahead of it up to the first junction.
+
+    :func:`lanelets_ahead` reaches through junctions and down every branch, and
+    in a junction lanelets overlap: a vehicle crossing straight on in the lane
+    beside is inside the ego lane's left or right turn.  So only the lanelets
+    reached from *lanelet_id* through no junction lanelet are kept -- the lane
+    the ego is on until the next intersection, where a lane change ends.  In
+    the order :func:`lanelets_ahead` gives, *lanelet_id* first.
+
+    A junction lanelet is one with a ``turn_direction`` tag
+    (:func:`~autoware_carla_scenario.odd.probes.lanelet_in_junction`).
+    Requires :class:`MapManager` to be initialised.
+    """
+    # Imported here, as in route_road_ids(): odd.probes is outside coordinate.
+    from ..odd.probes import lanelet_in_junction  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    ahead = lanelets_ahead(lanelet_id, distance_m)
+    kept: list[int] = [lanelet_id]
+    # Until nothing more is added: a lanelet may be listed before the
+    # predecessor that reaches it without a junction.
+    grew = True
+    while grew:
+        grew = False
+        for candidate in ahead:
+            if candidate in kept:
+                continue
+            lanelet = layer[candidate]
+            if lanelet_in_junction(lanelet):
+                continue
+            for previous in graph.previous(lanelet, False):
+                if int(previous.id) in kept:
+                    kept.append(candidate)
+                    grew = True
+                    break
+    ordered: list[int] = []
+    for candidate in ahead:
+        if candidate in kept:
+            ordered.append(candidate)
+    return ordered
+
+
+def lane_beside(lanelet_id: int, direction: str) -> Optional[int]:
+    """The lanelet beside *lanelet_id* on *direction*'s side, or ``None``.
+
+    The lane a vehicle may change into from it: the routing graph's ``left``
+    / ``right``, as the sweep's ``has_adjacent`` and ``adjacent`` binding pick
+    it.  Failing that, its ``adjacentLeft`` / ``adjacentRight``: a lane beside
+    it in the same direction that a lane change into crosses a line it may not
+    cross -- where a scenario asserting the change is refused must still
+    notice the vehicle.
+
+    Requires :class:`MapManager` to be initialised.
+
+    Raises:
+        ValueError: If *direction* is not ``"left"`` or ``"right"``.
+    """
+    if direction != "left" and direction != "right":
+        raise ValueError(f"direction must be 'left' or 'right', got {direction!r}")
+    mm = MapManager.get_instance()
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    graph = mm.routing_graph
+    # One call per side: Codon cannot type a bound method held in a variable.
+    if direction == "left":
+        beside = graph.left(lanelet)
+        if beside is None:
+            beside = graph.adjacentLeft(lanelet)
+    else:
+        beside = graph.right(lanelet)
+        if beside is None:
+            beside = graph.adjacentRight(lanelet)
+    if beside is None:
+        return None
+    return int(beside.id)
+
+
+#: How far ahead (m) :func:`lane_change_target_lanelets` looks for the
+#: lanelets that also count as the lane beside;
+#: :func:`lanes_ahead_before_junction` stops at the next junction well before.
+LANE_CHANGE_TARGET_AHEAD_M = 1000.0
+
+
+def lane_change_target_lanelets(
+    lanelet_id: int, direction: str, distance_m: float = LANE_CHANGE_TARGET_AHEAD_M
+) -> list[int]:
+    """The lanelets a lane change from *lanelet_id* to *direction*'s side ends on.
+
+    The lanelet :func:`lane_beside` gives, and the lanelets ahead of it before
+    the next junction (:func:`lanes_ahead_before_junction`), less any that
+    *lanelet_id*'s own lane also reaches before its junction -- a lane beside
+    that merges into it.  Empty when there is no lane beside on that side: a
+    lane change there has nowhere to end.
+
+    Matched in the Lanelet2 frame, not as an OpenDRIVE road and a lane ID
+    shifted by one: where a carriageway is built as one road per lane, the
+    lane beside is on another road, and matched through the nearest road, part
+    of a lanelet's centreline can read as the lane beside it (#1081, #1085).
+
+    Requires :class:`MapManager` to be initialised.
+
+    Raises:
+        ValueError: If *direction* is not ``"left"`` or ``"right"``.
+    """
+    beside = lane_beside(lanelet_id, direction)
+    targets: list[int] = []
+    if beside is None:
+        return targets
+    found: int = beside
+    own = lanes_ahead_before_junction(lanelet_id, distance_m)
+    for lanelet in lanes_ahead_before_junction(found, distance_m):
+        if lanelet not in own:
+            targets.append(lanelet)
+    return targets
+
+
 def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]:
     """A CARLA pose's ``(x, y, heading)`` in the Lanelet2 map's frame."""
     mm = MapManager.get_instance()

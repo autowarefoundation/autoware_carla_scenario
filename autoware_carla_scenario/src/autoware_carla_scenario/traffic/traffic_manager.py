@@ -43,7 +43,8 @@ from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
     DEFAULT_REACTION_S,
-    sight_speed,
+    driver_quantile,
+    sight_speed_at,
     world_visibility,
 )
 
@@ -160,6 +161,24 @@ _LANE_CHANGE_AHEAD_STEP_M: float = 2.0
 _LANE_CHANGE_AHEAD_MAX_WAYPOINTS: int = 4096
 
 
+#: How near (m) the last point of the path :meth:`TrafficManagerBackend.follow_route`
+#: gave a vehicle it is taken to have used the path up, and is given its own
+#: lane changes back: a path point's spacing, so it is met between two ticks.
+_ROUTE_END_M: float = ROUTE_POINT_STEP_M
+#: How many path points ahead of a vehicle's progress along its path
+#: (:attr:`_Kept.progress`), and behind it for :func:`_ahead_index`, it is
+#: looked for among: a vehicle that comes
+#: within :data:`_ROUTE_END_M` of one of the points ahead of it has come that
+#: far even if it missed the ones before, and a path that comes back near
+#: itself (a loop, a U-turn, a route through a via point and back) is never
+#: matched against its far part (#1105).
+_PROGRESS_WINDOW: int = 8
+#: How far (m) a vehicle is from every point about its progress along its
+#: path for it to be taken as lost from it (driven off it, or round an
+#: obstacle for longer than the window spans): its progress is then looked
+#: for along all the rest of its path, so it does not stall for good.
+_PROGRESS_LOST_M: float = _PROGRESS_WINDOW * ROUTE_POINT_STEP_M
+
 #: How near (m) a point where its path crosses to the lane beside a vehicle is
 #: told to change lanes.
 _LANE_CHANGE_AHEAD_M = 8.0
@@ -184,6 +203,7 @@ class _Kept:
     moved_at: float
     check_due: float
     path: List["carla.Location"]
+    progress: int
     near_route_end: bool
     checked_x: float
     checked_y: float
@@ -200,8 +220,13 @@ class _Kept:
         self.moved_at = 0.0
         #: When it is next looked at, s of the run; negative: not yet.
         self.check_due = -1.0
-        #: The rest of the path it was last given, to give again.
+        #: The path it was last given, to give the rest of again.
         self.path = []
+        #: How many points of :attr:`path` it has come within
+        #: :data:`_ROUTE_END_M` of, in order (:func:`_progressed`): where on
+        #: its path it is, which straight-line distance alone cannot tell on
+        #: a path that comes back near itself (#1105).  Never goes back.
+        self.progress = 0
         #: Whether its path's end has come near: its road is searched for a
         #: dead end only then (or without a path).
         self.near_route_end = False
@@ -274,6 +299,7 @@ class TrafficManagerBackend(TrafficBackend):
     _visibility: Optional[float]
     _draws: Optional[random.Random]
     _drawn: set[int]
+    _entity_overrides: dict[int, VehicleParameters]
     _autopiloted: dict[int, "carla.Actor"]
     _speed_differences: dict[int, float]
     _exact_kmh: dict[int, float]
@@ -283,6 +309,8 @@ class TrafficManagerBackend(TrafficBackend):
     _kept: dict[int, _Kept]
     _desired_mps: dict[int, float]
     _given: dict[int, List["carla.Location"]]
+    _lane_locked: set[int]
+    _paused: dict[int, _Kept]
 
     def __init__(
         self,
@@ -351,12 +379,23 @@ class TrafficManagerBackend(TrafficBackend):
         #: that have theirs.
         self._draws = None
         self._drawn = set()
+        #: Actor id -> what the entity overrides of its vehicle
+        #: (:meth:`override_entity_parameters`) set, layered in order: its
+        #: draws take these over the run's parameters, whenever they are made.
+        self._entity_overrides = {}
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
         #: The speed (m/s) each vehicle was last asked to hold, by actor id.
         self._desired_mps = {}
         #: The path each vehicle was last given, by actor id, kept or not yet.
         self._given = {}
+        #: The vehicles :meth:`follow_route` turned the TrafficManager's own
+        #: lane changes off for, which their first draw keeps off.
+        self._lane_locked = set()
+        #: Kept vehicles taken back (:meth:`release_actor`), by actor id: their
+        #: path and their progress along it, which goes on while the scenario
+        #: drives them, for when they are resumed.
+        self._paused = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -428,9 +467,12 @@ class TrafficManagerBackend(TrafficBackend):
         its vehicles know where every actor is, fog or not
         (:mod:`autoware_carla_scenario.visibility`).  With
         ``follow_visibility: true`` each vehicle it drives is held to the
-        speed it stops from within the visibility the run's weather set
-        (:func:`~autoware_carla_scenario.visibility.sight_speed`, for SUMO's
-        default car's reaction and braking), never faster than it drives
+        speed its driver keeps in the visibility the run's weather set: the
+        weather rules' ``sight_speed``, which reads the visibility, at the
+        driver's own quantile
+        (:func:`~autoware_carla_scenario.visibility.sight_speed_at`, for SUMO's
+        default car's reaction and braking; never above the speed it stops
+        from within the visibility), never faster than it drives
         anyway, worked out again every :data:`SIGHT_UPDATE_S` and whenever the
         visibility changes.  A vehicle given a speed of its own
         (``set_desired_speed``, a background vehicle's spawn speed) is given
@@ -451,7 +493,9 @@ class TrafficManagerBackend(TrafficBackend):
         # visibility any more, or follow_visibility turned off during the run).
         limit_kmh = -1.0
         if follows and seen is not None:
-            limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+            # The default car's median: each vehicle is held to its own
+            # (_sight_limit_kmh).
+            limit_kmh = sight_speed_at(seen) * 3.6
         if limit_kmh < 0.0 and len(self._held) == 0:
             self._sight_kmh = limit_kmh
             return
@@ -472,9 +516,19 @@ class TrafficManagerBackend(TrafficBackend):
             if actor_id in self._released:
                 continue
             try:
-                self._hold_to_sight(tm, actor, limit_kmh)
+                self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
             except RuntimeError:
                 continue  # destroyed under us: forgotten at the next update
+
+    def _sight_limit_kmh(self, actor_id: int) -> float:
+        """The speed, km/h, vehicle *actor_id*'s driver keeps in the
+        visibility it is held to: the weather rules' ``sight_speed`` at the
+        driver's own quantile (:func:`~autoware_carla_scenario.visibility.driver_quantile`),
+        for SUMO's default car; negative when nothing holds it."""
+        seen = self._visibility
+        if self._sight_kmh < 0.0 or seen is None:
+            return -1.0
+        return sight_speed_at(seen, driver_quantile(str(actor_id))) * 3.6
 
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
@@ -524,11 +578,12 @@ class TrafficManagerBackend(TrafficBackend):
             logger.info("TrafficManager: no visibility set any more")
             return
         logger.info(
-            "TrafficManager: drivers see %.0f m, so traffic %s at most %.0f km/h "
-            "(braking at %.1f m/s² after %.1f s)%s",
+            "TrafficManager: drivers see %.0f m, so traffic %s about %.0f km/h "
+            "(the weather rules' sight_speed, its median for a car braking at "
+            "%.1f m/s² after %.1f s; each driver keeps its own)%s",
             seen,
             "drives" if follows else "that follows it would drive",
-            sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6,
+            sight_speed_at(seen) * 3.6,
             DEFAULT_DECEL,
             DEFAULT_REACTION_S,
             ""
@@ -566,10 +621,14 @@ class TrafficManagerBackend(TrafficBackend):
         self._sight_kmh = -1.0
         self._sight_due = 0.0
         self._drawn = set()
+        # Actor ids are reused across runs: none keeps a finished run's.
+        self._entity_overrides = {}
         self._draws = None
         self._kept = {}
         self._desired_mps = {}
         self._given = {}
+        self._lane_locked = set()
+        self._paused = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -686,6 +745,7 @@ class TrafficManagerBackend(TrafficBackend):
         if handle not in self._background:
             return
         actor = self._background.pop(handle)
+        self._forget_overrides(int(actor.id))
         try:
             actor.destroy()
         except RuntimeError:
@@ -861,13 +921,14 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._held:
             del self._held[actor_id]
         sent = speed_kmh
+        limit_kmh = self._sight_limit_kmh(actor_id)
         if (
-            self._sight_kmh >= 0.0
-            and speed_kmh > self._sight_kmh
+            limit_kmh >= 0.0
+            and speed_kmh > limit_kmh
             and actor_id in self._autopiloted
             and actor_id not in self._released
         ):
-            sent = self._sight_kmh
+            sent = limit_kmh
             self._held[actor_id] = sent
         tm.set_desired_speed(_vehicle(actor), sent)
 
@@ -974,12 +1035,69 @@ class TrafficManagerBackend(TrafficBackend):
         # The route says where to change lane; the TrafficManager's own lane
         # changes would take the vehicle off it.
         tm.auto_lane_change(_vehicle(actor), False)
+        self._lane_locked.add(int(actor.id))
         tm.set_path(_vehicle(actor), path)
         self._remember_path(actor, path)
         self._drive_on(actor)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
         if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
             self._lead_out(actor, first, ahead, path)
+
+    def end_route(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Give *entity*'s vehicle, whose route is over, its own lane changes
+        back as the run's parameters (and its entity's overrides) say:
+        :meth:`follow_route` turned them off for the route alone.  Unset, the
+        TrafficManager's own default, which is on."""
+        actor = _require_actor(entity, "end_route")
+        if actor is None:
+            return
+        vehicle: "carla.Actor" = actor
+        self._unlock_lanes(vehicle, _entity_name(entity))
+
+    def _unlock_lanes(self, vehicle: "carla.Actor", name: str) -> None:
+        """Give *vehicle* its own lane changes back, if :meth:`follow_route`
+        turned them off: the run's ``lane_changes`` with its entity's
+        overrides, or, unset, the TrafficManager's default, on."""
+        actor_id = int(vehicle.id)
+        if actor_id not in self._lane_locked:
+            return
+        self._lane_locked.discard(actor_id)
+        tm = self._require_tm("end_route")
+        if tm is None:
+            return
+        lane_changes = self._parameters_of(vehicle).lane_changes
+        allowed = True
+        if lane_changes is not None:
+            allowed = bool(lane_changes)
+        tm.auto_lane_change(_vehicle(vehicle), allowed)
+        logger.info(
+            "%s: its route is over; its own lane changes are %s again",
+            name,
+            "on" if allowed else "off",
+        )
+
+    def _end_route_at_path_end(self, kept: _Kept) -> None:
+        """End the route of a vehicle :meth:`follow_route` turned the lane
+        changes off for once its progress (:meth:`_follow_progress`) has
+        reached its path's last point: the TrafficManager has used the path
+        up and drives on as it likes, which is what a route handed over with
+        nothing to watch it (an untimed ``RoutingAction``) ends in (#1100).
+        Not merely near that point: a route that ends near where it starts
+        is near it from the start (#1105)."""
+        if not kept.path or kept.progress < len(kept.path):
+            return
+        self._unlock_lanes(kept.actor, _actor_name(kept.actor))
+
+    def _follow_progress(self, kept: _Kept) -> None:
+        """Move *kept*'s progress along its path on to where its vehicle is
+        (:func:`_progressed`)."""
+        if kept.progress >= len(kept.path):
+            return
+        try:
+            location = kept.actor.get_location()
+        except RuntimeError:
+            return  # destroyed under us: forgotten at its next look
+        kept.progress = _progressed(kept.path, location, kept.progress)
 
     def _lead_out(
         self,
@@ -1075,6 +1193,8 @@ class TrafficManagerBackend(TrafficBackend):
         # The scenario drives it now: neither kept nor held any more.  Not
         # pop(key, default): Codon has no such overload.
         if actor.id in self._kept:
+            # Its path, and its progress along it, for when it is resumed.
+            self._paused[actor.id] = self._kept[actor.id]
             del self._kept[actor.id]
         if self._started:
             actor.set_autopilot(False, self.port)
@@ -1123,23 +1243,60 @@ class TrafficManagerBackend(TrafficBackend):
         self._autopiloted[actor.id] = actor
         if keep and actor.id not in self._kept:
             kept = _Kept(actor)
-            if actor.id in self._given:
+            if actor.id in self._paused:
+                # Resumed: on along its path from where it has come to.
+                paused = self._paused[actor.id]
+                del self._paused[actor.id]
+                kept.path = paused.path
+                kept.progress = paused.progress
+            elif actor.id in self._given:
                 # A path given before it was kept (the ego's, at its init).
                 kept.path = list(self._given[actor.id])
             self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
-            self._draw_for(actor, self.vehicle_parameters)
+            self._draw_for(actor, self._parameters_of(actor), first=True)
         if self._sight_kmh >= 0.0:
             # Held to sight at once, not at the next update: one resumed after
             # a speed was set on it while released would drive at that speed
             # until then.
             tm = self._require_tm("follow_visibility")
             if tm is not None:
-                self._hold_to_sight(tm, actor, self._sight_kmh)
+                self._hold_to_sight(tm, actor, self._sight_limit_kmh(int(actor.id)))
 
-    def _draw_for(self, actor: "carla.Actor", parameters: VehicleParameters) -> None:
-        """Give *actor* its own draw of each field *parameters* sets."""
+    def _parameters_of(self, actor: "carla.Actor") -> VehicleParameters:
+        """The run's parameters, overridden by those of *actor*'s entity
+        overrides: what a draw of all of them for it is made from."""
+        actor_id = int(actor.id)
+        if actor_id in self._entity_overrides:
+            return self.vehicle_parameters.overridden_by(
+                self._entity_overrides[actor_id]
+            )
+        return self.vehicle_parameters
+
+    def _forget_overrides(self, actor_id: int) -> None:
+        """Drop the entity overrides of the actor *actor_id*, which is gone."""
+        if actor_id in self._entity_overrides:
+            del self._entity_overrides[actor_id]
+        self._drawn.discard(actor_id)
+        self._lane_locked.discard(actor_id)
+        if actor_id in self._paused:
+            del self._paused[actor_id]
+
+    def _draw_for(
+        self, actor: "carla.Actor", parameters: VehicleParameters, first: bool = False
+    ) -> None:
+        """Give *actor* its own draw of each field *parameters* sets.
+
+        Its *first* draw, made when it is put on autopilot, comes after
+        whatever was asked of it before (at the scenario's init, or while it
+        was released), and does not undo it: the one given last wins, and that
+        was the command.  A speed it was given (:attr:`_exact_kmh`) is kept
+        over its speed factor, as a speed given after the draw is, and a route
+        it follows keeps the TrafficManager's own lane changes off
+        (:meth:`follow_route`).  Each value is drawn all the same, so the
+        vehicles after it draw what they would have.
+        """
         if not parameters.set_fields():
             return
         tm = self._require_tm("traffic parameters")
@@ -1149,34 +1306,37 @@ class TrafficManagerBackend(TrafficBackend):
             self._draws = random.Random(self._random_seed)
         rng: random.Random = self._draws
         vehicle = _vehicle(actor)
+        actor_id = int(actor.id)
         speed_factor = parameters.speed_factor
         if speed_factor is not None:
             # The TrafficManager's is a percentage *under* the limit.
             factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
             difference = (1.0 - factor) * 100.0
-            tm.vehicle_percentage_speed_difference(vehicle, difference)
-            # Its own, which a hold to sight never drives it faster than: the
-            # TrafficManager drops the speed it was given for it.
-            actor_id = int(actor.id)
-            self._speed_differences[actor_id] = difference
-            if actor_id in self._exact_kmh:
-                del self._exact_kmh[actor_id]
-            if actor_id in self._held:
-                del self._held[actor_id]
-            if (
-                self._sight_kmh >= 0.0
-                and actor_id in self._autopiloted
-                and actor_id not in self._released
-            ):
-                # Held, it is held again from this at once.
-                self._hold_to_sight(tm, actor, self._sight_kmh)
+            # A first draw keeps a speed it was given before it: drawn, unsent.
+            if not (first and actor_id in self._exact_kmh):
+                tm.vehicle_percentage_speed_difference(vehicle, difference)
+                # Its own, which a hold to sight never drives it faster than:
+                # the TrafficManager drops the speed it was given for it.
+                self._speed_differences[actor_id] = difference
+                if actor_id in self._exact_kmh:
+                    del self._exact_kmh[actor_id]
+                if actor_id in self._held:
+                    del self._held[actor_id]
+                if (
+                    self._sight_kmh >= 0.0
+                    and actor_id in self._autopiloted
+                    and actor_id not in self._released
+                ):
+                    # Held, it is held again from this at once.
+                    self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
         min_gap = parameters.min_gap_m
         if min_gap is not None:
             tm.distance_to_leading_vehicle(
                 vehicle, min_gap.draw(rng, VEHICLE_BOUNDS["min_gap_m"])
             )
-        if parameters.lane_changes is not None:
-            tm.auto_lane_change(vehicle, parameters.lane_changes)
+        lane_changes = parameters.lane_changes
+        if lane_changes is not None and not (first and actor_id in self._lane_locked):
+            tm.auto_lane_change(vehicle, lane_changes)
         # The TrafficManager's are percentages, the parameters' probabilities.
         ignore_lights = parameters.ignore_lights
         if ignore_lights is not None:
@@ -1212,7 +1372,14 @@ class TrafficManagerBackend(TrafficBackend):
         """Keep every vehicle on autopilot but a background one from the
         TrafficManager's removal, each looked at every :data:`_CHECK_PERIOD_S`
         (``docs/traffic_backends.md``)."""
+        for actor_id, paused in list(self._paused.items()):
+            # Driven by the scenario, it still comes along its path.
+            if not paused.actor.is_alive:
+                del self._paused[actor_id]
+                continue
+            self._follow_progress(paused)
         for actor_id, kept in list(self._kept.items()):
+            self._follow_progress(kept)
             approach = kept.approach
             if approach is not None:
                 driving: FinalApproach = approach
@@ -1236,6 +1403,8 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             if not kept.held and len(kept.lane_changes) > 0:
                 self._change_lanes_on_path(kept)
+            if actor_id in self._lane_locked:
+                self._end_route_at_path_end(kept)
             if kept.held or elapsed < kept.check_due:
                 continue
             actor = kept.actor
@@ -1303,12 +1472,14 @@ class TrafficManagerBackend(TrafficBackend):
         """
         if not kept.path:
             return
-        kept.path = _ahead_of(kept.path, kept.actor.get_location())
-        if not kept.path:
+        cut = _ahead_index(kept.path, kept.actor.get_location(), kept.progress)
+        # The points before the cut are not given again: passed.
+        kept.progress = max(kept.progress, cut)
+        if cut >= len(kept.path):
             return
         tm = self._require_tm("re-registering")
         if tm is not None:
-            tm.set_path(_vehicle(kept.actor), kept.path)
+            tm.set_path(_vehicle(kept.actor), kept.path[cut:])
 
     def _hand_on(self, kept: _Kept) -> None:
         """Give a vehicle driven out of its junction back to the
@@ -1330,10 +1501,14 @@ class TrafficManagerBackend(TrafficBackend):
         """Remember the path a vehicle was just given: for the keeping, now
         if it is kept, else from when it is put on autopilot."""
         self._given[actor.id] = list(path)
+        if actor.id in self._paused:
+            # Released: this path, from its start, when it is resumed.
+            del self._paused[actor.id]
         if actor.id not in self._kept:
             return
         kept = self._kept[actor.id]
         kept.path = list(path)
+        kept.progress = 0
         kept.near_route_end = False
         kept.checked_lookahead = -1.0
         kept.approach = None
@@ -1419,7 +1594,7 @@ class TrafficManagerBackend(TrafficBackend):
             return
         actor.set_autopilot(False, self.port)
         kept.held = True
-        ahead = _ahead_of(kept.path, location)
+        ahead = _ahead_of(kept.path, location, kept.progress)
         if ahead:
             # On a path it was given, which ends before the dead end: the
             # TrafficManager would plan past its end into it.  The rest of the
@@ -1460,6 +1635,23 @@ class TrafficManagerBackend(TrafficBackend):
         parameters too."""
         self._remember_parameters()
         self._vehicle_parameters = self.vehicle_parameters.overridden_by(overrides)
+        # The one given last wins: an entity override of a field this sets is
+        # spent, so a vehicle that draws later draws it from the new
+        # parameters, as one that drew already does here.
+        overridden = set(overrides.set_fields())
+        for undrawn in list(self._exact_kmh):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
+        for undrawn in list(self._lane_locked):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
+        for actor_id in list(self._entity_overrides):
+            own = self._entity_overrides[actor_id]
+            kept = set(own.set_fields()) - overridden
+            if kept:
+                self._entity_overrides[actor_id] = own.restricted_to(kept)
+            else:
+                del self._entity_overrides[actor_id]
         for driven in world.get_actors().filter("vehicle.*"):
             # The ones that drew already: a vehicle not yet on autopilot draws
             # from the new parameters when it is put on it.
@@ -1469,12 +1661,37 @@ class TrafficManagerBackend(TrafficBackend):
     def override_entity_parameters(
         self, world: "carla.World", overrides: VehicleParameters, entity: DrivenEntity
     ) -> None:
-        """Give *entity*'s vehicle alone a new draw of the fields *overrides* sets."""
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides* sets.
+
+        Kept for it, layered over the overrides it was given before: a vehicle
+        not yet on autopilot draws them when it is put on it, in place of the
+        run's parameters, rather than lose them to its first draw.
+        """
         actor = _require_actor(entity, "override_entity_parameters")
-        if actor is not None:
-            # A typed local: Codon unwraps the Optional here.
-            vehicle: "carla.Actor" = actor
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        actor_id = int(vehicle.id)
+        if actor_id in self._entity_overrides:
+            self._entity_overrides[actor_id] = self._entity_overrides[
+                actor_id
+            ].overridden_by(overrides)
+        else:
+            self._entity_overrides[actor_id] = overrides
+        if actor_id in self._drawn:
             self._draw_for(vehicle, overrides)
+        else:
+            self._given_before_draw(actor_id, overrides)
+
+    def _given_before_draw(self, actor_id: int, overrides: VehicleParameters) -> None:
+        """*overrides*, given vehicle *actor_id* before its first draw, came
+        after the speed or route it was given before them: the one given last
+        wins, so its first draw sends the fields they set (:meth:`_draw_for`)."""
+        if overrides.speed_factor is not None and actor_id in self._exact_kmh:
+            del self._exact_kmh[actor_id]
+        if overrides.lane_changes is not None:
+            self._lane_locked.discard(actor_id)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
@@ -1633,22 +1850,78 @@ def _from_here(
     return path[nearest:]
 
 
-def _ahead_of(
-    path: List["carla.Location"], location: "carla.Location"
-) -> List["carla.Location"]:
-    """The points of *path* after the one nearest *location*.
+def _progressed(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> int:
+    """How many points of *path* a vehicle at *location* has come to, given
+    it had come to *progress*: past the last of the next
+    :data:`_PROGRESS_WINDOW` points within :data:`_ROUTE_END_M` of it, again
+    from there while one is (a vehicle that missed a point by a little has
+    still come past it), and never fewer than *progress*.  Lost from its path
+    (:data:`_PROGRESS_LOST_M` from every point about *progress*), past the
+    first point of the rest of it within :data:`_ROUTE_END_M` of it."""
+    reached = progress
+    moved = True
+    while moved:
+        moved = False
+        end = min(len(path), reached + _PROGRESS_WINDOW)
+        for i in range(reached, end):
+            if location.distance(path[i]) <= _ROUTE_END_M:
+                reached = i + 1
+                moved = True
+    if reached > progress or reached >= len(path):
+        return reached
+    # Lost from its path: far from every point about its progress, it is
+    # looked for along the rest, the first point it has come near.  Not
+    # sooner: a path that comes back near itself would be matched against
+    # its far part (#1105).
+    end = min(len(path), progress + _PROGRESS_WINDOW)
+    for i in range(max(0, progress - 1), end):
+        if location.distance(path[i]) <= _PROGRESS_LOST_M:
+            return reached
+    for i in range(end, len(path)):
+        if location.distance(path[i]) <= _ROUTE_END_M:
+            return _progressed(path, location, i + 1)
+    return reached
+
+
+def _ahead_index(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> int:
+    """Where the points of *path* ahead of *location* start, a vehicle
+    *progress* points along it (:attr:`_Kept.progress`): after the one
+    nearest it among the last it has come to that are still within
+    :data:`_ROUTE_END_M` of it (back from *progress*, up to
+    :data:`_PROGRESS_WINDOW` of them, to the first that is not), else at
+    *progress*.
 
     Not that nearest one: the TrafficManager waits for each point to come
     within a few metres, and one beside or behind the vehicle may never.
+    Not the nearest on all the path, nor any further back: one that comes
+    back near itself (a loop, a U-turn) would be cut at its far part, or
+    the vehicle sent back to a point it has passed (#1105).
     """
-    nearest = 0
+    cut = min(progress, len(path))
     best = float("inf")
-    for i, point in enumerate(path):
-        gap = location.distance(point)
+    stop = max(0, progress - _PROGRESS_WINDOW)
+    i = cut - 1
+    while i >= stop:
+        gap = location.distance(path[i])
+        if gap > _ROUTE_END_M:
+            break
         if gap < best:
             best = gap
-            nearest = i
-    return path[nearest + 1 :]
+            cut = i + 1
+        i -= 1
+    return cut
+
+
+def _ahead_of(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> List["carla.Location"]:
+    """The points of *path* ahead of *location*, a vehicle *progress* points
+    along it (:func:`_ahead_index`)."""
+    return path[_ahead_index(path, location, progress) :]
 
 
 def _dead_end_within(start: "carla.Waypoint", distance: float) -> bool:

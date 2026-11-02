@@ -236,13 +236,16 @@ graph by following on, a lane change or a short path, the closest sequence
 chosen (`traffic.route_match`) -- and the route goes through where it leaves
 each one. A track that cannot be matched falls back to its waypoints one by
 one, leaving out those no lane route reaches, with a warning. The
-TrafficManager is given the route with its own lane changes off, and a route
+TrafficManager is given the route with its own lane changes off (given back
+by `end_route` when a run that watches the route ends), and a route
 ending in a junction is carried on along the lane after it until it is clear
 of the junction, so it is never handed an empty path.
 
 **When it ends.** A route given as a goal (and Lanelet2 waypoints) with
 nothing to time ends as soon as the vehicle has it (as an ego's initial goal
-always has); a route written out as waypoints, timed or not, runs until the
+always has), unless `stop_at_goal` asks for the vehicle to stop there: then
+it runs until the vehicle arrives, its last metres driven by the backend
+itself where it can (`finish_at`); a route written out as waypoints, timed or not, runs until the
 vehicle is within 1 m of its end along the planned path (a timed one then sets
 its driver's speed back to the cruise speed); a pedestrian's ends when it
 arrives.
@@ -263,6 +266,10 @@ braking that stops a few metres on -- lasts its time in `FOLLOW` mode too: a
 vehicle that reaches its end early stands there on the brake until the last
 vertex's time. Then a vehicle is braked to a stop and a walker stood still
 where the trajectory ended. Pass `until=` to end it on a condition of your own.
+One that ends the run before the entity reaches the end is OpenSCENARIO's stop
+transition, as an override is: a vehicle is braked where it is and handed back
+to its traffic backend (`resume_traffic`), a walker stood still; one that holds
+only after the end leaves the entity held there.
 `stop_at_end=False` (an extension) leaves a vehicle moving as it arrived instead
 -- in `POSITION` mode with the last segment's velocity -- for an action that
 hands it straight back to traffic, as the adversarial actions do
@@ -520,7 +527,11 @@ Position). Its route comes from one of five sources:
 
 - **Goal lanelet, via lanelets** (the default) -- a goal lanelet and `s`
   along it, and the lanelets to pass on the way: what an ego is sent to. It
-  takes no waypoint conditions and no time reference.
+  takes no waypoint conditions and no time reference, and it is driven in
+  Driver mode only, from where the entity stands (*Start this far along* 0):
+  the goal is a destination for the entity's driver, not a way to follow,
+  place it on, or start along. `RoutingAction` refuses a goal with
+  `mode=FOLLOW`/`POSITION` or a positive `initial_distance_offset` too.
 - **Vertices (map frame)** -- written in the card, one vertex per line:
   `x, y[, yaw]` (metres, radians; `81234.5, 50123.0` leaves the yaw to the
   path). The line above the text says how many vertices and how long. Their

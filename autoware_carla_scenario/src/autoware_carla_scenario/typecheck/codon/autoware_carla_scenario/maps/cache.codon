@@ -63,7 +63,7 @@ class GitMapCache:
     def __init__(self, root: Optional[Path] = None):
         raise NotImplementedError()
 
-    def derived_dir(self, path: str) -> Path:
+    def derived_dir(self, source: MapSource) -> Path:
         raise NotImplementedError()
 
     def provisioned(self, source: MapSource) -> Optional[Path]:

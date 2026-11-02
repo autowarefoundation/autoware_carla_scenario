@@ -654,6 +654,175 @@ def test_a_vehicle_published_from_the_start_is_not_resumed(
 
 
 @needs_sumo
+def test_an_entity_override_given_while_released_is_drawn_at_resume(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """An override given the NPC while CARLA drives it is not lost: drawn for
+    it once SUMO drives it again, its lane-change rule over the saved one."""
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        _LANE_CHANGE_MODE_STRATEGIC,
+    )
+
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        assert tc.vehicle.getLaneChangeMode(sumo_id) != _LANE_CHANGE_MODE_STRATEGIC
+        backend.release(entity, world)
+        backend.override_entity_parameters(
+            world,
+            VehicleParameters(lane_changes=False, reaction_time_s=Spread(2.0)),
+            entity,
+        )
+        # The one given last wins.
+        backend.override_entity_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(0.5)), entity
+        )
+        backend.tick(world, 0.05)
+        backend.resume(entity, world)
+        assert tc.vehicle.getLaneChangeMode(sumo_id) == _LANE_CHANGE_MODE_STRATEGIC
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(0.5)
+        assert sumo_id not in backend._released_overrides
+    finally:
+        backend.close()
+    assert backend._released_overrides == {}
+
+
+@needs_sumo
+def test_a_run_wide_override_given_while_released_is_drawn_at_resume(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A run-wide override reaches a released vehicle when it is resumed,
+    layered with the entity override given before it."""
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        _LANE_CHANGE_MODE_STRATEGIC,
+    )
+
+    configured = VehicleParameters(decel=Spread(4.0))
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path, vehicles=configured)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        backend.release(entity, world)
+        backend.override_entity_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(0.5)), entity
+        )
+        backend.override_vehicle_parameters(
+            world,
+            VehicleParameters(lane_changes=False, accel=Spread(1.5)),
+        )
+        backend.tick(world, 0.05)
+        backend.resume(entity, world)
+        assert tc.vehicle.getLaneChangeMode(sumo_id) == _LANE_CHANGE_MODE_STRATEGIC
+        assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(0.5)
+        assert tc.vehicle.getDecel(sumo_id) == pytest.approx(4.0)  # the run's
+    finally:
+        backend.close()
+
+
+class _JunctionVehicles:
+    """The traci vehicle domain of one vehicle standing in a junction behind
+    a published foe standing across its way."""
+
+    def __init__(self) -> None:
+        self.speed_mode = {"v0": 31}
+        self.lane_change_mode = {"v0": 1621}
+        self.lane = {"v0": ":J1_0_0"}
+        self.speed = {"v0": 0.0, "foe": 0.0}
+
+    def getSpeedMode(self, sumo_id: str) -> int:
+        return self.speed_mode[sumo_id]
+
+    def getLaneChangeMode(self, sumo_id: str) -> int:
+        return self.lane_change_mode[sumo_id]
+
+    def setSpeedMode(self, sumo_id: str, mode: int) -> None:
+        self.speed_mode[sumo_id] = mode
+
+    def setLaneChangeMode(self, sumo_id: str, mode: int) -> None:
+        self.lane_change_mode[sumo_id] = mode
+
+    def getLaneID(self, sumo_id: str) -> str:
+        return self.lane[sumo_id]
+
+    def getSpeed(self, sumo_id: str) -> float:
+        return self.speed[sumo_id]
+
+    def getJunctionFoes(self, sumo_id: str, distance: float) -> list[Any]:
+        return [("foe", 0.0, 0.0, 0.0, False, True)]
+
+    def setColor(self, sumo_id: str, color: Any) -> None:
+        pass
+
+    def setSpeed(self, sumo_id: str, speed: float) -> None:
+        pass
+
+
+def test_a_vehicle_released_while_unstuck_resumes_with_its_own_speed_mode() -> None:
+    """Released while going on through a junction disregarding the right of
+    way, a vehicle resumes with the speed mode it had before, not that one."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig(scenario_vehicles="sumo"))
+    vehicles = _JunctionVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    backend._running = True
+    actor = SimpleNamespace(id=7, attributes={}, disable_constant_velocity=lambda: None)
+    entity = SimpleNamespace(actor=actor, role_name="npc")
+    backend._driven["v0"] = entity
+    backend._external["foe"] = object()
+    backend._unstick_junctions(0.0)
+    backend._unstick_junctions(3.0)
+    assert vehicles.speed_mode["v0"] != 31  # going on through
+    assert "v0" in backend._unstuck
+
+    backend.release(entity, None)
+    assert "v0" not in backend._unstuck
+    published = vehicles.speed_mode["v0"]
+    vehicles.lane["v0"] = "E2_0"  # CARLA drives it out of the junction
+    backend._unstick_junctions(4.0)
+    assert vehicles.speed_mode["v0"] == published  # left as CARLA's
+
+    vehicles.speed["v0"] = 5.0
+    backend.resume(entity, None)
+    backend._unstick_junctions(5.0)
+    assert vehicles.speed_mode["v0"] == 31
+    assert backend._unstuck == {}
+
+
+def test_a_vehicle_released_without_its_actor_while_unstuck_gets_its_mode_back() -> (
+    None
+):
+    """Released before its actor is there, an unstuck vehicle is not handed
+    over: _unstick_junctions still gives it its own speed mode back once out
+    of the junction, rather than leave it disregarding the right of way."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig(scenario_vehicles="sumo"))
+    vehicles = _JunctionVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    backend._running = True
+    entity = SimpleNamespace(actor=None, role_name="npc")
+    backend._driven["v0"] = entity
+    backend._external["foe"] = object()
+    backend._unstick_junctions(0.0)
+    backend._unstick_junctions(3.0)
+    assert "v0" in backend._unstuck
+    backend._id_of = lambda e: "v0"  # type: ignore[method-assign,assignment]
+
+    backend.release(entity, None)
+    vehicles.lane["v0"] = "E2_0"
+    backend._unstick_junctions(4.0)
+    assert vehicles.speed_mode["v0"] == 31
+    assert backend._unstuck == {}
+
+
+@needs_sumo
 def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> None:
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
     entity = backend._driven[next(iter(backend._driven))]
@@ -968,9 +1137,10 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
     crossroads: Path, tmp_path: Path
 ) -> None:
     from autoware_carla_scenario.visibility import (
+        driver_quantile,
         forget_visibility,
         set_world_visibility,
-        sight_speed,
+        sight_speed_at,
     )
 
     forget_visibility()
@@ -985,10 +1155,20 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
         backend.tick(world, 0.0)
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
 
-        # Fog: 20 m, so held to what a car stops from within 20 m.
+        # Fog: 20 m, so held to what its driver keeps in 20 m (the weather
+        # rules' sight_speed at the driver's own quantile).
         set_world_visibility(11, 20.0)
         backend.tick(world, 0.05)
-        held = sight_speed(20.0, tc.vehicle.getDecel(handle), tc.vehicle.getTau(handle))
+
+        def kept(sumo_id: str) -> float:
+            return sight_speed_at(
+                20.0,
+                driver_quantile(sumo_id),
+                tc.vehicle.getDecel(sumo_id),
+                tc.vehicle.getTau(sumo_id),
+            )
+
+        held = kept(handle)
         assert held < 60.0 / 3.6
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(held)
         # The scenario's own vehicle is the scenario's.
@@ -1000,7 +1180,7 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
         )
         assert later is not None
         backend.tick(world, 0.1)
-        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(held)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(kept(later))
         assert backend.describe()["visibility_m"] == 20.0
 
         # The fog lifts: each gets its own speed back.
@@ -1048,9 +1228,10 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
 ) -> None:
     from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
     from autoware_carla_scenario.visibility import (
+        driver_quantile,
         forget_visibility,
         set_world_visibility,
-        sight_speed,
+        sight_speed_at,
     )
 
     forget_visibility()
@@ -1100,7 +1281,7 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
         set_world_visibility(13, 20.0)
         backend.tick(world, 0.1)
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
-            max(sight_speed(20.0, 3.0, taus[0]), 1.0)
+            max(sight_speed_at(20.0, driver_quantile(handle), 3.0, taus[0]), 1.0)
         )
     finally:
         backend.close()

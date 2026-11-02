@@ -298,6 +298,49 @@ def _hydra_overrides(directory: Path) -> list[str]:
     return [str(o) for o in data] if isinstance(data, list) else []
 
 
+def _job_indices(directory: Path, session_type: str) -> list[int]:
+    """The case indices of a multirun or single session in *directory*."""
+    if session_type != "multirun":
+        return [0]
+    return sorted(
+        int(p.name) for p in directory.iterdir() if p.is_dir() and p.name.isdigit()
+    )
+
+
+def _job(
+    base: Path, directory: Path, session_type: str, date: str, time: str, index: int
+) -> Path | None:
+    """The directory of case *index* of a multirun or single session."""
+    return job_dir(base, date, time, index) if session_type == "multirun" else directory
+
+
+def _override_label(overrides: list[str]) -> str | None:
+    """The ``scenario=`` override among *overrides*, if any."""
+    return next(
+        (o.split("=", 1)[1] for o in overrides if o.startswith("scenario=")), None
+    )
+
+
+def session_scenarios(base: Path, session_type: str, date: str, time: str) -> set[str]:
+    """The scenarios a multirun or single session ran, named as
+    :func:`load_results` names them (each case's :attr:`CaseResult.scenario`),
+    but read from the Hydra overrides alone: no result, coverage or trajectory
+    file is read, and a case's files are looked up only when it has no
+    ``scenario=`` override."""
+    directory = session_dir(base, session_type, date, time)
+    if session_type == "batch" or directory is None or not directory.is_dir():
+        return set()
+    out: set[str] = set()
+    for index in _job_indices(directory, session_type):
+        job = _job(base, directory, session_type, date, time, index)
+        label = _override_label(_hydra_overrides(job)) if job is not None else None
+        if label is None:
+            files = case_files(base, session_type, date, time, index)
+            label = files.stem if files else "unknown"
+        out.add(label.split("#", 1)[0])
+    return out
+
+
 def load_results(
     base: Path, session_type: str, date: str, time: str, *, metrics: bool = True
 ) -> list[CaseResult]:
@@ -332,29 +375,13 @@ def load_results(
                 )
             )
     else:
-        indices = (
-            sorted(
-                int(p.name)
-                for p in directory.iterdir()
-                if p.is_dir() and p.name.isdigit()
-            )
-            if session_type == "multirun"
-            else [0]
-        )
-        for index in indices:
+        for index in _job_indices(directory, session_type):
             files = case_files(base, session_type, date, time, index)
-            job = (
-                job_dir(base, date, time, index)
-                if session_type == "multirun"
-                else directory
-            )
+            job = _job(base, directory, session_type, date, time, index)
             result = _read_json(files.result) if files else None
             result = result if isinstance(result, dict) else {}
             overrides = _hydra_overrides(job) if job is not None else []
-            label = next(
-                (o.split("=", 1)[1] for o in overrides if o.startswith("scenario=")),
-                files.stem if files else "unknown",
-            )
+            label = _override_label(overrides) or (files.stem if files else "unknown")
             out.append(
                 CaseResult(
                     index=index,

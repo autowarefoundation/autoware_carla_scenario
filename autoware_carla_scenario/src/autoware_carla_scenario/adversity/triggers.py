@@ -23,7 +23,8 @@ adversarial thing now, else None:
 * :attr:`AdversityKind.HEAD_ON` (Headon): IGNORE_LEADER's command, where the
   leader's lanelet starts more than 120 degrees off the agent's;
 * :attr:`AdversityKind.MERGE` (Merge): not already changing lanes (turned
-  5 degrees or more off its lane), beside a merging lane with traffic on it
+  5 degrees or more off its lane), beside a lane merging toward it, on its
+  right or its left, with traffic on it
   (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
   speed up as if the vehicle merging ahead were not there, when that beats
   giving way by more than 1.5 m/s², for 2 s; two lanes over, change into
@@ -346,15 +347,21 @@ def head_on(
     return command
 
 
-def _merging(features: MapFeatures, side: Optional[SideLane]) -> bool:
-    """Whether *side* is a merging lane with a vehicle on it, near."""
+def _other_side(side: str) -> str:
+    """The side opposite *side*."""
+    return "left" if side == "right" else "right"
+
+
+def _merging(features: MapFeatures, side: Optional[SideLane], into: str) -> bool:
+    """Whether *side* is a lane merging into the lane on its *into* side,
+    with a vehicle on it, near."""
     if side is None:
         return False
     # A typed local: Codon unwraps the Optional here, not at each use.
     lane: SideLane = side
     if lane.leader is None and lane.follower is None:
         return False
-    return features.merges(lane.lanelet)
+    return features.merges(lane.lanelet, into)
 
 
 def _within_headway(
@@ -375,23 +382,28 @@ def merge(
     beyond: Optional[SideLane],
     features: MapFeatures,
     limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+    side: str = "right",
 ) -> Optional[AdversarialCommand]:
     """MERGE: make a merging vehicle's way in harder.
 
-    TeraSim's Merge, on the lane right beside the agent (one lane over) and
-    *beyond*, the lane right of that one (two lanes over).
+    TeraSim's Merge, on the lane beside the agent on *side* (one lane over)
+    and *beyond*, the lane on *side* of that one (two lanes over), each
+    merging toward the agent: a lane on the right ending into the lane on its
+    left, where traffic keeps right, and the mirror image, a lane on the left
+    ending into the lane on its right, where traffic keeps left.
     """
-    right = seen.right
+    near = seen.right if side == "right" else seen.left
     lane = seen.lane
-    if right is None or lane is None:
+    if near is None or lane is None:
         return None
     # Typed locals: Codon unwraps the Optionals here, not at each use.
-    beside: SideLane = right
+    beside: SideLane = near
+    toward = _other_side(side)
     on: LanePosition = lane
     if abs(math.degrees(on.heading)) >= limits.lane_changing_angle:
         return None  # already changing lanes
     agent = seen.agent
-    if _merging(features, beside):
+    if _merging(features, beside, toward):
         # MergeSpeedUp: drive as its own leader lets it, ignoring the
         # vehicle merging ahead it would give way to.
         safe = free_flow_acceleration(agent.speed, seen.desired_speed, limits.idm)
@@ -410,14 +422,14 @@ def merge(
         if safe - cooperative <= limits.acceleration_gain:
             return None
         return AdversarialCommand.accelerate(safe, limits.duration)
-    if not _merging(features, beyond):
+    if not _merging(features, beyond, toward):
         return None
     # MergeLaneChange: into the lane the merging vehicle is to merge into.
     if _within_headway(beside.leader, agent.speed, True, limits):
         return None
     if _within_headway(beside.follower, agent.speed, False, limits):
         return None
-    return AdversarialCommand.change_lane("right", limits.lane_change_duration)
+    return AdversarialCommand.change_lane(side, limits.lane_change_duration)
 
 
 def traffic_rule(
@@ -601,15 +613,22 @@ def adversity_command(
     if kind is AdversityKind.LANE_CHANGE_ABORT:
         return lane_change_abort(seen, scene.features, limits)
     if kind is AdversityKind.MERGE:
-        beyond: Optional[SideLane] = None
-        right = seen.right
-        if right is not None:
-            # Who is two lanes over is worth looking for only where that
-            # lane merges (a cached map answer); nearly everywhere it does not.
-            far = scene.features.neighbour(right.lanelet, "right")
-            if far is not None and scene.features.merges(far):
-                beyond = scene.lane_beside(name, right.lanelet, "right")
-        return merge(seen, beyond, scene.features, limits)
+        # The right first, then the left: a merge toward the agent from
+        # either side, wherever traffic keeps right or left.
+        for side in ("right", "left"):
+            beyond: Optional[SideLane] = None
+            near = seen.right if side == "right" else seen.left
+            if near is not None:
+                # Who is two lanes over is worth looking for only where that
+                # lane merges toward the agent (a cached map answer); nearly
+                # everywhere it does not.
+                far = scene.features.neighbour(near.lanelet, side)
+                if far is not None and scene.features.merges(far, _other_side(side)):
+                    beyond = scene.lane_beside(name, near.lanelet, side)
+            command = merge(seen, beyond, scene.features, limits, side)
+            if command is not None:
+                return command
+        return None
     if kind is AdversityKind.HEAD_ON:
         leader = seen.leader
         if leader is None:

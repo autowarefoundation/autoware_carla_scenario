@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -213,3 +215,89 @@ class TestNishishinjuku:
                     )
         assert checked > 100
         assert mismatches == []
+
+
+def _fires_along(condition: Any, lanelet_id: int) -> bool:
+    """Whether *condition* holds anywhere along *lanelet_id*'s centreline.
+
+    The ego is put every metre along it (at its middle too, for a lanelet
+    shorter than that) and the condition checked each time, as it would be
+    every tick of a drive down the lanelet.
+    """
+    from autoware_carla_scenario.coordinate import (
+        Lanelet2Pose,
+        lanelet_length,
+        to_carla_world,
+    )
+
+    length = lanelet_length(lanelet_id)
+    stations = [length / 2.0]
+    s = 0.5
+    while s < length - 0.5:
+        stations.append(s)
+        s += 1.0
+    for station in stations:
+        where = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=station))
+        location = MagicMock(x=where.x, y=where.y, z=where.z)
+        actor = MagicMock()
+        actor.attributes = {"role_name": "ego"}
+        actor.get_location.return_value = location
+        world = MagicMock()
+        world.get_actors.return_value = [actor]
+        result = condition.check(world, elapsed=1.0)
+        if result is not None and result.passed:
+            return True
+    return False
+
+
+class TestLaneOfALaneletIsReadInLanelet2:
+    """``entity_lane_of`` beside a lanelet is the lanelet beside it (#1085).
+
+    The fixture map builds most carriageways as one road per lane, so the
+    OpenDRIVE lane beside the position's, on the position's road, was often
+    no lane at all, or part of the position's own lanelet.
+    """
+
+    @staticmethod
+    def _lane_of(lanelet_id: int, s: float, lane: str) -> Any:
+        from autoware_carla_scenario.conditions import EntityLaneOfCondition
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        return EntityLaneOfCondition(
+            "ego", Lanelet2Pose(lanelet_id=lanelet_id, s=s), lane, label="x"
+        )
+
+    def test_a_change_onto_another_road_fires(self, loaded_map: None) -> None:
+        """37 is road 16, 38 beside it road 17: road 16 has no lane beside."""
+        condition = self._lane_of(37, 25.0, "right")
+        assert _fires_along(condition, 38)
+        assert not _fires_along(condition, 37)
+        assert condition.get_details()["lanelet_ids"][0] == 38
+
+    def test_staying_on_the_lanelet_does_not_fire(self, loaded_map: None) -> None:
+        """Part of 136's centreline reads as road 62's lane beside it."""
+        condition = self._lane_of(136, 24.0, "right")
+        assert not _fires_along(condition, 136)
+        assert _fires_along(condition, 137)
+
+    def test_a_side_reading_the_centre_lane_builds(self, loaded_map: None) -> None:
+        """301024 reads lane 0, which has no side; its left is 301029."""
+        from autoware_carla_scenario.coordinate import lanelet_length
+
+        condition = self._lane_of(301024, lanelet_length(301024) / 2.0, "left")
+        details = condition.get_details()
+        assert details["frame"] == "lanelet2"
+        assert details["lanelet_ids"] == [301029]
+        assert _fires_along(condition, 301029)
+        assert not _fires_along(condition, 301024)
+
+    def test_no_lane_beside_never_holds(self, loaded_map: None) -> None:
+        mm = MapManager.get_instance()
+        lanelet = mm.lanelet_map.laneletLayer[9]
+        assert mm.routing_graph.left(lanelet) is None
+        assert mm.routing_graph.adjacentLeft(lanelet) is None
+        condition = self._lane_of(9, 5.0, "left")
+        details = condition.get_details()
+        assert details["lanelet_ids"] == []
+        assert details["lanelet_id"] is None
+        assert not _fires_along(condition, 9)

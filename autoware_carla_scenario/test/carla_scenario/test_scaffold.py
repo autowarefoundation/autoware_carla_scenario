@@ -3,12 +3,18 @@
 These exercise :mod:`autoware_carla_scenario.scaffold` end-to-end.  The
 generator has no CARLA dependency (it only renders Jinja2 templates), so the
 tests -- including generating a package and byte-compiling its Python files --
-run in any environment.
+run in any environment.  ``TestOneGoalLanelet`` also runs the generated
+scenario's ``setup()`` (and the package template's), with stand-ins for the
+steps that need a live CARLA world.
 """
 
 from __future__ import annotations
 
+import importlib
+import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -269,3 +275,126 @@ class TestCreateScenarioPackage:
         # Should not raise when force=True.
         result = create_scenario_package("dup_pkg", output_dir=tmp_path, force=True)
         assert result.root.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# One goal lanelet (#1068)
+# ---------------------------------------------------------------------------
+
+_TEMPLATE_SRC = (
+    Path(__file__).resolve().parents[3]
+    / "examples"
+    / "scenario_package_template"
+    / "src"
+)
+
+
+def _import_from(src: Path, *names: str) -> list[ModuleType]:
+    """Import *names* with *src* on ``sys.path`` for the import only."""
+    sys.path.insert(0, str(src))
+    try:
+        return [importlib.import_module(name) for name in names]
+    finally:
+        sys.path.remove(str(src))
+
+
+def _set_up(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    scenario_cls: Any,
+    config: Any,
+) -> Any:
+    """Run ``setup()`` with stand-ins for what needs a live CARLA world."""
+    from autoware_carla_scenario import EgoConfig, Lanelet2Pose  # noqa: PLC0415
+    from autoware_carla_scenario.conditions.always_true import (  # noqa: PLC0415
+        AlwaysTrueCondition,
+    )
+    from autoware_carla_scenario.entity._spawn import (  # noqa: PLC0415
+        SpawnPointIndex,
+    )
+
+    # The lane-position check needs the loaded map.
+    monkeypatch.setattr(
+        module,
+        "EntityLanePositionCondition",
+        lambda entity, pose, label: AlwaysTrueCondition(label=label),
+    )
+    scenario = scenario_cls(
+        EgoConfig(SpawnPointIndex(0)), Lanelet2Pose(lanelet_id=242, s=25.0), config
+    )
+    monkeypatch.setattr(scenario, "derive_goal_from_route", lambda ids: None)
+    monkeypatch.setattr(scenario, "_setup_ego_spawn", lambda: None)
+    scenario.setup()
+    return scenario
+
+
+def _assert_goals_pass_condition(scenario: Any, goals: list[int]) -> None:
+    from autoware_carla_scenario import (  # noqa: PLC0415
+        AndCondition,
+        StickyCondition,
+    )
+
+    (passing,) = scenario._pass_conditions
+    if len(goals) == 1:
+        # The single sticky itself: AndCondition refuses fewer than two.
+        assert isinstance(passing, StickyCondition)
+        assert passing.label == f"ego_on_lanelet_{goals[0]}_sticky"
+    else:
+        assert isinstance(passing, AndCondition)
+
+
+class TestOneGoalLanelet:
+    """A single goal lanelet is a valid goal (#1068)."""
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_the_template_sets_up(
+        self, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        module, configs = _import_from(
+            _TEMPLATE_SRC,
+            "my_scenario_package.reach_goal",
+            "my_scenario_package.configs",
+        )
+        scenario = _set_up(
+            monkeypatch,
+            module,
+            module.ReachGoalScenario,
+            configs.ReachGoalConfig(goal_lanelet_ids=goals),
+        )
+        _assert_goals_pass_condition(scenario, goals)
+
+    def test_the_template_refuses_no_goal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module, configs = _import_from(
+            _TEMPLATE_SRC,
+            "my_scenario_package.reach_goal",
+            "my_scenario_package.configs",
+        )
+        with pytest.raises(ValueError, match="at least one lanelet"):
+            _set_up(
+                monkeypatch,
+                module,
+                module.ReachGoalScenario,
+                configs.ReachGoalConfig(goal_lanelet_ids=[]),
+            )
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_a_scaffolded_scenario_sets_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        result = create_scenario_package("one_goal_pkg", output_dir=tmp_path)
+        module, configs = _import_from(
+            result.root / "src", "one_goal_pkg.one_goal", "one_goal_pkg.configs"
+        )
+        try:
+            scenario = _set_up(
+                monkeypatch,
+                module,
+                getattr(module, result.names["scenario_class"]),
+                getattr(configs, result.names["config_class"])(goal_lanelet_ids=goals),
+            )
+            _assert_goals_pass_condition(scenario, goals)
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "one_goal_pkg"]:
+                del sys.modules[name]

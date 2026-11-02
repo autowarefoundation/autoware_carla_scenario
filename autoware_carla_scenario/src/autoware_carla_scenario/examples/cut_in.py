@@ -2,7 +2,8 @@
 
 An NPC starts in the lane beside the ego, a little ahead, and after a moment
 changes into the ego's lane. The ego must not hit it: the run passes once the
-NPC has been in the ego's lane for ``hold_seconds`` without a collision. It
+NPC has been in the ego's lane -- on its spawn lanelet or one that follows it
+before the next junction (:func:`npc_in_lanes_ahead`) -- for ``hold_seconds`` without a collision. It
 fails on any collision of the ego (``fail_on_any_collision``; off, only on one
 with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
 lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import logging
 
+import lanelet2.geometry
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
@@ -68,6 +70,10 @@ from autoware_carla_scenario import (
     to_opendrive,
     vehicle_bumpers,
 )
+from autoware_carla_scenario.coordinate import (
+    MapManager,
+    lanes_ahead_before_junction as lanes_ahead_before_junction,
+)
 from autoware_carla_scenario.failure import FailureCategory
 
 from .configs import CutInConfig
@@ -98,12 +104,18 @@ def left_lanes_ahead(
     them, on a lanelet that turns off them, or on no lanelet at all -- off the
     road.  The position tested is the vehicle's centre, its CARLA location.
 
+    Not every lanelet :func:`lanelets_ahead` returns is kept: following every
+    branch, it can loop round a block into the lane beside the ego's, and
+    those lanelets would then count as its own (#1080).  So
+    :func:`ego_lanes_ahead` leaves out each lanelet beside one of
+    :func:`lanes_ahead_before_junction` that it reaches only that way.
+
     *seconds* of zero or less fails on the first tick off them.
     """
     # Appended one by one, and chosen by if/else: Codon gives neither a list
     # comprehension nor a conditional expression the base class's type.
     on_lanes: list[BaseCondition] = []
-    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
         on_lanes.append(
             EntityLanePositionCondition(
                 EGO_ROLE_NAME,
@@ -123,6 +135,125 @@ def left_lanes_ahead(
         seconds,
         label="ego_left_its_lane",
     )
+
+
+def _beside(lanelet_id: int) -> list[int]:
+    """The lanelets beside *lanelet_id*, either side, a lane change allowed
+    across the line between or not (the routing graph's neighbours)."""
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    found: list[int] = []
+    left = graph.left(lanelet)
+    if left is not None:
+        found.append(int(left.id))
+    right = graph.right(lanelet)
+    if right is not None:
+        found.append(int(right.id))
+    adjacent_left = graph.adjacentLeft(lanelet)
+    if adjacent_left is not None:
+        found.append(int(adjacent_left.id))
+    adjacent_right = graph.adjacentRight(lanelet)
+    if adjacent_right is not None:
+        found.append(int(adjacent_right.id))
+    return found
+
+
+def _length(lanelet_id: int) -> float:
+    """The length of *lanelet_id*'s centerline (m), as :func:`lanelets_ahead`
+    measures it."""
+    lanelet = MapManager.get_instance().lanelet_map.laneletLayer[lanelet_id]
+    return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
+
+
+def _begins(ahead: list[int], distance_m: float) -> dict[int, float]:
+    """How far from the start of ``ahead[0]`` each lanelet of *ahead* begins
+    (m), by the shortest chain -- *ahead* as :func:`lanelets_ahead` gives it,
+    nearest first, so the predecessor on that chain always comes earlier."""
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    begins: dict[int, float] = {}
+    for candidate in ahead:
+        if len(begins) == 0:
+            begins[candidate] = 0.0
+            continue
+        nearest = distance_m
+        for previous in graph.previous(layer[candidate], False):
+            previous_id = int(previous.id)
+            if previous_id in begins:
+                ends_at = begins[previous_id] + _length(previous_id)
+                if ends_at < nearest:
+                    nearest = ends_at
+        begins[candidate] = nearest
+    return begins
+
+
+def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
+    """The lanelets :func:`left_lanes_ahead` keeps the ego on.
+
+    :func:`lanelets_ahead` of *lanelet_id*, less every lanelet beside one of
+    :func:`lanes_ahead_before_junction` -- the routing graph's ``left`` and
+    ``right``, and ``adjacentLeft`` and ``adjacentRight`` across a solid
+    line -- that it reaches only past the end of the lanelet it is beside.
+    Following every branch through junctions, :func:`lanelets_ahead` can loop
+    round a block and come back into the lane beside the ego's, which a lane
+    change reaches; it is never the ego's lane.  One it reaches before then
+    is a branch of the ego's own lanes -- a turn through the junction ahead
+    that ends beside one of them -- and is kept.  A lanelet of
+    :func:`lanes_ahead_before_junction` itself is always kept.  In the order
+    :func:`lanelets_ahead` gives, *lanelet_id* first.
+    """
+    own = lanes_ahead_before_junction(lanelet_id, distance_m)
+    ahead = lanelets_ahead(lanelet_id, distance_m)
+    begins = _begins(ahead, distance_m)
+    # Each lanelet beside the ego's, and the furthest any lanelet of the
+    # ego's it is beside ends: reached only past that, it is a loop.
+    beside_ends: dict[int, float] = {}
+    for lanelet in own:
+        ends_at = begins[lanelet] + _length(lanelet)
+        for neighbour in _beside(lanelet):
+            if neighbour in own:
+                continue
+            if neighbour not in beside_ends or beside_ends[neighbour] < ends_at:
+                beside_ends[neighbour] = ends_at
+    kept: list[int] = []
+    for lanelet in ahead:
+        if lanelet in beside_ends and begins[lanelet] >= beside_ends[lanelet]:
+            continue
+        kept.append(lanelet)
+    return kept
+
+
+def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
+    """The cut-in NPC is in the ego's lane: on one of the lanes ahead of *lanelet_id*.
+
+    *lanelet_id* and the lanelets that follow it up to the first junction
+    (:func:`lanes_ahead_before_junction`), the lane beside never among them,
+    so a lane change the NPC finishes on the lanelet after the ego's spawn
+    lanelet counts as a cut-in too.  Not the junction lanelets
+    :func:`left_lanes_ahead` also keeps the ego on, nor those past them: they
+    overlap the lane beside's, and the NPC driving straight on in its own lane
+    would count.  An ``EntityLanePositionCondition`` per lanelet, under an
+    ``OrCondition`` when there is more than one, latched by a
+    ``StickyCondition``: the NPC has cut in once it has been on any of them.
+    """
+    # Appended one by one, and chosen by if/else, as in left_lanes_ahead.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in lanes_ahead_before_junction(lanelet_id, distance_m):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                CUT_IN_ROLE,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"npc_on_lanelet_{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="npc_in_ego_lane")
+    return StickyCondition(on_any, label="npc_in_ego_lane_sticky")
 
 
 class CutInScenario(BaseScenario):
@@ -152,7 +283,7 @@ class CutInScenario(BaseScenario):
         if cfg.side not in _CHANGE_TOWARDS_EGO:
             raise ValueError(f"cut_in side must be 'left' or 'right', got {cfg.side!r}")
 
-        ego_lane = self._setup_ego_spawn()
+        self._setup_ego_spawn()
         self.register_init(
             TrafficSignalAction(
                 state=carla.TrafficLightState.Green,
@@ -224,11 +355,10 @@ class CutInScenario(BaseScenario):
             )
         )
 
-        # Latched once the NPC is on the ego's OpenDRIVE lane, as lane_change
-        # checks its ego; then held for hold_seconds with no collision.
-        cut_in = StickyCondition(
-            EntityLanePositionCondition(CUT_IN_ROLE, ego_lane, label="npc_in_ego_lane")
-        )
+        # Latched once the NPC is on the ego's lane -- its spawn lanelet or one
+        # that follows it before the next junction, wherever the NPC finishes
+        # its lane change; then held for hold_seconds with no collision.
+        cut_in = npc_in_lanes_ahead(spawn.lanelet_id, cfg.lanes_ahead_m)
         self.register_pass_condition(
             PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
         )

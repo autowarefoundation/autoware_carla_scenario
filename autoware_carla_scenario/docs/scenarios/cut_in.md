@@ -18,7 +18,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **NPC1** | *Beside the matched lanelet*, on the cut-in side: the lane next to the ego's. 15 m along it, 30 km/h. |
 | **Initialization** | Every traffic light green. |
 | **NPC1, after 2 s** | Change lane towards the ego. |
-| **Pass** | 3 s have passed since NPC1 reached the ego's OpenDRIVE lane (*lane of a position*: the matched lanelet at the ego's spawn, the same lane), with no collision. |
+| **Pass** | 3 s have passed since NPC1 reached the ego's lane -- the matched lanelet or one of the lanelets that follow it before the first junction, the lanes ahead below short of the junction, whose lanelets overlap the lane beside's (`npc_in_lanes_ahead`) -- with no collision. |
 | **Fail** | The ego collides with anything -- NPC1, another actor, a static object, map geometry such as a wall or a kerb (`ego_collided`); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 1000 m from its start -- for 0.2 s: it changed lanes, turned onto a lanelet that does not follow it, or left the road (`ego_left_its_lane`); or 20 s pass. |
 
 ## Variants
@@ -67,7 +67,13 @@ the road has not passed it, whatever it did not hit. The lanes ahead are the
 lanelet the ego spawns on and the ones that follow it in the routing graph
 (`lanelets_ahead`: `following` without lane changes, every branch, up to
 `lanes_ahead_m`); in none of them is in the lane beside, on a lanelet that
-turns off them, or in no lanelet at all.
+turns off them, or in no lanelet at all. Following every branch, those can
+loop round a block into the lane beside the ego's, so a lanelet beside one of
+the lanes up to the first junction (`lanes_ahead_before_junction`; the
+routing graph's `left`, `right`, `adjacentLeft` and `adjacentRight`) is left
+out when they reach it only past the end of the lanelet it is beside -- never
+one of those lanes itself, nor a turn through the junction ahead that ends
+beside one of them (`ego_lanes_ahead`).
 
 It is not a condition of its own but a composition of the framework's,
 `left_lanes_ahead` in `examples/cut_in.py`, which any scenario can build the
@@ -78,7 +84,7 @@ on_lanes = [
     EntityLanePositionCondition(
         EGO_ROLE_NAME, Lanelet2Pose(lanelet_id=i, s=0.0), label=f"ego_on_lanelet_{i}"
     )
-    for i in lanelets_ahead(spawn.lanelet_id, 1000.0)
+    for i in ego_lanes_ahead(spawn.lanelet_id, 1000.0)
 ]
 self.register_fail_condition(
     PersistentCondition(                     # off them for 0.2 s, not one tick at a seam

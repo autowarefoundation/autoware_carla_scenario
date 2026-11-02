@@ -195,8 +195,11 @@ def test_a_concrete_scenario_resumed_past_its_end_is_refused(batch: _Batch) -> N
     assert batch.configs == []
 
 
+@pytest.mark.parametrize(
+    "multirun", ["--multirun", "hydra.mode=MULTIRUN", "++hydra.mode=MULTIRUN"]
+)
 def test_multirun_on_a_glob_expands_the_batch_instead_of_reaching_hydra(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, multirun: str
 ) -> None:
     from autoware_carla_scenario.examples import run
 
@@ -214,7 +217,7 @@ def test_multirun_on_a_glob_expands_the_batch_instead_of_reaching_hydra(
         "argv",
         [
             "scenario",
-            "--multirun",
+            multirun,
             "hydra/sweeper=lanelet_constraint",
             "scenario=intersection_passing/straight*",
             "map=town10hd_opt",

@@ -355,7 +355,7 @@ Key features:
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
   A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.
 - **Server lifetime**: A CARLA that `CarlaServerManager` launched does not outlive the process that launched it. `stop()` (or `with`, or `atexit`) stops it on a normal exit; a SIGTERM to `scenario` raises `KeyboardInterrupt`, so the `with` blocks unwind as on Ctrl-C, and it exits 143; and CARLA is launched under a small watchdog that leads its process group and, once that process is gone (killed with SIGKILL, say, as the lanelet sweeper does a job past `sweep.job_timeout_seconds`), sends the group SIGTERM and, 10 s later, SIGKILL; the sweeper then waits until that CARLA has exited before its next attempt. The watchdog polls its parent process rather than using `PR_SET_PDEATHSIG`, which follows the thread that started it. A server that was already running and was reused is never stopped.
-- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.
+- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch or the queue fails to `start()`. It runs the scenarios with `run_all(continue_on_error=True)`, so a scenario that raises on every attempt fails its own tests rather than skipping the session: its result is a failed one naming the error, and a `CarlaScenarioFixture` for it fails each test that uses it.
 
 ### Recordings of a run
 
@@ -674,8 +674,12 @@ Whether that is an error is the newer action's to say, one action at a time.
 An action built with `overrides=True` (in the Scenario Editor, its card's
 *Override a running action*) takes the domain over instead, as OpenSCENARIO has every action do (*Actions
 at runtime*): the action holding it is stopped -- it goes to `completeState`,
-OpenSCENARIO's stop transition -- and gives back every domain it held. The
-default is `False`: actions fighting over an
+OpenSCENARIO's stop transition -- and gives back every domain it held, and any
+entity it took from its driver: a `follow` or `position` `RoutingAction`
+brakes its vehicle (or stands its walker still) and hands the vehicle back to
+its traffic backend, an adversity hands its road user back, a routed walk is
+stopped. A `follow` or `position` run that its `until` condition ends before
+the end of its trajectory gives its entity back the same way. The default is `False`: actions fighting over an
 entity say two things at once, and which one CARLA would end up doing is an
 accident of the tick order.
 

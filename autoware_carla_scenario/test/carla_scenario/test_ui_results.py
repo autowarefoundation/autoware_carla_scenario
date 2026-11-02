@@ -6,6 +6,7 @@ import copy
 import gzip
 import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -452,6 +453,97 @@ def test_the_compare_page_with_fewer_than_two_sessions_offers_them(
     assert page.status_code == 200
     assert 'name="s"' in page.text
     assert 'id="case-table"' not in page.text
+
+
+def _job(directory: Path, scenario: str | None, stem: str, passed: bool) -> None:
+    """A multirun job or single run of *scenario* (its ``scenario=``
+    override), whose result file is named after the class (*stem*)."""
+    (directory / ".hydra").mkdir(parents=True)
+    overrides = [f"scenario={scenario}"] if scenario else []
+    (directory / ".hydra" / "overrides.yaml").write_text(
+        "".join(f"- {o}\n" for o in [*overrides, "ego.spawn_s=10"])
+    )
+    (directory / f"{stem}_result.json").write_text(
+        json.dumps({"passed": passed, "message": "", "elapsed_seconds": 5.0})
+    )
+
+
+def _multirun(base: Path, time: str, scenario: str, stem: str) -> str:
+    for index in range(2):
+        _job(base / "multirun" / "2026-11-01" / time / str(index), scenario, stem, True)
+    return f"multirun/2026-11-01/{time}"
+
+
+def _offered(page_text: str) -> set[str]:
+    return set(re.findall(r'name="s" value="([^"]+)"', page_text))
+
+
+def test_a_multirun_session_is_offered_its_family(
+    client: TestClient, tmp_path: Path
+) -> None:
+    a = _multirun(tmp_path, "10-00-00", "lane_change/left", "LaneChangeScenario")
+    b = _multirun(tmp_path, "11-00-00", "lane_change/left", "LaneChangeScenario")
+    # The same class, another scenario: not of the family.
+    _multirun(tmp_path, "12-00-00", "lane_change/right", "LaneChangeScenario")
+    single = tmp_path / "outputs" / "2026-11-01" / "13-00-00"
+    _job(single, "lane_change/left", "LaneChangeScenario", False)
+    page = client.get("/compare", params=[("s", a)])
+    assert page.status_code == 200, page.text
+    assert _offered(page.text) == {a, b, "single/2026-11-01/13-00-00"}
+
+
+def test_a_single_session_is_offered_its_family(
+    client: TestClient, tmp_path: Path
+) -> None:
+    for time in ("10-00-00", "11-00-00"):
+        _job(
+            tmp_path / "outputs" / "2026-11-01" / time,
+            "cut_in/fast",
+            "CutInScenario",
+            True,
+        )
+    page = client.get("/compare", params=[("s", "single/2026-11-01/10-00-00")])
+    assert _offered(page.text) == {
+        "single/2026-11-01/10-00-00",
+        "single/2026-11-01/11-00-00",
+    }
+
+
+def test_session_scenarios_names_them_as_load_results_does_from_overrides_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "multirun" / "2026-11-01" / "10-00-00"
+    _job(session / "0", "lane_change/left", "LaneChangeScenario", True)
+    _job(session / "1", None, "CutInScenario", True)
+    expected = {
+        r.scenario
+        for r in results.load_results(
+            tmp_path, "multirun", "2026-11-01", "10-00-00", metrics=False
+        )
+    }
+    assert expected == {"lane_change/left", "CutInScenario"}
+
+    def no_read(path: Path) -> None:
+        raise AssertionError(f"read {path}")
+
+    # Cheap enough to run for every session /compare lists: no result,
+    # coverage or trajectory file is read.
+    monkeypatch.setattr(results, "_read_json", no_read)
+    assert (
+        results.session_scenarios(tmp_path, "multirun", "2026-11-01", "10-00-00")
+        == expected
+    )
+    assert results.session_scenarios(tmp_path, "multirun", "..", "10-00-00") == set()
+
+
+def test_the_picked_sessions_are_always_offered(
+    client: TestClient, tmp_path: Path
+) -> None:
+    a = _session(tmp_path, "10-00-00", [True, False, False, False])
+    m = _multirun(tmp_path, "10-00-00", "lane_change/left", "LaneChangeScenario")
+    page = client.get("/compare", params=[("s", a), ("s", m)])
+    assert page.status_code == 200, page.text
+    assert {a, m} <= _offered(page.text)
 
 
 def test_runs_side_by_side(

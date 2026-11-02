@@ -107,11 +107,32 @@ def test_the_policy_changes_level_with_hysteresis() -> None:
         {"update_interval_s": -1.0},
         {"headway_s": 0.0},
         {"jam_spacing_m": -1.0},
+        # Non-finite: NaN fails every comparison, so it would silently never
+        # demote (or decide again); nothing reads inf as "unbounded".
+        {"micro_radius_m": math.nan},
+        {"micro_radius_m": math.inf},
+        {"meso_radius_m": math.nan},
+        {"meso_radius_m": math.inf},
+        {"update_interval_s": math.nan},
+        {"update_interval_s": math.inf},
+        {"headway_s": math.nan},
+        {"headway_s": math.inf},
+        {"jam_spacing_m": math.nan},
+        {"jam_spacing_m": math.inf},
     ],
 )
 def test_the_policy_refuses_impossible_options(options: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         MesoscopicConfig(**options)
+
+
+def test_a_nan_radius_from_a_mapping_is_refused_rather_than_never_demoting() -> None:
+    with pytest.raises(ValueError, match="meso_radius_m must be finite"):
+        MesoscopicConfig.from_mapping({"enabled": True, "meso_radius_m": math.nan})
+    with pytest.raises(ValueError, match="meso_radius_m must be finite"):
+        SumoBackendConfig.from_mapping(
+            {"mesoscopic": {"enabled": True, "meso_radius_m": math.nan}}
+        )
 
 
 def test_the_policy_is_an_option_of_the_sumo_backend() -> None:

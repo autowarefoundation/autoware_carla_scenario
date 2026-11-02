@@ -870,3 +870,17 @@ def test_a_rerun_of_a_slurm_case_removes_its_old_recording() -> None:
     from autoware_carla_scenario.slurm.manifest import RUN_FILE_SUFFIXES
 
     assert ".rrd" in RUN_FILE_SUFFIXES
+
+
+def test_a_retried_case_goes_by_its_last_conversion(tmp_path: Path) -> None:
+    """A retried case writes under the stem of the attempt it replaces: the
+    failed attempt's conversion of that stem is not the retry's."""
+    from autoware_carla_scenario.examples.run import rerun_errors
+
+    recording = tmp_path / "A.rrd"
+    results = [ScenarioResult(True, "ok", 1.0, rerun_recording=str(recording))]
+    log = tmp_path / "A.trajectory.jsonl"
+    failed = RerunConversion("A", log, recording, error="E: first attempt")
+    converted = RerunConversion("A", log, recording)
+    assert rerun_errors(results, [failed, converted]) == {}
+    assert rerun_errors(results, [converted, failed]) == {0: "E: first attempt"}

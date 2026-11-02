@@ -99,7 +99,8 @@ def partitions() -> list[str]:
         done = subprocess.run(
             ["sinfo", "-h", "-o", "%P"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -248,7 +249,8 @@ def _submit(command: list[str], base: Path, record: Submission) -> None:
             command,
             cwd=str(base),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         output = "\n".join(s for s in (done.stdout, done.stderr) if s)
@@ -438,7 +440,12 @@ def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
     command = [sys.executable, "-m", "autoware_carla_scenario.slurm.cli", *args]
     try:
         done = subprocess.run(  # noqa: S603
-            command, capture_output=True, text=True, timeout=timeout, check=False
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)

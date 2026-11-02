@@ -301,9 +301,11 @@ defaults.
       `traffic.options.lateral_resolution_m: null` it is an error before the run.
 
 - `follow_visibility` — bool
-    - Hold the backend's own traffic to the speed it stops from within what
-      its drivers see in the run's weather, `v * tau + v² / (2 * decel)` = the
-      visibility, and give each its own speed back when the weather lifts.
+    - Hold the backend's own traffic to the speed its drivers keep in what
+      they see in the run's weather -- the weather rules' `sight_speed`, which
+      reads the visibility, at each driver's own quantile, never above the
+      speed it stops from within it (`v * tau + v² / (2 * decel)` = the
+      visibility) -- and give each its own speed back when the weather lifts.
     - `sumo`: SUMO's own traffic (ambient and background vehicles), with each
       vehicle's own `tau` and `decel`. Unset, `true`; `false` ignores the
       visibility. See **Visibility** under [The SUMO backend](#the-sumo-backend).
@@ -447,7 +449,19 @@ scenario.register_post_tick(
   The ODD's probes read the merged parameters from then on.
 - **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
   changed fields again; the run's parameters stay as they were. An entity is a
-  vehicle, so `pedestrians` and `bicycles` cannot be given with it.
+  vehicle, so `pedestrians` and `bicycles` cannot be given with it. Under the
+  TrafficManager, a vehicle not yet on autopilot (one the scenario drives
+  first) keeps the override for its first draw, which takes it over the run's
+  parameters; several such actions layer in order. That first draw keeps what
+  the vehicle was told before it: a speed it was given (a `SetSpeed`, a
+  background vehicle's spawn speed) wins over its `speed_factor`, and a route
+  it follows keeps its own lane changes off whatever `lane_changes` says,
+  unless an override of that field, with or without `entity_name`, came after
+  them: the one given last wins.
+- **The last one wins.** An action without `entity_name` fired after one with
+  it replaces that vehicle's override on the fields both set, as it does for a
+  vehicle that drew already: every vehicle draws those fields from the new
+  spread.
 - **Refused before the run.** A field the backend cannot change during a run
   is refused when the action is registered on the scenario, with a
   `TrafficParameterError`:
@@ -565,6 +579,7 @@ own bookkeeping on the vehicle rather than in a table of its own:
     def lane_change_finished(self, entity, world) -> bool: ...
     def turn_at_junction(self, entity, world, direction, **kwargs) -> None: ...
     def follow_route(self, entity, world, stops) -> None: ...
+    def end_route(self, entity, world) -> None: ...
 ```
 
 `direction` is `LaneChangeDirection` or `TurnDirection` — intents, not CARLA
@@ -579,6 +594,25 @@ point, and there a point lies on several ways through. A backend that has no ans
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.
+
+`end_route` is called when a route a `RoutingAction` watched is over: the
+vehicle arrived, or the action was stopped, overridden or closed first. It gives
+back what the route changed in how the vehicle drives, and does nothing by
+default. The TrafficManager backend turns its own lane changes, which
+`follow_route` turned off, back to the run's `lane_changes` (and the vehicle's
+overrides); unset, the TrafficManager's default, on. A route handed over untimed
+ends its action at once, with nothing left to watch it: the TrafficManager
+backend gives the lane changes back itself once the vehicle has come along its
+path to within a path point's spacing (5 m) of its last point, where the
+TrafficManager has used the path up and drives on as it likes. Along: the
+backend follows each kept vehicle's progress, point by point, coming within 5 m
+of one of the next eight points (released ones too, so a resumed vehicle goes
+on from where it was driven), so a route that ends near where it starts (a
+loop, a U-turn, a route through a via point and back) is not used up at its
+start. A vehicle lost from its path, 40 m from every point about where it had
+come to (driven off it while released, or round something for longer than
+those points span), is looked for along all the rest of it instead, so it
+picks its path up where it comes back to it.
 
 ### Handing a vehicle back
 
@@ -773,8 +807,10 @@ no traffic but its own and its traffic sources' unless asked.
 CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
 know where every actor is whatever the fog. With
 `traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
-the speed it stops from within what its driver sees, worked out with SUMO's
-default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
+the speed its driver keeps in what it sees: the weather rules' `sight_speed`
+([Weather rules](odd.md#weather-rules)) at the driver's own quantile, for
+SUMO's default car's reaction (1 s) and braking (4.5 m/s²) -- about 46-62
+km/h in 50 m of fog, never more than the 62 km/h it stops from within it.
 A vehicle is never held faster than it drives anyway. One given a speed of
 its own (`set_desired_speed`, a `SetSpeedAction`, a background vehicle's spawn
 speed) is given the lesser of that and the sight speed (`set_desired_speed`),
@@ -828,7 +864,11 @@ scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
   parameters, which survive the switch. Its planned waypoints do not, and the
   points of a path already planned are gone from the path the TrafficManager
   holds (`LocalizationStage::ImportPath`), so the part of the path it was last
-  given (`follow_route`, `turn_at_junction`) still ahead of it is given again. It drives on as before; it is logged once.
+  given (`follow_route`, `turn_at_junction`) still ahead of it is given again:
+  from the point after the one nearest it among the last it has come to along
+  the path that are still within 5 m of it (else from the next one it has not
+  come to), so a path that comes back near itself is not cut at its far part,
+  and the vehicle is not sent back to a point it has passed. It drives on as before; it is logged once.
 - **A dead end:** every 0.5 s the road ahead of a kept vehicle is walked down
   every branch (the TrafficManager picks one at random) a little past the
   TrafficManager's horizon, on the run's cached map. Where some branch ends,
@@ -1092,9 +1132,13 @@ as far as the run's weather lets a driver see. An
 drivers see in the weather it leaves
 ([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
 and the backend holds each of SUMO's own vehicles (ambient and background)
-to the speed it stops from within that distance: `v * tau + v² / (2 *
-decel)`, with the vehicle's own `tau` as its reaction time and its `decel` as
-its braking (`traffic.vehicles.reaction_time_s` and `decel` when set) -- a default car in 50 m of fog drives at most about 62 km/h, at
+to the speed its driver keeps in that distance: the weather rules'
+`sight_speed` ([Weather rules](odd.md#weather-rules)), which reads the
+visibility, at the driver's own quantile (`visibility.driver_quantile`, from
+the vehicle's id), scaled to the vehicle's own `tau` (reaction time) and
+`decel` (braking; `traffic.vehicles.reaction_time_s` and `decel` when set),
+and never above the speed it stops from within the visibility, `v * tau + v² /
+(2 * decel)` -- a default car in 50 m of fog drives at about 46-62 km/h, at
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the

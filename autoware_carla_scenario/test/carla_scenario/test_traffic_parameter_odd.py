@@ -85,7 +85,10 @@ def test_a_number_or_a_mean_and_std_is_read_as_a_spread() -> None:
     [
         ({"speed_factor": {"std": 0.1}}, "a std needs a mean"),
         ({"speed_factor": {"mean": 1.0, "sd": 0.1}}, "unknown key"),
-        ({"speed_factor": {"mean": 1.0, "std": -0.1}}, "std must not be negative"),
+        (
+            {"speed_factor": {"mean": 1.0, "std": -0.1}},
+            "std must be finite and not negative",
+        ),
         ({"ignore_lights": {"mean": 1.5}}, "ignore_lights must be within"),
     ],
 )

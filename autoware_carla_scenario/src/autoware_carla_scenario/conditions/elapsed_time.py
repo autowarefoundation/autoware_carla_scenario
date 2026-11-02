@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult
@@ -37,7 +38,9 @@ class ElapsedTimeCondition(BaseCondition):
       *tolerance* of ``0`` still matches the tick that reaches *duration*.
 
     Args:
-        duration_seconds: Time threshold in seconds.  Must be positive.
+        duration_seconds: Time threshold in seconds.  Must be positive and
+            finite: NaN fails every comparison, so a NaN duration would
+            never fire.
         rule: Comparison operator applied to *elapsed* vs *duration_seconds*.
             Defaults to :attr:`ComparisonRule.GREATER_THAN_OR_EQUAL`.
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
@@ -56,8 +59,8 @@ class ElapsedTimeCondition(BaseCondition):
         label: str,
     ) -> None:
         super().__init__(label=label)
-        if duration_seconds <= 0:
-            raise ValueError("duration_seconds must be positive")
+        if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+            raise ValueError("duration_seconds must be positive and finite")
         if tolerance < 0:
             raise ValueError("tolerance must be non-negative")
         self._comparison = ScalarComparisonRule(

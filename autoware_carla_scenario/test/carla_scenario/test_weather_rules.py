@@ -1,5 +1,5 @@
-"""The weather rules: the CARLA backend's fuzzy rules for the grip and the
-visibility, a run's over them, and rules that differ by vehicle."""
+"""The weather rules: the CARLA backend's conditional distributions for the
+grip and the visibility, a run's over them, and rules that differ by vehicle."""
 
 from __future__ import annotations
 
@@ -16,16 +16,18 @@ from autoware_carla_scenario.actions.environment import (
     apply_weather_grip,
     follow_tire_friction,
     forget_tire_friction,
+    tire_friction,
     tire_friction_range,
     world_tire_friction,
 )
 from autoware_carla_scenario.odd import probes
 from autoware_carla_scenario.odd.backend import CARLA_BACKEND
-from autoware_carla_scenario.visibility import visibility_range
+from autoware_carla_scenario.visibility import visibility, visibility_range
 from autoware_carla_scenario.weather_rules import (
     DEFAULT_RULES,
     RulesError,
     use_weather_rules,
+    vehicle_at,
     vehicle_range,
     vehicle_rules_in_use,
     weather_range,
@@ -73,14 +75,14 @@ _LIGHT = (
 
 
 def _grip_file(path: Path, flooded: tuple[float, float], extends: str = "") -> Path:
-    """A rule file naming only the grip's rules: its inputs are the default's."""
+    """A rule file naming only the grip's distribution: its points are the
+    default's."""
     path.write_text(
-        "version: 1\n"
+        "version: 2\n"
         + (f"extends: {extends}\n" if extends else "")
-        + "quantities:\n  tire_friction:\n    rule_bases:\n      water:\n        rules:\n"
-        "          - {if: (water IS dry), then: {low: 0.90, high: 1.10}}\n"
-        "          - {if: (water IS wet), then: {low: 0.65, high: 0.85}}\n"
-        f"          - {{if: (water IS flooded), then: {{low: {flooded[0]}, high: {flooded[1]}}}}}\n"
+        + "quantities:\n  tire_friction:\n    parts:\n      water:\n        uniform:\n"
+        f"          low: [0.90, 0.65, {flooded[0]}]\n"
+        f"          high: [1.10, 0.85, {flooded[1]}]\n"
     )
     return path
 
@@ -114,6 +116,34 @@ class TestDefaultRules:
         assert weather_range(
             "tire_friction", {"wetness": 10.0, "precipitation_deposits": 50.0}
         ) == pytest.approx(weather_range("tire_friction", {"water": 50.0}))
+
+    @pytest.mark.parametrize("q", [0.0, 0.25, 0.5, 0.9, 1.0])
+    def test_the_grip_at_a_quantile_is_its_uniform_distributions(self, q) -> None:
+        low, high = tire_friction_range(70.0)
+        assert tire_friction(70.0, quantile=q) == pytest.approx(low + q * (high - low))
+
+    def test_the_visibilitys_parts_move_together_at_one_quantile(self) -> None:
+        # fog 80: 31.7-80 m; rain 30: 180-320 m; day: 250-400 m.  At the
+        # quantile 0.5 each part is at its median, and the shortest holds.
+        fog = _interpolate(_FOG, 80.0)
+        assert visibility(80.0, 30.0, 45.0, 0.5) == pytest.approx((fog[0] + fog[1]) / 2)
+        # Night and light rain: the light's 50-150 m and the rain's 180-320 m.
+        assert visibility(0.0, 30.0, -10.0, 0.25) == pytest.approx(75.0)
+        assert visibility(0.0, 30.0, -10.0, 1.0) == pytest.approx(150.0)
+        # The quantile is clamped.
+        assert visibility(0.0, 30.0, -10.0, 7.0) == pytest.approx(150.0)
+
+    def test_an_old_fuzzy_rule_file_is_refused(self, tmp_path) -> None:
+        path = tmp_path / "v1.yaml"
+        path.write_text("version: 1\nquantities: {}\n")
+        with pytest.raises(RulesError, match="version 1"):
+            use_weather_rules(str(path))
+
+    def test_the_manifest_follows_a_knob_to_the_rules(self) -> None:
+        inputs = CARLA_BACKEND.manifest()["rule_inputs"]
+        assert inputs["precipitation"]["knob"] == "environment.rain"
+        assert inputs["fog_density"]["knob"] == "environment.fog_density"
+        assert "wetness" in inputs["water"]["text"]
 
     def test_an_unknown_quantity_is_refused(self) -> None:
         with pytest.raises(RulesError, match="unknown quantity 'grip'"):
@@ -154,10 +184,9 @@ class TestARunsRules:
     def test_a_file_reading_an_input_carla_has_not_is_refused(self, tmp_path) -> None:
         path = tmp_path / "bad.yaml"
         path.write_text(
-            "version: 1\nquantities:\n  tire_friction:\n    rule_bases:\n      t:\n"
-            "        inputs:\n          temperature:\n            universe: [-20, 40]\n"
-            "            terms: {any: {trapezoid: [-20, -20, 40, 40]}}\n"
-            "        rules:\n          - {if: (temperature IS any), then: {low: 1, high: 1}}\n"
+            "version: 2\nquantities:\n  tire_friction:\n    parts:\n      t:\n"
+            "        at: {temperature: [-20, 40]}\n"
+            "        uniform: {low: 1, high: 1}\n"
         )
         with pytest.raises(RulesError, match="unknown input 'temperature'"):
             use_weather_rules(str(path))
@@ -187,6 +216,12 @@ class TestRulesByVehicle:
         assert vehicle_range(
             "tire_friction", flooded, "vehicle.tesla.model3", ""
         ) == pytest.approx((0.40, 0.60))
+        assert vehicle_at(
+            "tire_friction", flooded, 0.5, "vehicle.mini.cooper", "npc1"
+        ) == pytest.approx(0.30)
+        assert vehicle_at(
+            "tire_friction", flooded, 0.5, "vehicle.tesla.model3", ""
+        ) == pytest.approx(0.50)
         # The visibility is the default rules'.
         assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
 
@@ -196,7 +231,7 @@ class TestRulesByVehicle:
         _grip_file(tmp_path / "shared.yaml", (0.35, 0.55))
         mini = tmp_path / "vehicles" / "mini.yaml"
         mini.parent.mkdir()
-        mini.write_text("version: 1\nextends: ../shared.yaml\nquantities: {}\n")
+        mini.write_text("version: 2\nextends: ../shared.yaml\nquantities: {}\n")
         use_weather_rules({"vehicles": {"vehicle.mini.*": str(mini)}})
         assert vehicle_range(
             "tire_friction", {"wetness": 100.0}, "vehicle.mini.cooper", ""

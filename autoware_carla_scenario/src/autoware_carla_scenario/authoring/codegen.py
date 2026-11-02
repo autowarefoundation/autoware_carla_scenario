@@ -472,11 +472,10 @@ def _build_one(
     is_action = isinstance(spec, ActionSpec)
 
     fields = {field.name: field for field in spec.fields}
-    argmap = dict(spec.argmap)
-    unknown = set(argmap) - set(fields)
+    unknown = {name for name, _ in spec.argmap} - set(fields)
     if unknown:
         raise GenerationError(f"{where}: argmap names absent fields {sorted(unknown)}")
-    by_kwarg = {argmap.get(name, name): field for name, field in fields.items()}
+    by_kwarg = _fields_by_kwarg(spec, fields, where)
 
     imports = [_import_line(cls, class_name, relative)]
     choices, consumed = _render_choices(spec, fields, where, imports)
@@ -490,9 +489,14 @@ def _build_one(
     consumed |= {build.over for build in records}
     built = {build.kwarg for build in builds}
 
+    constants = _render_constants(spec, by_kwarg, parameters, where, imports)
+
     args: list[tuple[str, str]] = []
     uses_params = bool(choices)
     for name, parameter in parameters.items():
+        if name in constants:
+            args.append((name, constants[name]))
+            continue
         if name in built:
             # Assembled in the prelude; the constructor takes the local.
             args.append((name, name))
@@ -524,6 +528,61 @@ def _build_one(
         uses_params=uses_params,
         needs_actor_assert=isinstance(spec, ActionSpec) and spec.actor_required,
     )
+
+
+def _fields_by_kwarg(
+    spec: "ConditionSpec | ActionSpec", fields: dict[str, FieldSpec], where: str
+) -> dict[str, FieldSpec]:
+    """Map each constructor keyword to the field feeding it.
+
+    A field with no argmap entry feeds the keyword of its own name; one with
+    several entries feeds each of them.  Two fields feeding one keyword is a
+    spec bug, reported rather than letting the later one win silently.
+    """
+    targets: dict[str, list[str]] = {}
+    for name, kwarg in spec.argmap:
+        targets.setdefault(name, []).append(kwarg)
+    by_kwarg: dict[str, FieldSpec] = {}
+    for name, field in fields.items():
+        for kwarg in targets.get(name, [name]):
+            if kwarg in by_kwarg:
+                raise GenerationError(
+                    f"{where}: fields {by_kwarg[kwarg].name!r} and {name!r} "
+                    f"both feed {kwarg!r}"
+                )
+            by_kwarg[kwarg] = field
+    return by_kwarg
+
+
+def _render_constants(
+    spec: "ConditionSpec | ActionSpec",
+    by_kwarg: dict[str, FieldSpec],
+    parameters: "dict[str, _Parameter]",
+    where: str,
+    imports: list[str],
+) -> dict[str, str]:
+    """Render the spec's fixed arguments, keyword -> expression.
+
+    A constant naming no parameter, or a parameter a field already feeds, is a
+    spec bug: the first would be dropped and the second would make the field a
+    control that does nothing.
+    """
+    rendered: dict[str, str] = {}
+    for kwarg, source in spec.constants:
+        if kwarg not in parameters:
+            raise GenerationError(
+                f"{where}: constant for {kwarg!r}, which the constructor does "
+                f"not take"
+            )
+        if kwarg in by_kwarg:
+            raise GenerationError(
+                f"{where}: {kwarg!r} is both a constant and fed by field "
+                f"{by_kwarg[kwarg].name!r}"
+            )
+        if kwarg in rendered:
+            raise GenerationError(f"{where}: duplicate constants for {kwarg!r}")
+        rendered[kwarg] = _built_constant(source, imports)
+    return rendered
 
 
 def _record_item_class(annotation: Any) -> Any:

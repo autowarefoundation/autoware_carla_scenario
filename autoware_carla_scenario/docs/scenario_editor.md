@@ -653,6 +653,25 @@ class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. `test_authoring_registry.py` fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.
 
+### A number's bounds
+
+A `number` or `int` field states the range its runtime constructor accepts:
+`minimum` (inclusive), `exclusive_minimum` and `maximum` (inclusive). The
+validator refuses a value outside it, in the constructor's words, so a document
+it accepts does not fail only when the scenario starts:
+
+```python
+FieldSpec("stop_duration", "Held for", "number", 1.0, unit="s",
+          exclusive_minimum=0.0)  # "Held for must be positive."
+FieldSpec("speed_threshold", "Counts as stopped below", "number", 0.1,
+          minimum=0.0)            # "... must not be negative."
+```
+
+A field whose constructor raises for a value needs the matching bound;
+`test_authoring_accepted_builds.py` checks each bound is refused, a value on
+it (or just inside an exclusive one) is accepted and builds, and each default
+lies inside it.
+
 ### A list of records
 
 A field of kind `record_list` holds an ordered list of records, each a mapping
@@ -689,6 +708,27 @@ FieldSpec(
   the form, and no record list.
 - **Overrides**: a run overrides one record's field with
   `scenario.param_overrides.<node id>.<field>.<index>.<sub>=<value>`.
+
+### "=" compares within a tolerance
+
+A card that measures a continuous quantity -- Speed, Acceleration, Relative
+speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+progress, Metric -- offers `=` among its predicates, and a measured value
+practically never lands exactly on a threshold. Each of these cards has an
+optional **Tolerance (=)** field, in the card's own unit: `=` holds while the
+value is within that much of the threshold, either side, so "Speed = 10 m/s,
+tolerance 0.05" holds from 9.95 to 10.05 m/s. The other predicates ignore it,
+and an `=` card shows its tolerance as `± 0.05` beside the value.
+
+Left blank, the tolerance is the runtime's 1e-6, so a document written before
+the field existed loads and runs as it did; the validator warns about such a
+card instead, since its rule would never fire. A negative tolerance is an
+error. Elapsed time and Road users matching have no tolerance field: the
+scenario clock advances in fixed steps, so `=` holds on the tick that reaches
+a duration that is a whole number of steps (use `≥` for any other), and a
+count is a whole number. The Lanelet
+length spawn constraint has none either, so `=` on it is warned about: bound
+the length with `≥` and `≤` instead.
 
 ### The map path is a document field
 

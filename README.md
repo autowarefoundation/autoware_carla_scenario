@@ -102,6 +102,11 @@ supported Python (3.10 to 3.14), and publishes both to
 [PyPI](https://pypi.org/project/autoware-carla-scenario/) as
 `autoware-carla-scenario`. A merge without a label releases nothing.
 
+GitHub Pages keeps the docs of `dev` and the newest 20 releases only
+(`.github/scripts/publish-docs.sh`); a site over 1 GB fails to deploy. Every
+release keeps its full documentation as the `.zip` and `.pdf` assets of its
+GitHub Release.
+
 PyPI uploads use Trusted Publishing, so no API token is stored. Before the
 first release, add a (pending) trusted publisher on PyPI with owner
 `autowarefoundation`, repository `autoware_carla_scenario`, workflow

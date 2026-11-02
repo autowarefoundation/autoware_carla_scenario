@@ -151,6 +151,17 @@ class TestTheFrame:
         with pytest.raises(ValueError, match="not ahead of the spawn"):
             ego_placement(frame, 125.0, True, 10.0)
 
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -1.0])
+    def test_ego_placement_refuses_a_spawn_off_the_route(
+        self, frame: RouteFrame, bad: float
+    ) -> None:
+        """A NaN fails every comparison, so it once landed on the last lanelet."""
+        for goal in (True, False):
+            with pytest.raises(ValueError, match="ego_spawn_s must be finite"):
+                ego_placement(frame, bad, goal, 0.0)
+        with pytest.raises(ValueError, match="ego_goal_margin must be finite"):
+            ego_placement(frame, 5.0, True, bad)
+
     def test_a_lanelet_the_map_lacks(self, road: tuple[Any, Any]) -> None:
         match = RouteMatch(
             (999999,), 0.0, 1.0, (RouteSegmentMatch("lane", 0, 1, (999999,)),)

@@ -20,9 +20,14 @@ from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
 from ..utils.vehicles import as_vehicle
-from ..visibility import at_quantile, set_world_visibility
+from ..visibility import set_world_visibility
 from ..entity_role import _role_name
-from ..weather_rules import vehicle_range, vehicle_rules_in_use, weather_range
+from ..weather_rules import (
+    vehicle_at,
+    vehicle_rules_in_use,
+    weather_at,
+    weather_range,
+)
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -101,12 +106,19 @@ def tire_friction_range(
 def tire_friction(
     wetness: float, precipitation_deposits: float = 0.0, quantile: float = 0.5
 ) -> float:
-    """The share of the dry road's grip at *quantile* (0-1) of :func:`tire_friction_range`.
+    """The share of the dry road's grip at *quantile* (0-1) of its
+    distribution, which spans :func:`tire_friction_range`.
 
-    0.5, the default, is the middle of the range: a dry road's is 1.0.
+    0.5, the default, is its median: a dry road's is 1.0.
     """
-    low, high = tire_friction_range(wetness, precipitation_deposits)
-    return at_quantile(low, high, quantile)
+    return weather_at(
+        "tire_friction",
+        {
+            "wetness": float(wetness),
+            "precipitation_deposits": float(precipitation_deposits),
+        },
+        quantile,
+    )
 
 
 #: World (episode) id -> the grip share last applied in it.
@@ -119,7 +131,7 @@ _TIRE_BASES: dict[int, dict[int, list[float]]] = {}
 _TIRE_SEEN: dict[int, set[int]] = {}
 #: World (episode) id -> the weather the grip was read off and the quantile,
 #: when it was (:func:`apply_weather_grip`): each vehicle's grip is then its
-#: own rules' (:func:`~autoware_carla_scenario.weather_rules.vehicle_range`).
+#: own rules' (:func:`~autoware_carla_scenario.weather_rules.vehicle_at`).
 _TIRE_WEATHER: dict[int, tuple[dict[str, float], float]] = {}
 #: World (episode) id -> the grip share the ego was given, where it differs
 #: by vehicle: what the ODD's ``tire_friction`` probe reads.
@@ -170,10 +182,13 @@ def _vehicle_factor(world_id: int, actor: "carla.Actor", factor: float) -> float
         return factor
     inputs, quantile = _TIRE_WEATHER[world_id]
     role = _role_name(actor)
-    low, high = vehicle_range(
-        "tire_friction", inputs, str(actor.type_id), "" if role is None else role
+    return vehicle_at(
+        "tire_friction",
+        inputs,
+        quantile,
+        str(actor.type_id),
+        "" if role is None else role,
     )
-    return at_quantile(low, high, quantile)
 
 
 def _scale_vehicles(
@@ -222,14 +237,14 @@ def apply_weather_grip(
     world: "carla.World", inputs: dict[str, float], quantile: float
 ) -> None:
     """Give every vehicle in *world* the grip the weather *inputs* leave, at
-    *quantile* (0-1) of its range: the run's rules' range, or, where they
+    *quantile* (0-1) of its distribution: the run's rules', or, where they
     differ by vehicle (``environment.rules.vehicles``), each vehicle's own.
 
     Remembered for the world, as :func:`apply_tire_friction`'s factor is, so
     :func:`follow_tire_friction` gives a vehicle spawned later its own.
     """
-    low, high = weather_range("tire_friction", inputs)
-    _set_grip(world, at_quantile(low, high, quantile), (dict(inputs), quantile))
+    share = weather_at("tire_friction", inputs, quantile)
+    _set_grip(world, share, (dict(inputs), quantile))
 
 
 def _set_grip(
@@ -423,9 +438,10 @@ class EnvironmentAction(BaseAction):
     the rain or the sun, or names a visibility, records the distance drivers
     see in the resulting weather
     (:func:`~autoware_carla_scenario.visibility.visibility`): *visibility_m*
-    if given, else the point *visibility_quantile* of
-    :func:`~autoware_carla_scenario.visibility.visibility_range` -- its middle
-    by default.  A traffic backend that models drivers' sight (``sumo``)
+    if given, else the value at *visibility_quantile* of its distribution
+    in that weather, which spans
+    :func:`~autoware_carla_scenario.visibility.visibility_range` -- its
+    median by default.  A traffic backend that models drivers' sight (``sumo``)
     holds its traffic to it, and the TrafficManager with
     ``follow_visibility: true``.
 
@@ -433,9 +449,9 @@ class EnvironmentAction(BaseAction):
     ``wetness`` or the standing water (``rain`` sets both), or names a tire
     friction, scales every vehicle's wheel friction to the share of the dry
     road's grip the resulting weather leaves (:func:`tire_friction`):
-    *tire_friction* if given, else the point *tire_friction_quantile* of
-    :func:`tire_friction_range` -- its middle by default, so ``rain=0`` keeps
-    the dry grip.  Vehicles spawned later get it from
+    *tire_friction* if given, else the value at *tire_friction_quantile* of
+    its distribution, which spans :func:`tire_friction_range` -- its median
+    by default, so ``rain=0`` keeps the dry grip.  Vehicles spawned later get it from
     :func:`follow_tire_friction`.
 
     Args:
@@ -457,16 +473,17 @@ class EnvironmentAction(BaseAction):
             Keyword-only.
         tire_friction: The vehicles' grip, as a share of the dry road's
             (1.0): fixed, whatever the weather.  Keyword-only.
-        tire_friction_quantile: Where in the range of grip the weather leaves
-            (:func:`tire_friction_range`) the vehicles' is, 0 (its low end) to
-            1 (its high end); 0.5 when the action sets the road's water and
-            this is not given.  *tire_friction* wins over it.  An ODD sweep
+        tire_friction_quantile: The quantile of the distribution of grip the
+            weather leaves (:func:`tire_friction_range`) the vehicles' is at,
+            0 (its low end) to 1 (its high end); 0.5 when the action sets
+            the road's water and this is not given.  *tire_friction* wins over it.  An ODD sweep
             draws it per case.  Keyword-only.
         visibility_m: How far drivers see, metres: fixed, whatever the
             weather.  Keyword-only.
-        visibility_quantile: Where in the range of visibility the weather
-            leaves (:func:`~autoware_carla_scenario.visibility.visibility_range`)
-            the drivers' is, 0 (its low end) to 1 (its high end); 0.5 when the
+        visibility_quantile: The quantile of the distribution of visibility
+            the weather leaves
+            (:func:`~autoware_carla_scenario.visibility.visibility_range`) the
+            drivers' is at, 0 (its low end) to 1 (its high end); 0.5 when the
             action sets the fog, the rain or the sun and this is not given.
             *visibility_m* wins over it.  An ODD sweep draws it per case.
             Keyword-only.
@@ -587,8 +604,11 @@ class EnvironmentAction(BaseAction):
         if self._visibility_m is not None:
             return self._visibility_m
         quantile = self._visibility_quantile
-        low, high = weather_range("visibility", _weather_inputs(weather))
-        return at_quantile(low, high, 0.5 if quantile is None else quantile)
+        return weather_at(
+            "visibility",
+            _weather_inputs(weather),
+            0.5 if quantile is None else quantile,
+        )
 
     def execute(self, world: "carla.World") -> None:
         """Apply the settings on top of the world's current weather."""

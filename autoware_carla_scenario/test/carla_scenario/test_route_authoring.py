@@ -859,6 +859,19 @@ class TestAnNpcVehicleFollowsTheRoute:
         assert path[-1].distance(to_carla_location(goal)) < 1e-6
         assert abs(path[-1].x) < 3.5 and -path[-1].y > 10.0
 
+    def test_its_lane_changes_come_back_when_the_route_ends(self, loaded: None) -> None:
+        """The route turns its TrafficManager lane changes off; ending it
+        (what a RoutingAction does on arrival) turns them back on (#1100)."""
+        npc, tm = self._npc()
+        npc.route_to(
+            _OpenWorld(),  # type: ignore[arg-type]
+            Lanelet2Pose(lanelet_id=rm.N_OUT, s=38.0),
+            waypoints=[Lanelet2Pose(rm.J[("W", "N")], 0.0)],
+        )
+        assert tm.lane_changes is False
+        npc.end_route(_OpenWorld())  # type: ignore[arg-type]
+        assert tm.lane_changes is True
+
     def test_a_routing_action_on_the_npc_reaches_it(
         self, loaded: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:

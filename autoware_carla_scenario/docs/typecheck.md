@@ -3258,7 +3258,7 @@ What Codon 0.19 needs that Python does not, beyond
   `sys.version` and `sys.hexversion` are not modelled, and refused with a
   hint: the check compiles every branch of a version test, so the code must
   be valid on every supported Python anyway. `urllib.parse`
-  declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
+  declares `urlsplit()`, `urlunsplit()`, `unquote()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,

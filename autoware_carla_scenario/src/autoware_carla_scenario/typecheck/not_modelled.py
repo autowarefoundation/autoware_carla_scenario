@@ -222,11 +222,11 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.weather_rules": _each(
         "DEFAULT_RULES EGO_KEY QUANTITIES RulesError WEATHER_INPUTS default_rules "
-        "rule_values use_weather_rules weather_rule_files",
+        "rule_values use_weather_rules vehicle_range weather_rule_files",
         "reads rule files with openodd (a Rust extension) and takes "
         "`environment.rules` as `Mapping[str, Any]`, the runner's; a scenario "
         "sets the weather, not the rules (weather_rules.codon models what "
-        "visibility and actions.environment read the ranges through)",
+        "visibility and actions.environment read the rules through)",
     ),
     f"{_PACKAGE}.environment": {
         "write": (
@@ -550,7 +550,8 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "CarlaDriverEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
-        "config debug_markers debug_state destroy drive_count finish_at follow_route forget_lane_change "
+        "config debug_markers debug_state destroy drive_count end_route finish_at follow_route "
+        "forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
         "on_scenario_start on_tick release_from_traffic require_microscopic "
         "requires_goal resume_traffic route_to set_client set_desired_speed "
@@ -592,7 +593,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     ),
     "HilsEgoEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane command "
-        "config debug_markers destroy finish_at follow_route forget_lane_change "
+        "config debug_markers destroy end_route finish_at follow_route forget_lane_change "
         "is_initialized lane_change_finished on_scenario_end on_scenario_start "
         "on_tick release_from_traffic require_microscopic requires_goal "
         "resume_traffic route_to set_client set_desired_speed set_initial_speeds "
@@ -685,6 +686,18 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_dict": _FROM_MAPPING,
     },
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
+    "TrajectoryRecorder": {
+        "record_metric": (
+            "writes the metrics computed once the run is over; only "
+            "scenario_runner._record_metrics calls it, and that is not checked "
+            "(library.py), so no checked code reaches it"
+        ),
+        "record_condition_at": (
+            "writes a metric condition's state judged once the run is over; "
+            "only scenario_runner._record_metrics calls it, and that is not "
+            "checked (library.py)"
+        ),
+    },
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},

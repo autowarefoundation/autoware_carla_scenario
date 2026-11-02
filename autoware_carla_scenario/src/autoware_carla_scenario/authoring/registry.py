@@ -210,6 +210,16 @@ class FieldSpec:
             destination differently from a place merely watched.
         item_fields: For a ``record_list`` field, the fields of each record,
             checked and coerced as a primitive's own are.
+        minimum: For a ``number`` or whole-number field, the least value it
+            may hold, inclusive (``0.0``: not negative).
+        exclusive_minimum: For a ``number`` or whole-number field, a value it
+            must stay above (``0.0``: positive).
+        maximum: For a ``number`` or whole-number field, the most it may
+            hold, inclusive.
+
+    The bounds are the runtime's: a constructor that raises for a value is
+    stated here, so the validator refuses the document that would carry it
+    instead of the scenario failing as it starts (#1111).
     """
 
     name: str
@@ -222,6 +232,9 @@ class FieldSpec:
     required: bool = True
     place: LaneletPlace = "watched"
     item_fields: tuple["FieldSpec", ...] = ()
+    minimum: Optional[float] = None
+    exclusive_minimum: Optional[float] = None
+    maximum: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -358,12 +371,19 @@ class ActionSpec:
     #: two, which ``test_authoring_registry`` enforces.
     target: str = ""
     #: Field name -> constructor keyword, for the pairs that differ.  Fields
-    #: whose name already matches the constructor need no entry.
+    #: whose name already matches the constructor need no entry.  A field
+    #: named in more than one entry feeds every keyword it is mapped to: the
+    #: Speed card's subject is both the entity measured and the one whose
+    #: heading the components are measured along.
     argmap: tuple[tuple[str, str], ...] = ()
     #: Constructor arguments a select field chooses the source of.
     choices: tuple[ArgumentChoice, ...] = ()
     #: Constructor arguments the generator assembles rather than passes through.
     builds: tuple[BuiltArgument, ...] = ()
+    #: Constructor keyword -> a value the spec fixes and the editor does not
+    #: offer, as source text: a literal (``0.0``) or a dotted constant
+    #: (``..conditions:SpeedCoordinateSystem.ENTITY``), resolved at generation.
+    constants: tuple[tuple[str, str], ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     #: What the action acts on. ``actor`` actions are performed *by* a vehicle
     #: and belong to its track; ``environment`` actions change the world around
@@ -437,6 +457,8 @@ class ConditionSpec:
     choices: tuple[ArgumentChoice, ...] = ()
     #: See :attr:`ActionSpec.builds`.
     builds: tuple[BuiltArgument, ...] = ()
+    #: See :attr:`ActionSpec.constants`.
+    constants: tuple[tuple[str, str], ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     kind: ConditionKind = "leaf"
     min_children: int = 0
@@ -624,6 +646,41 @@ def _rule_field(default: str = "less_than") -> FieldSpec:
     )
 
 
+#: The runtime conditions' own ``tolerance`` default, which a card left without
+#: one keeps: a document written before the field existed means what it meant.
+EQUAL_TO_DEFAULT_TOLERANCE = 1e-6
+
+
+def _tolerance_field(unit: str, example: str) -> FieldSpec:
+    """Return the tolerance an ``=`` rule compares within, in *unit*.
+
+    A card measuring a continuous quantity -- a speed, a distance, a time to
+    collision -- offers ``=`` through :func:`_rule_field`, and without this the
+    runtime's 1e-6 applied: a measured speed lands within a micrometre per
+    second of 10 m/s on practically no tick, so "Speed = 10" never fired
+    (#1091).  The other rules do not read it.  *example* is a tolerance that
+    makes sense in *unit*, for the help text.
+
+    Not required, and blank means the old 1e-6, so documents that used ``=``
+    before the field existed still load and behave as they did; the validator
+    warns about them instead (``_check_equal_tolerance``).
+    """
+    return FieldSpec(
+        name="tolerance",
+        label="Tolerance (=)",
+        kind="number",
+        default=EQUAL_TO_DEFAULT_TOLERANCE,
+        unit=unit,
+        required=False,
+        help=(
+            'Only read by the "=" predicate, which holds while the measured '
+            "value is within this much of the threshold, either side.  A "
+            "measured value almost never lands exactly on a threshold, so "
+            f"give a margin such as {example}; the other predicates ignore it."
+        ),
+    )
+
+
 def _edge_to_edge_field() -> FieldSpec:
     """Return the bounding-box-versus-centres switch.
 
@@ -673,6 +730,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="s_margin",
             label="Margin",
             kind="number",
+            exclusive_minimum=0.0,
             default=5.0,
             unit="m",
             help=f"How far either side of {place} still counts.",
@@ -681,6 +739,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="stop_duration",
             label="Held for",
             kind="number",
+            exclusive_minimum=0.0,
             default=1.0,
             unit="s",
         ),
@@ -688,6 +747,7 @@ def _temporary_stop_fields(place: str) -> tuple[FieldSpec, ...]:
             name="speed_threshold",
             label="Counts as stopped below",
             kind="number",
+            minimum=0.0,
             default=0.1,
             unit="m/s",
         ),
@@ -1048,6 +1108,7 @@ register_action_spec(
                 name="duration",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1131,6 +1192,7 @@ register_action_spec(
                 name="initial_vehicles",
                 label="Vehicles at start",
                 kind="int",
+                minimum=0,
                 default=10,
                 help="Placed at once, on the first tick it runs.",
             ),
@@ -1138,6 +1200,7 @@ register_action_spec(
                 name="vehicles_per_minute",
                 label="Then, per minute",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 help="Added while it runs; 0 places only the ones at start.",
             ),
@@ -1145,6 +1208,7 @@ register_action_spec(
                 name="max_vehicles",
                 label="At most on the road",
                 kind="int",
+                minimum=0,
                 default=None,
                 required=False,
                 help="Every background vehicle counts, whichever source made it.",
@@ -1221,6 +1285,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_ttc_s",
         label="Turn back at TTC",
         kind="number",
+        minimum=0.0,
         default=None,
         required=False,
         unit="s",
@@ -1233,6 +1298,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_distance_m",
         label="Turn back at distance",
         kind="number",
+        minimum=0.0,
         default=None,
         required=False,
         unit="m",
@@ -1245,6 +1311,7 @@ _TURN_BACK_FIELDS: tuple[FieldSpec, ...] = (
         name="turn_back_within_m",
         label="Turn back within",
         kind="number",
+        minimum=0.0,
         default=1.0,
         unit="m",
         help=(
@@ -1268,6 +1335,7 @@ register_action_spec(
                 name="speed_ms",
                 label="Walking speed",
                 kind="number",
+                minimum=0.0,
                 default=1.4,
                 unit="m/s",
                 help=(
@@ -1309,6 +1377,7 @@ register_action_spec(
                 name="fps",
                 label="Frame rate",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="fps",
@@ -1325,6 +1394,7 @@ register_action_spec(
                 name="duration_s",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1384,7 +1454,7 @@ register_action_spec(
                 default=(),
                 help="Texts that take over at a time into the motion.",
                 item_fields=(
-                    FieldSpec("time_s", "From", "number", 0.0, unit="s"),
+                    FieldSpec("time_s", "From", "number", 0.0, unit="s", minimum=0.0),
                     FieldSpec("text", "What it does", "text", ""),
                 ),
             ),
@@ -1403,6 +1473,7 @@ register_action_spec(
                 name="speed_ms",
                 label="Speed",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.3,
                 unit="m/s",
                 help="How fast it walks along the waypoints.",
@@ -1422,6 +1493,7 @@ register_action_spec(
                 name="duration_s",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="s",
@@ -1611,6 +1683,7 @@ register_action_spec(
                 name="length",
                 label="Footprint length",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 required=False,
                 unit="m",
@@ -1624,6 +1697,7 @@ register_action_spec(
                 name="width",
                 label="Footprint width",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 required=False,
                 unit="m",
@@ -1724,6 +1798,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2006,6 +2081,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2044,6 +2120,7 @@ register_action_spec(
                 name="spacing",
                 label="Spacing",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=20.0,
                 unit="m",
                 help="Between the objects; 0.7 of it in a taper, 0.8 in the buffer.",
@@ -2193,6 +2270,7 @@ register_action_spec(
                 name="start_time",
                 label="Appears at",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="s",
                 help="From the scenario's start.",
@@ -2231,6 +2309,7 @@ register_action_spec(
                 name="spacing",
                 label="Spacing",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=10.0,
                 unit="m",
                 help="Between the work zone's objects; half of it in the merge taper.",
@@ -2332,6 +2411,8 @@ register_action_spec(
                         "number",
                         0.001,
                         help="Naturalistic, a tick, when its trigger holds.",
+                        minimum=0.0,
+                        maximum=1.0,
                     ),
                 ),
             ),
@@ -2425,6 +2506,7 @@ register_action_spec(
                 name="target_speed_kmh",
                 label="Target speed",
                 kind="number",
+                minimum=0.0,
                 default=30.0,
                 unit="km/h",
                 help=(
@@ -2436,6 +2518,7 @@ register_action_spec(
                 name="rate_kmh_s",
                 label="Rate",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=None,
                 required=False,
                 unit="km/h/s",
@@ -2542,6 +2625,7 @@ def _spread_fields(
                 required=False,
                 unit=unit,
                 help="Spread between road users; empty or 0: all the same.",
+                minimum=0.0,
             )
         )
     return tuple(fields)
@@ -2803,7 +2887,8 @@ register_action_spec(
                     "pedestrian route walker, Autoware) drives Lanelet2 routes "
                     "between the waypoints, its speed set to meet their times. "
                     "Follow: a controller drives straight legs between them. "
-                    "Position: placed on the legs every tick (a replay)."
+                    "Position: placed on the legs every tick (a replay). "
+                    "A goal lanelet is a destination for its driver: Driver only."
                 ),
             ),
             FieldSpec(
@@ -2948,8 +3033,13 @@ register_action_spec(
                 name="initial_distance_offset",
                 label="Start this far along",
                 kind="number",
+                minimum=0.0,
                 default=0.0,
                 unit="m",
+                help=(
+                    "Along written-out waypoints; a goal lanelet has none to "
+                    "start along, so leave it 0."
+                ),
             ),
             *_TURN_BACK_FIELDS,
             FieldSpec(
@@ -2969,6 +3059,7 @@ register_action_spec(
                 name="walking_speed",
                 label="Walking speed",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.4,
                 required=False,
                 unit="m/s",
@@ -3242,6 +3333,7 @@ register_condition_spec(
                 name="duration",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=1.0,
                 unit="s",
             ),
@@ -3301,8 +3393,9 @@ register_condition_spec(
                     "car in the next lane is 20 m away in a straight line and "
                     "2 m away longitudinally, and following-distance and "
                     "cut-in scenarios mean the second.  Along the road is "
-                    "one-dimensional, so this is only read when Measured is "
-                    "a straight line."
+                    "one-dimensional: it reads the distance along the road "
+                    "with Straight line or Along the subject, and has no "
+                    "Across the subject component."
                 ),
             ),
             _edge_to_edge_field(),
@@ -3318,6 +3411,7 @@ register_condition_spec(
                     "so -30 with at most reads at least 30 m behind."
                 ),
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "Distance from the subject to the target.  Say which frame and "
@@ -3333,6 +3427,8 @@ def _entity_filter_fields() -> tuple[FieldSpec, ...]:
     a condition looks at, by name, kind, place and relative to a reference."""
 
     def bound(name: str, label: str, help_text: str) -> FieldSpec:
+        # A distance is not negative (EntityFilter.__post_init__); an offset
+        # ahead or to the left is signed.
         return FieldSpec(
             name=name,
             label=label,
@@ -3341,6 +3437,7 @@ def _entity_filter_fields() -> tuple[FieldSpec, ...]:
             unit="m",
             required=False,
             help=help_text,
+            minimum=0.0 if name.endswith("_distance_m") else None,
         )
 
     return (
@@ -3453,7 +3550,7 @@ register_condition_spec(
         fields=(
             *_entity_filter_fields(),
             _rule_field("greater_than_or_equal"),
-            FieldSpec(name="count", label="Count", kind="int", default=1),
+            FieldSpec(name="count", label="Count", kind="int", default=1, minimum=0),
         ),
         description=(
             "How many road users pass a filter: by name pattern, kind, place, "
@@ -3608,6 +3705,7 @@ register_condition_spec(
                 default=20.0,
                 unit="m",
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "Distance from an entity to a place on the map -- a stop line, a "
@@ -3641,6 +3739,7 @@ register_condition_spec(
             ),
             _coordinate_system_field(),
             _edge_to_edge_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "Time to collision from the subject to the target.  Measured "
@@ -3703,6 +3802,7 @@ register_condition_spec(
                 name="seconds", label="TTC", kind="number", default=4.0, unit="s"
             ),
             _edge_to_edge_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "Time until the subject reaches a place on the map -- a stop "
@@ -3745,6 +3845,7 @@ register_condition_spec(
                 name="seconds", label="Headway", kind="number", default=2.0, unit="s"
             ),
             _coordinate_system_field(),
+            _tolerance_field("s", "0.1 s"),
         ),
         description=(
             "How long the follower would take to reach where the vehicle "
@@ -3765,7 +3866,15 @@ register_condition_spec(
         category="Entity",
         builder="build_speed_condition",
         target="..conditions:SpeedCondition",
-        argmap=(("entity", "entity_name"),),
+        # Longitudinal and lateral are measured along the subject's own
+        # heading, as on the Acceleration card: in the constructor's default
+        # WORLD frame "longitudinal" is world +x, so a "longitudinal speed
+        # above 5" rule fired only while driving east (#1089).
+        argmap=(
+            ("entity", "entity_name"),
+            ("entity", "reference_entity_name"),
+        ),
+        constants=(("coordinate_system", "..conditions:SpeedCoordinateSystem.ENTITY"),),
         visual=ConditionVisual(
             metric="Speed",
             subject="entity",
@@ -3790,7 +3899,14 @@ register_condition_spec(
                     SelectOption("LATERAL", "Lateral"),
                 ),
                 required=False,
+                help=(
+                    "Longitudinal and lateral are signed in the entity's own "
+                    "frame: longitudinal is negative while reversing, lateral "
+                    "positive to its left.  Magnitude is never negative, so a "
+                    '"less than 0" rule on it can never fire.'
+                ),
             ),
+            _tolerance_field("m/s", "0.1 m/s"),
         ),
         description="Speed of a single entity.",
     )
@@ -3834,6 +3950,7 @@ register_condition_spec(
                     "junction:K:entry or junction:K:exit (K from 0)."
                 ),
             ),
+            _tolerance_field("m", "0.5 m"),
         ),
         description=(
             "How far an entity (the ego when none is named) has come along the "
@@ -3887,6 +4004,7 @@ register_condition_spec(
                     '"less than -3" rule on it can never fire.'
                 ),
             ),
+            _tolerance_field("m/s²", "0.2 m/s²"),
         ),
         description=(
             "Acceleration of a single entity.  Read from CARLA directly, not "
@@ -3944,6 +4062,7 @@ register_condition_spec(
                     "frame."
                 ),
             ),
+            _tolerance_field("m/s", "0.1 m/s"),
         ),
         description=(
             "Speed of one entity relative to another: the subject's velocity "
@@ -3966,12 +4085,18 @@ register_condition_spec(
         fields=(
             _entity_field("entity", "Subject"),
             FieldSpec(
-                name="duration", label="Duration", kind="number", default=1.0, unit="s"
+                name="duration",
+                label="Duration",
+                kind="number",
+                exclusive_minimum=0.0,
+                default=1.0,
+                unit="s",
             ),
             FieldSpec(
                 name="speed_threshold",
                 label="Speed threshold",
                 kind="number",
+                minimum=0.0,
                 default=0.1,
                 unit="m/s",
                 required=False,
@@ -4191,13 +4316,19 @@ register_condition_spec(
                 kind="select",
                 default="same",
                 options=_LANE_RELATIONS,
+                help=(
+                    "Left or right: the lanelet beside it and the lanelets "
+                    "ahead of that one up to the next junction.  No lane on "
+                    "that side never holds."
+                ),
             ),
         ),
         description=(
-            "The entity is on the OpenDRIVE lane under a Lanelet2 position, the "
-            "lane beside it, or any lane of its road -- anywhere along the "
-            "road, not only within the lanelet.  Beside a spawn is where a lane "
-            "change from it ends."
+            "The entity is on the OpenDRIVE lane under a Lanelet2 position or "
+            "any lane of its road -- anywhere along the road, not only within "
+            "the lanelet -- or in the lane beside it: the lanelet beside it "
+            "and those ahead of that one before the next junction.  Beside a "
+            "spawn is where a lane change from it ends."
         ),
     )
 )
@@ -4359,6 +4490,8 @@ register_condition_spec(
                 name="fraction",
                 label="Fraction",
                 kind="number",
+                exclusive_minimum=0.0,
+                maximum=1.0,
                 default=0.3,
                 help=(
                     "Of the 15 points of a 5 x 3 grid over the bounding box, "
@@ -4394,6 +4527,7 @@ register_condition_spec(
                 name="distance",
                 label="Look-ahead",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=10.0,
                 unit="m",
             ),
@@ -4428,6 +4562,7 @@ register_condition_spec(
                 name="duration_seconds",
                 label="Duration",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=5.0,
                 unit="s",
             ),
@@ -4518,6 +4653,7 @@ register_condition_spec(
                 name="length",
                 label="Length",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=4.6,
                 unit="m",
                 help="Along its heading: a car's, a walker's, whatever is to stand there.",
@@ -4526,6 +4662,7 @@ register_condition_spec(
                 name="width",
                 label="Width",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=2.0,
                 unit="m",
             ),
@@ -4533,6 +4670,7 @@ register_condition_spec(
                 name="margin",
                 label="Margin",
                 kind="number",
+                minimum=0.0,
                 default=0.3,
                 required=False,
                 unit="m",
@@ -4591,6 +4729,7 @@ register_condition_spec(
                     "the run fails; 0 fails it at the first frame that does."
                 ),
             ),
+            _tolerance_field("", "0.1 in the metric's unit"),
         ),
         description=(
             "How the ego drove, computed once the run is over: a collision, "
@@ -4646,6 +4785,7 @@ register_condition_spec(
                 name="timeout_seconds",
                 label="Timeout",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=30.0,
                 unit="s",
             ),
@@ -5013,6 +5153,16 @@ register_constraint_spec(
                 kind="select",
                 default="left",
                 options=_DIRECTIONS,
+            ),
+            FieldSpec(
+                name="include_forks",
+                label="Include forks",
+                kind="bool",
+                default=False,
+                help=(
+                    "Count a lane that forks off or joins beside it too, such "
+                    "as a turn pocket, which the routing graph does not."
+                ),
             ),
         ),
         description="A same-direction neighbour lane exists on that side.",

@@ -7,21 +7,23 @@ whole list, and both read it from here:
 
 * ``scenario_runner._run_file_stem``, which takes the first stem none of them
   exists under, so a run never writes over an earlier one's outputs;
-* the SLURM worker (``slurm.worker._remove_outputs``), which runs a case under
-  the stem its manifest gives it and removes that stem's outputs first, so a
-  case run again leaves none of its last attempt's behind -- and the T4 writer,
-  which refuses a directory already holding a dataset, records the new one.
+* :func:`remove_run_outputs`, which the SLURM worker calls before it runs a
+  case under the stem its manifest gives it, and ``scenario_queue`` before it
+  retries a failed attempt under the stem that attempt had, so a case run
+  again leaves none of its last attempt's behind -- and the T4 writer, which
+  refuses a directory already holding a dataset, records the new one.
 
 The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX`` ...);
 ``test_run_outputs.py`` keeps them equal to the ones here.
 
-Free of imports beyond ``pathlib``: the SLURM worker and the library check
-read it.
+Free of imports beyond ``pathlib`` and ``shutil``: the SLURM worker and the
+library check read it.
 """
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 __all__ = [
@@ -29,6 +31,7 @@ __all__ = [
     "RUN_FILE_SUFFIXES",
     "run_output_paths",
     "run_outputs_exist",
+    "remove_run_outputs",
 ]
 
 #: The files a run writes as ``{stem}{suffix}``.
@@ -74,3 +77,17 @@ def run_outputs_exist(directory: Path, stem: str) -> bool:
         if path.exists():
             return True
     return False
+
+
+def remove_run_outputs(directory: Path, stem: str) -> None:
+    """Remove what a run named *stem* left in *directory*: every path of
+    :func:`run_output_paths`, its T4 dataset directory included -- the T4
+    writer refuses a directory already holding a dataset, so a case run again
+    under *stem* would otherwise record none and keep the last attempt's.  A
+    symlink is unlinked, never what it points to; the outputs of any other
+    stem are left alone."""
+    for path in run_output_paths(directory, stem):
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)

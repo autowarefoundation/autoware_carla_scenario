@@ -93,7 +93,11 @@ run.main()
 
 
 def _run(
-    app: str, tmp_path: Path, *args: str, resume_from: int | None = None
+    app: str,
+    tmp_path: Path,
+    *args: str,
+    resume_from: int | None = None,
+    mode: str = "--multirun",
 ) -> subprocess.CompletedProcess[str]:
     script = tmp_path / "app.py"
     script.write_text(textwrap.dedent(app), encoding="utf-8")
@@ -106,7 +110,7 @@ def _run(
         [
             sys.executable,
             str(script),
-            "--multirun",
+            mode,
             *args,
             f"hydra.sweep.dir={tmp_path / 'multirun'}",
         ],
@@ -278,6 +282,76 @@ def test_lanelet_sweeper_stops_with_2_on_a_refused_case(tmp_path: Path) -> None:
     assert "case 1" in output, output
     assert "case 2" not in output, output
     assert "REFUSED" in output, output
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "returncode"),
+    [("pass,fail,pass", 1), ("pass,pass", 0)],
+)
+def test_a_sweep_set_by_hydra_mode_runs_every_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verdicts: str, returncode: int
+) -> None:
+    """``hydra.mode=MULTIRUN`` sweeps as ``--multirun`` does: the first case
+    does not end the sweep with its own verdict (#1034)."""
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    proc = _run(
+        _BASIC_APP, tmp_path, f"+verdict={verdicts}", mode="hydra.mode=MULTIRUN"
+    )
+    output = proc.stdout + proc.stderr
+    assert output.count("case verdict=") == len(verdicts.split(",")), output
+    assert proc.returncode == returncode, output
+
+
+@pytest.mark.parametrize(
+    ("argv", "multirun"),
+    [
+        (["--multirun"], True),
+        (["-m"], True),
+        (["hydra.mode=MULTIRUN"], True),
+        (["++hydra.mode=MULTIRUN"], True),
+        (["hydra.mode=RUN"], False),
+        # Hydra refuses it: not a multirun.
+        (["hydra.mode=multirun"], False),
+        (["seed=1,2"], False),
+    ],
+)
+def test_multirun_requested_in_argv(argv: list[str], multirun: bool) -> None:
+    from autoware_carla_scenario.examples import run
+
+    assert run._multirun_requested_in_argv(["scenario", *argv]) is multirun
+
+
+@pytest.mark.parametrize("mode", ["RUN", "MULTIRUN"])
+def test_is_multirun_inside_a_hydra_job_is_the_jobs_mode(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """In a job, the mode Hydra settled on wins over argv: a config may set it."""
+    from types import SimpleNamespace
+
+    from hydra.types import RunMode
+
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(run.HydraConfig, "initialized", staticmethod(lambda: True))
+    monkeypatch.setattr(
+        run.HydraConfig,
+        "get",
+        staticmethod(lambda: SimpleNamespace(mode=RunMode[mode])),
+    )
+    monkeypatch.setattr(sys, "argv", ["scenario", "seed=1,2"])
+    assert run._is_multirun() is (mode == "MULTIRUN")
+
+
+def test_is_multirun_outside_a_hydra_job_reads_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(run.HydraConfig, "initialized", staticmethod(lambda: False))
+    monkeypatch.setattr(sys, "argv", ["scenario", "hydra.mode=MULTIRUN"])
+    assert run._is_multirun()
+    monkeypatch.setattr(sys, "argv", ["scenario"])
+    assert not run._is_multirun()
 
 
 def test_basic_sweeper_stops_with_2_on_a_refused_case(

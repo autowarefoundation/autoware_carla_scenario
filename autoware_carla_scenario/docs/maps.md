@@ -208,7 +208,16 @@ in the order that costs least:
 3. a running server, over the CARLA Python API.
 
 Whatever it comes from is cached under `.derived/` beside the map, so it is
-fetched once.
+fetched once, as `.derived/<repository>-<hash>/<path>/<MAP_NAME>.xodr`. The
+directory is keyed on the repository (its name, and a hash of its URL) as well
+as the map's path in it, so two repositories that both keep their map at
+`map/` never share an OpenDRIVE. It is not keyed on the ref: the file is read
+out of CARLA, so it belongs to the CARLA town rather than to a revision of the
+repository, and a branch that moves does not have it fetched again (fetch it
+again with **Fetch OpenDRIVE** when the town itself changed). Only
+`<MAP_NAME>.xodr` is read from there -- the map directory's name, or
+`map.name` when that differs -- never any other `.xodr` lying beside it.
+A cache written before this layout is simply fetched again.
 
 **You do not need it to write a scenario.** A scenario is written against
 Lanelet2 — a spawn, a goal and a constraint search all name lanelets — so the
