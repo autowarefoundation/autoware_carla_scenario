@@ -367,8 +367,36 @@ def plan_xy(
     positions = point + state["offset"].unsqueeze(-1) * normal
 
     velocity = _central_difference(positions, config.horizon.step_s)
-    heading = torch.atan2(velocity[..., 1], velocity[..., 0])
-    return positions, heading
+    return positions, _heading(velocity, tangent)
+
+
+#: Below this path speed (m/s) a step counts as at rest and its velocity no
+#: longer says which way the vehicle points.
+_REST_SPEED_MPS = 1e-3
+
+
+def _heading(velocity: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    """Yaw along a ``(..., T, 2)`` path, held through stretches at rest.
+
+    The direction of travel is ``atan2(v_y, v_x)`` -- but at rest the velocity
+    is zero and ``atan2(0, 0)`` is 0, the rig's own heading, so a plan that
+    stops in a bend would snap every resting pose back to where the ego
+    points now. A step at rest keeps the heading of the last step that moved,
+    and a step that has not moved yet takes the route tangent at its station,
+    which is the direction the plan moves in when it does.
+
+    The resting velocities are swapped for the tangent *before* the ``atan2``
+    rather than masked after it, so no ``atan2`` is ever taken at the origin
+    and the gradient does not depend on how the backend defines it there.
+    """
+    moving = velocity.norm(dim=-1) > _REST_SPEED_MPS
+    direction = torch.where(moving.unsqueeze(-1), velocity, tangent)
+    heading = torch.atan2(direction[..., 1], direction[..., 0])
+
+    steps = torch.arange(heading.shape[-1], device=heading.device).expand_as(heading)
+    last_moving, _ = torch.cummax(torch.where(moving, steps, -1), dim=-1)
+    carried = torch.gather(heading, -1, last_moving.clamp_min(0))
+    return torch.where(last_moving >= 0, carried, heading)
 
 
 def _central_difference(values: torch.Tensor, dt: float) -> torch.Tensor:
