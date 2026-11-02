@@ -2006,6 +2006,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#the-speed-cards-longitudinal-and-lateral-follow-the-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Speed card's Longitudinal and Lateral follow the entity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-viewer-and-the-editor-bind-127001-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2090,6 +2101,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#the-speed-cards-longitudinal-and-lateral-follow-the-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Speed card's Longitudinal and Lateral follow the entity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-viewer-and-the-editor-bind-127001-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2160,6 +2182,18 @@
 
 
 <h1 id="migrating">Migrating<a class="headerlink" href="#migrating" title="Permanent link">&para;</a></h1>
+<h2 id="the-speed-cards-longitudinal-and-lateral-follow-the-entity">The Speed card's Longitudinal and Lateral follow the entity<a class="headerlink" href="#the-speed-cards-longitudinal-and-lateral-follow-the-entity" title="Permanent link">&para;</a></h2>
+<p>The editor's <strong>Speed</strong> card (<code>type_id: speed</code>) now measures its Longitudinal
+and Lateral components along its own entity's heading, as the Acceleration
+card always has: longitudinal is the speed along the way the entity faces
+(negative while reversing), lateral the speed to its left. They used to be
+the world's x and y, so "longitudinal speed above 5" held only while the
+entity drove east (<a href="https://github.com/autowarefoundation/autoware_carla_scenario/issues/1089">#1089</a>).</p>
+<p>A saved document needs no edit, but one that picks Longitudinal or Lateral on
+a Speed card now means the entity's own frame. One written to test a world
+direction meant it only by accident; to keep it, write that condition in
+Python, where <code>SpeedCondition</code> still defaults to
+<code>SpeedCoordinateSystem.WORLD</code>. Magnitude is unchanged.</p>
 <h2 id="the-viewer-and-the-editor-bind-127001-by-default">The viewer and the editor bind 127.0.0.1 by default<a class="headerlink" href="#the-viewer-and-the-editor-bind-127001-by-default" title="Permanent link">&para;</a></h2>
 <p><code>viewer</code> and <code>scenario-editor</code> now take command-line options (<code>--help</code>,
 <code>--host</code>, <code>--port</code>, and the directories they serve; see
@@ -2270,7 +2304,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 28, 2026 21:55:19 UTC"><span class="timeago" datetime="2026-10-28T21:55:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 28, 2026 21:55:19 UTC">2026-10-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 00:44:49 UTC"><span class="timeago" datetime="2026-11-02T00:44:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 00:44:49 UTC">2026-11-02</span>
   </span>
 
     
