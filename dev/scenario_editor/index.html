@@ -1294,6 +1294,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-field-with-no-value-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A field with no value yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-numbers-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2619,6 +2630,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-field-with-no-value-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A field with no value yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#a-numbers-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3446,6 +3468,22 @@ change in <code>autoware_carla_scenario.authoring.registry</code>:</p>
 class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. <code>test_authoring_registry.py</code> fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.</p>
+<h3 id="a-field-with-no-value-yet">A field with no value yet<a class="headerlink" href="#a-field-with-no-value-yet" title="Permanent link">&para;</a></h3>
+<p>The inspector posts its whole form on every change, so a control has to be
+able to show a field's stored value, or the next unrelated edit stores
+whatever the control showed instead:</p>
+<ul>
+<li>A <code>bool</code> field whose default is <code>None</code> and that is not <code>required</code> (such as
+  <em>Lane changes</em> on Traffic Parameters, where unset means "keep the run's")
+  is a select of <em>keep the run's</em> / <em>On</em> / <em>Off</em>, not a checkbox. The blank
+  choice stores <code>None</code>, and a post that leaves the field out keeps the stored
+  value. Any other <code>bool</code> is a checkbox, whose absence from a post means off.</li>
+<li>A <code>select</code> field with no value shows a placeholder rather than its first
+  option. When the field is <code>required</code> the placeholder cannot be picked back,
+  and the browser posts nothing for it, so the field stays unset and the
+  validator's "is required" is what the author sees. A stored value that is
+  not one of the options is shown as such, and kept.</li>
+</ul>
 <h3 id="a-numbers-bounds">A number's bounds<a class="headerlink" href="#a-numbers-bounds" title="Permanent link">&para;</a></h3>
 <p>A <code>number</code> or <code>int</code> field states the range its runtime constructor accepts:
 <code>minimum</code> (inclusive), <code>exclusive_minimum</code> and <code>maximum</code> (inclusive). The
@@ -3782,7 +3820,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 04:53:46 UTC"><span class="timeago" datetime="2026-11-02T04:53:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 04:53:46 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 12:30:31 UTC"><span class="timeago" datetime="2026-11-02T12:30:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 12:30:31 UTC">2026-11-02</span>
   </span>
 
     
