@@ -797,6 +797,82 @@ def test_the_resource_keeps_exact_local_coordinates(
             assert relation.find(f"tag[@k='{CENTERLINE_INVERTED_TAG}']") is not None
 
 
+def _drive_along(
+    lanelet_map: Any,
+    offset: tuple[float, float],
+    legs: list[tuple[int, float, float]],
+    spacing_m: float = 0.5,
+) -> list[dict]:
+    """Ticks of an ego whose origin (its rear axle: ``rear_axle`` 0) runs along
+    the centrelines of *legs*, ``(lanelet id, from, to)`` as fractions of each
+    one's length, a point every *spacing_m*, in CARLA's frame."""
+    ox, oy = offset
+    points: list[np.ndarray] = []
+    for lanelet_id, start, end in legs:
+        centre = np.array(
+            [(p.x, p.y) for p in lanelet_map.laneletLayer[lanelet_id].centerline]
+        )
+        s = np.concatenate(
+            [[0.0], np.cumsum(np.linalg.norm(np.diff(centre, axis=0), axis=1))]
+        )
+        for at in np.arange(start * s[-1], end * s[-1], spacing_m):
+            points.append(np.array([np.interp(at, s, centre[:, k]) for k in range(2)]))
+    ticks = []
+    for i, point in enumerate(points):
+        ahead = points[min(i + 1, len(points) - 1)] - points[max(i - 1, 0)]
+        yaw = -math.degrees(math.atan2(ahead[1], ahead[0]))
+        ticks.append(_tick(100 + i, _state(1, point[0] - ox, -(point[1] - oy), yaw)))
+    return ticks
+
+
+@pytest.fixture(scope="module")
+def route_log(
+    tmp_path_factory: pytest.TempPathFactory,
+    fixture_map: tuple[Any, tuple[float, float]],
+) -> Path:
+    """A run on nishishinjuku: along lanelet 4, a lane change to 98 beside it,
+    and on into 98's successor 102."""
+    lanelet_map, (ox, oy) = fixture_map
+    record = _map_record((ox, oy), 0.0)
+    record["lanelet2"] = {"path": str(OSM), "sha256": None, "bytes": 0}
+    record["opendrive"] = {"path": str(XODR), "sha256": None, "bytes": 0}
+    return _write_log(
+        tmp_path_factory.mktemp("route") / "Drive.trajectory.jsonl",
+        EGO,
+        {"type": "rear_axle", "id": 1, "offset": 0.0},
+        *_drive_along(
+            lanelet_map, (ox, oy), [(4, 0.0, 0.4), (98, 0.6, 1.0), (102, 0.0, 1.0)]
+        ),
+        map_record=record,
+    )
+
+
+def test_the_route_is_the_lanelets_the_ego_drove_along(route_log: Path) -> None:
+    scene = trajectory_log_to_t4_scene(route_log).scene
+    rows = scene.routes.rows
+    assert len(rows) == len(_numeric(scene.timestamps_ns))
+    for row in rows:
+        assert row.HasField("value")
+        assert _numeric(row.value.lane_ids).tolist() == [4, 98, 102]
+        assert not row.value.HasField("preferred_lane_ids")
+
+
+def test_the_route_can_be_left_out(route_log: Path, tmp_path: Path) -> None:
+    assert not trajectory_log_to_t4_scene(route_log, with_route=False).scene.HasField(
+        "routes"
+    )
+    assert not trajectory_log_to_t4_scene(route_log, with_map=False).scene.HasField(
+        "routes"
+    )
+    assert main([str(route_log), "-o", str(tmp_path), "--no-route"]) == 0
+    written = pb.T4Scene.FromString((tmp_path / f"Drive{SCENE_SUFFIX}").read_bytes())
+    assert not written.HasField("routes")
+
+
+def test_an_ego_that_stood_still_has_no_route(map_export: T4SceneExport) -> None:
+    assert not map_export.scene.HasField("routes")
+
+
 def test_a_map_that_is_not_here_is_left_out(tmp_path: Path) -> None:
     record = _map_record()
     record["lanelet2"] = {
