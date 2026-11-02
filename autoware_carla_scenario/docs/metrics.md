@@ -211,7 +211,22 @@ with `metrics.heavy=false`, `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0`, or
 
 ```bash
 uv run scenario scenario=intersection_passing/straight metrics.heavy=false
+AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0 uv run scenario scenario=intersection_passing/straight
 ```
+
+The `scenario` command (a single run, a batch, a sweep, and the SLURM tasks
+alike) decides in this order:
+
+1. `metrics.heavy` when a config sets it to `true` or `false` (the first
+   case's of a batch that does): it overrides the environment variable;
+2. otherwise `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`: off when it is `0`,
+   `false`, `off` or `no`;
+3. otherwise on.
+
+The shipped `config.yaml` leaves `metrics.heavy` `null`, so the environment
+variable decides unless the command line or a scenario's config says
+otherwise. The command then sets the variable to what it decided (`1` or
+`0`), which carries it to the runs' own processes and to the SLURM jobs.
 
 The workers are started with, in order, the command in
 `$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on

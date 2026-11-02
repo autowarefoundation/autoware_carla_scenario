@@ -86,8 +86,10 @@ t4:
 # that cannot be converted is logged, the run's verdict stands.
 # The heavy CommonRoad metrics (CriMe's TTR, seconds a frame): off, a metric
 # condition on one is not judged (docs/metrics.md, "CommonRoad metrics").
+# null: as $AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS says (on unless it is 0);
+# true or false here overrides it.
 metrics:
-  heavy: true
+  heavy: null
 t4scene:
   enabled: false
   # The scene's time step in seconds, a multiple of the 0.05 s tick.

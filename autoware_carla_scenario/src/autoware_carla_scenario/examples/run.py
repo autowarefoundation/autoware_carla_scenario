@@ -971,19 +971,24 @@ def apply_canvas(*cfgs: DictConfig) -> Path | None:
 
 def apply_metrics(*cfgs: DictConfig) -> bool:
     """Turn the heavy CommonRoad metrics on or off as the first of *cfgs*
-    that sets ``metrics.heavy`` says (on when none does); whether they are
-    on.  The environment carries it to the runs' own processes."""
+    that sets ``metrics.heavy`` (to ``true`` or ``false``) says; when none
+    does, as ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` says (on unless it is
+    ``0``).  Whether they are on.  The environment carries it to the runs'
+    own processes."""
     from ..commonroad.session import (  # noqa: PLC0415
         HEAVY_METRICS_ENV,
+        _heavy_metrics_default,
         configure_commonroad_metrics,
     )
 
-    heavy = True
+    heavy: bool | None = None
     for cfg in cfgs:
         value = (cfg.get("metrics") or {}).get("heavy")
         if value is not None:
             heavy = bool(value)
             break
+    if heavy is None:
+        heavy = _heavy_metrics_default()
     os.environ[HEAVY_METRICS_ENV] = "1" if heavy else "0"
     configure_commonroad_metrics(heavy_metrics=heavy)
     return heavy

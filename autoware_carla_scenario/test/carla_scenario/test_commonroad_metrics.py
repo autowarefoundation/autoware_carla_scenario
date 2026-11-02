@@ -565,6 +565,79 @@ def test_metrics_heavy_turns_them_off_for_the_runs(
     # Carried to the runs' own processes.
     assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
     assert not cr_session.CommonRoadSettings().heavy_metrics
-    # On when no config sets it.
+    # On when no config sets it and neither does the environment.
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV)
     assert apply_metrics(OmegaConf.create({}))
     assert cr_session.commonroad_settings().heavy_metrics
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "1"
+
+
+@pytest.mark.parametrize(
+    "cfg", [{}, {"metrics": {}}, {"metrics": {"heavy": None}}, {"metrics": None}]
+)
+def test_the_environment_decides_when_no_config_sets_metrics_heavy(
+    monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any]
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    assert not apply_metrics(OmegaConf.create(cfg))
+    assert not cr_session.commonroad_settings().heavy_metrics
+    assert not cr_session.commonroad_settings().evaluates(CRIME_TTR_S)
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
+    assert apply_metrics(OmegaConf.create(cfg))
+    assert cr_session.commonroad_settings().heavy_metrics
+
+
+@pytest.mark.parametrize(("env", "heavy"), [("0", True), ("1", False), ("", False)])
+def test_metrics_heavy_set_in_a_config_overrides_the_environment(
+    monkeypatch: pytest.MonkeyPatch, env: str, heavy: bool
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, env)
+    # The first config that sets it, past one that leaves it to the environment.
+    cfgs = [
+        OmegaConf.create({"metrics": {"heavy": None}}),
+        OmegaConf.create({"metrics": {"heavy": heavy}}),
+        OmegaConf.create({"metrics": {"heavy": not heavy}}),
+    ]
+    assert apply_metrics(*cfgs) is heavy
+    assert cr_session.commonroad_settings().heavy_metrics is heavy
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == ("1" if heavy else "0")
+
+
+def _shipped_config(overrides: list[str]) -> Any:
+    from hydra import compose, initialize_config_dir
+
+    from autoware_carla_scenario.examples import conf as conf_package
+
+    conf_dir = str(Path(conf_package.__file__).parent.resolve())
+    with initialize_config_dir(config_dir=conf_dir, version_base=None):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_the_shipped_config_leaves_the_heavy_metrics_to_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    cfg = _shipped_config([])
+    assert cfg.metrics.heavy is None
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    assert not apply_metrics(cfg)
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV)
+    assert apply_metrics(cfg)
+
+    # The command line still overrides it, either way (no `+`: the key exists).
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    assert apply_metrics(_shipped_config(["metrics.heavy=true"]))
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
+    assert not apply_metrics(_shipped_config(["metrics.heavy=false"]))
