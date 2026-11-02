@@ -551,6 +551,83 @@ def test_sessions_on_concurrent_threads_follow_their_own_readings(policy):
     assert not failures, failures[:5]
 
 
+# Through the public interface only: what a runtime sees of another session's
+# rollout is the plan it is sent back. The default config has no time budget,
+# so a step's plan is a function of its inputs and of its own session's memory
+# alone -- the same steps on a fresh policy must give the same plans.
+
+
+def assert_same_plan(actual, expected) -> None:
+    np.testing.assert_allclose(
+        actual.trajectory_in_rig.positions,
+        expected.trajectory_in_rig.positions,
+        rtol=0.0,
+        atol=1e-9,
+    )
+    assert actual.debug_scalars["light_active"] == expected.debug_scalars["light_active"]
+
+
+def braking_at_a_red_light(uuid: str, accel_mps2: float = -2.5) -> DriveContext:
+    return context(
+        route=straight_route(),
+        speed_mps=6.0,
+        accel_mps2=accel_mps2,
+        renderer_data=red_light(40.0),
+        uuid=uuid,
+    )
+
+
+def cruising(uuid: str, accel_mps2: float = 1.0) -> DriveContext:
+    return context(route=straight_route(), speed_mps=6.0, accel_mps2=accel_mps2, uuid=uuid)
+
+
+def test_a_session_plans_its_first_step_as_if_it_were_alone():
+    """A cruising ego is not planned from another ego's braking (#1158)."""
+    alone = EgoPolicy()
+    alone.on_session_start(session("b"))
+    expected = alone.drive(cruising("b"))
+
+    shared = EgoPolicy()
+    shared.on_session_start(session("a"))
+    shared.on_session_start(session("b"))
+    for _ in range(10):
+        shared.drive(braking_at_a_red_light("a"))
+    assert_same_plan(shared.drive(cruising("b")), expected)
+
+
+def test_another_session_starting_and_closing_does_not_reset_a_rollout():
+    """A rollout's next plan is the one it would have made alone (#1158)."""
+    # The second reading jumps the envelope: alone, the anchor follows it at
+    # the rate a vehicle could, from the first step's anchor.
+    alone = EgoPolicy()
+    alone.on_session_start(session("a"))
+    alone.drive(braking_at_a_red_light("a", accel_mps2=0.0))
+    expected = alone.drive(braking_at_a_red_light("a", accel_mps2=-3.9))
+
+    shared = EgoPolicy()
+    shared.on_session_start(session("a"))
+    shared.drive(braking_at_a_red_light("a", accel_mps2=0.0))
+    shared.on_session_start(session("b"))
+    shared.drive(cruising("b", accel_mps2=1.5))
+    shared.on_session_close(session("b"))
+    assert_same_plan(shared.drive(braking_at_a_red_light("a", accel_mps2=-3.9)), expected)
+
+
+def test_a_restarted_session_plans_as_a_new_one():
+    """Closing and starting a session again forgets everything it carried."""
+    fresh = EgoPolicy()
+    fresh.on_session_start(session("s"))
+    expected = fresh.drive(cruising("s", accel_mps2=-3.0))
+
+    restarted = EgoPolicy()
+    restarted.on_session_start(session("s"))
+    for _ in range(5):
+        restarted.drive(braking_at_a_red_light("s", accel_mps2=1.5))
+    restarted.on_session_close(session("s"))
+    restarted.on_session_start(session("s"))
+    assert_same_plan(restarted.drive(cruising("s", accel_mps2=-3.0)), expected)
+
+
 def test_actors_reach_the_policy(policy):
     """A sanity check that the perception path is wired into the step."""
     data = CarlaRendererData(
