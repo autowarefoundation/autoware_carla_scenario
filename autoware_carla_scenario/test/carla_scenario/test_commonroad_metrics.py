@@ -61,6 +61,14 @@ def _clean() -> Iterator[None]:
     cr_session._POOL.settings = settings
 
 
+@pytest.fixture(autouse=True)
+def _apply_metrics_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """apply_metrics remembers what it set the environment to: not across tests."""
+    run = sys.modules.get("autoware_carla_scenario.examples.run")
+    if run is not None:
+        monkeypatch.setattr(run, "_heavy_metrics_env_set", None, raising=False)
+
+
 # ---------------------------------------------------------------------------
 # The metrics and the condition on them
 # ---------------------------------------------------------------------------
@@ -565,11 +573,31 @@ def test_metrics_heavy_turns_them_off_for_the_runs(
     # Carried to the runs' own processes.
     assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
     assert not cr_session.CommonRoadSettings().heavy_metrics
-    # On when no config sets it and neither does the environment.
-    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV)
+    # On when no config sets it and neither did the user: the "0" above is
+    # the last run's, not the environment's.
     assert apply_metrics(OmegaConf.create({}))
     assert cr_session.commonroad_settings().heavy_metrics
     assert os.environ[cr_session.HEAVY_METRICS_ENV] == "1"
+
+
+@pytest.mark.parametrize("env", [None, "0", "1"])
+def test_one_runs_metrics_heavy_does_not_carry_over_to_the_next(
+    monkeypatch: pytest.MonkeyPatch, env: Optional[str]
+) -> None:
+    """Hydra's --multirun runs its cases in one process, one apply_metrics each."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    if env is None:
+        monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, env)
+    from_env = env != "0"
+    for heavy in (True, False, True):
+        assert apply_metrics(OmegaConf.create({"metrics": {"heavy": heavy}})) is heavy
+        assert apply_metrics(OmegaConf.create({"metrics": {"heavy": None}})) is from_env
+        assert os.environ[cr_session.HEAVY_METRICS_ENV] == ("1" if from_env else "0")
 
 
 @pytest.mark.parametrize(

@@ -227,6 +227,9 @@ The shipped `config.yaml` leaves `metrics.heavy` `null`, so the environment
 variable decides unless the command line or a scenario's config says
 otherwise. The command then sets the variable to what it decided (`1` or
 `0`), which carries it to the runs' own processes and to the SLURM jobs.
+A batch decides once, for all its cases; the cases of a Hydra `--multirun`
+(`scenario=a,b`) each decide for themselves, from the variable as you set it,
+not as an earlier case's `metrics.heavy` left it.
 
 The workers are started with, in order, the command in
 `$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on
