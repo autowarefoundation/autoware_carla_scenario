@@ -713,6 +713,36 @@ def test_the_decision_is_carried_to_the_slurm_jobs() -> None:
     assert snapshot_environment(DEFAULT_ENV_PASSTHROUGH, env) == env
 
 
+def test_a_slurm_task_follows_the_batchs_decision_not_its_own_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task runs only some of the batch's cases: the one that sets
+    ``metrics.heavy`` may be another task's, and the task still runs with the
+    decision the submitter made for the whole batch."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.worker import _apply_metrics
+
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
+    unset = OmegaConf.create({"metrics": {"heavy": None}})
+    off = OmegaConf.create({"metrics": {"heavy": False}})
+    # The submitter: the batch's second case turns them off.
+    assert not run.apply_metrics(unset, off)
+    snapshot = os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV]
+    assert snapshot == "0"
+    # A task with only the first case, on a node whose process starts with
+    # them on, and the snapshot in its environment.
+    cr_session.configure_commonroad_metrics(heavy_metrics=True)
+    assert not _apply_metrics(run, [unset])
+    assert not cr_session.commonroad_settings().heavy_metrics
+    assert cr_session.HEAVY_METRICS_ENV not in os.environ
+    # A snapshot without the decision: the task decides from its cases.
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_DECIDED_ENV)
+    assert _apply_metrics(run, [unset])
+    assert cr_session.commonroad_settings().heavy_metrics
+
+
 def _shipped_config(overrides: list[str]) -> Any:
     from hydra import compose, initialize_config_dir
 

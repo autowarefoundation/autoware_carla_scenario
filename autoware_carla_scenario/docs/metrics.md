@@ -230,9 +230,9 @@ decided (`1` or `0`) to `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED`
 (`HEAVY_METRICS_DECIDED_ENV`), which `CommonRoadSettings` reads before
 `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`: it carries the decision to the runs'
 own processes and to the SLURM jobs (`launcher.env_passthrough`'s `AUTOWARE_*`
-passes both variables, and each job decides again from the same configs and
-your variable). Set by the command, not by you: the command never reads it,
-and overwrites it each time it decides.
+passes it; a SLURM task runs with it rather than decide again from its own
+cases, which are only some of the batch's). Set by the command, not by you:
+the command never reads it to decide, and overwrites it each time it decides.
 A batch decides once, for all its cases; the cases of a Hydra `--multirun`
 (`scenario=a,b`) each decide for themselves, from the variable as you set it,
 not as an earlier case's `metrics.heavy` decided.
