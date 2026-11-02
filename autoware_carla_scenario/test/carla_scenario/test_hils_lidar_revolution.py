@@ -689,44 +689,30 @@ def test_a_long_tick_after_a_whole_revolution_starts_at_its_first_point() -> Non
 
 
 @pytest.mark.parametrize("seed", range(6))
-@pytest.mark.parametrize("fixed_step", [True, False])
 @pytest.mark.parametrize("horizontal_fov", [360.0, 270.0, 120.0])
-def test_the_sensors_angle_starts_revolutions_whichever_rays_hit(
-    horizontal_fov: float, fixed_step: bool, seed: int
+def test_revolutions_start_where_the_sweep_did_whatever_was_lost(
+    horizontal_fov: float, seed: int
 ) -> None:
-    """With each measurement's ``horizontal_angle``, revolutions start where
-    the sensor's sweep did, whatever was lost and whichever rays hit nothing:
-    where the first arc that arrives started, then where each arc of a whole
-    revolution ended."""
+    """At a fixed world step, revolutions start where the sweep did, whatever
+    measurements are lost: where the first arc that arrives started, then
+    where each arc of a whole revolution ended (#1128).  The upper channel's
+    rays hit nothing at random (sky); the lower one's all hit."""
     rng = random.Random(seed)
     rotation_frequency, dt = 7.0, 0.05
     sensor = _FovSensor(rotation_frequency, horizontal_fov)
     for _ in range(rng.randint(0, 3)):  # measured before the bridge listened
         sensor.tick(dt)
-    sectors = [
-        (rng.uniform(0.0, horizontal_fov), rng.uniform(5.0, 0.3 * horizontal_fov))
-        for _ in range(2)
-    ]
     revolution = LidarRevolution(rotation_frequency, dt, horizontal_fov)
     began = sensor.turned
-    time = 0.0
     starts: List[float] = []  # where each revolution emitted should start
     emitted: List[FloatPoints] = []
-    for tick in range(80):
-        if fixed_step or tick == 0:
-            step = dt
-        else:
-            step = rng.choice([dt * rng.uniform(0.5, 1.5), dt * rng.uniform(1.5, 2.4)])
-            if rng.random() < 0.1:
-                step = rng.uniform(1.0, 2.0) / rotation_frequency  # a hitch
-        points = sensor.tick(step)
-        time += step
-        if tick > 0 and rng.random() < 0.25:
+    for tick in range(1, 81):
+        points = sensor.tick(dt)
+        if tick > 1 and rng.random() < 0.3:
             continue  # lost
-        for sector in sectors:
-            points = _missing(points, sensor.step, horizontal_fov, sector)
-        angle = math.radians(math.fmod(sensor.turned, horizontal_fov))
-        whole = revolution.add(time, points, angle)
+        sky = np.array([rng.random() < 0.5 for _ in range(points.shape[0])])
+        points = points[(points[:, 2] == 0.0) | ~sky]
+        whole = revolution.add(dt * tick, points)
         if whole is points:
             began = sensor.turned
         elif whole is not None:

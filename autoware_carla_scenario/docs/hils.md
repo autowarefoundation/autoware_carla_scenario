@@ -301,10 +301,9 @@ front_camera:
 - **LiDAR** (`sensor.lidar.ray_cast`, with a `lidar:MODEL` codec: Hesai
   Pandar and Velodyne models). CARLA measures the arc a LiDAR sweeps in one
   tick; the bridge gathers the arcs into whole revolutions (by
-  `rotation_frequency` and the time between measurements, starting them
-  where each measurement's `horizontal_angle` says the sweep was, and
-  splitting the arc that completes one by each point's azimuth, so each
-  covers the field of view once) and hilspy encodes each revolution into the model's UDP
+  `rotation_frequency` and the time between measurements, splitting the arc
+  that completes one by each point's azimuth, so each covers the field of
+  view once) and hilspy encodes each revolution into the model's UDP
   packets, paced over the revolution as the sensor streams them. A
   revolution is one sweep of `horizontal_fov` (360 degrees by default; CARLA
   turns the rays through azimuths [-fov/2, fov/2)), which may be anything in

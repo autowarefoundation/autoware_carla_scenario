@@ -9,7 +9,6 @@ the conversions that do not compile.
 
 from __future__ import annotations
 
-import math
 from typing import List, Optional
 
 import numpy as np
@@ -114,11 +113,10 @@ class LidarRevolution:
     arc that arrives next spans the lost ticks too but holds the points of
     its own tick alone (#1128).
 
-    A measurement's ``horizontal_angle``, where its sweep stopped, tells
-    where its arc started without the points: *arc* degrees before.  Points
-    tell it only roughly (rays that hit nothing leave no point, and an arc
-    of the world's variable tick need not be one tick), so :meth:`add` takes
-    the angle where the sensor reports it.
+    A measurement's ``horizontal_angle`` cannot tell instead: CARLA's
+    ``sensor.lidar.ray_cast`` sends 0 there, always (ARayCastLidar turns the
+    angle of the SemanticLidarData it inherits, and sends a LidarData of its
+    own whose angle nothing sets).
 
     Args:
         rotation_frequency: The blueprint's ``rotation_frequency``, Hz.
@@ -161,17 +159,9 @@ class LidarRevolution:
         self._parts = []
 
     def add(
-        self,
-        time: float,
-        points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
-        angle: float = -1.0,
+        self, time: float, points: np.ndarray[tuple[int, int], np.dtype[np.float32]]
     ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """Add the measurement taken at *time*; a whole revolution, or ``None``.
-
-        *angle* is the measurement's ``horizontal_angle`` (radians, in
-        [0, fov)), or negative when unknown: the revolutions then start
-        where the points say.
-        """
+        """Add the measurement taken at *time*; a whole revolution, or ``None``."""
         previous = self._time
         if previous is None:
             dt = self._first_dt
@@ -189,11 +179,8 @@ class LidarRevolution:
         swept = before + arc
         fov = self._fov
         if not self._anchored and arc + _REVOLUTION_TOLERANCE_DEG < fov:
-            if angle >= 0.0:
-                start = (math.degrees(angle) - arc) % fov
-            else:
-                tick = self._per_second * self._first_dt
-                start = _arc_start(points, arc, tick, fov)
+            tick = self._per_second * self._first_dt
+            start = _arc_start(points, arc, tick, fov)
             if start >= 0.0:
                 self._start = (start - before) % fov
                 self._anchored = True
