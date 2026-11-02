@@ -12,6 +12,7 @@ from .map import commonroad_map
 from .session import (
     DEFAULT_METRIC_PERIODS_S,
     HEAVY_METRICS,
+    HEAVY_METRICS_DECIDED_ENV,
     HEAVY_METRICS_ENV,
     CommonRoadSettings,
     close_commonroad_workers,
@@ -24,6 +25,7 @@ from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_
 __all__ = [
     "DEFAULT_METRIC_PERIODS_S",
     "HEAVY_METRICS",
+    "HEAVY_METRICS_DECIDED_ENV",
     "HEAVY_METRICS_ENV",
     "WORKER_ENV",
     "CommonRoadSettings",

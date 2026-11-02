@@ -61,14 +61,6 @@ def _clean() -> Iterator[None]:
     cr_session._POOL.settings = settings
 
 
-@pytest.fixture(autouse=True)
-def _apply_metrics_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """apply_metrics remembers what it set the environment to: not across tests."""
-    run = sys.modules.get("autoware_carla_scenario.examples.run")
-    if run is not None:
-        monkeypatch.setattr(run, "_heavy_metrics_env_set", None, raising=False)
-
-
 # ---------------------------------------------------------------------------
 # The metrics and the condition on them
 # ---------------------------------------------------------------------------
@@ -570,14 +562,16 @@ def test_metrics_heavy_turns_them_off_for_the_runs(
     monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
     assert not apply_metrics(OmegaConf.create({"metrics": {"heavy": False}}))
     assert not cr_session.commonroad_settings().heavy_metrics
-    # Carried to the runs' own processes.
-    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+    # Carried to the runs' own processes, the user's variable left unset.
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == "0"
+    assert cr_session.HEAVY_METRICS_ENV not in os.environ
     assert not cr_session.CommonRoadSettings().heavy_metrics
     # On when no config sets it and neither did the user: the "0" above is
     # the last run's, not the environment's.
     assert apply_metrics(OmegaConf.create({}))
     assert cr_session.commonroad_settings().heavy_metrics
-    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "1"
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == "1"
+    assert cr_session.HEAVY_METRICS_ENV not in os.environ
 
 
 @pytest.mark.parametrize("env", [None, "0", "1"])
@@ -597,7 +591,10 @@ def test_one_runs_metrics_heavy_does_not_carry_over_to_the_next(
     for heavy in (True, False, True):
         assert apply_metrics(OmegaConf.create({"metrics": {"heavy": heavy}})) is heavy
         assert apply_metrics(OmegaConf.create({"metrics": {"heavy": None}})) is from_env
-        assert os.environ[cr_session.HEAVY_METRICS_ENV] == ("1" if from_env else "0")
+        assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == (
+            "1" if from_env else "0"
+        )
+        assert os.environ.get(cr_session.HEAVY_METRICS_ENV) == env
 
 
 @pytest.mark.parametrize(
@@ -614,7 +611,7 @@ def test_the_environment_decides_when_no_config_sets_metrics_heavy(
     assert not apply_metrics(OmegaConf.create(cfg))
     assert not cr_session.commonroad_settings().heavy_metrics
     assert not cr_session.commonroad_settings().evaluates(CRIME_TTR_S)
-    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == "0"
 
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
     assert apply_metrics(OmegaConf.create(cfg))
@@ -638,7 +635,112 @@ def test_metrics_heavy_set_in_a_config_overrides_the_environment(
     ]
     assert apply_metrics(*cfgs) is heavy
     assert cr_session.commonroad_settings().heavy_metrics is heavy
-    assert os.environ[cr_session.HEAVY_METRICS_ENV] == ("1" if heavy else "0")
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == ("1" if heavy else "0")
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == env
+
+
+@pytest.mark.parametrize("value", ["1", "0"])
+def test_a_value_the_user_sets_equal_to_the_last_decision_is_honoured(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """The user's variable is the user's, even when it reads what an earlier
+    run decided (#1164)."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    heavy = value == "1"
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1" if not heavy else "0")
+    # An earlier run decides `value`, overriding the user's opposite one.
+    assert apply_metrics(OmegaConf.create({"metrics": {"heavy": heavy}})) is heavy
+    # The user (a test's monkeypatch, an embedding runner) now sets `value`.
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, value)
+    assert apply_metrics(OmegaConf.create({"metrics": {"heavy": None}})) is heavy
+    assert cr_session.commonroad_settings().heavy_metrics is heavy
+    assert os.environ[cr_session.HEAVY_METRICS_ENV] == value
+
+
+def test_the_runs_one_after_another_of_issue_1164(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    def cfg(heavy: Optional[bool]) -> Any:
+        return OmegaConf.create({"metrics": {"heavy": heavy}})
+
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    assert apply_metrics(cfg(True))
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
+    assert apply_metrics(cfg(None))
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV)
+    assert not apply_metrics(cfg(False))
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    assert not apply_metrics(cfg(None))
+
+
+def test_the_runs_own_processes_follow_the_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process the run starts reads what it decided, not the user's variable."""
+    import subprocess
+
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
+    probe = (
+        "from autoware_carla_scenario.commonroad.session import CommonRoadSettings;"
+        "print(CommonRoadSettings().heavy_metrics)"
+    )
+    for heavy in (False, True):
+        apply_metrics(OmegaConf.create({"metrics": {"heavy": heavy}}))
+        out = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+        )
+        assert out.stdout.strip() == str(heavy)
+
+
+def test_the_decision_is_carried_to_the_slurm_jobs() -> None:
+    from autoware_carla_scenario.slurm.settings import (
+        DEFAULT_ENV_PASSTHROUGH,
+        snapshot_environment,
+    )
+
+    env = {cr_session.HEAVY_METRICS_DECIDED_ENV: "0", cr_session.HEAVY_METRICS_ENV: "1"}
+    assert snapshot_environment(DEFAULT_ENV_PASSTHROUGH, env) == env
+
+
+def test_a_slurm_task_follows_the_batchs_decision_not_its_own_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task runs only some of the batch's cases: the one that sets
+    ``metrics.heavy`` may be another task's, and the task still runs with the
+    decision the submitter made for the whole batch."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.worker import _apply_metrics
+
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV, raising=False)
+    unset = OmegaConf.create({"metrics": {"heavy": None}})
+    off = OmegaConf.create({"metrics": {"heavy": False}})
+    # The submitter: the batch's second case turns them off.
+    assert not run.apply_metrics(unset, off)
+    snapshot = os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV]
+    assert snapshot == "0"
+    # A task with only the first case, on a node whose process starts with
+    # them on, and the snapshot in its environment.
+    cr_session.configure_commonroad_metrics(heavy_metrics=True)
+    assert not _apply_metrics(run, [unset])
+    assert not cr_session.commonroad_settings().heavy_metrics
+    assert cr_session.HEAVY_METRICS_ENV not in os.environ
+    # A snapshot without the decision: the task decides from its cases.
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_DECIDED_ENV)
+    assert _apply_metrics(run, [unset])
+    assert cr_session.commonroad_settings().heavy_metrics
 
 
 def _shipped_config(overrides: list[str]) -> Any:
@@ -660,7 +762,7 @@ def test_the_shipped_config_leaves_the_heavy_metrics_to_the_environment(
     assert cfg.metrics.heavy is None
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
     assert not apply_metrics(cfg)
-    assert os.environ[cr_session.HEAVY_METRICS_ENV] == "0"
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == "0"
     monkeypatch.delenv(cr_session.HEAVY_METRICS_ENV)
     assert apply_metrics(cfg)
 
