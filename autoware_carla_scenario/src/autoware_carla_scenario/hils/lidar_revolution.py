@@ -9,6 +9,7 @@ the conversions that do not compile.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import numpy as np
@@ -25,10 +26,11 @@ _REVOLUTION_TOLERANCE_DEG = 1e-3
 #: hundredth of a degree or more from the next).
 _START_TOLERANCE_DEG = 1e-3
 
-#: Points this close in azimuth are of one ray (the channels shoot each ray
-#: at the same angle; float rounding in their coordinates parts them by a
-#: few millionths of a degree), not of two.
-_SAME_RAY_DEG = 1e-4
+#: An arc this close to a whole number of world ticks, relative to it, is
+#: one (simulated times are doubles: their differences are exact to far
+#: less), and one that is not cannot be (the world does not tick at a fixed
+#: step).
+_WHOLE_TICKS = 1e-6
 
 
 def _angles(
@@ -57,18 +59,15 @@ def _arc_start(
 
     The arc's points leave out the angle it did not sweep, ``fov - arc``
     degrees or more: the point after the widest gap between them is the
-    first of the arc, the point before it the last.  -1 when the arc has no
-    points, or no gap that wide (missing hits can only widen gaps).
+    first of the arc.  -1 when the arc has no points, or no gap that wide
+    (missing hits can only widen gaps).
 
     CARLA measures one world tick, *tick* degrees, per measurement.  An arc
-    that spans more than its points do, by half a tick or more, is one whose
-    measurements before were lost on the way (#1128): its points are the
-    last tick's alone, and the first of them is where that tick started,
-    not where the arc did.  Where they end is where the arc ends, a ray
-    step past the last point (CARLA shoots a tick's rays from where its
-    angle was, a step apart, and turns it on by the tick's arc): the arc
-    started *arc* degrees before.  Elsewhere the first point is where it
-    started, as it is for one tick, whatever its points.
+    of two whole ticks or more is one whose measurements before were lost on
+    the way (#1128): its points are the last tick's alone, and the first of
+    them is where that tick started, ``arc - tick`` degrees after the arc
+    did.  Any other arc is one tick, a long one where the world does not
+    tick at a fixed step, and its first point is where it started.
     """
     if points.shape[0] == 0:
         return -1.0
@@ -78,18 +77,10 @@ def _arc_start(
     if float(gaps[widest]) + _REVOLUTION_TOLERANCE_DEG < fov - arc:
         return -1.0
     first = float(angles[(widest + 1) % angles.shape[0]])
-    if arc < 1.5 * tick:  # one tick: nothing was lost
-        return first
-    # The ray step: the narrowest gap between two rays.
-    steps = np.where(gaps > _SAME_RAY_DEG, gaps, fov)
-    steps[widest] = fov
-    step = float(np.min(steps))
-    if step >= fov:  # rays at a single angle
-        step = 0.0
-    last = float(angles[widest])
-    if (last - first) % fov + step + 0.5 * tick >= arc:
-        return first  # one long tick, its points cover it
-    return (last + step - arc) % fov
+    ticks = round(arc / tick)
+    if ticks >= 2 and abs(arc - ticks * tick) <= _WHOLE_TICKS * arc:
+        return (first - (arc - tick)) % fov
+    return first
 
 
 class LidarRevolution:
@@ -121,7 +112,13 @@ class LidarRevolution:
     started, at horizontal angle 0, is not where the first arc that arrives
     does.  Nor need the ones right after an arc of a whole revolution: the
     arc that arrives next spans the lost ticks too but holds the points of
-    its own tick alone, so it is read off where its points end (#1128).
+    its own tick alone (#1128).
+
+    A measurement's ``horizontal_angle``, where its sweep stopped, tells
+    where its arc started without the points: *arc* degrees before.  Points
+    tell it only roughly (rays that hit nothing leave no point, and an arc
+    of the world's variable tick need not be one tick), so :meth:`add` takes
+    the angle where the sensor reports it.
 
     Args:
         rotation_frequency: The blueprint's ``rotation_frequency``, Hz.
@@ -164,9 +161,17 @@ class LidarRevolution:
         self._parts = []
 
     def add(
-        self, time: float, points: np.ndarray[tuple[int, int], np.dtype[np.float32]]
+        self,
+        time: float,
+        points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+        angle: float = -1.0,
     ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """Add the measurement taken at *time*; a whole revolution, or ``None``."""
+        """Add the measurement taken at *time*; a whole revolution, or ``None``.
+
+        *angle* is the measurement's ``horizontal_angle`` (radians, in
+        [0, fov)), or negative when unknown: the revolutions then start
+        where the points say.
+        """
         previous = self._time
         if previous is None:
             dt = self._first_dt
@@ -184,7 +189,11 @@ class LidarRevolution:
         swept = before + arc
         fov = self._fov
         if not self._anchored and arc + _REVOLUTION_TOLERANCE_DEG < fov:
-            start = _arc_start(points, arc, self._per_second * self._first_dt, fov)
+            if angle >= 0.0:
+                start = (math.degrees(angle) - arc) % fov
+            else:
+                tick = self._per_second * self._first_dt
+                start = _arc_start(points, arc, tick, fov)
             if start >= 0.0:
                 self._start = (start - before) % fov
                 self._anchored = True

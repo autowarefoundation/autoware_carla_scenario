@@ -838,6 +838,59 @@ def test_a_lidar_revolution_sweeps_its_horizontal_fov(world: _World) -> None:
         receiver.close()
 
 
+def test_a_lidar_revolution_starts_where_the_sensors_angle_says(
+    world: _World,
+) -> None:
+    # As above, but the first arc's rays hit nothing for 25 degrees: its
+    # points alone would start the revolution 25 degrees late, at 6.25; its
+    # horizontal_angle (135 degrees, where the sweep stopped) puts it at 0.
+    url = _mem()
+    receiver = hilspy.open(url, "lidar:vlp16", frame="packet")
+    bridge = _bridge(
+        {
+            "devices": {
+                "lidar": {
+                    "url": url,
+                    "codec": "lidar:vlp16",
+                    "sensor": {
+                        "blueprint": "sensor.lidar.ray_cast",
+                        "attributes": {
+                            "rotation_frequency": 15,
+                            "horizontal_fov": 180,
+                            "channels": 16,
+                        },
+                    },
+                }
+            }
+        },
+        world,
+    )
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        assert sensor.callback is not None
+        first = _fov_measurement(0.05, np.arange(100, 540) * 0.25, 180.0)
+        first.horizontal_angle = math.radians(135.0)
+        sensor.callback(first)
+        world.tick()
+        bridge.step()
+        assert _drain(receiver) == []
+        second = _fov_measurement(0.10, (540 + np.arange(540)) * 0.25, 180.0)
+        second.horizontal_angle = math.radians(90.0)
+        sensor.callback(second)
+        for _ in range(4):
+            world.tick()
+            bridge.step()
+        packets = _drain(receiver)
+        assert packets and all(p.name == "scan" for p in packets)
+        # Rays 100 to 720: the revolution ends at 180 degrees, not 205.
+        assert sum(len(p["x"]) for p in packets) == 620
+    finally:
+        bridge.close()
+        receiver.close()
+
+
 def test_camera_frames_and_a_new_ego(world: _World) -> None:
     url = _mem()
     receiver = hilspy.open(url)
