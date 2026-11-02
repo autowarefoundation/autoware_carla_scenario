@@ -280,7 +280,7 @@ class CarlaCameraSensor(CameraSensorBase):
             for name in BLUEPRINT_ATTRIBUTES:
                 self._override(camera_bp, name, getattr(cfg, name))
 
-        # -- Transform (base_link -> camera)
+        # -- Transform (CARLA actor origin -> camera, CARLA convention)
         transform = _carla.Transform(
             _carla.Location(x=cfg.position_x, y=cfg.position_y, z=cfg.position_z),
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),

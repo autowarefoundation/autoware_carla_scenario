@@ -287,8 +287,9 @@ class DriverCameraSpec:
     """One camera streamed to the driver policy.
 
     ``logical_id`` is the name the policy looks the camera up by, so it must match what
-    the policy expects.  Extrinsics use CARLA's convention relative to ``base_link``
-    (x forward, y right, z up; angles in degrees).
+    the policy expects.  Extrinsics are relative to the CARLA actor origin (the
+    vehicle's centre), in CARLA's convention (x forward, y right, z up; angles in
+    degrees), as :class:`~.driver.base.DriverCameraConfig`'s are.
     """
 
     logical_id: str = "camera_front_wide_120fov"
