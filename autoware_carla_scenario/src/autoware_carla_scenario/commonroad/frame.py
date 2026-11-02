@@ -44,6 +44,9 @@ class Frame:
         others: The other vehicles and pedestrians within the radius.
     """
 
+    ego: ActorState
+    others: list[ActorState]
+
     def __init__(self, ego: ActorState, others: list[ActorState]) -> None:
         self.ego = ego
         self.others = others
