@@ -550,9 +550,19 @@ def test_sensors_are_kept_when_the_cli_output_cannot_be_read(
 class _FakeModule(_FakeConverter):
     """The converter package, ``convert_dir`` included."""
 
+    class ConversionError(RuntimeError):
+        """The converter's: what ``convert_dir`` raises for a directory it
+        cannot read."""
+
+    def __init__(self, *, unreadable: tuple[str, ...] = (), **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.unreadable = unreadable
+
     def convert_dir(
         self, output_dir: str, *, jobs: Any = None, strict: bool = False, out_dir: str
     ) -> list[dict]:
+        if Path(output_dir).name in self.unreadable:
+            raise self.ConversionError(f"{output_dir}: Permission denied (os error 13)")
         entries = []
         for log in sorted(Path(output_dir).rglob("*.trajectory.jsonl")):
             out = Path(out_dir) / log.relative_to(output_dir)
@@ -695,6 +705,43 @@ def test_a_path_whose_scratch_directory_cannot_be_made_is_reported(
     assert f"[FAILED] {locked}: PermissionError:" in out
     assert (good / "A.rrd").read_bytes() == b"RRD"
     assert not (locked / "A.rrd").exists()
+
+
+def test_a_path_that_cannot_be_read_is_reported(
+    tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = tmp_path / "good"
+    unreadable = tmp_path / "unreadable"
+    for directory in (good, unreadable):
+        directory.mkdir()
+        (directory / "A.trajectory.jsonl").write_text("{}\n")
+    no_sdk_cli.unreadable = ("unreadable",)
+
+    assert main([str(unreadable), str(good)]) == 1
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 1/2 written" in out
+    assert f"[FAILED] {unreadable}: ConversionError:" in out
+    assert (good / "A.rrd").read_bytes() == b"RRD"
+    # Its scratch directory is removed.
+    assert sorted(p.name for p in unreadable.iterdir()) == ["A.trajectory.jsonl"]
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root can read and write any directory",
+)
+def test_an_unreadable_path_is_reported_by_the_real_converter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("autoware_carla_scenario_rerun")
+    unreadable = tmp_path / "unreadable"
+    unreadable.mkdir()
+    unreadable.chmod(0o300)
+    try:
+        assert main([str(unreadable)]) == 1
+    finally:
+        unreadable.chmod(0o755)
+    assert f"[FAILED] {unreadable}: ConversionError:" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(

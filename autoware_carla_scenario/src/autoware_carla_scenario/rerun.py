@@ -476,6 +476,8 @@ def convert_outputs(
         FileNotFoundError: *output_dir* does not exist.
         OSError: The scratch directory the recordings are made in cannot be
             created beside the logs (*output_dir* cannot be written, ...).
+        autoware_carla_scenario_rerun.ConversionError: *output_dir*, or a
+            directory under it, cannot be read (nothing is converted).
     """
     module = require_converter()
     path = Path(output_dir)
@@ -543,8 +545,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     Each PATH is converted on its own: one that does not exist or cannot be
     converted (an :class:`OSError`, such as a directory that cannot be
-    written) is reported as a failed conversion labelled with the PATH, and
-    the others are still converted and reported."""
+    written, or the converter's ``ConversionError``, such as a directory that
+    cannot be read) is reported as a failed conversion labelled with the
+    PATH, and the others are still converted and reported."""
     import argparse  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
@@ -575,6 +578,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     conversions: list[RerunConversion] = []
     try:
+        # What a PATH that cannot be converted raises: an OSError
+        # (convert_outputs: it does not exist, or no scratch directory can be
+        # made beside it) or the converter's ConversionError (convert_dir: it
+        # cannot be read).  Anything else is a bug, and propagates.
+        unconvertible = (OSError, require_converter().ConversionError)
         for path in args.path:
             try:
                 conversions.extend(
@@ -585,7 +593,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         overwrite=args.overwrite,
                     )
                 )
-            except OSError as exc:  # reported with the PATH, not raised
+            except unconvertible as exc:  # reported with the PATH, not raised
                 conversions.append(
                     _failed(str(path), path, f"{type(exc).__name__}: {exc}")
                 )

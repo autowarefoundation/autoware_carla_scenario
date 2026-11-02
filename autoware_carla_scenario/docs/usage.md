@@ -653,10 +653,10 @@ still written: CARLA's own replayer (`client.replay_file()`) plays it back on a
 server running the same map.
 
 The command takes several paths and converts each on its own: a path that does
-not exist, or cannot be converted (a directory it cannot write to), is reported
-as `[FAILED] <path>: ...` and the others are still converted. It exits 0 when
-every recording was written, 1 when any conversion failed or was skipped, and 2
-when the converter is not installed.
+not exist, or cannot be converted (a directory it cannot read or write to), is
+reported as `[FAILED] <path>: ...` and the others are still converted. It exits
+0 when every recording was written, 1 when any conversion failed or was
+skipped, and 2 when the converter is not installed.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets
