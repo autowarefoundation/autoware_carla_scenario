@@ -386,6 +386,7 @@ class RoutingAction(TrajectoryRun):
     _start_pose: Optional[CarlaWorldPose]
     _warned_off: bool
     _route_start: Optional[Lanelet2Pose]
+    _route_held: bool
 
     def __init__(
         self,
@@ -491,6 +492,7 @@ class RoutingAction(TrajectoryRun):
         self._mode = mode
         self._walking = False
         self._stepping = False
+        self._route_held = False
         self._pacer = None
         self._path = None
         self._here = 0.0
@@ -512,6 +514,7 @@ class RoutingAction(TrajectoryRun):
         self._mark_points = []
         self._mark_lanes = []
         self._start_pose = None
+        self._route_held = False
 
     def _clear_run(self) -> None:
         """Forget the last run's progress, as a new run starts: by
@@ -548,13 +551,16 @@ class RoutingAction(TrajectoryRun):
         ``position`` run took from its driver is stopped and given back
         (:meth:`TrajectoryRun._stopped`)."""
         self._stop_walk()
+        self._end_route(world)
         # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
         TrajectoryRun._stopped(self, world)
 
     def close(self) -> None:
-        """Stop a pedestrian's walk the run ends in the middle of, and close
-        the conditions (:meth:`TrajectoryRun.close`)."""
+        """Stop a pedestrian's walk the run ends in the middle of, end a
+        vehicle's route it ends in the middle of (:meth:`_end_route`), and
+        close the conditions (:meth:`TrajectoryRun.close`)."""
         self._stop_walk()
+        self._end_route_at_close()
         # Named, not super(), as _stopped is.
         TrajectoryRun.close(self)
 
@@ -569,6 +575,41 @@ class RoutingAction(TrajectoryRun):
         if pedestrian is not None:
             walker: PedestrianEntity = pedestrian
             walker.stop_walk()
+
+    def _end_route_at_close(self) -> None:
+        """:meth:`_end_route` from :meth:`close`, which is given no world:
+        the vehicle's own."""
+        if not self._route_held:
+            return
+        actor = _entity_actor(str(self._entity_name))
+        if actor is None:
+            self._route_held = False
+            return
+        found: "carla.Actor" = actor
+        try:
+            world = found.get_world()
+        except RuntimeError:
+            self._route_held = False
+            return  # the actor is gone from the world
+        self._end_route(world)
+
+    def _end_route(self, world: "carla.World") -> None:
+        """End the route this action's ``driver`` run gave a vehicle and
+        watched (:meth:`BackendDriven.end_route`), once: it arrived, or the
+        run was stopped, overridden or closed before it did.  Its backend
+        gives back what the route changed -- its own lane changes -- as the
+        run's settings say."""
+        if not self._route_held:
+            return
+        self._route_held = False
+        vehicle = find_vehicle_entity(self._entity_name)
+        if vehicle is None:
+            return
+        driven: BackendDriven = vehicle
+        try:
+            driven.end_route(world)
+        except RuntimeError:
+            pass  # the actor is gone from the world
 
     # ------------------------------------------------------------------
     # Public state
@@ -802,6 +843,10 @@ class RoutingAction(TrajectoryRun):
             self._finished = True
             return
         self._stepping = True
+        # Watched to its end: the route is ended there (_end_route).  One
+        # handed over untimed is ended by its backend, where the vehicle uses
+        # its path up (the TrafficManager's _end_route_at_path_end).
+        self._route_held = True
 
     def _hand_route(
         self,
@@ -940,6 +985,7 @@ class RoutingAction(TrajectoryRun):
             elif paced.paced or self._given_speed is not None:
                 # Arrived: the driver's own speed again from here on.
                 entity.set_desired_speed(world, cruise * 3.6)
+            self._end_route(world)
             self._finished = True
             self._stepping = False
             return

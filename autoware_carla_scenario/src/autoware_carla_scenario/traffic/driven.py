@@ -178,6 +178,12 @@ class BackendDriven(DrivenEntity):
         entity: DrivenEntity = self
         self._resolve_backend().follow_route(entity, world, stops)
 
+    def end_route(self, world: "carla.World") -> None:
+        """The route :meth:`follow_route` gave is over: back to driving as the
+        run's settings say (:meth:`TrafficBackend.end_route`)."""
+        entity: DrivenEntity = self
+        self._resolve_backend().end_route(entity, world)
+
     def finish_at(self, world: "carla.World", points: List["carla.Location"]) -> bool:
         """Drive the rest of the route along *points* and stop on the last,
         if the backend can (:meth:`TrafficBackend.finish_at`)."""

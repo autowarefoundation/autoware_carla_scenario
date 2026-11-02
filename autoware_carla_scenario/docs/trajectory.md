@@ -236,7 +236,8 @@ graph by following on, a lane change or a short path, the closest sequence
 chosen (`traffic.route_match`) -- and the route goes through where it leaves
 each one. A track that cannot be matched falls back to its waypoints one by
 one, leaving out those no lane route reaches, with a warning. The
-TrafficManager is given the route with its own lane changes off, and a route
+TrafficManager is given the route with its own lane changes off (given back
+by `end_route` when a run that watches the route ends), and a route
 ending in a junction is carried on along the lane after it until it is clear
 of the junction, so it is never handed an empty path.
 

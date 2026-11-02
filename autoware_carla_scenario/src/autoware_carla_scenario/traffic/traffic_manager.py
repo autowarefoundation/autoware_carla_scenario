@@ -161,6 +161,11 @@ _LANE_CHANGE_AHEAD_STEP_M: float = 2.0
 _LANE_CHANGE_AHEAD_MAX_WAYPOINTS: int = 4096
 
 
+#: How near (m) the last point of the path :meth:`TrafficManagerBackend.follow_route`
+#: gave a vehicle it is taken to have used the path up, and is given its own
+#: lane changes back: a path point's spacing, so it is met between two ticks.
+_ROUTE_END_M: float = ROUTE_POINT_STEP_M
+
 #: How near (m) a point where its path crosses to the lane beside a vehicle is
 #: told to change lanes.
 _LANE_CHANGE_AHEAD_M = 8.0
@@ -1013,6 +1018,55 @@ class TrafficManagerBackend(TrafficBackend):
         if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
             self._lead_out(actor, first, ahead, path)
 
+    def end_route(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Give *entity*'s vehicle, whose route is over, its own lane changes
+        back as the run's parameters (and its entity's overrides) say:
+        :meth:`follow_route` turned them off for the route alone.  Unset, the
+        TrafficManager's own default, which is on."""
+        actor = _require_actor(entity, "end_route")
+        if actor is None:
+            return
+        vehicle: "carla.Actor" = actor
+        self._unlock_lanes(vehicle, _entity_name(entity))
+
+    def _unlock_lanes(self, vehicle: "carla.Actor", name: str) -> None:
+        """Give *vehicle* its own lane changes back, if :meth:`follow_route`
+        turned them off: the run's ``lane_changes`` with its entity's
+        overrides, or, unset, the TrafficManager's default, on."""
+        actor_id = int(vehicle.id)
+        if actor_id not in self._lane_locked:
+            return
+        self._lane_locked.discard(actor_id)
+        tm = self._require_tm("end_route")
+        if tm is None:
+            return
+        lane_changes = self._parameters_of(vehicle).lane_changes
+        allowed = True
+        if lane_changes is not None:
+            allowed = bool(lane_changes)
+        tm.auto_lane_change(_vehicle(vehicle), allowed)
+        logger.info(
+            "%s: its route is over; its own lane changes are %s again",
+            name,
+            "on" if allowed else "off",
+        )
+
+    def _end_route_at_path_end(self, kept: _Kept) -> None:
+        """End the route of a vehicle :meth:`follow_route` turned the lane
+        changes off for once it is within :data:`_ROUTE_END_M` of its path's
+        last point: the TrafficManager has used the path up and drives on as
+        it likes, which is what a route handed over with nothing to watch it
+        (an untimed ``RoutingAction``) ends in (#1100)."""
+        if not kept.path:
+            return
+        try:
+            location = kept.actor.get_location()
+        except RuntimeError:
+            return  # destroyed under us: forgotten at its next look
+        if location.distance(kept.path[-1]) > _ROUTE_END_M:
+            return
+        self._unlock_lanes(kept.actor, _actor_name(kept.actor))
+
     def _lead_out(
         self,
         actor: "carla.Actor",
@@ -1300,6 +1354,8 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             if not kept.held and len(kept.lane_changes) > 0:
                 self._change_lanes_on_path(kept)
+            if actor_id in self._lane_locked:
+                self._end_route_at_path_end(kept)
             if kept.held or elapsed < kept.check_due:
                 continue
             actor = kept.actor

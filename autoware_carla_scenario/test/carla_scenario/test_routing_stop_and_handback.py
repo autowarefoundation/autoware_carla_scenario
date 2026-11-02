@@ -84,6 +84,7 @@ class _Car:
         self.routes: list[Lanelet2Pose] = []
         self.speeds: list[float] = []
         self.finishes: list[list[Any]] = []
+        self.ended = 0
         self.actor = SimpleNamespace(
             id=7,
             get_transform=lambda: SimpleNamespace(
@@ -107,6 +108,9 @@ class _Car:
     def finish_at(self, world: Any, points: list) -> bool:
         self.finishes.append(points)
         return True
+
+    def end_route(self, world: Any) -> None:
+        self.ended += 1
 
 
 @pytest.fixture
@@ -166,6 +170,7 @@ def test_a_goal_route_stops_its_vehicle_at_the_goal(
         action.tick(world, elapsed)
         elapsed += _DT
     assert vehicle.speeds[-1] == 0.0
+    assert vehicle.ended == 1  # its route ended on arrival (#1100)
     assert action.state is ActionState.COMPLETE
 
 

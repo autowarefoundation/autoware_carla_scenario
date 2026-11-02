@@ -223,7 +223,11 @@ class _Vehicle:
     def __init__(self) -> None:
         self.routes: list[tuple[Lanelet2Pose, tuple[Lanelet2Pose, ...]]] = []
         self.speeds: list[float] = []
+        self.ended: int = 0
         self.actor = None
+
+    def end_route(self, world):  # noqa: ANN001, ANN201
+        self.ended += 1
 
     def route_to(
         self, world, goal, *, initial_pose=None, ground_projection=None, waypoints=()
@@ -1753,6 +1757,73 @@ def test_a_driven_vehicle_at_its_route_end_stops_if_asked(
     )
     action._pace_vehicle(_WORLD, vehicle, at_end)  # type: ignore[arg-type]
     assert vehicle.speeds[-1] == pytest.approx(told)
+
+
+def _paced_to(action: RoutingAction, length: float) -> None:
+    """Put *action* mid-run on a paced route of *length* m, as a timed
+    ``driver`` run is once its vehicle was given the route."""
+    from autoware_carla_scenario.actions._route_pacing import RoutePacer
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    action._path = ResolvedTrajectory(
+        [0.0, length], [0.0, 0.0], [0.0, 0.0], [None, None]
+    )
+    action._pacer = RoutePacer("npc1", "driver", [], 1.0, 0.0)
+    action._stepping = True
+    action._route_held = True
+
+
+def _standing_at(x: float):  # noqa: ANN202
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        get_transform=lambda: SimpleNamespace(location=SimpleNamespace(x=x, y=0.0)),
+        get_speed_limit=lambda: 50.0,
+        get_world=lambda: _WORLD,
+    )
+
+
+class TestTheRouteIsEnded:
+    """A watched ``driver`` route is ended on its vehicle (``end_route``),
+    once, however its run ends, so that its backend gives back the lane
+    changes the route turned off (#1100)."""
+
+    def test_on_arrival(self, vehicle: _Vehicle) -> None:
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(10.0))  # type: ignore[arg-type]
+        assert vehicle.ended == 0  # on its way
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(20.0))  # type: ignore[arg-type]
+        assert action._finished
+        assert vehicle.ended == 1
+        action.close()
+        assert vehicle.ended == 1  # once
+
+    def test_when_overridden(self, vehicle: _Vehicle) -> None:
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action._pace_vehicle(_WORLD, vehicle, _standing_at(10.0))  # type: ignore[arg-type]
+        action._stop_overridden(_WORLD, "other")
+        assert vehicle.ended == 1
+        action._stopped(_WORLD)
+        assert vehicle.ended == 1
+
+    def test_when_closed_mid_route(self, vehicle: _Vehicle) -> None:
+        vehicle.actor = _standing_at(10.0)  # type: ignore[assignment]
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0), speed=10.0)
+        _paced_to(action, 20.0)
+        action.close()
+        assert vehicle.ended == 1
+
+    def test_not_an_untimed_route_handed_over(self, vehicle: _Vehicle) -> None:
+        """Handed over untimed, the route is its driver's to the end: its run
+        ends at once, and the route with it would be left mid-way."""
+        action = RoutingAction("npc1", Lanelet2Pose(3, 7.0))
+        action.tick(_WORLD, 0.0)
+        action.tick(_WORLD, 0.05)
+        assert vehicle.routes
+        action.close()
+        assert vehicle.ended == 0
 
 
 def test_a_vehicle_stopping_at_its_goal_is_driven_there_exactly(
