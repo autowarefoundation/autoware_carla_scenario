@@ -116,6 +116,39 @@ than a metre and starve the optimizer of the gradient it needs to fix it.
 Twenty metres brackets both concerns, and the objective's `margin` is what
 keeps the vacuous `+gate` from dominating.
 
+`stop_slack` is the room left before the *stop station*, less what stopping
+from the plan's speed takes (`v²/2b + v·b/2j`, `Limits.stopping_distance_m`).
+The stop station is the reported distance to the line less
+`stop_line_margin_m`, 4 m.  Both are measured at the rig origin, the rear
+axle, so the margin is what keeps the front bumper (3.75 m ahead of it) short
+of the line.  Amber is treated as red.
+
+The margin gives way only to what can no longer be stopped short of: it is
+never more than the distance less `Limits.stop_room_m`, the most room this
+rule asks for while the hardest stop a plan can make is under way.  That is
+more than the stopping distance from a cruise -- the rule charges the ramp to
+full braking at every instant, so a second into it, the ground covered plus
+what is still asked for peaks 1.2 m above it at 4 m/s and 3.1 m above at
+8 m/s -- and equal to it once braking at the bound.  So a light first seen,
+or turning red, too close for the full margin still leaves a stop some plan
+satisfies; only where the line itself is out of reach is the rule violated,
+and the emergency fallback then is right.  A stopped vehicle keeps the whole
+margin, and one already inside it is held where it stands.
+
+A margin that gave way stays given way while the same line governs us.  Read
+afresh each step it grows back once the brakes are on -- the room to stop
+shrinks faster than the distance -- and every step it put the stop station at
+the very edge of what could still be reached, so the first plan short of the
+hardest allowed stop violated the rule: closed loop, a light turning red with
+2 m of the margin left handed a step to the fallback that way.
+
+This replaced `min(margin, 0.5 · distance)` of the live distance, which within
+two margins of the line put the stop station halfway to it, so it slid
+forward as the vehicle crept: a red light 30 m ahead stopped the rear axle at
+28.1 m rather than 26 m.  Now it stops at 25.3 m -- short of 26 by less than
+`liveness_stop_gap_m`, the room `makes_progress` lets a stopped vehicle leave
+(#1147).
+
 ## Safety
 
 ### `collision_free` — hard, weight 10, margin 2.0

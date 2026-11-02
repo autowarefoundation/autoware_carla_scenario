@@ -38,6 +38,7 @@ _PADDING_DISTANCE_M = 1.0e4
 
 __all__ = [
     "ActorForecast",
+    "SAME_STOP_LINE_M",
     "TrafficLight",
     "footprint_discs",
     "forecast_actors",
@@ -121,6 +122,13 @@ class ActorForecast:
         return int(self.radii.shape[0])
 
 
+#: How far apart, in the local frame, two sightings of a stop line can be and
+#: still be the same line. The runtime reports the distance along the ego's
+#: heading, not to a point, so the position read back from it drifts sideways
+#: as the heading turns; lines of different junctions are tens of metres apart.
+SAME_STOP_LINE_M = 3.0
+
+
 @dataclass(frozen=True)
 class TrafficLight:
     """The light governing the ego, reduced to a station and a gate."""
@@ -129,18 +137,33 @@ class TrafficLight:
     stop_station_m: float
     #: ``True`` when a red or amber light governs us.
     active: bool
+    #: How far short of the line the stop station is; ``inf`` when inactive.
+    margin_m: float = math.inf
+    #: Where the line is in the local frame, ``(2,)``; ``None`` when inactive
+    #: or when no anchor was given to place it with.
+    line_xy: np.ndarray | None = None
 
 
 def read_traffic_light(
     renderer_data: CarlaRendererData | None,
     station0_m: float,
     config: STLDriverConfig,
+    speed_mps: float,
+    accel_mps2: float = 0.0,
+    *,
+    anchor: Pose | None = None,
+    previous: TrafficLight | None = None,
 ) -> TrafficLight:
     """Where to stop for the light ahead, if any.
 
     ``renderer_data`` is ``None`` under an upstream alpasim runtime, or when
     the extension payload could not be parsed; a policy that assumed otherwise
     would crash the moment it left this project's runtime.
+
+    ``speed_mps`` and ``accel_mps2`` are the state the plan is anchored at,
+    which decide how much of the margin can still be honoured. ``anchor``
+    (rig to local) and ``previous``, last step's answer, let a margin that had
+    to give way stay given way for as long as the same line governs us.
     """
     if renderer_data is None:
         return TrafficLight(stop_station_m=math.inf, active=False)
@@ -154,18 +177,71 @@ def read_traffic_light(
     if state not in _STOPPING_STATES or distance < 0.0:
         return TrafficLight(stop_station_m=math.inf, active=False)
 
-    # The margin never takes more than half the distance that is left.
+    # Both the distance and the stop station are measured at the rig origin,
+    # the rear axle, so the margin is what keeps the front bumper
+    # (`Limits.ego_front_m`, 3.75 m ahead of it) short of the line.
+    #
+    # The margin gives way only to what the vehicle can no longer stop short
+    # of: it never takes more than the distance less the room `stop_on_red`
+    # will ask for while stopping from this state (`Limits.stop_room_m`).
     #
     # CARLA only reports a light once the ego is inside its trigger volume,
     # which on Town10HD means the first sighting can be four metres from the
-    # line at four metres per second. A fixed four-metre margin then demands
-    # the plan stop dead where it stands, which no plan can do, so the rule is
-    # violated by every candidate and the emergency fallback engages on what
-    # is actually a comfortably stoppable approach. Halving instead leaves
-    # room to stop while still keeping the vehicle short of the line.
-    margin = min(config.limits.stop_line_margin_m, 0.5 * distance)
+    # line at four metres per second, and a light can turn amber or red just
+    # as close. The full margin then demands a stop no plan can make, every
+    # candidate violates the hard rule, and the emergency fallback engages.
+    # Here the margin shrinks to the room actually left, so the stop station
+    # sits where the hardest comfortable stop from this state ends and the
+    # approach stays feasible. Only where even the line is out of reach -- the
+    # dilemma zone proper, which amber is meant to cover and which this
+    # driver, treating amber as red, does not try to drive through -- is the
+    # rule violated, and then that is the truth and the fallback is right.
+    #
+    # This replaced ``min(margin, 0.5 * distance)``, which had the same aim
+    # but read the live distance alone. Within two margins of the line the
+    # stop station sat halfway between the ego and the line, so every metre
+    # crept moved it half a metre on, and `makes_progress` asked for it: a red
+    # light 30 m ahead stopped the rear axle at 28.1 m rather than 26 m, the
+    # bumper over the line. Halving was no guarantee of feasibility either --
+    # at 4 m/s, 4 m out, stopping takes 5.3 m by the rule's count and it left 2.
+    #
+    # Bounding by the room to stop does not creep. While the hard rule holds,
+    # the distance less that room stays at least the full margin -- that is
+    # what holding it means -- and braking at the plan's bound only widens it.
+    # At rest the room is zero, so a stopped vehicle keeps the full margin, and
+    # one already inside it is held where it stands rather than invited on.
+    limits = config.limits
+    stoppable = max(0.0, distance - limits.stop_room_m(speed_mps, accel_mps2))
+    margin = min(limits.stop_line_margin_m, stoppable)
+
+    # And a margin that gave way does not grow back while the same line
+    # governs us. Read afresh, it would: once the brakes are on, the room to
+    # stop shrinks faster than the distance, so the stop station slid back
+    # towards the vehicle a little every step, always to exactly the edge of
+    # what a stop could still reach -- and the first plan that was not exactly
+    # the hardest stop the rule allows violated it. Closed loop, a light
+    # turning red with 2 m of the margin left handed a step to the emergency
+    # fallback that way. Held instead, the stop station a feasible plan was
+    # aimed at stays where it was, and that plan stays feasible.
+    #
+    # Only held, never grown, so it cannot bring the creep back: the margin
+    # still gives way only to what cannot be stopped short of. Latching the
+    # whole stop station instead -- the other way to stop it creeping -- would
+    # still have needed the bound above for a light first seen, or first
+    # turning, close to the line; a held margin is that bound remembered.
+    line_xy = None
+    if anchor is not None:
+        line_xy = anchor.transform_points(np.array([[distance, 0.0, 0.0]]))[0, :2]
+        if (
+            previous is not None
+            and previous.active
+            and previous.line_xy is not None
+            and float(np.linalg.norm(previous.line_xy - line_xy)) <= SAME_STOP_LINE_M
+        ):
+            margin = min(margin, previous.margin_m)
+
     stop_station = station0_m + max(0.0, distance - margin)
-    return TrafficLight(stop_station_m=stop_station, active=True)
+    return TrafficLight(stop_station_m=stop_station, active=True, margin_m=margin, line_xy=line_xy)
 
 
 def forecast_actors(

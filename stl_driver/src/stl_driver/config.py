@@ -86,6 +86,11 @@ class Limits:
     #: the approach under gradient while refusing to pay for a dawdle.
     speed_headroom_scale_mps: float = 0.75
     #: Stop this far short of the reported traffic-light distance.
+    #:
+    #: Both are measured at the rig origin, the rear axle, so this is what
+    #: keeps the front bumper (`ego_front_m`, 3.75 m) short of the line. It
+    #: gives way only to the room a moving vehicle can no longer stop short
+    #: of -- see `perception.read_traffic_light`.
     stop_line_margin_m: float = 4.0
 
     # -- safety ------------------------------------------------------------
@@ -311,6 +316,59 @@ class Limits:
     def plan_jerk_limit(self) -> float:
         """The largest rate of change of acceleration a plan may command."""
         return self.max_jerk_mps3 * self.plan_bound_inset
+
+    def stopping_terms(self) -> tuple[float, float]:
+        """``(braking rate, ramp coefficient)`` of a stop a plan can make.
+
+        Stopping from ``v`` takes ``v^2 / 2b + v * b / 2j``, with ``b`` and
+        ``j`` the plan's own braking and jerk bounds: the textbook distance
+        and what the jerk-limited ramp to full braking costs. The one
+        statement of it, so that `stop_on_red`, `makes_progress` and the stop
+        station perception sets cannot disagree about what stopping costs.
+        """
+        lowest, _ = self.plan_accel_envelope()
+        brake = -lowest
+        return brake, brake / (2.0 * self.plan_jerk_limit())
+
+    def stopping_distance_m(self, speed_mps: float) -> float:
+        """Room a plan needs to stop from ``speed_mps``, as `stop_on_red` counts it."""
+        brake, ramp = self.stopping_terms()
+        speed = max(0.0, float(speed_mps))
+        return speed * speed / (2.0 * brake) + speed * ramp
+
+    def stop_room_m(self, speed_mps: float, accel_mps2: float = 0.0) -> float:
+        """The most room `stop_on_red` will ask for while a plan stops.
+
+        Not simply `stopping_distance_m`. The rule charges the ramp to full
+        braking at *every* instant, as though braking began from nothing --
+        it reads speed, not acceleration -- so halfway through that ramp it
+        still asks for the whole of it on top of the ground the ramp has
+        already covered. Along the hardest stop a plan can make, braking
+        harder at the jerk limit from ``accel_mps2`` until it reaches the
+        bound, the distance covered plus what the rule then asks for peaks a
+        second or so in, not at the start: from cruising, 1.2 m above
+        `stopping_distance_m` at 4 m/s and 3.1 m at 8 m/s. A stop station
+        nearer than this peak is one every candidate violates -- measured
+        against the optimizer, the room it needed was within 0.3 m below it.
+
+        Already braking at the bound, there is no ramp left to pay twice and
+        this is `stopping_distance_m` itself; at rest, not pulling away, zero.
+        """
+        brake, _ = self.stopping_terms()
+        jerk = self.plan_jerk_limit()
+        speed0 = max(0.0, float(speed_mps))
+        accel0 = min(max(float(accel_mps2), -brake), self.plan_accel_envelope()[1])
+        ramp_s = (accel0 + brake) / jerk
+        peak = self.stopping_distance_m(speed0)
+        samples = 64
+        for i in range(1, samples + 1):
+            t = ramp_s * i / samples
+            speed = speed0 + accel0 * t - 0.5 * jerk * t * t
+            if speed <= 0.0:
+                break
+            covered = speed0 * t + 0.5 * accel0 * t * t - jerk * t * t * t / 6.0
+            peak = max(peak, covered + self.stopping_distance_m(speed))
+        return peak
 
     def __post_init__(self) -> None:
         if self.gate_magnitude_m <= self.stop_line_margin_m:

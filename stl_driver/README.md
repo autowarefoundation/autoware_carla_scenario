@@ -260,6 +260,7 @@ it, the policy deadlocks at the first red light it stops for:
    after a rollout that had already succeeded.
 
 `stl_driver` also defends itself against the first independently: a stop line
-inside the margin is clamped so the rule stays satisfiable, and CARLA's
+inside the margin holds the vehicle where it stands rather than behind it, so
+the rule stays satisfiable (`docs/RULES.md`, `stop_on_red`), and CARLA's
 finite-differenced acceleration is confined to the physical envelope before it
 anchors the plan.

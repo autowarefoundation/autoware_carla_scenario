@@ -28,7 +28,12 @@ from stl_driver.config import STLDriverConfig
 from stl_driver.fallback import emergency_brake_plan, hold_plan
 from stl_driver.frenet import build_route_table, distance_behind_start, project_to_frenet
 from stl_driver.optimizer import PlanSolution, RobustnessOptimizer
-from stl_driver.perception import forecast_actors, pad_actor_discs, read_traffic_light
+from stl_driver.perception import (
+    TrafficLight,
+    forecast_actors,
+    pad_actor_discs,
+    read_traffic_light,
+)
 from stl_driver.rollout import RolloutInputs, plan_xy
 from stl_driver.rules import build_rules
 from stl_driver.ruleset import RuleSet
@@ -80,6 +85,9 @@ class EgoPolicy(BaseDriver):
         # same lock as the warm start, and for the same reason: gRPC handler
         # threads and the search both touch it.
         self._anchor_accel_mps2: float | None = None
+        # Last step's reading of the light, so a stop margin that had to give
+        # way stays given way for the same line (`read_traffic_light`).
+        self._light: TrafficLight | None = None
         self._warm_start_lock = threading.Lock()
 
     # -- session hooks -----------------------------------------------------
@@ -95,12 +103,14 @@ class EgoPolicy(BaseDriver):
         with self._warm_start_lock:
             self._warm_start = None
             self._anchor_accel_mps2 = None
+            self._light = None
         self.warm_up()
 
     def on_session_close(self, session: SessionState) -> None:
         with self._warm_start_lock:
             self._warm_start = None
             self._anchor_accel_mps2 = None
+            self._light = None
 
     def warm_up(self) -> None:
         """Pay the one-off costs before the runtime starts waiting on us.
@@ -294,7 +304,19 @@ class EgoPolicy(BaseDriver):
         station, offset = project_to_frenet(table, np.zeros((1, 2)))
         station0, offset0 = float(station[0]), float(offset[0])
 
-        light = read_traffic_light(renderer_data, station0, config)
+        with self._warm_start_lock:
+            previous = self._light
+        light = read_traffic_light(
+            renderer_data,
+            station0,
+            config,
+            speed_mps,
+            accel_mps2,
+            anchor=anchor,
+            previous=previous,
+        )
+        with self._warm_start_lock:
+            self._light = light
         forecast = forecast_actors(renderer_data, anchor, table, station0, config)
 
         speed_limit = 0.0

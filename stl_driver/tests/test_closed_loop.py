@@ -31,7 +31,7 @@ from carla_driver_interface.protocol import Pose as PoseProto
 from carla_driver_interface.protocol import Quat as QuatProto
 
 from stl_driver.policy import EgoPolicy, warmed_up_policy
-from tests.fake_world import FakeWorld, Rollout
+from tests.fake_world import FakeWorld, Rollout, straight_then_curve_route
 
 pytestmark = pytest.mark.slow
 
@@ -172,6 +172,133 @@ def test_it_stops_for_a_red_light_on_a_route_starting_ahead_of_it():
 
     assert travelled.max() < 30.0
     assert rollout.speeds[-10:].mean() < 0.5
+
+
+class StopLineWorld(FakeWorld):
+    """A light on a long straight, at a station measured along the route.
+
+    Red from the start, or -- with ``red_with_room_m`` -- green until the
+    first step at which the room left once the ego has stopped comfortably,
+    the distance to the line less the policy's own `Limits.stop_room_m` for
+    the ego's speed and acceleration, falls under ``red_with_room_m``. That
+    puts the change where the policy cannot keep its full margin whatever
+    speed the search happens to have settled at, which is what makes it a
+    dilemma rather than an ordinary approach.
+    """
+
+    def __init__(
+        self,
+        *,
+        light_station_m: float,
+        red_with_room_m: float | None = None,
+        state: TrafficLightState = TrafficLightState.TRAFFIC_LIGHT_STATE_RED,
+        **kwargs,
+    ) -> None:
+        kwargs.setdefault("route", straight_then_curve_route(straight_m=150.0))
+        super().__init__(**kwargs)
+        self.light_station_m = light_station_m
+        self.red_with_room_m = red_with_room_m
+        self.state = state
+        self.room_at_change_m: float | None = None
+        self.speed_at_change_mps: float | None = None
+        self._speed = self._accel = 0.0
+
+    def _observe(self, stub, session, now_us, pose, speed, accel, station) -> None:
+        self._speed, self._accel = speed, accel
+        super()._observe(stub, session, now_us, pose, speed, accel, station)
+
+    def environment(self, pose: Pose, now_us: int) -> CarlaRendererData:
+        data = super().environment(pose, now_us)
+        station, _ = self.station_of(pose.position[:2])
+        remaining = self.light_station_m - station
+        if self.red_with_room_m is not None and self.room_at_change_m is None:
+            limits = shared_policy().config.limits
+            room = remaining - limits.stop_room_m(self._speed, self._accel)
+            if room >= self.red_with_room_m:
+                data.ego_traffic_light = TrafficLightState.TRAFFIC_LIGHT_STATE_GREEN
+                data.ego_traffic_light_distance_m = remaining
+                return data
+            self.room_at_change_m = room
+            self.speed_at_change_mps = self._speed
+        data.ego_traffic_light = self.state
+        data.ego_traffic_light_distance_m = remaining
+        return data
+
+
+def _fallbacks_while(monkeypatch, world: FakeWorld, steps: int) -> tuple[Rollout, list[float]]:
+    """Run ``world`` and record, per step, whether the emergency fallback drove."""
+    policy = shared_policy()
+    fallbacks: list[float] = []
+    original = policy.drive
+
+    def recording(ctx):
+        result = original(ctx)
+        fallbacks.append(result.debug_scalars.get("stl_fallback", 0.0))
+        return result
+
+    monkeypatch.setattr(policy, "drive", recording)
+    return run_rollout(world, steps=steps), fallbacks
+
+
+def _assert_stopped_at_the_margin(rollout: Rollout, light_station_m: float) -> None:
+    """At rest, the rear axle within reach of ``line - stop_line_margin_m``.
+
+    Never past it by more than a quarter metre, and short of it by no more
+    than `liveness_stop_gap_m` -- the room `makes_progress` lets a vehicle at
+    rest leave -- plus the same quarter metre.
+    """
+    limits = shared_policy().config.limits
+    target = light_station_m - limits.stop_line_margin_m
+    final = rollout.stations_m[-1]
+    assert rollout.speeds[-10:].mean() < 0.1
+    assert max(rollout.stations_m) <= target + 0.25, (max(rollout.stations_m), target)
+    assert final >= target - limits.liveness_stop_gap_m - 0.25, (final, target)
+
+
+def test_it_stops_at_the_margin_on_approach():
+    """The stop station must not slide forward as the vehicle closes in (#1147).
+
+    Within two margins of the line the margin used to be half the distance
+    left, so every metre crept moved the stop half a metre on: a red light
+    30 m ahead stopped the rear axle at 28.1 m rather than 26 m -- the front
+    bumper, 3.75 m ahead of it, nearly two metres over the line.
+    """
+    rollout = run_rollout(RedLightWorld(light_station_m=30.0), steps=220)
+    _assert_stopped_at_the_margin(rollout, 30.0)
+
+
+def test_it_stops_at_the_margin_from_cruising_speed():
+    world = StopLineWorld(light_station_m=70.0, speed_limit_mps=8.0)
+    rollout = run_rollout(world, steps=260)
+    assert rollout.speeds.max() > 6.0  # it was at speed when it braked
+    _assert_stopped_at_the_margin(rollout, 70.0)
+
+
+def test_it_stays_at_the_margin_from_rest():
+    """At rest eight metres out, there is four metres to cover and no more."""
+    world = StopLineWorld(light_station_m=8.0)
+    rollout = run_rollout(world, steps=120)
+    _assert_stopped_at_the_margin(rollout, 8.0)
+
+
+def test_a_light_turning_red_inside_the_margin_leaves_a_feasible_stop(monkeypatch):
+    """A light that turns red where the full margin is out of reach.
+
+    The vehicle can still stop comfortably short of the line, just not a full
+    margin short of it, so the stop station has to come forward to where a
+    comfortable stop ends. Asking for the whole margin -- or, as the halving
+    rule did, for whatever half the distance happened to leave -- made every
+    candidate violate `stop_on_red` and handed the step to the emergency
+    fallback on a perfectly stoppable approach.
+    """
+    world = StopLineWorld(light_station_m=80.0, red_with_room_m=2.0, speed_limit_mps=8.0)
+    rollout, fallbacks = _fallbacks_while(monkeypatch, world, steps=240)
+
+    assert world.speed_at_change_mps is not None and world.speed_at_change_mps > 6.0
+    assert 0.0 <= world.room_at_change_m < shared_policy().config.limits.stop_line_margin_m
+    assert sum(fallbacks) == 0.0
+    assert max(rollout.stations_m) < 80.0  # the rear axle never reached the line
+    assert rollout.speeds[-10:].mean() < 0.1
 
 
 def test_it_stops_behind_a_parked_vehicle():

@@ -600,13 +600,14 @@ def _stopping_terms(limits) -> tuple[float, float, float]:
     and what the jerk-limited ramp to full braking costs. At 5 m/s those are
     3.2 m and 2.5 m, so the ramp is not a correction but half the answer.
 
-    Shared so that the rule asking whether there is room to stop and the rule
-    asking how much ground is left to cover cannot disagree about what
-    stopping costs.
+    Shared -- and stated once, in `Limits.stopping_terms` -- so that the rule
+    asking whether there is room to stop, the rule asking how much ground is
+    left to cover, and the stop station perception sets cannot disagree about
+    what stopping costs.
     """
     lowest, _ = limits.plan_accel_envelope()
-    brake = -lowest
-    return lowest, brake, brake / (2.0 * limits.plan_jerk_limit())
+    brake, ramp = limits.stopping_terms()
+    return lowest, brake, ramp
 
 
 def _stop_slack(
