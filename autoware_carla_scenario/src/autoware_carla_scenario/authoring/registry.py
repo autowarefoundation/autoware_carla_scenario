@@ -358,12 +358,19 @@ class ActionSpec:
     #: two, which ``test_authoring_registry`` enforces.
     target: str = ""
     #: Field name -> constructor keyword, for the pairs that differ.  Fields
-    #: whose name already matches the constructor need no entry.
+    #: whose name already matches the constructor need no entry.  A field
+    #: named in more than one entry feeds every keyword it is mapped to: the
+    #: Speed card's subject is both the entity measured and the one whose
+    #: heading the components are measured along.
     argmap: tuple[tuple[str, str], ...] = ()
     #: Constructor arguments a select field chooses the source of.
     choices: tuple[ArgumentChoice, ...] = ()
     #: Constructor arguments the generator assembles rather than passes through.
     builds: tuple[BuiltArgument, ...] = ()
+    #: Constructor keyword -> a value the spec fixes and the editor does not
+    #: offer, as source text: a literal (``0.0``) or a dotted constant
+    #: (``..conditions:SpeedCoordinateSystem.ENTITY``), resolved at generation.
+    constants: tuple[tuple[str, str], ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     #: What the action acts on. ``actor`` actions are performed *by* a vehicle
     #: and belong to its track; ``environment`` actions change the world around
@@ -437,6 +444,8 @@ class ConditionSpec:
     choices: tuple[ArgumentChoice, ...] = ()
     #: See :attr:`ActionSpec.builds`.
     builds: tuple[BuiltArgument, ...] = ()
+    #: See :attr:`ActionSpec.constants`.
+    constants: tuple[tuple[str, str], ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     kind: ConditionKind = "leaf"
     min_children: int = 0
@@ -3770,7 +3779,15 @@ register_condition_spec(
         category="Entity",
         builder="build_speed_condition",
         target="..conditions:SpeedCondition",
-        argmap=(("entity", "entity_name"),),
+        # Longitudinal and lateral are measured along the subject's own
+        # heading, as on the Acceleration card: in the constructor's default
+        # WORLD frame "longitudinal" is world +x, so a "longitudinal speed
+        # above 5" rule fired only while driving east (#1089).
+        argmap=(
+            ("entity", "entity_name"),
+            ("entity", "reference_entity_name"),
+        ),
+        constants=(("coordinate_system", "..conditions:SpeedCoordinateSystem.ENTITY"),),
         visual=ConditionVisual(
             metric="Speed",
             subject="entity",
@@ -3795,6 +3812,12 @@ register_condition_spec(
                     SelectOption("LATERAL", "Lateral"),
                 ),
                 required=False,
+                help=(
+                    "Longitudinal and lateral are signed in the entity's own "
+                    "frame: longitudinal is negative while reversing, lateral "
+                    "positive to its left.  Magnitude is never negative, so a "
+                    '"less than 0" rule on it can never fire.'
+                ),
             ),
         ),
         description="Speed of a single entity.",

@@ -520,6 +520,53 @@ class TestGeneratedBuilders:
 
         codegen._check_arguments_fit([("label", "compiled.label")], "somewhere")
 
+    def test_the_speed_card_measures_in_its_subjects_frame(self) -> None:
+        """Its subject feeds the reference frame too, fixed to ENTITY (#1089)."""
+        spec = registry.get_condition_spec("speed")
+        assert spec is not None
+
+        assert ("entity", "reference_entity_name") in spec.argmap
+        assert dict(spec.constants) == {
+            "coordinate_system": "..conditions:SpeedCoordinateSystem.ENTITY"
+        }
+
+    def test_a_constant_for_a_field_fed_argument_is_refused(self) -> None:
+        """A constant over a field would make the field a control that does nothing."""
+        import dataclasses
+
+        codegen = pytest.importorskip(
+            "autoware_carla_scenario.authoring.codegen",
+            reason="the generator introspects the runtime, which needs CARLA",
+        )
+        spec = registry.get_condition_spec("speed")
+        assert spec is not None
+        clash = dataclasses.replace(
+            spec,
+            constants=(
+                *spec.constants,
+                ("direction", "..conditions:SpeedDirection.LATERAL"),
+            ),
+        )
+
+        with pytest.raises(codegen.GenerationError, match="both a constant and fed"):
+            codegen._build_one(clash, codegen._import_localns())
+
+    def test_two_fields_feeding_one_argument_are_refused(self) -> None:
+        import dataclasses
+
+        codegen = pytest.importorskip(
+            "autoware_carla_scenario.authoring.codegen",
+            reason="the generator introspects the runtime, which needs CARLA",
+        )
+        spec = registry.get_condition_spec("speed")
+        assert spec is not None
+        clash = dataclasses.replace(
+            spec, argmap=(*spec.argmap, ("value", "reference_entity_name"))
+        )
+
+        with pytest.raises(codegen.GenerationError, match="both feed"):
+            codegen._build_one(clash, codegen._import_localns())
+
     @pytest.mark.parametrize(
         "spec",
         _ALL_SPECS,

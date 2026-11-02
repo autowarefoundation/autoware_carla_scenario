@@ -483,6 +483,7 @@ def build_speed_condition(
 ) -> "BaseCondition":
     """Build a :class:`SpeedCondition`."""
     from ..conditions import SpeedCondition  # noqa: PLC0415
+    from ..conditions import SpeedCoordinateSystem  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
     from ..conditions import SpeedDirection  # noqa: PLC0415
 
@@ -492,6 +493,8 @@ def build_speed_condition(
         value=params["value"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         direction=SpeedDirection[str(params["direction"])],
+        coordinate_system=SpeedCoordinateSystem.ENTITY,
+        reference_entity_name=str(params["entity"]),
         label=compiled.label,
     )
 
