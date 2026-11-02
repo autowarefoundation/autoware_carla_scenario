@@ -3350,8 +3350,9 @@ register_condition_spec(
                     "car in the next lane is 20 m away in a straight line and "
                     "2 m away longitudinally, and following-distance and "
                     "cut-in scenarios mean the second.  Along the road is "
-                    "one-dimensional, so this is only read when Measured is "
-                    "a straight line."
+                    "one-dimensional: it reads the distance along the road "
+                    "with Straight line or Along the subject, and has no "
+                    "Across the subject component."
                 ),
             ),
             _edge_to_edge_field(),

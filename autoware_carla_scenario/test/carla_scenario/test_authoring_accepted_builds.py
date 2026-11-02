@@ -341,6 +341,43 @@ def test_validator_refuses_an_action_on_lanelet_0(
             },
             "stop_lanelets",
         ),
+        # Along the road is one-dimensional, between centres (#1097).
+        (
+            {
+                "type": "entity_distance",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "lane",
+                    "distance_type": "LATERAL",
+                },
+            },
+            "distance_type",
+        ),
+        (
+            {
+                "type": "entity_distance",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "lane",
+                    "edge_to_edge": True,
+                },
+            },
+            "edge_to_edge",
+        ),
+        (
+            {
+                "type": "ttc",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "lane",
+                    "edge_to_edge": True,
+                },
+            },
+            "edge_to_edge",
+        ),
     ],
 )
 @pytest.mark.usefixtures("unchecked")
