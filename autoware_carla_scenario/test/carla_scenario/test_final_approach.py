@@ -564,6 +564,186 @@ def test_a_path_crossing_to_the_lane_beside_sends_carlas_bool(
     assert kept.lane_changes == []
 
 
+def _crossing_path() -> List[Any]:
+    """East along y = 0, then across to the lane on the right at x = 4."""
+    return [carla.Location(float(x), 0.0, 0.0) for x in (0, 2, 4)] + [
+        carla.Location(float(x), 3.5, 0.0) for x in (6, 8, 10)
+    ]
+
+
+def _lane_changing_backend() -> Any:
+    """A backend whose TrafficManager records paths and lane changes."""
+    from autoware_carla_scenario.traffic.config import TrafficManagerBackendConfig
+    from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBackend
+
+    from .test_traffic_backend import _Client, _TrafficManager
+
+    class _Manager(_TrafficManager):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lane_changes: List[bool] = []
+
+        def force_lane_change(self, vehicle: Any, to_the_right: bool) -> None:
+            self.lane_changes.append(to_the_right)
+
+        def auto_lane_change(self, vehicle: Any, enabled: bool) -> None:
+            pass
+
+    tm = _Manager()
+    return (
+        TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123),
+            client=_Client(tm),  # type: ignore[arg-type]
+        ),
+        tm,
+    )
+
+
+def test_a_path_given_before_start_changes_lanes_where_it_crosses() -> None:
+    """A path given before the vehicle is kept (a RoutingAction at init) has
+    its lane changes marked too: with the TrafficManager's own lane changes
+    off for the route, the vehicle is told to change lanes there (#1154)."""
+    from .test_traffic_backend import _World
+
+    backend, tm = _lane_changing_backend()
+    npc = _Actor(5)
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    backend._lane_locked.add(5)  # as follow_route leaves it
+    backend._remember_path(npc, _crossing_path())
+    backend.start(_World([npc]))
+    assert len(backend._kept[5].lane_changes) == 1
+    backend._keep_scenario_vehicles(_World(), 0.0)
+    assert tm.lane_changes == [True]
+
+
+def test_a_resumed_vehicle_changes_lanes_it_has_still_to_change() -> None:
+    """Released and resumed short of where its path crosses, a vehicle is
+    still told to change lanes there (#1154), and given the rest of its path
+    again: unregistered, the TrafficManager dropped the points it had
+    planned, as when a standing vehicle is re-registered."""
+    from .test_traffic_backend import _World
+
+    backend, tm = _lane_changing_backend()
+    npc = _Actor(6)
+    npc.location = carla.Location(-20.0, 0.0, 0.0)
+    path = _crossing_path()
+    backend.start(_World([npc]))
+    backend._remember_path(npc, path)
+    backend.release_actor(_World(), npc)
+    npc.location = carla.Location(2.0, 0.0, 0.0)  # come to x = 4, still in lane
+    backend._keep_scenario_vehicles(_World(), 0.0)
+    tm.paths.clear()
+    backend.resume_actor(_World(), npc)
+    kept = backend._kept[6]
+    assert (kept.progress, len(kept.lane_changes)) == (3, 1)
+    assert tm.paths == [(6, path[2:])]
+    backend._keep_scenario_vehicles(_World(), 0.05)
+    assert tm.lane_changes == [True]
+
+
+def test_a_resumed_vehicle_is_not_told_of_lane_changes_behind_it() -> None:
+    """Neither one it was told of before it was released, nor one it was
+    driven across while released: told of it, it would leave its path."""
+    from .test_traffic_backend import _World
+
+    backend, tm = _lane_changing_backend()
+    npc = _Actor(6)
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    path = _crossing_path() + [carla.Location(float(x), 0.0, 0.0) for x in (12, 14, 16)]
+    backend.start(_World([npc]))
+    backend._remember_path(npc, path)
+    assert len(backend._kept[6].lane_changes) == 2  # across, and back
+    backend._keep_scenario_vehicles(_World(), 0.0)
+    assert tm.lane_changes == [True]
+    backend.release_actor(_World(), npc)
+    for x in (4.0, 6.0, 8.0):  # Driven across, on along the lane beside.
+        npc.location = carla.Location(x, 0.0 if x < 6 else 3.5, 0.0)
+        backend._keep_scenario_vehicles(_World(), 0.05)
+    backend.resume_actor(_World(), npc)
+    assert len(backend._kept[6].lane_changes) == 1  # back, still ahead
+    # Released before it crossed back: told to once resumed, and no more.
+    backend.release_actor(_World(), npc)
+    for x in (12.0, 14.0):
+        npc.location = carla.Location(x, 0.0, 0.0)
+        backend._keep_scenario_vehicles(_World(), 0.1)
+    backend.resume_actor(_World(), npc)
+    assert backend._kept[6].lane_changes == []
+
+
+def test_a_route_given_from_a_junctions_mouth_before_start_is_led_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route a vehicle is given at its init, standing in a junction's
+    mouth, is driven out of the junction once the vehicle is put on
+    autopilot, as one given after is (#1154)."""
+    import autoware_carla_scenario.coordinate.map_manager as map_manager
+    import autoware_carla_scenario.coordinate.transform as transform
+    import autoware_carla_scenario.odd.route_plan as route_plan
+    import autoware_carla_scenario.traffic.traffic_manager as tm_module
+
+    from .test_traffic_backend import _Waypoint, _World
+
+    _Approach.made = []
+    monkeypatch.setattr(tm_module, "FinalApproach", _DoneApproach)
+    route = [carla.Location(float(x), 0.0, 0.0) for x in (0, 5, 10, 15, 20, 25)]
+    monkeypatch.setattr(route_plan, "route_poses", lambda *a, **k: list(route))
+    monkeypatch.setattr(transform, "to_carla_location", lambda pose: pose)
+    monkeypatch.setattr(
+        map_manager.MapManager,
+        "get_instance",
+        staticmethod(lambda: SimpleNamespace(lanelet_map=None, routing_graph=None)),
+    )
+
+    # The junction spans x 8-12: the route's point at 10 is in it.
+    def waypoint(location: Any) -> Any:
+        found = _Waypoint(500.0, False)
+        found.is_junction = 8.0 <= location.x <= 12.0  # type: ignore[attr-defined]
+        return found
+
+    junction = SimpleNamespace(get_waypoint=waypoint)
+    monkeypatch.setattr(tm_module, "run_carla_map", lambda world: junction)
+    monkeypatch.setattr(tm_module, "_at_junction_mouth", lambda m, p: p.x <= 12.0)
+    backend, tm = _lane_changing_backend()
+    npc = _Actor(4)
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    npc.get_world = lambda: None  # type: ignore[attr-defined]
+    entity = SimpleNamespace(actor=npc, role_name="npc4")
+    backend.follow_route(entity, _World(), [SimpleNamespace(), SimpleNamespace()])
+    assert npc.autopilot == []
+    backend.start(_World([npc]))
+    (approach,) = _Approach.made
+    assert approach.points == route[1:5] and not approach.stop  # type: ignore[attr-defined]
+    assert npc.autopilot == [(True, 8123), (False, 8123)]
+    assert backend._kept[4].leading_out
+    # Once: not again when it is handed back.
+    npc.location = carla.Location(20.0, 0.0, 0.0)
+    _stand(backend, 2.0)
+    assert npc.autopilot[-1] == (True, 8123)
+    assert len(_Approach.made) == 1
+
+
+def test_a_new_path_before_start_drops_the_lead_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path given after the route from the junction's mouth replaces it:
+    the vehicle is not driven out along the old one."""
+    import autoware_carla_scenario.traffic.traffic_manager as tm_module
+
+    from .test_traffic_backend import _World
+
+    _Approach.made = []
+    monkeypatch.setattr(tm_module, "FinalApproach", _DoneApproach)
+    backend, _ = _lane_changing_backend()
+    npc = _Actor(4)
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    backend._lead_from[4] = carla.Location(0.0, 0.0, 0.0)
+    backend._lead_route[4] = [carla.Location(5.0, 0.0, 0.0)]
+    backend._remember_path(npc, [carla.Location(5.0, 0.0, 0.0)])
+    backend.start(_World([npc]))
+    assert _Approach.made == []
+    assert npc.autopilot == [(True, 8123)]
+
+
 def test_a_vehicle_wedged_on_a_kerb_is_given_full_throttle(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

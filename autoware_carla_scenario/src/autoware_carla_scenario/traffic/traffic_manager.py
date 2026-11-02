@@ -195,6 +195,28 @@ def _lane_change_marks(
     return [(path[i], across > 0.0) for i, across in lane_changes(xs, ys)]
 
 
+def _marks_not_passed(
+    path: List["carla.Location"],
+    progress: int,
+    left: List[tuple["carla.Location", bool]],
+) -> List[tuple["carla.Location", bool]]:
+    """Of *left*, the lane-change marks of *path* not yet told (the last of
+    :func:`_lane_change_marks`, told from the first), those a vehicle
+    *progress* points along it has not passed: those whose next point, the
+    first in the lane beside, it has not come to (:attr:`_Kept.progress`;
+    not the mark's own, which it comes to within :data:`_ROUTE_END_M` of
+    still in its lane).  The rest it was driven past (released, by the
+    scenario): told of one, it would change lanes off its path."""
+    xs = [float(p.x) for p in path]
+    ys = [float(p.y) for p in path]
+    ahead = 0
+    for i, _across in lane_changes(xs, ys):
+        if i + 1 >= progress:
+            ahead += 1
+    keep = min(len(left), ahead)
+    return left[len(left) - keep :]
+
+
 class _Kept:
     """One vehicle the backend keeps from the TrafficManager's removal
     (:meth:`TrafficManagerBackend._keep_scenario_vehicles`)."""
@@ -311,6 +333,8 @@ class TrafficManagerBackend(TrafficBackend):
     _given: dict[int, List["carla.Location"]]
     _lane_locked: set[int]
     _paused: dict[int, _Kept]
+    _lead_from: dict[int, "carla.Location"]
+    _lead_route: dict[int, List["carla.Location"]]
 
     def __init__(
         self,
@@ -396,6 +420,12 @@ class TrafficManagerBackend(TrafficBackend):
         #: path and their progress along it, which goes on while the scenario
         #: drives them, for when they are resumed.
         self._paused = {}
+        #: Vehicles given a route from a junction's mouth before they were
+        #: kept (at their init, or while released), by actor id: where the
+        #: route starts and its points, to drive them out of the junction
+        #: from when they are put on autopilot (:meth:`_lead_out`).
+        self._lead_from = {}
+        self._lead_route = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -629,6 +659,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._given = {}
         self._lane_locked = set()
         self._paused = {}
+        self._lead_from = {}
+        self._lead_route = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -1040,8 +1072,14 @@ class TrafficManagerBackend(TrafficBackend):
         self._remember_path(actor, path)
         self._drive_on(actor)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
-        if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
-            self._lead_out(actor, first, ahead, path)
+        if _at_junction_mouth(carla_map, first) and path:
+            if actor.id in self._kept:
+                self._lead_out(actor, first, ahead, path)
+            else:
+                # Not on autopilot yet (a RoutingAction at init, or released):
+                # driven out of the junction once it is (:meth:`_autopilot`).
+                self._lead_from[actor.id] = first
+                self._lead_route[actor.id] = list(ahead)
 
     def end_route(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Give *entity*'s vehicle, whose route is over, its own lane changes
@@ -1249,10 +1287,23 @@ class TrafficManagerBackend(TrafficBackend):
                 del self._paused[actor.id]
                 kept.path = paused.path
                 kept.progress = paused.progress
-            elif actor.id in self._given:
-                # A path given before it was kept (the ego's, at its init).
-                kept.path = list(self._given[actor.id])
-            self._kept[actor.id] = kept
+                # The lane changes it has still to make: not those it was
+                # told of before it was released, nor those it was driven
+                # past since.
+                kept.lane_changes = _marks_not_passed(
+                    paused.path, paused.progress, paused.lane_changes
+                )
+                self._kept[actor.id] = kept
+                # Unregistered, the TrafficManager dropped the points of its
+                # path it had planned (:meth:`_give_path_again`).
+                self._give_path_again(kept)
+            else:
+                if actor.id in self._given:
+                    # A path given before it was kept (the ego's, or a
+                    # RoutingAction's at its init).
+                    kept.path = list(self._given[actor.id])
+                    kept.lane_changes = _lane_change_marks(kept.path)
+                self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
             self._draw_for(actor, self._parameters_of(actor), first=True)
@@ -1263,6 +1314,13 @@ class TrafficManagerBackend(TrafficBackend):
             tm = self._require_tm("follow_visibility")
             if tm is not None:
                 self._hold_to_sight(tm, actor, self._sight_limit_kmh(int(actor.id)))
+        if actor.id in self._lead_from and actor.id in self._kept:
+            # Given its route from a junction's mouth before it was kept.
+            start = self._lead_from[actor.id]
+            route = self._lead_route[actor.id]
+            del self._lead_from[actor.id]
+            del self._lead_route[actor.id]
+            self._lead_out(actor, start, route, self._kept[actor.id].path)
 
     def _parameters_of(self, actor: "carla.Actor") -> VehicleParameters:
         """The run's parameters, overridden by those of *actor*'s entity
@@ -1282,6 +1340,15 @@ class TrafficManagerBackend(TrafficBackend):
         self._lane_locked.discard(actor_id)
         if actor_id in self._paused:
             del self._paused[actor_id]
+        self._forget_lead_out(actor_id)
+
+    def _forget_lead_out(self, actor_id: int) -> None:
+        """Drop the drive out of a junction's mouth the actor *actor_id* was
+        to start with: given a new path, or gone."""
+        if actor_id in self._lead_from:
+            del self._lead_from[actor_id]
+        if actor_id in self._lead_route:
+            del self._lead_route[actor_id]
 
     def _draw_for(
         self, actor: "carla.Actor", parameters: VehicleParameters, first: bool = False
@@ -1501,6 +1568,7 @@ class TrafficManagerBackend(TrafficBackend):
         """Remember the path a vehicle was just given: for the keeping, now
         if it is kept, else from when it is put on autopilot."""
         self._given[actor.id] = list(path)
+        self._forget_lead_out(int(actor.id))
         if actor.id in self._paused:
             # Released: this path, from its start, when it is resumed.
             del self._paused[actor.id]
