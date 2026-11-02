@@ -165,6 +165,13 @@ _LANE_CHANGE_AHEAD_MAX_WAYPOINTS: int = 4096
 #: gave a vehicle it is taken to have used the path up, and is given its own
 #: lane changes back: a path point's spacing, so it is met between two ticks.
 _ROUTE_END_M: float = ROUTE_POINT_STEP_M
+#: How many path points either side of a vehicle's progress along its path
+#: (:attr:`_Kept.progress`) it is looked for among: a vehicle that comes
+#: within :data:`_ROUTE_END_M` of one of the points ahead of it has come that
+#: far even if it missed the ones before, and a path that comes back near
+#: itself (a loop, a U-turn, a route through a via point and back) is never
+#: matched against its far part (#1105).
+_PROGRESS_WINDOW: int = 8
 
 #: How near (m) a point where its path crosses to the lane beside a vehicle is
 #: told to change lanes.
@@ -190,6 +197,7 @@ class _Kept:
     moved_at: float
     check_due: float
     path: List["carla.Location"]
+    progress: int
     near_route_end: bool
     checked_x: float
     checked_y: float
@@ -206,8 +214,13 @@ class _Kept:
         self.moved_at = 0.0
         #: When it is next looked at, s of the run; negative: not yet.
         self.check_due = -1.0
-        #: The rest of the path it was last given, to give again.
+        #: The path it was last given, to give the rest of again.
         self.path = []
+        #: How many points of :attr:`path` it has come within
+        #: :data:`_ROUTE_END_M` of, in order (:func:`_progressed`): where on
+        #: its path it is, which straight-line distance alone cannot tell on
+        #: a path that comes back near itself (#1105).  Never goes back.
+        self.progress = 0
         #: Whether its path's end has come near: its road is searched for a
         #: dead end only then (or without a path).
         self.near_route_end = False
@@ -291,6 +304,7 @@ class TrafficManagerBackend(TrafficBackend):
     _desired_mps: dict[int, float]
     _given: dict[int, List["carla.Location"]]
     _lane_locked: set[int]
+    _paused: dict[int, _Kept]
 
     def __init__(
         self,
@@ -372,6 +386,10 @@ class TrafficManagerBackend(TrafficBackend):
         #: The vehicles :meth:`follow_route` turned the TrafficManager's own
         #: lane changes off for, which their first draw keeps off.
         self._lane_locked = set()
+        #: Kept vehicles taken back (:meth:`release_actor`), by actor id: their
+        #: path and their progress along it, which goes on while the scenario
+        #: drives them, for when they are resumed.
+        self._paused = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -604,6 +622,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._desired_mps = {}
         self._given = {}
         self._lane_locked = set()
+        self._paused = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -1053,19 +1072,26 @@ class TrafficManagerBackend(TrafficBackend):
 
     def _end_route_at_path_end(self, kept: _Kept) -> None:
         """End the route of a vehicle :meth:`follow_route` turned the lane
-        changes off for once it is within :data:`_ROUTE_END_M` of its path's
-        last point: the TrafficManager has used the path up and drives on as
-        it likes, which is what a route handed over with nothing to watch it
-        (an untimed ``RoutingAction``) ends in (#1100)."""
-        if not kept.path:
+        changes off for once its progress (:meth:`_follow_progress`) has
+        reached its path's last point: the TrafficManager has used the path
+        up and drives on as it likes, which is what a route handed over with
+        nothing to watch it (an untimed ``RoutingAction``) ends in (#1100).
+        Not merely near that point: a route that ends near where it starts
+        is near it from the start (#1105)."""
+        if not kept.path or kept.progress < len(kept.path):
+            return
+        self._unlock_lanes(kept.actor, _actor_name(kept.actor))
+
+    def _follow_progress(self, kept: _Kept) -> None:
+        """Move *kept*'s progress along its path on to where its vehicle is
+        (:func:`_progressed`)."""
+        if kept.progress >= len(kept.path):
             return
         try:
             location = kept.actor.get_location()
         except RuntimeError:
             return  # destroyed under us: forgotten at its next look
-        if location.distance(kept.path[-1]) > _ROUTE_END_M:
-            return
-        self._unlock_lanes(kept.actor, _actor_name(kept.actor))
+        kept.progress = _progressed(kept.path, location, kept.progress)
 
     def _lead_out(
         self,
@@ -1161,6 +1187,8 @@ class TrafficManagerBackend(TrafficBackend):
         # The scenario drives it now: neither kept nor held any more.  Not
         # pop(key, default): Codon has no such overload.
         if actor.id in self._kept:
+            # Its path, and its progress along it, for when it is resumed.
+            self._paused[actor.id] = self._kept[actor.id]
             del self._kept[actor.id]
         if self._started:
             actor.set_autopilot(False, self.port)
@@ -1209,7 +1237,13 @@ class TrafficManagerBackend(TrafficBackend):
         self._autopiloted[actor.id] = actor
         if keep and actor.id not in self._kept:
             kept = _Kept(actor)
-            if actor.id in self._given:
+            if actor.id in self._paused:
+                # Resumed: on along its path from where it has come to.
+                paused = self._paused[actor.id]
+                del self._paused[actor.id]
+                kept.path = paused.path
+                kept.progress = paused.progress
+            elif actor.id in self._given:
                 # A path given before it was kept (the ego's, at its init).
                 kept.path = list(self._given[actor.id])
             self._kept[actor.id] = kept
@@ -1240,6 +1274,8 @@ class TrafficManagerBackend(TrafficBackend):
             del self._entity_overrides[actor_id]
         self._drawn.discard(actor_id)
         self._lane_locked.discard(actor_id)
+        if actor_id in self._paused:
+            del self._paused[actor_id]
 
     def _draw_for(
         self, actor: "carla.Actor", parameters: VehicleParameters, first: bool = False
@@ -1330,7 +1366,14 @@ class TrafficManagerBackend(TrafficBackend):
         """Keep every vehicle on autopilot but a background one from the
         TrafficManager's removal, each looked at every :data:`_CHECK_PERIOD_S`
         (``docs/traffic_backends.md``)."""
+        for actor_id, paused in list(self._paused.items()):
+            # Driven by the scenario, it still comes along its path.
+            if not paused.actor.is_alive:
+                del self._paused[actor_id]
+                continue
+            self._follow_progress(paused)
         for actor_id, kept in list(self._kept.items()):
+            self._follow_progress(kept)
             approach = kept.approach
             if approach is not None:
                 driving: FinalApproach = approach
@@ -1423,12 +1466,14 @@ class TrafficManagerBackend(TrafficBackend):
         """
         if not kept.path:
             return
-        kept.path = _ahead_of(kept.path, kept.actor.get_location())
-        if not kept.path:
+        cut = _ahead_index(kept.path, kept.actor.get_location(), kept.progress)
+        # The points before the cut are not given again: passed.
+        kept.progress = max(kept.progress, cut)
+        if cut >= len(kept.path):
             return
         tm = self._require_tm("re-registering")
         if tm is not None:
-            tm.set_path(_vehicle(kept.actor), kept.path)
+            tm.set_path(_vehicle(kept.actor), kept.path[cut:])
 
     def _hand_on(self, kept: _Kept) -> None:
         """Give a vehicle driven out of its junction back to the
@@ -1450,10 +1495,14 @@ class TrafficManagerBackend(TrafficBackend):
         """Remember the path a vehicle was just given: for the keeping, now
         if it is kept, else from when it is put on autopilot."""
         self._given[actor.id] = list(path)
+        if actor.id in self._paused:
+            # Released: this path, from its start, when it is resumed.
+            del self._paused[actor.id]
         if actor.id not in self._kept:
             return
         kept = self._kept[actor.id]
         kept.path = list(path)
+        kept.progress = 0
         kept.near_route_end = False
         kept.checked_lookahead = -1.0
         kept.approach = None
@@ -1539,7 +1588,7 @@ class TrafficManagerBackend(TrafficBackend):
             return
         actor.set_autopilot(False, self.port)
         kept.held = True
-        ahead = _ahead_of(kept.path, location)
+        ahead = _ahead_of(kept.path, location, kept.progress)
         if ahead:
             # On a path it was given, which ends before the dead end: the
             # TrafficManager would plan past its end into it.  The rest of the
@@ -1795,22 +1844,58 @@ def _from_here(
     return path[nearest:]
 
 
-def _ahead_of(
-    path: List["carla.Location"], location: "carla.Location"
-) -> List["carla.Location"]:
-    """The points of *path* after the one nearest *location*.
+def _progressed(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> int:
+    """How many points of *path* a vehicle at *location* has come to, given
+    it had come to *progress*: past the last of the next
+    :data:`_PROGRESS_WINDOW` points within :data:`_ROUTE_END_M` of it, again
+    from there while one is (a vehicle that missed a point by a little has
+    still come past it), and never fewer than *progress*."""
+    reached = progress
+    moved = True
+    while moved:
+        moved = False
+        end = min(len(path), reached + _PROGRESS_WINDOW)
+        for i in range(reached, end):
+            if location.distance(path[i]) <= _ROUTE_END_M:
+                reached = i + 1
+                moved = True
+    return reached
+
+
+def _ahead_index(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> int:
+    """Where the points of *path* ahead of *location* start: after the one
+    nearest it among the :data:`_PROGRESS_WINDOW` either side of *progress*
+    (:attr:`_Kept.progress`).
 
     Not that nearest one: the TrafficManager waits for each point to come
     within a few metres, and one beside or behind the vehicle may never.
+    Not the nearest on all the path either: one that comes back near its
+    start would be cut after its last point there (#1105).
     """
-    nearest = 0
+    start = max(0, progress - _PROGRESS_WINDOW)
+    end = min(len(path), progress + _PROGRESS_WINDOW)
+    if start >= end:
+        return len(path)
+    nearest = start
     best = float("inf")
-    for i, point in enumerate(path):
-        gap = location.distance(point)
+    for i in range(start, end):
+        gap = location.distance(path[i])
         if gap < best:
             best = gap
             nearest = i
-    return path[nearest + 1 :]
+    return nearest + 1
+
+
+def _ahead_of(
+    path: List["carla.Location"], location: "carla.Location", progress: int
+) -> List["carla.Location"]:
+    """The points of *path* ahead of *location*, a vehicle *progress* points
+    along it (:func:`_ahead_index`)."""
+    return path[_ahead_index(path, location, progress) :]
 
 
 def _dead_end_within(start: "carla.Waypoint", distance: float) -> bool:

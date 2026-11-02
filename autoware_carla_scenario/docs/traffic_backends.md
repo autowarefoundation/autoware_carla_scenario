@@ -602,9 +602,14 @@ default. The TrafficManager backend turns its own lane changes, which
 `follow_route` turned off, back to the run's `lane_changes` (and the vehicle's
 overrides); unset, the TrafficManager's default, on. A route handed over untimed
 ends its action at once, with nothing left to watch it: the TrafficManager
-backend gives the lane changes back itself once the vehicle comes within a path
-point's spacing (5 m) of its path's last point, where the TrafficManager has
-used the path up and drives on as it likes.
+backend gives the lane changes back itself once the vehicle has come along its
+path to within a path point's spacing (5 m) of its last point, where the
+TrafficManager has used the path up and drives on as it likes. Along: the
+backend follows each kept vehicle's progress, point by point, coming within 5 m
+of one of the next eight points (released ones too, so a resumed vehicle goes
+on from where it was driven), so a route that ends near where it starts (a
+loop, a U-turn, a route through a via point and back) is not used up at its
+start.
 
 ### Handing a vehicle back
 
@@ -856,7 +861,10 @@ scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
   parameters, which survive the switch. Its planned waypoints do not, and the
   points of a path already planned are gone from the path the TrafficManager
   holds (`LocalizationStage::ImportPath`), so the part of the path it was last
-  given (`follow_route`, `turn_at_junction`) still ahead of it is given again. It drives on as before; it is logged once.
+  given (`follow_route`, `turn_at_junction`) still ahead of it is given again:
+  from the point after the one nearest it among those either side of its
+  progress along the path, so a path that comes back near itself is not cut at
+  its far part. It drives on as before; it is logged once.
 - **A dead end:** every 0.5 s the road ahead of a kept vehicle is walked down
   every branch (the TrafficManager picks one at random) a little past the
   TrafficManager's horizon, on the run's cached map. Where some branch ends,

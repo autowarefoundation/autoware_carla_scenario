@@ -8,6 +8,7 @@ pinned in ``test_traffic_sumo``.
 
 from __future__ import annotations
 
+import math
 from typing import Any, List, Optional, Tuple
 
 import pytest
@@ -723,6 +724,143 @@ def test_a_route_used_up_gives_lane_changes_back(
     assert backend._lane_locked == set()
     backend._keep_scenario_vehicles(world, 0.1)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, after)]
+
+
+class _PlanePoint:
+    """A CARLA location on the ground, for a path that turns."""
+
+    def __init__(self, x: float, y: float) -> None:
+        self.x = float(x)
+        self.y = float(y)
+
+    def distance(self, other: "_PlanePoint") -> float:
+        return math.hypot(self.x - other.x, self.y - other.y)
+
+    def __repr__(self) -> str:
+        return f"({self.x:g}, {self.y:g})"
+
+
+def _block_loop() -> List[_PlanePoint]:
+    """Round a 40 m block from (0, 0), a point every 5 m, back to 3 m from
+    where it started."""
+    return (
+        [_PlanePoint(x, 0) for x in range(0, 41, 5)]
+        + [_PlanePoint(40, y) for y in range(5, 41, 5)]
+        + [_PlanePoint(x, 40) for x in range(35, -1, -5)]
+        + [_PlanePoint(0, y) for y in range(35, 2, -5)]
+        + [_PlanePoint(0, 3)]
+    )
+
+
+def _on_a_route(
+    monkeypatch: pytest.MonkeyPatch, poses: List[_PlanePoint]
+) -> Tuple[_Client, TrafficManagerBackend, _World, "_MovingActor"]:
+    """A vehicle standing on the first of *poses*, given the route through
+    them with ``lane_changes: true``; the calls so far cleared."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    import autoware_carla_scenario.odd.route_plan as route_plan  # noqa: PLC0415
+
+    _stub_route_planning(monkeypatch)
+    monkeypatch.setattr(route_plan, "route_poses", lambda *a, **k: list(poses))
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=True)
+    )
+    npc = _MovingActor(5)
+    npc.location = poses[0]  # type: ignore[assignment]
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    backend.follow_route(
+        _Entity(npc),  # type: ignore[arg-type]
+        world,  # type: ignore[arg-type]
+        [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+    )
+    client.tm.calls.clear()
+    return client, backend, world, npc
+
+
+def _drive(
+    backend: TrafficManagerBackend,
+    world: _World,
+    npc: "_MovingActor",
+    points: List[_PlanePoint],
+) -> List[bool]:
+    """Put *npc* on each of *points* in turn, a tick at each: whether its
+    lanes were still locked after each.  All at the run's start, before its
+    first look for standing or a dead end is due."""
+    locked = []
+    for point in points:
+        npc.location = point  # type: ignore[assignment]
+        backend._keep_scenario_vehicles(world, 0.0)  # type: ignore[arg-type]
+        locked.append(5 in backend._lane_locked)
+    return locked
+
+
+def test_a_loop_route_is_not_used_up_where_it_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route that ends 3 m from where it starts keeps its lane-change lock
+    until the vehicle has driven round it: its end is near from the start,
+    but not reached (#1105)."""
+    loop = _block_loop()
+    client, backend, world, npc = _on_a_route(monkeypatch, loop)
+
+    locked = _drive(backend, world, npc, loop)
+    # Unlocked at (0, 5), 2 m from its end: within a point's spacing of it.
+    assert locked == [True] * (len(loop) - 2) + [False, False]
+    assert client.tm.called("auto_lane_change") == [(npc, True)]
+
+
+def test_a_straight_route_is_used_up_at_its_end_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven off its points by a little, a vehicle on a straight route gets
+    its lane changes back at the end and not before."""
+    line = [_PlanePoint(x, 0) for x in range(0, 61, 5)]
+    client, backend, world, npc = _on_a_route(monkeypatch, line)
+
+    beside = [_PlanePoint(p.x, 2.0) for p in line]
+    locked = _drive(backend, world, npc, beside)
+    assert locked == [True] * (len(line) - 1) + [False]
+    assert client.tm.called("auto_lane_change") == [(npc, True)]
+
+
+def test_a_loop_vehicle_re_registered_near_its_start_keeps_its_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-registered standing at its start, a vehicle on a loop route is
+    given the rest of its path again, not cut after the loop's last point,
+    3 m away (#1105)."""
+    loop = _block_loop()
+    client, backend, world, npc = _on_a_route(monkeypatch, loop)
+    _drive(backend, world, npc, [loop[0]])
+    kept = backend._kept[5]
+
+    backend._keep_standing(kept, 0.0, 0.0)
+    backend._keep_standing(kept, 0.0, 61.0)
+    # The point beside it (5 m on) is taken as passed, as on any path.
+    assert client.tm.called("set_path") == [(npc, loop[2:])]
+    assert 5 in backend._lane_locked
+
+
+def test_a_resumed_vehicle_goes_on_from_where_it_was_driven(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Released half way round a loop and driven by the scenario to its end,
+    a vehicle resumed there has used its route up: its progress went on
+    while it was released."""
+    loop = _block_loop()
+    client, backend, world, npc = _on_a_route(monkeypatch, loop)
+    half = len(loop) // 2
+    _drive(backend, world, npc, loop[:half])
+    backend.release_actor(world, npc)  # type: ignore[arg-type]
+
+    _drive(backend, world, npc, loop[half:])
+    assert 5 in backend._lane_locked
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _drive(backend, world, npc, [loop[-1]]) == [False]
 
 
 def test_the_end_of_a_route_follows_the_entity_overrides(
