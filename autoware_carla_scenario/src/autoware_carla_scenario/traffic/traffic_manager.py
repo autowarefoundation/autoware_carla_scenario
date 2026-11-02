@@ -285,6 +285,7 @@ class TrafficManagerBackend(TrafficBackend):
     _kept: dict[int, _Kept]
     _desired_mps: dict[int, float]
     _given: dict[int, List["carla.Location"]]
+    _lane_locked: set[int]
 
     def __init__(
         self,
@@ -363,6 +364,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._desired_mps = {}
         #: The path each vehicle was last given, by actor id, kept or not yet.
         self._given = {}
+        #: The vehicles :meth:`follow_route` turned the TrafficManager's own
+        #: lane changes off for, which their first draw keeps off.
+        self._lane_locked = set()
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -594,6 +598,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._kept = {}
         self._desired_mps = {}
         self._given = {}
+        self._lane_locked = set()
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -1000,6 +1005,7 @@ class TrafficManagerBackend(TrafficBackend):
         # The route says where to change lane; the TrafficManager's own lane
         # changes would take the vehicle off it.
         tm.auto_lane_change(_vehicle(actor), False)
+        self._lane_locked.add(int(actor.id))
         tm.set_path(_vehicle(actor), path)
         self._remember_path(actor, path)
         self._drive_on(actor)
@@ -1155,7 +1161,7 @@ class TrafficManagerBackend(TrafficBackend):
             self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
-            self._draw_for(actor, self._parameters_of(actor))
+            self._draw_for(actor, self._parameters_of(actor), first=True)
         if self._sight_kmh >= 0.0:
             # Held to sight at once, not at the next update: one resumed after
             # a speed was set on it while released would drive at that speed
@@ -1179,9 +1185,22 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._entity_overrides:
             del self._entity_overrides[actor_id]
         self._drawn.discard(actor_id)
+        self._lane_locked.discard(actor_id)
 
-    def _draw_for(self, actor: "carla.Actor", parameters: VehicleParameters) -> None:
-        """Give *actor* its own draw of each field *parameters* sets."""
+    def _draw_for(
+        self, actor: "carla.Actor", parameters: VehicleParameters, first: bool = False
+    ) -> None:
+        """Give *actor* its own draw of each field *parameters* sets.
+
+        Its *first* draw, made when it is put on autopilot, comes after
+        whatever was asked of it before (at the scenario's init, or while it
+        was released), and does not undo it: the one given last wins, and that
+        was the command.  A speed it was given (:attr:`_exact_kmh`) is kept
+        over its speed factor, as a speed given after the draw is, and a route
+        it follows keeps the TrafficManager's own lane changes off
+        (:meth:`follow_route`).  Each value is drawn all the same, so the
+        vehicles after it draw what they would have.
+        """
         if not parameters.set_fields():
             return
         tm = self._require_tm("traffic parameters")
@@ -1191,34 +1210,37 @@ class TrafficManagerBackend(TrafficBackend):
             self._draws = random.Random(self._random_seed)
         rng: random.Random = self._draws
         vehicle = _vehicle(actor)
+        actor_id = int(actor.id)
         speed_factor = parameters.speed_factor
         if speed_factor is not None:
             # The TrafficManager's is a percentage *under* the limit.
             factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
             difference = (1.0 - factor) * 100.0
-            tm.vehicle_percentage_speed_difference(vehicle, difference)
-            # Its own, which a hold to sight never drives it faster than: the
-            # TrafficManager drops the speed it was given for it.
-            actor_id = int(actor.id)
-            self._speed_differences[actor_id] = difference
-            if actor_id in self._exact_kmh:
-                del self._exact_kmh[actor_id]
-            if actor_id in self._held:
-                del self._held[actor_id]
-            if (
-                self._sight_kmh >= 0.0
-                and actor_id in self._autopiloted
-                and actor_id not in self._released
-            ):
-                # Held, it is held again from this at once.
-                self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
+            # A first draw keeps a speed it was given before it: drawn, unsent.
+            if not (first and actor_id in self._exact_kmh):
+                tm.vehicle_percentage_speed_difference(vehicle, difference)
+                # Its own, which a hold to sight never drives it faster than:
+                # the TrafficManager drops the speed it was given for it.
+                self._speed_differences[actor_id] = difference
+                if actor_id in self._exact_kmh:
+                    del self._exact_kmh[actor_id]
+                if actor_id in self._held:
+                    del self._held[actor_id]
+                if (
+                    self._sight_kmh >= 0.0
+                    and actor_id in self._autopiloted
+                    and actor_id not in self._released
+                ):
+                    # Held, it is held again from this at once.
+                    self._hold_to_sight(tm, actor, self._sight_limit_kmh(actor_id))
         min_gap = parameters.min_gap_m
         if min_gap is not None:
             tm.distance_to_leading_vehicle(
                 vehicle, min_gap.draw(rng, VEHICLE_BOUNDS["min_gap_m"])
             )
-        if parameters.lane_changes is not None:
-            tm.auto_lane_change(vehicle, parameters.lane_changes)
+        lane_changes = parameters.lane_changes
+        if lane_changes is not None and not (first and actor_id in self._lane_locked):
+            tm.auto_lane_change(vehicle, lane_changes)
         # The TrafficManager's are percentages, the parameters' probabilities.
         ignore_lights = parameters.ignore_lights
         if ignore_lights is not None:
@@ -1506,6 +1528,12 @@ class TrafficManagerBackend(TrafficBackend):
         # spent, so a vehicle that draws later draws it from the new
         # parameters, as one that drew already does here.
         overridden = set(overrides.set_fields())
+        for undrawn in list(self._exact_kmh):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
+        for undrawn in list(self._lane_locked):
+            if undrawn not in self._drawn:
+                self._given_before_draw(undrawn, overrides)
         for actor_id in list(self._entity_overrides):
             own = self._entity_overrides[actor_id]
             kept = set(own.set_fields()) - overridden
@@ -1542,6 +1570,17 @@ class TrafficManagerBackend(TrafficBackend):
             self._entity_overrides[actor_id] = overrides
         if actor_id in self._drawn:
             self._draw_for(vehicle, overrides)
+        else:
+            self._given_before_draw(actor_id, overrides)
+
+    def _given_before_draw(self, actor_id: int, overrides: VehicleParameters) -> None:
+        """*overrides*, given vehicle *actor_id* before its first draw, came
+        after the speed or route it was given before them: the one given last
+        wins, so its first draw sends the fields they set (:meth:`_draw_for`)."""
+        if overrides.speed_factor is not None and actor_id in self._exact_kmh:
+            del self._exact_kmh[actor_id]
+        if overrides.lane_changes is not None:
+            self._lane_locked.discard(actor_id)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
