@@ -285,7 +285,12 @@ def test_a_glob_that_does_not_compose_prints_no_listing(
 
     assert main(["scenario=intersection_passing/*", "foo.bar=1"]) == 2
     captured = capsys.readouterr()
-    assert "could not override 'foo.bar'" in captured.err
+    # Each scenario's error names it, so the reader can tell them apart.
+    for name in ("left_turn", "straight_3npc"):
+        assert (
+            f"Error: intersection_passing/{name}: could not override 'foo.bar'"
+            in captured.err
+        )
     assert captured.out == ""
 
 

@@ -65,20 +65,20 @@ def main(argv: list[str] | None = None) -> int:
     # Composed the way a glob batch run composes each scenario, so the
     # expansion sees the same config (package conf dirs included).
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
-    from .compose_errors import compose_or_report, resolve_scenarios  # noqa: PLC0415
-
     from ..scenario_glob import is_scenario_glob  # noqa: PLC0415
+    from .compose_errors import compose_or_report, resolve_scenarios  # noqa: PLC0415
 
     names = resolve_scenarios(scenario)
     if names is None:
         return 2
-    if not is_scenario_glob(scenario):
+    globbed = is_scenario_glob(scenario)
+    if not globbed:
         # A plain name is composed (and printed) as given, as a run does.
         names = [scenario]
     listings: list[dict[str, object]] = []
     status = 0
     for name in names:
-        cfg = compose_or_report(name, overrides)
+        cfg = compose_or_report(name, overrides, named=globbed)
         if cfg is None:
             status = 2
             continue

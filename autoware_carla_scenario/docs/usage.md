@@ -350,7 +350,8 @@ uv run scenario-expand 'scenario=intersection_passing/*'
 
 Every matched scenario is expanded before anything is printed. If one of them
 fails (its `controls:` are invalid, or an override does not compose), each
-failure goes to stderr, nothing goes to stdout, and the exit status is non-zero.
+failure goes to stderr headed by that scenario's name, nothing goes to stdout,
+and the exit status is non-zero.
 
 A *logical* scenario -- a document with a route search, whose `sweep:` holds
 `route:` instead of `constraints:` -- expands to one case per route of the map
