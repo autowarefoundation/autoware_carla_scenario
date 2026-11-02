@@ -189,6 +189,21 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
             shim = _shim(name)
             if shim is not None and _declares(shim, attr):
                 wrong.append(f"{module}: `{name}.{attr}` is declared by its shim")
+        # An unqualified name in "more of X than its shim declares
+        # (`mkdtemp()`)" is X's: one the shim of X (of any of "X and Y")
+        # declares is wrong too.
+        for shimmed, names in re.findall(
+            r"more of ([\w., ]+?) than (?:its|their) shims? declares? "
+            r"\(([^()]*(?:\(\)[^()]*)*)\)",
+            reason,
+        ):
+            for attr in re.findall(r"`(\w+)(?:\(\))?`", names):
+                for name in re.split(r",\s*|\s+and\s+", shimmed):
+                    shim = _shim(name)
+                    if shim is not None and _declares(shim, attr):
+                        wrong.append(
+                            f"{module}: `{attr}` is declared by the {name} shim"
+                        )
         # "more of X than its shim declares" names X for what the shim lacks.
         bare = re.sub(r"\bof [\w., ]+? than (?:its|their) shims? declares?", "", reason)
         # The reason itself names the module's own imports; "slurm.manifest
