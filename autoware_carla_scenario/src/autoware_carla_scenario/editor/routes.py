@@ -777,7 +777,7 @@ async def update_signal_controller(
 def delete_signal_controller(
     request: Request, draft_id: str, index: int
 ) -> HTMLResponse:
-    """Remove a controller, and drop the offsets that measured from it."""
+    """Remove a controller, and every offset and card that named it."""
     service = _service(request)
     return _apply(
         request,
