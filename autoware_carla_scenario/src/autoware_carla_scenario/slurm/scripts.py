@@ -3,7 +3,8 @@
 The job script every task of a submission runs (:func:`job_script`), the
 ``sbatch`` command line submitting it (:func:`sbatch_command`), and the
 script and command line of the job collecting the batch after its array
-(:func:`collect_script`, :func:`_collect_command`); and the state of each
+(:func:`collect_script`, :func:`_collect_command`), which sets its
+environment up as the tasks' does; and the state of each
 task ``squeue`` lists (:func:`squeue_task_states`).  Plain text from the
 launcher's settings and what they read of the batch's manifest
 (:class:`ScriptInputs`), with nothing of the file system, of SLURM or of the
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Optional
@@ -190,6 +192,34 @@ def _setup_lines(settings: SlurmSettings) -> list[str]:
     return ["set +u", *settings.setup, "set -u"]
 
 
+def _exports(values: Mapping[str, str]) -> list[str]:
+    """``export`` lines setting *values*, by name."""
+    return [
+        f"export {name}={shlex.quote(value)}" for name, value in sorted(values.items())
+    ]
+
+
+def _passthrough_lines(manifest: ScriptInputs) -> list[str]:
+    """The submitting shell's variables a job without ``remote_cwd`` sets
+    again (``launcher.env_passthrough``)."""
+    return [
+        "",
+        "# The submitting shell's environment, as it was (launcher.env_passthrough).",
+        *_exports(manifest.env),
+    ]
+
+
+def _setup_and_env_lines(settings: SlurmSettings) -> list[str]:
+    """``launcher.setup``, then ``launcher.env``: the lines every job (each
+    task and the collect job) runs before it starts Python."""
+    lines: list[str] = []
+    if settings.setup:
+        lines += ["", "# launcher.setup", *_setup_lines(settings)]
+    if len(settings.env) > 0:
+        lines += ["", "# launcher.env", *_exports(settings.env)]
+    return lines
+
+
 def job_script(
     layout: BatchPaths,
     manifest: ScriptInputs,
@@ -220,29 +250,14 @@ def job_script(
                 manifest, settings, '"${SLURM_ARRAY_JOB_ID}_${TASK}.out"'
             ),
         ]
-    lines += [
-        "",
-        "# The submitting shell's environment, as it was (launcher.env_passthrough).",
-    ]
-    lines += [
-        f"export {name}={shlex.quote(value)}"
-        for name, value in sorted(manifest.env.items())
-    ]
+    lines += _passthrough_lines(manifest)
     if settings.headless:
         lines += [
             "",
             "# CARLA renders off-screen (launcher.headless).",
             "unset DISPLAY WAYLAND_DISPLAY",
         ]
-    if settings.setup:
-        lines += ["", "# launcher.setup"]
-        lines += _setup_lines(settings)
-    if len(settings.env) > 0:
-        lines += ["", "# launcher.env"]
-        lines += [
-            f"export {name}={shlex.quote(value)}"
-            for name, value in sorted(settings.env.items())
-        ]
+    lines += _setup_and_env_lines(settings)
     if remote:
         port_file = f'"$BATCH_DIR"/slurm/tasks/{submission}-${{TASK}}.port'
         manifest_path = '"$BATCH_DIR"/slurm/manifest.json'
@@ -341,13 +356,44 @@ def sbatch_command(
     return command
 
 
-def collect_script(manifest: ScriptInputs, settings: SlurmSettings) -> str:
-    """The script of the job collecting a ``remote_cwd`` batch, on a node."""
+def collect_script(
+    manifest: ScriptInputs,
+    settings: SlurmSettings,
+    layout: Optional[BatchPaths] = None,
+) -> str:
+    """The script of the job collecting the batch once its array has ended.
+
+    It sets the environment up as the tasks' :func:`job_script` does -- the
+    submitting shell's variables, ``launcher.setup``, ``launcher.env`` -- so
+    that ``launcher.python`` is the interpreter the tasks ran.  With
+    ``remote_cwd`` every path is the node's; without it the script names the
+    batch's directory, *layout*'s.
+    """
     python = _shell_path(settings.python or manifest.python)
     lines = [
         "#!/bin/bash",
         "# autoware_carla_scenario: collects a batch submitted with "
         "launcher=slurm once its array has ended (docs/slurm.md).",
+    ]
+    if settings.remote_cwd is None:
+        if layout is None:
+            raise ValueError(
+                "the collect script of a batch submitted without "
+                "launcher.remote_cwd names the batch's directory: pass its layout"
+            )
+        lines += [
+            f"# Batch: {layout.batch_dir}",
+            "set -u",
+            *_passthrough_lines(manifest),
+            *_setup_and_env_lines(settings),
+            "",
+            f"cd {shlex.quote(manifest.cwd)} || exit 1",
+            f"exec {python} -m {CLI_MODULE} collect "
+            f"{shlex.quote(str(layout.batch_dir))}",
+            "",
+        ]
+        return "\n".join(lines)
+    lines += [
         f"# Batch: {manifest.batch_dir_relative} under launcher.remote_cwd "
         f"{settings.remote_cwd}",
         "set -u",
@@ -355,19 +401,8 @@ def collect_script(manifest: ScriptInputs, settings: SlurmSettings) -> str:
         *_remote_prologue(manifest, settings, '"collect-${SLURM_JOB_ID}.out"'),
     ]
     if len(manifest.env) > 0:
-        lines += ["", "# launcher.env_passthrough"]
-        lines += [
-            f"export {name}={shlex.quote(value)}"
-            for name, value in sorted(manifest.env.items())
-        ]
-    if settings.setup:
-        lines += ["", "# launcher.setup", *_setup_lines(settings)]
-    if len(settings.env) > 0:
-        lines += ["", "# launcher.env"]
-        lines += [
-            f"export {name}={shlex.quote(value)}"
-            for name, value in sorted(settings.env.items())
-        ]
+        lines += ["", "# launcher.env_passthrough", *_exports(manifest.env)]
+    lines += _setup_and_env_lines(settings)
     lines += [
         "",
         'cd "$WORKDIR" || exit 1',
@@ -384,55 +419,21 @@ def _collect_command(
     job: str,
     script: Optional[Path] = None,
 ) -> list[str]:
-    """The ``sbatch`` command of the job collecting the batch after *job*:
-    with ``remote_cwd``, the job runs *script* (:func:`collect_script`)."""
-    if settings.remote_cwd is not None:
-        if script is None:
-            raise ValueError("a remote_cwd batch's collect job runs a script")
-        command = [
-            "sbatch",
-            "--parsable",
-            f"--job-name={_job_name(layout, settings)}-collect",
-            f"--dependency=afterany:{job}",
-            *_output_options(layout, settings, "collect-%j.out"),
-            f"--export={settings.export}",
-            "--cpus-per-task=1",
-        ]
-        for flag, value in (
-            ("partition", settings.partition),
-            ("account", settings.account),
-            ("qos", settings.qos),
-            ("mem", settings.collect_mem),
-        ):
-            if value is not None:
-                command.append(f"--{flag}={value}")
-        command.append(str(script))
-        return command
-    python = settings.python or manifest.python
-    wrap = " ".join(
-        [
-            _shell_path(python),
-            "-m",
-            CLI_MODULE,
-            "collect",
-            shlex.quote(str(layout.batch_dir)),
-        ]
-    )
-    exports = " ".join(
-        f"{name}={shlex.quote(value)}"
-        for name, value in sorted(manifest.env.items())
-        if name in ("PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "VIRTUAL_ENV")
-    )
+    """The ``sbatch`` command of the job collecting the batch after *job*: it
+    runs *script* (:func:`collect_script`)."""
+    if script is None:
+        raise ValueError("the collect job runs a script (collect_script)")
     command = [
         "sbatch",
         "--parsable",
         f"--job-name={_job_name(layout, settings)}-collect",
         f"--dependency=afterany:{job}",
-        f"--output={layout.logs}/collect-%j.out",
+        *_output_options(layout, settings, "collect-%j.out"),
         f"--export={settings.export}",
         "--cpus-per-task=1",
-        f"--chdir={manifest.cwd}",
     ]
+    if settings.remote_cwd is None:
+        command.append(f"--chdir={manifest.cwd}")
     for flag, value in (
         ("partition", settings.partition),
         ("account", settings.account),
@@ -441,7 +442,7 @@ def _collect_command(
     ):
         if value is not None:
             command.append(f"--{flag}={value}")
-    command.append(f"--wrap={'env ' + exports + ' ' if exports else ''}{wrap}")
+    command.append(str(script))
     return command
 
 

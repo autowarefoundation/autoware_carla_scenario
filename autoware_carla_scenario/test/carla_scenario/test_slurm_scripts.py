@@ -284,7 +284,7 @@ def _render(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                 for tasks in (1, 7)
             },
             "collect_script": _outcome(
-                lambda: submit.collect_script(manifest, settings)
+                lambda: submit.collect_script(manifest, settings, layout)
             ),
             "collect_command": _outcome(
                 lambda: submit._collect_command(layout, manifest, settings, "41")

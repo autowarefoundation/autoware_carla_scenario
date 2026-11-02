@@ -158,6 +158,11 @@ or `launcher.python`) and its environment:
 3. `launcher.setup` runs;
 4. `launcher.env` is set.
 
+The collect job (`launcher.collect_job`) runs its script,
+`slurm/jobs/<submission>-collect.sh`, with the same environment: steps 1 to 4,
+then `launcher.python` in the directory the batch was submitted from, so a
+`setup` that loads a module or activates a venv serves it as it does the tasks.
+
 A driver policy's variables belong on `env_passthrough` (a pattern:
 `launcher.env_passthrough=[...]` replaces the list) or in `launcher.env`. No
 token or credential is on the default list, and a name with `TOKEN`,

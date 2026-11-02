@@ -46,18 +46,7 @@
   "~/venv/bin/python": "\"$HOME\"/venv/bin/python"
  },
  "local-defaults": {
-  "collect_command": [
-   "sbatch",
-   "--parsable",
-   "--job-name=acs-2026-10-19-12-00-00-collect",
-   "--dependency=afterany:41",
-   "--output=/work/outputs/2026-10-19/12-00-00/slurm/logs/collect-%j.out",
-   "--export=ALL",
-   "--cpus-per-task=1",
-   "--chdir=/work",
-   "--mem=2G",
-   "--wrap=/usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/outputs/2026-10-19/12-00-00"
-  ],
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -68,9 +57,9 @@
    "--cpus-per-task=1",
    "--chdir=/work",
    "--mem=2G",
-   "--wrap=/usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/outputs/2026-10-19/12-00-00"
+   "/work/outputs/2026-10-19/12-00-00/slurm/jobs/3-collect.sh"
   ],
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: /work/outputs/2026-10-19/12-00-00\nset -u\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\ncd /work || exit 1\nexec /usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/outputs/2026-10-19/12-00-00\n",
   "job_script": {
    "0": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work/outputs/2026-10-19/12-00-00  submission: 0\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd /work || exit 1\nPORT_FILE=/work/outputs/2026-10-19/12-00-00/slurm/tasks/0-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n/usr/bin/python3 -u -m autoware_carla_scenario.slurm.worker /work/outputs/2026-10-19/12-00-00/slurm/manifest.json 0 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n",
    "3": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work/outputs/2026-10-19/12-00-00  submission: 3\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd /work || exit 1\nPORT_FILE=/work/outputs/2026-10-19/12-00-00/slurm/tasks/3-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n/usr/bin/python3 -u -m autoware_carla_scenario.slurm.worker /work/outputs/2026-10-19/12-00-00/slurm/manifest.json 3 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n"
@@ -99,17 +88,7 @@
   }
  },
  "local-env-passthrough": {
-  "collect_command": [
-   "sbatch",
-   "--parsable",
-   "--job-name=acs-d-t-collect",
-   "--dependency=afterany:41",
-   "--output=/w/out/d/t/slurm/logs/collect-%j.out",
-   "--export=ALL",
-   "--cpus-per-task=1",
-   "--chdir=/w",
-   "--wrap=env LD_LIBRARY_PATH='/opt/carla lib:/usr/lib' PATH=/opt/venv/bin:/usr/bin PYTHONPATH='' VIRTUAL_ENV=/opt/venv \"$HOME\" -m autoware_carla_scenario.slurm.cli collect /w/out/d/t"
-  ],
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -119,9 +98,9 @@
    "--export=ALL",
    "--cpus-per-task=1",
    "--chdir=/w",
-   "--wrap=env LD_LIBRARY_PATH='/opt/carla lib:/usr/lib' PATH=/opt/venv/bin:/usr/bin PYTHONPATH='' VIRTUAL_ENV=/opt/venv \"$HOME\" -m autoware_carla_scenario.slurm.cli collect /w/out/d/t"
+   "/w/out/d/t/slurm/jobs/3-collect.sh"
   ],
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: /w/out/d/t\nset -u\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport CARLA_ROOT='/opt/carla'\"'\"'s root'\nexport LD_LIBRARY_PATH='/opt/carla lib:/usr/lib'\nexport ONEPLANNER_FLAGS='--a=\"b c\" $HOME `x`'\nexport PATH=/opt/venv/bin:/usr/bin\nexport PYTHONPATH=''\nexport VIRTUAL_ENV=/opt/venv\n\ncd /w || exit 1\nexec \"$HOME\" -m autoware_carla_scenario.slurm.cli collect /w/out/d/t\n",
   "job_script": {
    "0": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /w/out/d/t  submission: 0\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport CARLA_ROOT='/opt/carla'\"'\"'s root'\nexport LD_LIBRARY_PATH='/opt/carla lib:/usr/lib'\nexport ONEPLANNER_FLAGS='--a=\"b c\" $HOME `x`'\nexport PATH=/opt/venv/bin:/usr/bin\nexport PYTHONPATH=''\nexport VIRTUAL_ENV=/opt/venv\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd /w || exit 1\nPORT_FILE=/w/out/d/t/slurm/tasks/0-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\" -u -m autoware_carla_scenario.slurm.worker /w/out/d/t/slurm/manifest.json 0 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n",
    "3": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /w/out/d/t  submission: 3\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport CARLA_ROOT='/opt/carla'\"'\"'s root'\nexport LD_LIBRARY_PATH='/opt/carla lib:/usr/lib'\nexport ONEPLANNER_FLAGS='--a=\"b c\" $HOME `x`'\nexport PATH=/opt/venv/bin:/usr/bin\nexport PYTHONPATH=''\nexport VIRTUAL_ENV=/opt/venv\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd /w || exit 1\nPORT_FILE=/w/out/d/t/slurm/tasks/3-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\" -u -m autoware_carla_scenario.slurm.worker /w/out/d/t/slurm/manifest.json 3 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n"
@@ -150,21 +129,7 @@
   }
  },
  "local-every-sbatch-option": {
-  "collect_command": [
-   "sbatch",
-   "--parsable",
-   "--job-name=my job-collect",
-   "--dependency=afterany:41",
-   "--output=/work dir/outputs/2026-10-19/12-00-00/slurm/logs/collect-%j.out",
-   "--export=NONE",
-   "--cpus-per-task=1",
-   "--chdir=/work dir",
-   "--partition=main",
-   "--account=acct",
-   "--qos=high",
-   "--mem=4G",
-   "--wrap=\"$HOME\"/venv/bin/python -m autoware_carla_scenario.slurm.cli collect '/work dir/outputs/2026-10-19/12-00-00'"
-  ],
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -178,9 +143,9 @@
    "--account=acct",
    "--qos=high",
    "--mem=4G",
-   "--wrap=\"$HOME\"/venv/bin/python -m autoware_carla_scenario.slurm.cli collect '/work dir/outputs/2026-10-19/12-00-00'"
+   "/work dir/outputs/2026-10-19/12-00-00/slurm/jobs/3-collect.sh"
   ],
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: /work dir/outputs/2026-10-19/12-00-00\nset -u\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load cuda\nsource /venv/bin/activate\n\n# launcher.env\nexport B='two words'\nexport ONEPLANNER_X='set by launcher.env'\n\ncd '/work dir' || exit 1\nexec \"$HOME\"/venv/bin/python -m autoware_carla_scenario.slurm.cli collect '/work dir/outputs/2026-10-19/12-00-00'\n",
   "job_script": {
    "0": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work dir/outputs/2026-10-19/12-00-00  submission: 0\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load cuda\nsource /venv/bin/activate\n\n# launcher.env\nexport B='two words'\nexport ONEPLANNER_X='set by launcher.env'\n\ncd '/work dir' || exit 1\nPORT_FILE='/work dir/outputs/2026-10-19/12-00-00/slurm/tasks'/0-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\"/venv/bin/python -u -m autoware_carla_scenario.slurm.worker '/work dir/outputs/2026-10-19/12-00-00/slurm/manifest.json' 0 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n",
    "3": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work dir/outputs/2026-10-19/12-00-00  submission: 3\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load cuda\nsource /venv/bin/activate\n\n# launcher.env\nexport B='two words'\nexport ONEPLANNER_X='set by launcher.env'\n\ncd '/work dir' || exit 1\nPORT_FILE='/work dir/outputs/2026-10-19/12-00-00/slurm/tasks'/3-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\"/venv/bin/python -u -m autoware_carla_scenario.slurm.worker '/work dir/outputs/2026-10-19/12-00-00/slurm/manifest.json' 3 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n"
@@ -227,18 +192,7 @@
   }
  },
  "local-home-python": {
-  "collect_command": [
-   "sbatch",
-   "--parsable",
-   "--job-name=acs-d-t-collect",
-   "--dependency=afterany:41",
-   "--output=relative/d/t/slurm/logs/collect-%j.out",
-   "--export=ALL",
-   "--cpus-per-task=1",
-   "--chdir=/w'q",
-   "--mem=2G",
-   "--wrap=env VIRTUAL_ENV=/v \"$HOME\" -m autoware_carla_scenario.slurm.cli collect relative/d/t"
-  ],
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -249,9 +203,9 @@
    "--cpus-per-task=1",
    "--chdir=/w'q",
    "--mem=2G",
-   "--wrap=env VIRTUAL_ENV=/v \"$HOME\" -m autoware_carla_scenario.slurm.cli collect relative/d/t"
+   "relative/d/t/slurm/jobs/3-collect.sh"
   ],
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: relative/d/t\nset -u\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport VIRTUAL_ENV=/v\n\ncd '/w'\"'\"'q' || exit 1\nexec \"$HOME\" -m autoware_carla_scenario.slurm.cli collect relative/d/t\n",
   "job_script": {
    "0": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: relative/d/t  submission: 0\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport VIRTUAL_ENV=/v\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd '/w'\"'\"'q' || exit 1\nPORT_FILE=relative/d/t/slurm/tasks/0-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\" -u -m autoware_carla_scenario.slurm.worker relative/d/t/slurm/manifest.json 0 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n",
    "3": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: relative/d/t  submission: 3\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\nexport VIRTUAL_ENV=/v\n\n# CARLA renders off-screen (launcher.headless).\nunset DISPLAY WAYLAND_DISPLAY\n\ncd '/w'\"'\"'q' || exit 1\nPORT_FILE=relative/d/t/slurm/tasks/3-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n\"$HOME\" -u -m autoware_carla_scenario.slurm.worker relative/d/t/slurm/manifest.json 3 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n"
@@ -280,8 +234,19 @@
   }
  },
  "local-manifest-of-null-values": {
-  "collect_command": "AttributeError",
-  "collect_command_with_script": "AttributeError",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
+  "collect_command_with_script": [
+   "sbatch",
+   "--parsable",
+   "--job-name=acs-d-t-collect",
+   "--dependency=afterany:41_2",
+   "--output=/work/o/d/t/slurm/logs/collect-%j.out",
+   "--export=ALL",
+   "--cpus-per-task=1",
+   "--chdir=None",
+   "--mem=2G",
+   "/work/o/d/t/slurm/jobs/3-collect.sh"
+  ],
   "collect_script": "AttributeError",
   "job_script": {
    "0": "AttributeError",
@@ -311,9 +276,20 @@
   }
  },
  "local-manifest-of-other-types": {
-  "collect_command": "TypeError",
-  "collect_command_with_script": "TypeError",
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
+  "collect_command_with_script": [
+   "sbatch",
+   "--parsable",
+   "--job-name=acs-d-t-collect",
+   "--dependency=afterany:41_2",
+   "--output=/work/o/d/t/slurm/logs/collect-%j.out",
+   "--export=ALL",
+   "--cpus-per-task=1",
+   "--chdir=7",
+   "--mem=2G",
+   "/work/o/d/t/slurm/jobs/3-collect.sh"
+  ],
+  "collect_script": "TypeError",
   "job_script": {
    "0": "TypeError",
    "3": "TypeError"
@@ -344,7 +320,7 @@
  "local-manifest-without-cwd": {
   "collect_command": "KeyError: 'cwd'",
   "collect_command_with_script": "KeyError: 'cwd'",
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "KeyError: 'cwd'",
   "job_script": {
    "0": "KeyError: 'cwd'",
    "3": "KeyError: 'cwd'"
@@ -373,18 +349,7 @@
   }
  },
  "local-manifest-without-env": {
-  "collect_command": [
-   "sbatch",
-   "--parsable",
-   "--job-name=acs-d-t-collect",
-   "--dependency=afterany:41",
-   "--output=/work/o/d/t/slurm/logs/collect-%j.out",
-   "--export=ALL",
-   "--cpus-per-task=1",
-   "--chdir=/work",
-   "--mem=2G",
-   "--wrap=/usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/o/d/t"
-  ],
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -395,9 +360,9 @@
    "--cpus-per-task=1",
    "--chdir=/work",
    "--mem=2G",
-   "--wrap=/usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/o/d/t"
+   "/work/o/d/t/slurm/jobs/3-collect.sh"
   ],
-  "collect_script": "ValueError: launcher.remote_cwd is set, but the batch's manifest has no batch_dir_relative: the batch was submitted without remote_cwd",
+  "collect_script": "#!/bin/bash\n# autoware_carla_scenario: collects a batch submitted with launcher=slurm once its array has ended (docs/slurm.md).\n# Batch: /work/o/d/t\nset -u\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load x\n\ncd /work || exit 1\nexec /usr/bin/python3 -m autoware_carla_scenario.slurm.cli collect /work/o/d/t\n",
   "job_script": {
    "0": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work/o/d/t  submission: 0\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load x\n\ncd /work || exit 1\nPORT_FILE=/work/o/d/t/slurm/tasks/0-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n/usr/bin/python3 -u -m autoware_carla_scenario.slurm.worker /work/o/d/t/slurm/manifest.json 0 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n",
    "3": "#!/bin/bash\n# autoware_carla_scenario: one task of a batch submitted with launcher=slurm (docs/slurm.md).\n# Batch: /work/o/d/t  submission: 3\nset -u\nTASK=\"${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}\"\n\n# The submitting shell's environment, as it was (launcher.env_passthrough).\n\n# launcher.setup\nmodule load x\n\ncd /work || exit 1\nPORT_FILE=/work/o/d/t/slurm/tasks/3-${TASK}.port\n\n# The worker runs in the background so that the signal SLURM sends\n# before the time limit (--signal=B:TERM) reaches it through this trap.\n/usr/bin/python3 -u -m autoware_carla_scenario.slurm.worker /work/o/d/t/slurm/manifest.json 3 \"$TASK\" &\nchild=$!\ntrap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2\nrc=0\nwhile :; do\n  wait \"$child\"; rc=$?\n  kill -0 \"$child\" 2>/dev/null || break\ndone\n\n# The worker stops its CARLA however it ends, and removes the port file\n# once it has; if it was killed outright, its CARLA is stopped here.\nif [ -s \"$PORT_FILE\" ]; then\n  port=$(cat \"$PORT_FILE\")\n  if pkill -TERM -f -- \"-carla-rpc-port=${port}( |$)\"; then\n    sleep 5\n    pkill -KILL -f -- \"-carla-rpc-port=${port}( |$)\"\n  fi\n  rm -f \"$PORT_FILE\"\nfi\nexit \"$rc\"\n"
@@ -426,8 +391,19 @@
   }
  },
  "local-manifest-without-python": {
-  "collect_command": "KeyError: 'python'",
-  "collect_command_with_script": "KeyError: 'python'",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
+  "collect_command_with_script": [
+   "sbatch",
+   "--parsable",
+   "--job-name=acs-d-t-collect",
+   "--dependency=afterany:41_2",
+   "--output=/work/o/d/t/slurm/logs/collect-%j.out",
+   "--export=ALL",
+   "--cpus-per-task=1",
+   "--chdir=/work",
+   "--mem=2G",
+   "/work/o/d/t/slurm/jobs/3-collect.sh"
+  ],
   "collect_script": "KeyError: 'python'",
   "job_script": {
    "0": "KeyError: 'python'",
@@ -465,7 +441,7 @@
   "ValueError: launcher.remote_cwd: the batch's output directory is the directory scenario runs in (/w); it must be a directory under it"
  ],
  "remote-absolute": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -509,7 +485,7 @@
   }
  },
  "remote-home": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -553,7 +529,7 @@
   }
  },
  "remote-home-and-passthrough": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -609,7 +585,7 @@
   }
  },
  "remote-manifest-of-null-env": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -653,7 +629,7 @@
   }
  },
  "remote-manifest-without-cwd-and-env": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -697,7 +673,7 @@
   }
  },
  "remote-relative": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",
@@ -741,7 +717,7 @@
   }
  },
  "remote-without-relative-batch": {
-  "collect_command": "ValueError: a remote_cwd batch's collect job runs a script",
+  "collect_command": "ValueError: the collect job runs a script (collect_script)",
   "collect_command_with_script": [
    "sbatch",
    "--parsable",

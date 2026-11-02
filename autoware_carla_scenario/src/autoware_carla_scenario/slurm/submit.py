@@ -257,13 +257,21 @@ def job_script(
     return scripts.job_script(layout, inputs, settings, submission)
 
 
-def collect_script(manifest: dict[str, Any], settings: SlurmSettings) -> str:
-    """The script of the job collecting a ``remote_cwd`` batch, on a node
-    (:func:`.scripts.collect_script`)."""
+def collect_script(
+    manifest: dict[str, Any],
+    settings: SlurmSettings,
+    layout: BatchLayout | None = None,
+) -> str:
+    """The script of the job collecting the batch once its array has ended
+    (:func:`.scripts.collect_script`); *layout* is the batch's, which a batch
+    submitted without ``remote_cwd`` needs."""
     inputs = _script_inputs(
-        manifest, python=not settings.python, cwd=False, env=manifest.get("env") or {}
+        manifest,
+        python=not settings.python,
+        cwd=settings.remote_cwd is None,
+        env=manifest.get("env") or {},
     )
-    return scripts.collect_script(inputs, settings)
+    return scripts.collect_script(inputs, settings, layout)
 
 
 def _collect_command(
@@ -273,14 +281,10 @@ def _collect_command(
     job: str,
     script: Path | None = None,
 ) -> list[str]:
-    """The ``sbatch`` command of the job collecting the batch after *job*
-    (:func:`.scripts._collect_command`)."""
-    local = settings.remote_cwd is None
+    """The ``sbatch`` command of the job collecting the batch after *job*,
+    running *script* (:func:`.scripts._collect_command`)."""
     inputs = _script_inputs(
-        manifest,
-        python=local and not settings.python,
-        cwd=local,
-        env=manifest.get("env", {}) if local else {},
+        manifest, python=False, cwd=settings.remote_cwd is None, env={}
     )
     return scripts._collect_command(layout, inputs, settings, job, script)
 
@@ -365,15 +369,15 @@ def submit_cases(
         flush=True,
     )
     if not settings.wait and settings.collect_job:
-        collect_path: Path | None = None
-        if settings.remote_cwd is not None:
-            collect_path = layout.root / "jobs" / f"{index}-collect.sh"
-            _write_script(collect_path, collect_script(manifest, settings))
-        collect = _collect_command(
-            layout, manifest, settings, submission["job_id"], collect_path
-        )
-        submission["collect_sbatch"] = collect
+        collect_path = layout.root / "jobs" / f"{index}-collect.sh"
         try:
+            # Inside the try: the array is submitted already, so a script
+            # that cannot be written is reported like a refused sbatch.
+            _write_script(collect_path, collect_script(manifest, settings, layout))
+            collect = _collect_command(
+                layout, manifest, settings, submission["job_id"], collect_path
+            )
+            submission["collect_sbatch"] = collect
             submission["collect_job_id"] = _run_sbatch(collect)
         except (RuntimeError, OSError) as exc:
             # The array runs all the same: say how to collect it by hand.
