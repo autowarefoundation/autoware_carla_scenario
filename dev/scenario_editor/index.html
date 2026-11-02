@@ -1305,6 +1305,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#compares-within-a-tolerance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "=" compares within a tolerance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-map-path-is-a-document-field" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2608,6 +2619,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#compares-within-a-tolerance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "=" compares within a tolerance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-map-path-is-a-document-field" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3436,6 +3458,24 @@ entries repeat, such as NADE's adversities, where the first to fire wins:</p>
 <li><strong>Overrides</strong>: a run overrides one record's field with
   <code>scenario.param_overrides.&lt;node id&gt;.&lt;field&gt;.&lt;index&gt;.&lt;sub&gt;=&lt;value&gt;</code>.</li>
 </ul>
+<h3 id="compares-within-a-tolerance">"=" compares within a tolerance<a class="headerlink" href="#compares-within-a-tolerance" title="Permanent link">&para;</a></h3>
+<p>A card that measures a continuous quantity -- Speed, Acceleration, Relative
+speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+progress, Metric -- offers <code>=</code> among its predicates, and a measured value
+practically never lands exactly on a threshold. Each of these cards has an
+optional <strong>Tolerance (=)</strong> field, in the card's own unit: <code>=</code> holds while the
+value is within that much of the threshold, either side, so "Speed = 10 m/s,
+tolerance 0.05" holds from 9.95 to 10.05 m/s. The other predicates ignore it,
+and an <code>=</code> card shows its tolerance as <code>± 0.05</code> beside the value.</p>
+<p>Left blank, the tolerance is the runtime's 1e-6, so a document written before
+the field existed loads and runs as it did; the validator warns about such a
+card instead, since its rule would never fire. A negative tolerance is an
+error. Elapsed time and Road users matching have no tolerance field: the
+scenario clock advances in fixed steps, so <code>=</code> holds on the tick that reaches
+a duration that is a whole number of steps (use <code>≥</code> for any other), and a
+count is a whole number. The Lanelet
+length spawn constraint has none either, so <code>=</code> on it is warned about: bound
+the length with <code>≥</code> and <code>≤</code> instead.</p>
 <h3 id="the-map-path-is-a-document-field">The map path is a document field<a class="headerlink" href="#the-map-path-is-a-document-field" title="Permanent link">&para;</a></h3>
 <p><code>/draft/&lt;id&gt;/map.osm</code> serves the file the document names, and that name is
 typed by whoever is using the editor -- which may bind <code>0.0.0.0</code> (<code>--host</code>). Handed
@@ -3706,7 +3746,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 10:29:19 UTC"><span class="timeago" datetime="2026-11-01T10:29:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 10:29:19 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 01:12:32 UTC"><span class="timeago" datetime="2026-11-02T01:12:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 01:12:32 UTC">2026-11-02</span>
   </span>
 
     
