@@ -30,7 +30,7 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 `action` and `result`, and `schema_version` itself; a file of version 1 has no
 `schema_version` and none of those records, and still follows the schema.
 The records marked (2) in the table below that are not in that list
-(`rear_axle`, `turn_indicators`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`,
+(`rear_axle`, `turn_indicators`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`, `metric`,
 `spawn`, `despawn`) came later within version 2: a reader of version 2 that does not
 know one skips it. So did the `tick`'s optional `angular_velocity` field: a
 file written before it has none.
@@ -48,7 +48,7 @@ Each line is one of twenty records, told apart by `type`. A file starts with one
 an `actor_gone` line for every one that has gone since the last, and followed
 by a `turn_indicators` line when a vehicle's turn indicators changed on it, a `markers` line when the ego's plan changed on it (and a `plan` line after
 it, the plan timed), a `condition` line for
-each condition that changed and an `action` line for each action that moved on. A run that reached a verdict ends with `result`.
+each condition that changed and an `action` line for each action that moved on. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for and `condition` lines for each metric condition, whether its metric was NG, all in frame order ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`.
 
 ```json
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
@@ -86,6 +86,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `walker_fallen` (2) | once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways) | `frame`, `t`, `id`, `role`, `drop` (m), `tilt` (deg) |
 | `spawn` (2) | on the tick a `SpawnAction` brought an entity into the scene (one spawned hidden, as a rule; not for a prop) | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null) |
 | `despawn` (2) | on the tick a `DespawnAction` removed an entity, or the run a walker that lay fallen 5 s | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null), `reason` (`action`/`fallen`) |
+| `metric` (2) | after the last tick, a run judged on a `MetricCondition`, for each frame its metrics were computed for (every tick; CriMe's and CommonRoad-Reach's every 0.1 s) | `frame`, `t`, `values` `{key: value}` (the metrics computed for that tick, null where one read nothing or no finite number) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
 Fixed-length arrays are tuples: the schema gives each position its meaning, and

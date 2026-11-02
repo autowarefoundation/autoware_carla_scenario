@@ -559,6 +559,22 @@ T4Scene, `{ScenarioName}.t4scene.pb` with its map, `{ScenarioName}.t4scene.map.p
 the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
 `scenario-t4scene <output dir>` does the same after a run.
 
+### Metrics in the recording
+
+A run judged on a `MetricCondition` writes the metrics it computed once it was
+over into its trajectory log ([Metrics](metrics.md#how-metrics-are-computed)),
+and its recording carries them:
+
+- each metric as a scalar, `metrics/<key>` (`metrics/crime_ttc_s`), on the
+  recording's `frame` and `sim_time` timelines -- add a time series view of
+  `/metrics` in the viewer to plot them (the converter's layout has none yet);
+- each metric condition in the **Conditions** view, satisfied over the frames
+  its metric was NG.
+
+The values are written with the Rerun SDK and merged into the recording once
+the log is converted, as the sensors are (`rerun rrd merge`); the `rerun`
+extra installs the SDK. Converting a log again puts them in again.
+
 ### Sensors in the recording
 
 The trajectory log holds no sensor data. With `rerun.enabled=true` and:

@@ -134,9 +134,12 @@ ros2 = [
 # A Rerun recording of each run (`rerun.enabled=true`, docs/usage.md): the
 # converter from trajectory logs to `.rrd` (hakuturu583/autoware_carla_scenario_rerun,
 # a Rust core in one abi3 wheel), which the runner hands each log to as the run
-# ends. Its minor version follows the trajectory log's format.
+# ends. Its minor version follows the trajectory log's format. With the Rerun
+# SDK of the minor version its recordings are written with, which puts the
+# metrics a run computed into its recording (rerun_metrics.py).
 rerun = [
     "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "rerun-sdk>=0.38.1,<0.39",
 ]
 # The LiDAR sweeps of each run as a Rerun recording too (`rerun.lidar=true`):
 # the converter, and the Rerun SDK of the minor version its recordings are

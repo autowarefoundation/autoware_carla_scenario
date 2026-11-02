@@ -395,16 +395,50 @@ def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
     return FrameRecorder()
 
 
+def _record_metrics(
+    trajectory: Any,
+    frames: list[Any],
+    series: dict[str, Any],
+    judged: list[tuple[int, BaseCondition]],
+) -> None:
+    """Write the metrics of *series* into the *trajectory* log, a ``metric``
+    record per frame evaluated, and each condition of *judged* as
+    ``condition`` records: whether its metric was NG, on its first frame and
+    whenever that changed."""
+    frame_at = {frame.t: frame.frame for frame in frames}
+    rows: dict[float, dict[str, Optional[float]]] = {}
+    for key, metric in series.items():
+        for t, value in zip(metric.times, metric.values):
+            rows.setdefault(t, {})[key] = value
+    for t in sorted(rows):
+        trajectory.record_metric(frame_at.get(t, 0), t, rows[t])
+    for i, condition in judged:
+        metric = series[condition.metric]  # type: ignore[attr-defined]
+        last: Optional[bool] = None
+        for t, value in zip(metric.times, metric.values):
+            ng = condition.is_ng(value)  # type: ignore[attr-defined]
+            if ng != last:
+                trajectory.record_condition_at(
+                    frame_at.get(t, 0), t, "fail", i, condition.label, ng
+                )
+                last = ng
+
+
 def _judge_metrics(
     scenario: BaseScenario,
     recorder: Optional[Any],
     world: "carla.World",
     result: ScenarioResult,
     scenario_name: str,
+    trajectory: Optional[Any] = None,
 ) -> ScenarioResult:
     """Judge the run's MetricConditions on the metrics of the frames it
     recorded, computed now, on the run's map (still loaded); the run's result,
     failed by the first that fails when it fails earlier than the run did.
+
+    The metrics, and each condition's NG frames, go into the run's
+    *trajectory* log (its :class:`TrajectoryRecorder`), for its Rerun
+    recording (:mod:`~autoware_carla_scenario.rerun_metrics`).
 
     Raises:
         ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A CommonRoad
@@ -424,6 +458,8 @@ def _judge_metrics(
         ", ".join(sorted(set(keys))),
     )
     series = evaluate_metrics(recorder.frames, run_carla_map(world), keys)
+    if trajectory is not None:
+        _record_metrics(trajectory, recorder.frames, series, judged)
     first: Optional[tuple[int, BaseCondition, ScenarioResult]] = None
     for i, condition in judged:
         metric = series[condition.metric]  # type: ignore[attr-defined]
@@ -1981,7 +2017,12 @@ class ScenarioRunner:
                 # The MetricConditions, on the metrics of the recorded frames,
                 # while the run's map is still loaded.
                 result = _judge_metrics(
-                    scenario, metric_recorder, world, result, scenario_name
+                    scenario,
+                    metric_recorder,
+                    world,
+                    result,
+                    scenario_name,
+                    trajectory,
                 )
 
             # Sampled before teardown, while the ego still exists.

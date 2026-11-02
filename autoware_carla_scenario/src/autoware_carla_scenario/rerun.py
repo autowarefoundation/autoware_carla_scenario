@@ -14,7 +14,9 @@ failure with the case it belongs to.
     convert_outputs("outputs/2026-10-18/15-58-45")
 
 or, from a shell, ``python -m autoware_carla_scenario.rerun <output dir>``.
-It keeps the sensors a run recorded (:mod:`.rerun_lidar`): a
+The metrics a run computed once it was over, which its log holds, are put in
+the recording too (:mod:`.rerun_metrics`).  It keeps the sensors a run
+recorded (:mod:`.rerun_lidar`): a
 ``{stem}.sensors.rrd`` beside a log is merged into its new recording, and the
 sensors in a recording it replaces are carried over into the new one.
 Neither needs CARLA.  Both need the extra:
@@ -281,6 +283,9 @@ class RerunConverter:
                 logger.exception(
                     "merging the sensors %s into %s failed", lidar, recording
                 )
+        from .rerun_metrics import merge_metrics  # noqa: PLC0415
+
+        merge_metrics(trajectory, recording, _label(trajectory))
         return stats
 
     def wait(self) -> list[RerunConversion]:
@@ -414,6 +419,9 @@ def _install(
             logger.exception(
                 "merging the sensors %s into %s failed", sensors, recording
             )
+    from .rerun_metrics import merge_metrics  # noqa: PLC0415
+
+    merge_metrics(trajectory, recording, label)
     logger.info("[%s] Rerun recording written to %s", label, recording)
     return RerunConversion(label, trajectory, recording, stats=stats)
 

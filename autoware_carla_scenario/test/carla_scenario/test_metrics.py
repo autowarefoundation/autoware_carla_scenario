@@ -904,7 +904,10 @@ def test_the_editor_offers_every_metric() -> None:
 
 
 def _judged_run(
-    *conditions: Any, result: Any, worlds: list[tuple[float, _World]]
+    *conditions: Any,
+    result: Any,
+    worlds: list[tuple[float, _World]],
+    trajectory: Any = None,
 ) -> Any:
     from autoware_carla_scenario.scenario_runner import _judge_metrics
 
@@ -916,7 +919,14 @@ def _judged_run(
     recorder = FrameRecorder()
     for t, world in worlds:
         recorder.record(world, t, None)  # type: ignore[arg-type]
-    return _judge_metrics(scenario, recorder, worlds[-1][1], result, "test")  # type: ignore[arg-type]
+    return _judge_metrics(
+        scenario,
+        recorder,
+        worlds[-1][1],
+        result,
+        "test",
+        trajectory,  # type: ignore[arg-type]
+    )
 
 
 def _hit_at_two() -> list[tuple[float, _World]]:
@@ -984,3 +994,50 @@ def test_the_runner_records_frames_and_judges_after_the_loop() -> None:
     assert "metric_recorder.record(" in source
     assert source.index("_judge_metrics(") < source.index("coverage.end(world")
     assert "if is_post_run(condition):" in source
+
+
+class _Log:
+    """What a run's trajectory log is told once the run is over."""
+
+    def __init__(self) -> None:
+        self.metrics: list[tuple[int, float, dict[str, Optional[float]]]] = []
+        self.conditions: list[tuple[int, float, str, int, str, bool]] = []
+
+    def record_metric(
+        self, frame: int, t: float, values: dict[str, Optional[float]]
+    ) -> None:
+        self.metrics.append((frame, t, values))
+
+    def record_condition_at(
+        self, frame: int, t: float, role: str, index: int, label: str, satisfied: bool
+    ) -> None:
+        self.conditions.append((frame, t, role, index, label, satisfied))
+
+
+def test_the_metrics_and_their_ng_frames_go_into_the_log() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    log = _Log()
+    _judged_run(
+        MetricCondition(COLLISION_AT_FAULT, label="hit"),
+        MetricCondition(WRONG_LANE, label="wrong lane"),
+        result=ScenarioResult(passed=True, message="done", elapsed_seconds=3.0),
+        worlds=_hit_at_two(),
+        trajectory=log,
+    )
+
+    # A record a frame, every metric judged in it, in frame order.
+    assert [(t, values) for _, t, values in log.metrics] == [
+        (0.0, {COLLISION_AT_FAULT: 0.0, WRONG_LANE: 0.0}),
+        (1.0, {COLLISION_AT_FAULT: 0.0, WRONG_LANE: 0.0}),
+        (2.0, {COLLISION_AT_FAULT: 1.0, WRONG_LANE: 0.0}),
+        (3.0, {COLLISION_AT_FAULT: 1.0, WRONG_LANE: 0.0}),
+    ]
+    frames = [frame for frame, _, _ in log.metrics]
+    assert frames == sorted(frames) and len(set(frames)) == 4
+    # Each condition on its first frame and whenever it changed.
+    assert [(t, role, i, label, ng) for _, t, role, i, label, ng in log.conditions] == [
+        (0.0, "fail", 0, "hit", False),
+        (2.0, "fail", 0, "hit", True),
+        (0.0, "fail", 1, "wrong lane", False),
+    ]

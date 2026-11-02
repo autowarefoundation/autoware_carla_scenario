@@ -98,6 +98,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import math
 from pathlib import Path
 from typing import IO, Any, Optional
 
@@ -534,6 +535,50 @@ class TrajectoryRecorder:
                     "target_t": _r(arrival.target_t),
                     "actual_t": _r(arrival.actual_t),
                     "error_s": _r(arrival.error_s),
+                }
+            ),
+        )
+
+    def record_metric(
+        self, frame: int, t: float, values: dict[str, Optional[float]]
+    ) -> None:
+        """Write the metrics computed once the run was over for the tick of
+        CARLA frame *frame* at *t* (:mod:`~autoware_carla_scenario.metric_batch`);
+        a value that reads nothing, or no finite number, as null.  Values are
+        written as they are, not to the millimetre: an importance-sampling
+        weight is far smaller."""
+        if self._out is None:
+            return
+        written = {
+            key: None if value is None or not math.isfinite(value) else float(value)
+            for key, value in values.items()
+        }
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {"type": "metric", "frame": int(frame), "t": _r(t), "values": written}
+            ),
+        )
+
+    def record_condition_at(
+        self, frame: int, t: float, role: str, index: int, label: str, satisfied: bool
+    ) -> None:
+        """Write a condition's state on the tick of CARLA frame *frame* at
+        *t*: a metric condition's, judged once the run was over, whether its
+        metric was NG then."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "condition",
+                    "frame": int(frame),
+                    "t": _r(t),
+                    "role": role,
+                    "index": index,
+                    "label": label,
+                    "satisfied": bool(satisfied),
                 }
             ),
         )

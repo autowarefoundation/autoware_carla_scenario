@@ -274,7 +274,9 @@ map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
 own every tick, in order, by the code that reads them off a live world, on a
 stand-in world answering with the recorded actors and the run's map; the
 CommonRoad metrics every 0.1 s, by the workers at once. Then each metric
-condition judges its metric's series.
+condition judges its metric's series. The metrics, and each metric condition's NG frames,
+go into the run's trajectory log (`metric` and `condition` records) and so
+into its Rerun recording ([Metrics in the recording](usage.md#metrics-in-the-recording)).
 
 To read an AlpaSim metric off a live world yourself -- in a probe, a test --
 `read_metric(key, world)` returns its value in the frame, or `None`; a

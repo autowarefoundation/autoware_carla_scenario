@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twenty records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twenty-one records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -63,6 +63,9 @@
       "$ref": "#/definitions/DespawnRecord"
     },
     {
+      "$ref": "#/definitions/MetricRecord"
+    },
+    {
       "$ref": "#/definitions/ResultRecord"
     }
   ],
@@ -88,6 +91,7 @@
       "walker_fallen": "#/definitions/WalkerFallenRecord",
       "spawn": "#/definitions/SpawnRecord",
       "despawn": "#/definitions/DespawnRecord",
+      "metric": "#/definitions/MetricRecord",
       "result": "#/definitions/ResultRecord"
     }
   },
@@ -1131,6 +1135,41 @@
         "entity",
         "id",
         "reason"
+      ],
+      "additionalProperties": false
+    },
+    "MetricRecord": {
+      "title": "MetricRecord",
+      "description": "The metrics computed for one tick once the run was over (`metric_batch`), for a run judged on a `MetricCondition`: written after the run's last tick, in the order of their frames, together with each metric condition's `condition` records (whether its metric was NG). The metrics read every tick and those read every 0.1 s (CriMe's and CommonRoad-Reach's) share the records of the frames both were read on. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "metric"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it was computed for.",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "values": {
+          "description": "Each metric computed for the tick, by its key (`metrics.BUILT_IN_METRICS`): its value in the metric's unit, or null where it read nothing or no finite number (a time to collision that never comes).",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "values"
       ],
       "additionalProperties": false
     },

@@ -1006,6 +1006,36 @@ def test_the_new_records_never_fail_the_run(tmp_path) -> None:
     recorder.record_warmup(1, 0, 1)
     recorder.record_spawn("s", "npc1", 1)
     recorder.record_despawn("d", "npc1", 1)
+    recorder.record_metric(1, 0.05, {"offroad": 0.0})
+    recorder.record_condition_at(1, 0.05, "fail", 0, "x", True)
+
+
+def test_the_metrics_computed_after_the_run_are_records(tmp_path) -> None:
+    recorder, world = _run(tmp_path)
+    world.frame = 101
+    recorder.record(world, 0.05)  # type: ignore[arg-type]
+    recorder.record_metric(
+        101, 0.05, {"crime_ttc_s": 2.5501, "crime_hw_m": None, "ttc_inf": float("inf")}
+    )
+    recorder.record_condition_at(101, 0.05, "fail", 2, "TTC under 3 s", True)
+    recorder.close()
+
+    records = _lines(tmp_path / "s.trajectory.jsonl")
+    assert {
+        "type": "metric",
+        "frame": 101,
+        "t": 0.05,
+        "values": {"crime_ttc_s": 2.5501, "crime_hw_m": None, "ttc_inf": None},
+    } in records
+    assert {
+        "type": "condition",
+        "frame": 101,
+        "t": 0.05,
+        "role": "fail",
+        "index": 2,
+        "label": "TTC under 3 s",
+        "satisfied": True,
+    } in records
 
 
 def test_a_map_file_that_cannot_be_read_leaves_its_field_null(tmp_path) -> None:

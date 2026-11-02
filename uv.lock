@@ -214,6 +214,7 @@ map = [
 ]
 rerun = [
     { name = "autoware-carla-scenario-rerun" },
+    { name = "rerun-sdk" },
 ]
 rerun-lidar = [
     { name = "autoware-carla-scenario-rerun" },
@@ -265,6 +266,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rerun-sdk", marker = "extra == 'rerun'", specifier = ">=0.38.1,<0.39" },
     { name = "rerun-sdk", marker = "extra == 'rerun-lidar'", specifier = ">=0.38.1,<0.39" },
     { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.42.0" },
     { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.42.0" },
