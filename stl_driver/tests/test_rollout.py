@@ -190,6 +190,81 @@ def test_no_lateral_input_stays_on_the_centreline_of_a_straight_route(config):
     assert torch.allclose(heading, torch.zeros(config.horizon.n_steps), atol=1e-4)
 
 
+def _road_heading_on_circle(position: torch.Tensor, radius_m: float) -> float:
+    """Tangent direction of `curved_route` at a point on it."""
+    return float(np.arctan2(position[0].item(), radius_m - position[1].item()))
+
+
+def test_a_plan_that_stops_in_a_bend_keeps_the_path_heading(config):
+    """Issue #1142: resting poses must not snap back to the rig's heading.
+
+    At rest the differenced velocity is zero and `atan2(0, 0)` is 0, the
+    heading the ego has *now*. Braking to a halt eight degrees into a 15 m
+    turn then planned every resting pose pointing eight degrees off the road
+    -- tens of degrees when stopping deeper into a junction -- which the
+    controller's nearest-point gating and yaw interpolation both read.
+    """
+    radius = 15.0
+    inputs = make_inputs(
+        config,
+        route=curved_route(radius_m=radius, sweep_rad=np.pi / 2),
+        speed0_mps=4.0,
+        accel0_mps2=-3.0,
+    )
+    params = constant_accel_params(-3.9, accel0=-3.0)
+    positions, heading = plan_xy(params, inputs, config)
+    speed = rollout(params, inputs, config)[:, Col.SPEED]
+
+    at_rest = (speed == 0.0).nonzero().flatten()
+    assert len(at_rest) > config.horizon.n_steps // 2, "the plan should stop early"
+    first_rest = int(at_rest[0])
+    road = _road_heading_on_circle(positions[first_rest], radius)
+    assert road > np.radians(5.0), "the stop should be well into the bend"
+    # Within the chord error of the 1 m route table on this radius.
+    tolerance = np.radians(2.5)
+    for index in at_rest.tolist():
+        assert abs(heading[index].item() - road) < tolerance
+    # And with no jump where the vehicle comes to rest.
+    assert torch.all(heading[first_rest:] == heading[first_rest]).item()
+    assert abs(heading[first_rest].item() - heading[first_rest - 1].item()) < tolerance
+
+
+def test_a_plan_entirely_at_rest_points_along_the_route(config):
+    """Nothing moves, so the only direction there is is the road's."""
+    yaw = np.radians(30.0)
+    stations = np.arange(0.0, 302.0, 2.0)
+    route = np.stack(
+        [stations * np.cos(yaw), stations * np.sin(yaw), np.zeros_like(stations)], axis=1
+    )
+    inputs = make_inputs(config, route=route, speed0_mps=0.0)
+    positions, heading = plan_xy(constant_accel_params(-2.0), inputs, config)
+
+    assert torch.allclose(positions, positions[:1].expand_as(positions))
+    assert torch.allclose(heading, torch.full_like(heading, yaw), atol=1e-4)
+
+
+def test_the_heading_has_no_nan_gradient_at_rest(config):
+    """Resting steps must not leak a non-finite `atan2` derivative.
+
+    `atan2` is undefined at the origin, which is exactly where a resting
+    step's velocity sits; the heading must stay finite and differentiable
+    through a stop and through a plan that never moves.
+    """
+    radius = 15.0
+    for speed0, accel in ((0.0, -2.0), (4.0, -3.9)):
+        inputs = make_inputs(
+            config,
+            route=curved_route(radius_m=radius, sweep_rad=np.pi / 2),
+            speed0_mps=speed0,
+        )
+        params = constant_accel_params(accel).clone().requires_grad_(True)
+        _, heading = plan_xy(params, inputs, config)
+        assert torch.isfinite(heading).all()
+        heading.sum().backward()
+        assert params.grad is not None
+        assert torch.isfinite(params.grad).all()
+
+
 def test_the_plan_starts_from_the_measured_lateral_offset(config):
     """C0 continuity with where the vehicle actually is.
 
@@ -328,8 +403,43 @@ def test_headway_tightens_as_we_close_on_a_lead(config):
     signal = rollout(hold_speed_params(), inputs, config)
     slack = signal[:, Col.HEADWAY_SLACK]
     assert slack[0] > slack[-1]
-    expected0 = 30.0 - rss_distance(8.0, 0.0, config.limits)
+    # Bumper to bumper: `lead_station_m` is the lead's rear edge and the
+    # ego's station its rear axle, so the front of the ego comes off too.
+    # (This used to read `30 - rss`, a gap 3.75 m too generous; #1140.)
+    expected0 = 30.0 - ego_front_m(config) - rss_distance(8.0, 0.0, config.limits)
     assert slack[0].item() == pytest.approx(expected0, abs=1.0)
+
+
+def ego_front_m(config) -> float:
+    """Rear axle to front bumper, written out rather than asked of the config."""
+    return config.limits.ego_rear_axle_to_centre_m + config.limits.ego_length_m / 2.0
+
+
+def test_the_config_reports_the_front_bumper(config):
+    assert config.limits.ego_front_m() == pytest.approx(ego_front_m(config))
+    assert ego_front_m(config) == pytest.approx(3.75)
+
+
+def test_headway_is_measured_from_the_front_bumper(config):
+    """Issue #1140: a stopped lead 0.5 m off the bumper violates the rule."""
+    limits = config.limits
+    front = ego_front_m(config)
+    at_rest = make_inputs(config, speed0_mps=0.0, lead_station_m=front + 0.5)
+    slack = rollout(hold_speed_params(), at_rest, config)[:, Col.HEADWAY_SLACK]
+    assert slack[0].item() == pytest.approx(0.5 - limits.standstill_gap_m, abs=1e-3)
+    assert (slack < 0.0).all()
+
+    # At a matched speed, exactly the RSS distance between bumpers is the edge.
+    # The first sample is one step in, by which time the ego has covered
+    # `speed * step_s` towards a lead these inputs hold still; measured from
+    # the axle this read +2.95 m.
+    speed = 8.0
+    required = rss_distance(speed, speed, limits)
+    matched = make_inputs(
+        config, speed0_mps=speed, lead_station_m=front + required, lead_speed_mps=speed
+    )
+    slack0 = rollout(hold_speed_params(), matched, config)[0, Col.HEADWAY_SLACK].item()
+    assert slack0 == pytest.approx(-speed * config.horizon.step_s, abs=0.05)
 
 
 def test_a_lead_at_our_own_speed_needs_far_less_room_than_a_stopped_one(config):

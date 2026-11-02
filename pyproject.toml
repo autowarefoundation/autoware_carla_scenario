@@ -59,7 +59,7 @@ dev = [
     # ...and the `hils` extra (the HILS bridge) and its tests.
     "hilspy>=0.16,<0.17",
     # ...and the `rerun` extra (Rerun recordings of the runs) and its tests.
-    "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "autoware-carla-scenario-rerun>=0.2,<0.3",
     "hypothesis>=6.100",
     "jsonschema>=4.18",
     # ...and the `t4` extra (T4 datasets of the runs) and its tests, which

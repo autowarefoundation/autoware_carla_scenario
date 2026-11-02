@@ -273,6 +273,69 @@ def test_a_distant_red_light_still_governs(policy):
 
 
 # ---------------------------------------------------------------------------
+# A route that starts ahead of the ego (#1141)
+# ---------------------------------------------------------------------------
+
+#: How far ahead of the rig a route walked from the actor's centre starts.
+LEAD_M = 1.4
+
+
+def route_ahead_of_the_ego() -> np.ndarray:
+    route = straight_route()
+    route[:, 0] += LEAD_M
+    return route
+
+
+def inputs_for(policy, route, *, renderer_data=None, speed_mps=0.0):
+    return policy._build_inputs(
+        route_in_rig=route,
+        anchor=Pose.identity(),
+        renderer_data=renderer_data,
+        speed_mps=speed_mps,
+        accel_mps2=0.0,
+    )
+
+
+def centreline_x(inputs, station_m: float) -> float:
+    """The table's ``x`` at one station; the route runs along ``x``."""
+    xy = inputs.route_xy.double().numpy()
+    return float(np.interp(station_m / inputs.route_ds, np.arange(len(xy)), xy[:, 0]))
+
+
+def test_the_ego_behind_the_route_start_gets_its_own_station(policy):
+    inputs = inputs_for(policy, route_ahead_of_the_ego())
+    assert centreline_x(inputs, float(inputs.station0_m)) == pytest.approx(0.0, abs=1e-5)
+    # The route's first point stays where it was published.
+    assert centreline_x(inputs, float(inputs.station0_m) + LEAD_M) == pytest.approx(
+        LEAD_M, abs=1e-5
+    )
+
+
+def test_the_red_light_stop_is_measured_from_the_ego_not_the_route_start(policy):
+    """The light is 10 m ahead of the rig: the rule must hold the rear axle
+    ``stop_line_margin_m`` short of it, not 1.4 m further on."""
+    inputs = inputs_for(policy, route_ahead_of_the_ego(), renderer_data=red_light(10.0))
+    expected = 10.0 - CONFIG.limits.stop_line_margin_m
+    assert centreline_x(inputs, float(inputs.stop_station_m)) == pytest.approx(expected, abs=1e-4)
+
+
+def test_a_plan_at_rest_starts_at_the_ego(policy):
+    import torch
+
+    from stl_driver.rollout import plan_xy
+
+    inputs = inputs_for(policy, route_ahead_of_the_ego(), renderer_data=red_light(10.0))
+    hold = torch.tensor([-5.0, -5.0, -5.0, -5.0, 0.0, 0.0])
+    positions, _ = plan_xy(hold, inputs, CONFIG)
+    assert np.allclose(positions.detach().numpy(), 0.0, atol=1e-4)
+
+    result = policy.drive(
+        context(route=route_ahead_of_the_ego(), speed_mps=0.0, renderer_data=red_light(10.0))
+    )
+    assert np.linalg.norm(result.trajectory_in_rig.positions[0, :2]) < 0.3
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 

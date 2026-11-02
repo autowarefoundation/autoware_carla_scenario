@@ -86,9 +86,29 @@ def test_the_metrics_are_merged_into_the_converted_recording(tmp_path: Path) -> 
     pytest.importorskip("rerun")
     from autoware_carla_scenario.rerun_lidar import _cli
 
+    from autoware_carla_scenario.rerun_metrics import converter_draws_metrics
+
+    # The pinned converter (>=0.2) draws the metrics itself, so the merge is
+    # for an older one: its recording is what converting the log without its
+    # metric records gives.
+    assert converter_draws_metrics(converter)
     trajectory = _log(tmp_path / "s.trajectory.jsonl")
     recording = tmp_path / "s.rrd"
-    converter.convert(str(trajectory), str(recording))
+    # Same stem, so the same recording id as the merge's.
+    (tmp_path / "older").mkdir()
+    converter.convert(
+        str(_log(tmp_path / "older" / "s.trajectory.jsonl", metrics=False)),
+        str(recording),
+    )
+    assert (
+        "/metrics/"
+        not in subprocess.run(
+            [str(_cli()), "rrd", "print", str(recording)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
 
     assert merge_metrics(trajectory, recording, "s")
 
