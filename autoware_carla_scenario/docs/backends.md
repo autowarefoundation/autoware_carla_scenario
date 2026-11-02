@@ -68,8 +68,10 @@ a backend is said to take (backends.<name>.gpu_memory_mb / memory_mb).
 
 A container set to one GPU (`gpus: device=N`) is placed first, and checked on
 that GPU. Then each of the others, the largest first, is placed on the GPU with
-the most room left, and starts on that GPU. One with `gpus: none` needs no GPU
-at all.
+the most room left, and starts on that GPU. When that leaves one without room,
+the other ways to place them are tried, and the run is refused only when none
+fits them all; the message then names the ones the first placement left out.
+One with `gpus: none` needs no GPU at all.
 
 The check is a snapshot of what is free when the backends start. It cannot see
 what others are about to take:

@@ -52,6 +52,62 @@ class HostResources:
     memory_mb: int
 
 
+#: How many placements :func:`_fit` tries before it gives up.
+_FIT_STEPS = 10000
+
+
+def _fit(
+    sizes: list[int], gpus: Sequence[Gpu], free: dict[int, int]
+) -> Optional[list[Gpu]]:
+    """A GPU for each size (largest first) that leaves none short, or ``None``.
+
+    The first placement tried puts each on the GPU with the most room left
+    (the first such GPU on a tie), so a run the greedy placement fits is
+    placed the same way. It gives up after :data:`_FIT_STEPS` placements.
+    """
+    listed = list(gpus)
+    room = [free[gpu.index] for gpu in listed]
+    chosen = [0 for _ in sizes]
+    steps = [_FIT_STEPS]
+    if _search(0, sizes, room, chosen, steps):
+        return [listed[index] for index in chosen]
+    return None
+
+
+def _search(
+    at: int, sizes: list[int], room: list[int], chosen: list[int], steps: list[int]
+) -> bool:
+    """Place ``sizes[at:]`` in ``room``, recording each GPU in ``chosen``."""
+    if at == len(sizes):
+        return True
+    steps[0] -= 1
+    if steps[0] < 0:
+        return False
+    rest = 0
+    for size in sizes[at:]:
+        rest += size
+    total = 0
+    for left in room:
+        total += left
+    if rest > total:
+        return False
+    size = sizes[at]
+    # The roomiest first; a GPU with as much room as one tried is the same.
+    tried: list[int] = []
+    for index in sorted(range(len(room)), key=lambda i: -room[i]):
+        if room[index] < size:
+            break
+        if room[index] in tried:
+            continue
+        tried.append(room[index])
+        room[index] -= size
+        chosen[at] = index
+        if _search(at + 1, sizes, room, chosen, steps):
+            return True
+        room[index] += size
+    return False
+
+
 def probe_host() -> HostResources:
     """What the host has free now."""
     return HostResources(gpus=_visible(_gpus()), memory_mb=_available_memory_mb())
@@ -84,33 +140,48 @@ def assign_gpus(
     free = {gpu.index: gpu.free_mb for gpu in host.gpus}
     placed: dict[str, Optional[Gpu]] = {}
     # The backends set to a GPU first, so one that is free to go anywhere
-    # cannot take their room; then the rest, the largest first, each onto
-    # the GPU with the most room left.
+    # cannot take their room.
     by_size = sorted(needs, key=lambda item: -item[1].gpu_memory_mb)
-    order = [item for item in by_size if item[1].gpu is not None]
-    order.extend(item for item in by_size if item[1].gpu is None)
-    for name, need in order:
+    loose: list[tuple[str, Resources]] = []
+    for name, need in by_size:
         if need.gpu_memory_mb <= 0:
             placed[name] = None
             continue
         pinned = need.gpu
         if pinned is None:
-            best = max(host.gpus, key=lambda gpu: free[gpu.index], default=None)
-            where = "the roomiest GPU"
-        else:
-            best = next((gpu for gpu in host.gpus if gpu.index == pinned), None)
-            where = "the GPU it is set to"
+            loose.append((name, need))
+            continue
+        best = next((gpu for gpu in host.gpus if gpu.index == pinned), None)
         if best is None:
-            shortfalls.append(
-                f"{name}: needs a GPU, and none is visible"
-                if pinned is None
-                else f"{name}: is set to GPU {pinned}, which is not visible"
-            )
+            shortfalls.append(f"{name}: is set to GPU {pinned}, which is not visible")
             continue
         if free[best.index] < need.gpu_memory_mb:
             shortfalls.append(
                 f"{name}: {need.gpu_memory_mb} MiB of GPU memory needed, "
-                f"{free[best.index]} MiB free on {where} ({best.index})"
+                f"{free[best.index]} MiB free on the GPU it is set to ({best.index})"
+            )
+            continue
+        free[best.index] -= need.gpu_memory_mb
+        placed[name] = best
+    # Then the rest: the largest first, each onto the GPU with the most room
+    # left, or, when that leaves one without room, another placement that
+    # fits them all (#1121).
+    if loose and host.gpus:
+        found = _fit([need.gpu_memory_mb for _, need in loose], host.gpus, free)
+        if found is not None:
+            for index in range(len(loose)):
+                placed[loose[index][0]] = found[index]
+            loose = []
+    # None fits them all: the greedy placement names the ones left out.
+    for name, need in loose:
+        best = max(host.gpus, key=lambda gpu: free[gpu.index], default=None)
+        if best is None:
+            shortfalls.append(f"{name}: needs a GPU, and none is visible")
+            continue
+        if free[best.index] < need.gpu_memory_mb:
+            shortfalls.append(
+                f"{name}: {need.gpu_memory_mb} MiB of GPU memory needed, "
+                f"{free[best.index]} MiB free on the roomiest GPU ({best.index})"
             )
             continue
         free[best.index] -= need.gpu_memory_mb

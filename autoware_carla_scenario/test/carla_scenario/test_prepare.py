@@ -337,6 +337,43 @@ class TestAssignGpus:
         )
         assert "perception: 5000 MiB of GPU memory needed" not in message
 
+    def test_a_placement_the_greedy_one_misses_is_found(self) -> None:
+        # Pinned first, the roomiest GPU each time leaves "small" out:
+        # perception and policy on GPU 0, "large" on GPU 1, no room for
+        # "small". Placing policy beside perception instead fits them all.
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 11000), Gpu(1, "GPU-b", 11000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [
+                ("policy", Resources(gpu_memory_mb=9000)),
+                ("large", Resources(gpu_memory_mb=6000)),
+                ("small", Resources(gpu_memory_mb=5000)),
+                ("perception", Resources(gpu_memory_mb=1000, gpu=0)),
+            ],
+            host,
+        )
+        assert placed == {
+            "perception": host.gpus[0],
+            "policy": host.gpus[0],
+            "large": host.gpus[1],
+            "small": host.gpus[1],
+        }
+
+    def test_the_greedy_placement_is_kept_when_it_fits(self) -> None:
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 8000), Gpu(1, "GPU-b", 8000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [
+                ("a", Resources(gpu_memory_mb=3000)),
+                ("b", Resources(gpu_memory_mb=2000)),
+                ("c", Resources(gpu_memory_mb=1000)),
+            ],
+            host,
+        )
+        assert placed == {"a": host.gpus[0], "b": host.gpus[1], "c": host.gpus[1]}
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
