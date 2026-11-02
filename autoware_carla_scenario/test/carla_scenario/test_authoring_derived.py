@@ -172,6 +172,27 @@ class TestLaneOf:
         [("same", -2), ("left", -1), ("right", -3), ("any", None)],
     )
     def test_the_lane_follows_the_relation(self, lane: str, lane_id: Any) -> None:
+        """Of an OpenDRIVE position, and of a CARLA one converted to it: a
+        lanelet's lane beside is read in Lanelet2 (test_lane_change_target)."""
+        from autoware_carla_scenario.conditions import EntityLaneOfCondition
+        from autoware_carla_scenario.coordinate import CarlaWorldPose, OpenDrivePose
+
+        positions: list[Any] = [
+            OpenDrivePose(road_id="5", lane_id=-2, s=10.0),
+            CarlaWorldPose(x=1.0, y=2.0, z=0.0),
+        ]
+        for position in positions:
+            condition = EntityLaneOfCondition("ego", position, lane, label="x")
+            details = condition.get_details()
+            assert (details["road_id"], details["lane_id"]) == ("5", lane_id)
+            assert details["frame"] == "opendrive"
+
+    @pytest.mark.parametrize(("lane", "lane_id"), [("same", -2), ("any", None)])
+    def test_a_lanelets_own_lane_and_road_are_the_opendrive_ones(
+        self, lane: str, lane_id: Any
+    ) -> None:
+        """Same and any of a lanelet still match the OpenDRIVE lane and road
+        under it, anywhere along the road."""
         from autoware_carla_scenario.conditions import EntityLaneOfCondition
         from autoware_carla_scenario.coordinate import Lanelet2Pose
 
@@ -181,6 +202,7 @@ class TestLaneOf:
         details = condition.get_details()
         assert (details["road_id"], details["lane_id"]) == ("5", lane_id)
         assert details["frame"] == "opendrive"
+        assert "lanelet_ids" not in details
 
     def test_an_unknown_relation_is_refused(self) -> None:
         from autoware_carla_scenario.conditions import EntityLaneOfCondition

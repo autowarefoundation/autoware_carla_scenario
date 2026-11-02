@@ -4196,13 +4196,19 @@ register_condition_spec(
                 kind="select",
                 default="same",
                 options=_LANE_RELATIONS,
+                help=(
+                    "Left or right: the lanelet beside it and the lanelets "
+                    "ahead of that one up to the next junction.  No lane on "
+                    "that side never holds."
+                ),
             ),
         ),
         description=(
-            "The entity is on the OpenDRIVE lane under a Lanelet2 position, the "
-            "lane beside it, or any lane of its road -- anywhere along the "
-            "road, not only within the lanelet.  Beside a spawn is where a lane "
-            "change from it ends."
+            "The entity is on the OpenDRIVE lane under a Lanelet2 position or "
+            "any lane of its road -- anywhere along the road, not only within "
+            "the lanelet -- or in the lane beside it: the lanelet beside it "
+            "and those ahead of that one before the next junction.  Beside a "
+            "spawn is where a lane change from it ends."
         ),
     )
 )
