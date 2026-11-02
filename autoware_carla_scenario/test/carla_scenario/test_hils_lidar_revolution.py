@@ -576,3 +576,71 @@ def test_an_arc_of_the_whole_field_of_view_is_one_revolution() -> None:
     for tick in range(1, 5):
         points = sensor.tick(0.05)
         assert revolution.add(0.05 * tick, points) is points
+
+
+@pytest.mark.parametrize("lost", [0, 2])
+@pytest.mark.parametrize(
+    ("horizontal_fov", "rotation_frequency", "dt", "drops"),
+    [
+        # #1128: 126 degrees a tick; measurement 19 sweeps 504 degrees (a
+        # whole revolution), 21 sweeps 252 with the points of 126.
+        (360.0, 7.0, 0.05, (16, 17, 18, 20)),
+        (360.0, 7.0, 0.05, (16, 17, 18, 20, 23)),  # and one lost later
+        (360.0, 5.0, 0.05, (10, 11, 12, 14, 15)),  # 90, dividing 360
+        (120.0, 7.0, 0.05, (10, 11, 13)),  # 42 a tick
+        (270.0, 7.0, 0.05, (10, 11, 13)),  # 94.5
+        (180.0, 3.0, 0.05, (10, 11, 12, 13, 14, 15, 17, 18)),  # 27
+    ],
+)
+def test_revolutions_after_a_whole_one_start_where_a_lost_arc_did(
+    horizontal_fov: float,
+    rotation_frequency: float,
+    dt: float,
+    drops: tuple[int, ...],
+    lost: int,
+) -> None:
+    """Measurements lost right after an arc of a whole revolution (#1128).
+
+    The next arc that arrives spans the lost ticks too, but holds only its
+    own tick's points: the revolutions start where the arc did (where the
+    sensor was when the first of those ticks began), not at its first
+    point.
+    """
+    sensor = _FovSensor(rotation_frequency, horizontal_fov)
+    for _ in range(lost):  # measured before the bridge listened
+        sensor.tick(dt)
+    per_revolution = int(round(horizontal_fov / sensor.step))
+    revolution = LidarRevolution(rotation_frequency, dt, horizontal_fov)
+    whole_arc = False  # the last arc that arrived was a whole revolution
+    began: Optional[float] = None  # where the arc after it started
+    arrived: Optional[int] = None  # the first ray that arc holds
+    received: set[int] = set()  # the rays measured since
+    emitted: List[FloatPoints] = []
+    previous = -1
+    for tick in range(60):
+        if whole_arc and began is None:
+            began = sensor.turned
+        points = sensor.tick(dt)
+        if tick in drops:
+            continue
+        whole = revolution.add(dt * (tick + 1), points)
+        if (tick - previous) * dt * sensor.per_second >= horizontal_fov:
+            assert whole is points
+            whole_arc, began, emitted = True, None, []
+        elif began is not None:
+            if arrived is None:
+                arrived = int(points[:, 3].min())
+            received.update(int(ray) for ray in points[:, 3])
+            if whole is not None:
+                emitted.append(whole)
+        previous = tick
+    assert began is not None and arrived is not None
+    first = math.ceil(began / sensor.step - 1e-9)
+    assert arrived > first  # the arc's first ticks were lost
+    assert len(emitted) >= 3
+    for index, whole in enumerate(emitted):
+        begin = first + index * per_revolution
+        for channel in range(sensor.channels):
+            assert _rays(whole, channel) == [
+                ray for ray in range(begin, begin + per_revolution) if ray in received
+            ]
