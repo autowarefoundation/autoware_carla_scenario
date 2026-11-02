@@ -302,15 +302,20 @@ def forecast_actors(
     yaws = np.asarray(yaws_rig, dtype=np.float64)
     sizes_array = np.asarray(sizes, dtype=np.float64)
 
-    centres_over_time, radii = _disc_forecast(centres, velocities, yaws, sizes_array, table, config)
+    centres_over_time, radii, boxes = _disc_forecast(
+        centres, velocities, yaws, sizes_array, table, config
+    )
     shape = centres_over_time.shape[:2]
-    stations, offsets = project_to_frenet(table, centres_over_time.reshape(-1, 2))
-    stations = stations.reshape(shape)
+    _, offsets = project_to_frenet(table, centres_over_time.reshape(-1, 2))
     offsets = offsets.reshape(shape)
 
     along = _along_route_speeds(centres, velocities, table)
+    # An actor is in our lane at a timestep when one of its disc centres is.
+    in_lane = (np.abs(offsets) < config.limits.lead_capture_half_width_m).reshape(
+        shape[0], len(sizes_array), -1
+    )
     lead_station, lead_speed = _lead_station(
-        stations, offsets, radii, sizes_array, along, station0_m, config
+        boxes, in_lane.any(axis=2), along, table, station0_m, config
     )
     centres_over_time, radii, offsets = _drop_traffic_out_of_lane(
         centres_over_time, radii, offsets, config
@@ -525,6 +530,19 @@ def _yaw_in_rig(to_rig: Pose, quat_local_xyzw: np.ndarray) -> float:
     return (to_rig @ Pose(np.zeros(3), quat_local_xyzw)).yaw
 
 
+@dataclass(frozen=True)
+class _Boxes:
+    """Each actor's predicted box over the horizon, for the lead's geometry."""
+
+    #: ``(T, A, 2)`` box centres in the rig frame.
+    centres: np.ndarray
+    #: ``(T, A, 2)`` unit headings, along each body's length.
+    headings: np.ndarray
+    #: ``(A,)`` lengths and widths, floored as the discs' are.
+    lengths: np.ndarray
+    widths: np.ndarray
+
+
 def _disc_forecast(
     centres: np.ndarray,
     velocities: np.ndarray,
@@ -532,7 +550,7 @@ def _disc_forecast(
     sizes: np.ndarray,
     table: RouteTable,
     config: STLDriverConfig,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, _Boxes]:
     """Cover each actor with discs and predict them over the horizon.
 
     A rectangle would be exact but has corners the optimizer cannot
@@ -547,6 +565,11 @@ def _disc_forecast(
 
     The prediction itself is either straight-line or along the road; see
     :func:`_predict_centres`.
+
+    The boxes the discs cover come back too. The discs are for
+    `collision_free`, and what makes them right for it -- radii reaching past
+    the box, a count set by the largest vehicle present -- makes them wrong
+    for measuring where a vehicle ends; see :func:`_lead_station`.
     """
     horizon = config.horizon
     times = np.arange(1, horizon.n_steps + 1, dtype=np.float64) * horizon.step_s
@@ -576,7 +599,8 @@ def _disc_forecast(
     )
     predicted = predicted.reshape(len(times), -1, 2)
 
-    return predicted, np.repeat(radii, n_discs)
+    boxes = _Boxes(centres=predicted_centres, headings=headings, lengths=lengths, widths=widths)
+    return predicted, np.repeat(radii, n_discs), boxes
 
 
 def _predict_centres(
@@ -678,12 +702,52 @@ def _predict_centres(
     return np.where(keep, predicted, straight), np.where(keep, headings, straight_headings)
 
 
+def _box_stations(
+    table: RouteTable,
+    centres: np.ndarray,
+    headings: np.ndarray,
+    lengths: np.ndarray,
+    widths: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The nearest and farthest station each box reaches along the route.
+
+    The four corners are projected and the extremes kept, so a vehicle at an
+    angle to the road -- turning in, or cutting across -- reaches back by its
+    diagonal rather than by half its length: on a straight road that is exact,
+    on a bend it is as close as the projection itself. Projecting points
+    rather than offsetting the centre's station by a half-extent also keeps the
+    table's clamp honest: a corner behind the table's start reads as the
+    start, while ``centre - extent`` with the centre clamped there would put a
+    long vehicle beside us metres ahead of where it is.
+
+    Args:
+        centres, headings: ``(N, 2)``.
+        lengths, widths: ``(N,)``.
+
+    Returns:
+        ``(rear, front)``, each ``(N,)``.
+    """
+    along = headings * (lengths / 2.0)[:, None]
+    across = np.stack([-headings[:, 1], headings[:, 0]], axis=1) * (widths / 2.0)[:, None]
+    corners = np.stack(
+        [
+            centres + along + across,
+            centres + along - across,
+            centres - along + across,
+            centres - along - across,
+        ],
+        axis=1,
+    )
+    stations, _ = project_to_frenet(table, corners.reshape(-1, 2))
+    stations = stations.reshape(-1, 4)
+    return stations.min(axis=1), stations.max(axis=1)
+
+
 def _lead_station(
-    stations: np.ndarray,
-    offsets: np.ndarray,
-    radii: np.ndarray,
-    sizes: np.ndarray,
+    boxes: _Boxes,
+    in_lane: np.ndarray,
     along: np.ndarray,
+    table: RouteTable,
     station0_m: float,
     config: STLDriverConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -694,29 +758,38 @@ def _lead_station(
     the same way.  Its speed comes back too, because the RSS distance in
     :func:`~stl_driver.rollout._headway_slack` depends on how fast the thing
     ahead is already travelling, not only on how fast we are.
+
+    Args:
+        boxes: every actor's predicted box.
+        in_lane: ``(T, A)``, whether the actor is in our lane at each step --
+            some disc centre within `lead_capture_half_width_m` of the route.
+            The *centre* has to be in our lane, not merely an edge of it.
+            Allowing an edge to qualify widens the window into the
+            neighbouring lane, and a car passing there becomes the vehicle we
+            believe we are following -- a few metres ahead, which reads as a
+            violation however far the real lead is.
+        along: ``(A,)`` each actor's speed along the route.
+        table: the route.
+        station0_m: the ego's station now.
+        config: limits.
     """
     limits = config.limits
-    n_steps, n_discs = stations.shape
-    if n_discs == 0:
-        return np.full((n_steps,), np.inf), np.zeros((n_steps,))
+    n_steps, n_actors = in_lane.shape
+    none = np.full((n_steps,), np.inf), np.zeros((n_steps,))
+    if n_actors == 0:
+        return none
 
-    # How many discs each actor contributed. Derived rather than assumed: the
-    # count follows from the footprint tolerance and the largest vehicle
-    # present, so hardcoding it would silently pair discs with the speed
-    # belonging to some other actor.
-    per_actor = n_discs // max(1, len(sizes))
-
-    # The *centre* has to be in our lane, not merely an edge of it. Allowing an
-    # edge to qualify widens the window into the neighbouring lane, and a car
-    # passing there becomes the vehicle we believe we are following -- a few
-    # metres ahead, which reads as a violation however far the real lead is.
-    in_lane = np.abs(offsets) < limits.lead_capture_half_width_m
-
-    # The rear edge of each disc, which is the part of the lead we would reach
-    # first. Measured from the disc's own radius rather than from half the
-    # length of the largest vehicle anywhere in the scene -- with one ambulance
-    # on the map, that put every lead three metres further back than it was.
-    rear = stations - radii[None, :]
+    # Where each vehicle's box begins and ends along the route, from its own
+    # length and width. `safe_headway` measures to the rear, bumper to
+    # bumper, so it has to be the bumper. The discs were used for this once,
+    # as the rear disc's centre less its radius, and that was not the bumper:
+    # the radius is mostly half the *width*, so a 4.5 x 2.0 m car's rear read
+    # 0.6 m behind its bumper -- 0.8 m once a bus anywhere in the scene shrank
+    # every vehicle's disc spacing -- and the ego queued that much further
+    # back than `standstill_gap_m`.
+    rear_now, front_now = _box_stations(
+        table, boxes.centres[0], boxes.headings[0], boxes.lengths, boxes.widths
+    )
 
     # Who we are following is decided *now*, and then that vehicle is followed.
     #
@@ -741,8 +814,10 @@ def _lead_station(
     # watches every actor's footprint, not just the one we follow.
     #
     # "Ahead" starts at the middle of our own body, not at the front bumper,
-    # even though the gap is then measured from the bumper. A vehicle whose
-    # centre is in our lane and which is level with the front half of the car
+    # even though the gap is then measured from the bumper, and it is the
+    # other vehicle's *front* that has to be past it: the same box, measured
+    # the same way, as the rear the gap is taken to. A vehicle whose centre
+    # is in our lane and whose nose is level with the front half of the car
     # is one cutting in -- partly alongside, its nose ahead of ours or about
     # to be -- and the right answer to it is to drop back and let it in.
     # Starting "ahead" at the bumper would ignore it until it had fully
@@ -750,19 +825,25 @@ def _lead_station(
     # inviting the policy to close up on the merger. Followed from here, its
     # rear edge lies behind our bumper, the gap is negative, and
     # `safe_headway` asks for exactly the room the merge needs. Something
-    # level with our back half is the merger's to yield to, not ours, and is
-    # `collision_free`'s business.
-    ahead_now = (stations[0] > station0_m + limits.ego_rear_axle_to_centre_m) & in_lane[0]
+    # wholly level with our back half is the merger's to yield to, not ours,
+    # and is `collision_free`'s business.
+    ahead_now = (front_now > station0_m + limits.ego_rear_axle_to_centre_m) & in_lane[0]
     if not ahead_now.any():
-        return np.full((n_steps,), np.inf), np.zeros((n_steps,))
+        return none
 
-    followed = int(np.argmin(np.where(ahead_now, rear[0], np.inf))) // per_actor
-    columns = slice(followed * per_actor, (followed + 1) * per_actor)
+    followed = int(np.argmin(np.where(ahead_now, rear_now, np.inf)))
 
-    # Its nearest edge over the horizon, and absent once it has left our lane
-    # -- a vehicle turning off is no longer something we are following, and
-    # its station along *our* route stops meaning anything once it has gone.
-    still_ours = in_lane[:, columns].any(axis=1)
-    lead = np.where(still_ours, rear[:, columns].min(axis=1), np.inf)
+    # Its rear over the horizon, and absent once it has left our lane -- a
+    # vehicle turning off is no longer something we are following, and its
+    # station along *our* route stops meaning anything once it has gone.
+    rear, _ = _box_stations(
+        table,
+        boxes.centres[:, followed],
+        boxes.headings[:, followed],
+        np.full((n_steps,), boxes.lengths[followed]),
+        np.full((n_steps,), boxes.widths[followed]),
+    )
+    still_ours = in_lane[:, followed]
+    lead = np.where(still_ours, rear, np.inf)
     lead_speed = np.where(still_ours, float(along[followed]), 0.0)
     return lead, lead_speed

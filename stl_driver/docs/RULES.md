@@ -51,7 +51,7 @@ Read `Always(clearance > 0)` as "there is always clearance to spare", not as
 ## Reading a rule
 
 ```python
-Rule("collision_free", Always(clearance > 0.0), weight=10.0, margin=2.0, hard=True)
+Rule("collision_free", Always(clearance > 0.0), weight=10.0, margin=0.5, hard=True)
 ```
 
 | field | meaning |
@@ -101,7 +101,7 @@ rather than leaving it as an unwritten property of the kinematics.  If the
 model ever gains a reverse gear, or the floor is relaxed to recover gradient,
 this is the line that notices.
 
-### `stop_on_red` — hard, weight 6, margin 2.0
+### `stop_on_red` — hard, weight 6, margin 0.5
 ```
 □ ((light_gate > 0) ⇒ (stop_slack > 0))
 ```
@@ -115,6 +115,13 @@ below `-gate`.  Too small a gate -- ±1, say -- would clip any overshoot worse
 than a metre and starve the optimizer of the gradient it needs to fix it.
 Twenty metres brackets both concerns, and the objective's `margin` is what
 keeps the vacuous `+gate` from dominating.
+
+The margin is small for the same reason `collision_free`'s is.  At 2.0 the
+rule paid the vehicle to stay away from the line: decomposed at a settled stop
+7.2 m short of a line it had every right to reach, closing three of those
+metres would have cost 7.9 of `stop_on_red` to gain 5.0 of `makes_progress`.
+At 0.5 the same three metres cost 0.5.  The rule is hard, so below zero the
+penalty stays linear and unbounded; only the reward for surplus is capped.
 
 `stop_slack` is the room left before the *stop station*, less what stopping
 from the plan's speed takes (`v²/2b + v·b/2j`, `Limits.stopping_distance_m`).
@@ -151,7 +158,7 @@ forward as the vehicle crept: a red light 30 m ahead stopped the rear axle at
 
 ## Safety
 
-### `collision_free` — hard, weight 10, margin 2.0
+### `collision_free` — hard, weight 10, margin 0.5
 ```
 □ (clearance > 0)
 ```
@@ -174,6 +181,13 @@ parameterises, though, so a vehicle behind the route table's start -- which
 is at the ego, reaching back over it when the route is published from ahead of
 it -- would come back at station zero, on our front bumper.
 The two models are therefore chosen per vehicle.
+
+The margin is half a metre, which saturates by about a metre and a half of
+clearance -- as much air as any plan needs to be judged safe.  At 2.0 the
+objective still paid about 9.4 per metre of clearance at the half-metre a car
+in the next lane leaves, against 2.0 per metre of progress, so backing off
+outscored getting on whenever traffic came past: on a 400-step drive, 44 steps
+braked below -1 m/s² with every rule satisfied by simply holding speed.
 
 The clearance is an exact minimum over disc pairs, not a soft one.  A soft
 minimum would spread gradient more widely, but its error scales with
@@ -202,14 +216,24 @@ so at 8 m/s a lead at the same speed asks for 10.4 m and a stopped one 14.4 m.
 bumper (`ego_rear_axle_to_centre_m + ego_length_m / 2`, 3.75 m ahead of the
 rear axle the rig frame is anchored at) to the lead's rear edge.
 
+The rear edge is the lead's *box*, from its own length and width: the nearest
+station any of its corners projects to, so a vehicle at an angle reaches back
+by its corner.  The discs that cover it are `collision_free`'s and are not
+used for this.  Their radius is mostly half the vehicle's width and their
+count is shared with the largest vehicle in the scene, so the rear disc's
+centre less its radius put a car's rear 0.6–0.8 m behind its bumper, and the
+ego queued that much further back than `standstill_gap_m` (#1151).
+
 The lead is chosen in route coordinates rather than by heading, so a vehicle on
 a parallel road does not become our lead just because it points the same way;
-an actor's centre has to be within `lead_capture_half_width_m` of the route.
+one of an actor's disc centres has to be within `lead_capture_half_width_m`
+of the route.
 It is chosen once, at t = 0, and followed over the horizon, so a car
 overtaking from behind is never adopted half way through it.  "Ahead" starts
-at the middle of the ego's body rather than at its bumper: a vehicle cutting
-in level with our front half is followed, its gap reads negative and the
-policy drops back to let it in.
+at the middle of the ego's body rather than at its bumper, and it is the
+front of the other vehicle's box -- the same box its rear is taken from --
+that has to be past it: a vehicle cutting in level with our front half is
+followed, its gap reads negative and the policy drops back to let it in.
 
 ### `stay_on_route` — hard, weight 4, margin 5.0
 ```
@@ -246,21 +270,33 @@ saturate as soon as the plan was inside the corridor.
 ```
 All in SI units.  Only the emergency fallback exceeds these.
 
-Lateral acceleration is computed as `(ẋÿ - ẏẍ) / max(‖ṗ‖, 0.1)` rather than
-the textbook `v²κ`, whose `(ẋ²+ẏ²)^{3/2}` denominator divides by an epsilon at
-low speed and reports a swerve that is not there.
+Lateral acceleration is the curvature the plan follows times the speed
+squared, read in the road's own frame rather than by differencing the planned
+positions twice, which aliased the route polyline's vertices into the answer:
+
+```
+a_lat = v² · (κ / (1 − κ·d) + d″(s))
+```
+
+`κ` is the route's curvature at the plan's station, looked up from the route
+table rather than differentiated; riding at offset `d` on a bend tightens the
+radius to `κ / (1 − κ·d)` (the denominator floored at 0.1); and steering
+across the road adds the offset profile's own curvature `d″(s)`.  Cross terms
+in `d′` are dropped -- the offset moves about a metre over thirty, so `d′²` is
+under a percent.
 
 ## Liveness
 
-Standing still satisfies every rule above.  These two are what stop the
-optimizer from discovering that and parking forever.  Stating them as logic
+Standing still satisfies every rule above.  `makes_progress` is what stops
+the optimizer from discovering that and parking forever.  Stating them as logic
 rather than as a progress bonus in the cost keeps the whole specification in
 one language -- and means a stopped vehicle reports *which* requirement it is
 failing.
 
 ### `makes_progress` — soft, weight 2, margin 5.0
 ```
-□ ((no red light ∧ nothing close ahead) ⇒ ◇[0, 4.0s] (progress_slack > 0))
+□ ((headway_slack > standstill_gap_m) ∧ (clearance > liveness_clearance_m))
+    ⇒ ◇[0, 4.0s] (progress_slack > 0)
 ```
 Cover a reasonable distance over the horizon: half of what travelling at the
 average of the current and target speeds would cover.
@@ -271,14 +307,22 @@ limit caps a four-second pull-away well below it -- so the rule would be
 violated by every plan and the specification would be asking for the
 impossible.
 
-Both liveness rules are gated on the same condition -- *nothing is stopping
-us* -- so that waiting for a legitimate reason is not reported as a failure to
-make progress.  Three things count, and the third was missing for a while: a
-red light, a vehicle close ahead, and anything else close enough to be worth
-waiting for.  Gating on the lead vehicle alone ignored crossing traffic and
-vehicles alongside at junctions, which is most of what actually stops a car in
-a city: of 165 reported violations over 500 steps, 90 had no lead vehicle at
-all but something within two metres, and only 15 were genuine.
+The rule is gated on *no traffic stopping us*, so that waiting for a
+legitimate reason is not reported as a failure to make progress.  Two things
+count: a vehicle close ahead (`headway_slack` no more than `standstill_gap_m`,
+2.5 m, above the RSS distance) and anything else close enough to be worth
+waiting for (`clearance` within `liveness_clearance_m`, 2 m).  Gating on the
+lead vehicle alone ignored crossing traffic and vehicles alongside at
+junctions, which is most of what actually stops a car in a city: of 165
+reported violations over 500 steps, 90 had no lead vehicle at all but
+something within two metres, and only 15 were genuine.
+
+A red light is deliberately *not* in the gate.  What the rule demands is
+capped by the room the stop line leaves -- the distance to the stop station
+less the stopping distance from the current speed, floored at
+`-liveness_stop_gap_m` -- so approaching a red light satisfies the rule
+rather than being excused from it, and a rule that is satisfied still has a
+gradient towards the line.
 
 `makes_progress` wraps that condition in `Always`, so it reads "if nothing
 obstructs us at any point in the horizon".  Asking only about the present
