@@ -25,6 +25,7 @@ Neither needs CARLA.  Both need the extra:
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
@@ -472,9 +473,16 @@ def convert_outputs(
 
     Raises:
         RerunUnavailableError: The converter is not installed.
+        FileNotFoundError: *output_dir* does not exist.
+        OSError: The scratch directory the recordings are made in cannot be
+            created beside the logs (*output_dir* cannot be written, ...).
+        autoware_carla_scenario_rerun.ConversionError: *output_dir*, or a
+            directory under it, cannot be read (nothing is converted).
     """
     module = require_converter()
     path = Path(output_dir)
+    if not path.exists():
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
     scratch = Path(
         tempfile.mkdtemp(
             prefix=".rerun-convert-", dir=path.parent if path.is_file() else path
@@ -533,7 +541,13 @@ def convert_outputs(
 def main(argv: Optional[list[str]] = None) -> int:
     """``python -m autoware_carla_scenario.rerun PATH...``: convert the
     trajectory logs of finished runs (each PATH an output directory or a
-    log); exit 1 if any failed or was skipped, 2 without the converter."""
+    log); exit 1 if any failed or was skipped, 2 without the converter.
+
+    Each PATH is converted on its own: one that does not exist or cannot be
+    converted (an :class:`OSError`, such as a directory that cannot be
+    written, or the converter's ``ConversionError``, such as a directory that
+    cannot be read) is reported as a failed conversion labelled with the
+    PATH, and the others are still converted and reported."""
     import argparse  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
@@ -562,14 +576,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
+    conversions: list[RerunConversion] = []
     try:
-        conversions = [
-            conversion
-            for path in args.path
-            for conversion in convert_outputs(
-                path, strict=args.strict, jobs=args.jobs, overwrite=args.overwrite
-            )
-        ]
+        # What a PATH that cannot be converted raises: an OSError
+        # (convert_outputs: it does not exist, or no scratch directory can be
+        # made beside it) or the converter's ConversionError (convert_dir: it
+        # cannot be read).  Anything else is a bug, and propagates.
+        unconvertible = (OSError, require_converter().ConversionError)
+        for path in args.path:
+            try:
+                conversions.extend(
+                    convert_outputs(
+                        path,
+                        strict=args.strict,
+                        jobs=args.jobs,
+                        overwrite=args.overwrite,
+                    )
+                )
+            except unconvertible as exc:  # reported with the PATH, not raised
+                conversions.append(
+                    _failed(str(path), path, f"{type(exc).__name__}: {exc}")
+                )
     except RerunUnavailableError as exc:
         print(exc, file=sys.stderr)  # noqa: T201
         return 2
