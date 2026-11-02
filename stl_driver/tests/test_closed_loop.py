@@ -158,6 +158,22 @@ def test_it_stops_for_a_red_light():
     assert rollout.speeds[-10:].mean() < 0.5  # and settled there
 
 
+def test_it_stops_for_a_red_light_on_a_route_starting_ahead_of_it():
+    """A route published from the actor's centre, 1.4 m ahead of the rig, as
+    the runtime sends where no lane leads in (#1141).
+
+    Planned from the route's start rather than from the ego, every plan began
+    1.4 m ahead of it: each step carried the ego that far on, from rest, and
+    it ran the light.
+    """
+    rollout = run_rollout(RedLightWorld(light_station_m=30.0, route_lead_m=1.4), steps=220)
+    positions = rollout.positions
+    travelled = np.linalg.norm(positions - positions[0], axis=1)
+
+    assert travelled.max() < 30.0
+    assert rollout.speeds[-10:].mean() < 0.5
+
+
 def test_it_stops_behind_a_parked_vehicle():
     """Stopping is judged by where the ego ends up, not by a collision count.
 

@@ -26,7 +26,7 @@ from carla_driver_interface.geometry import Pose, Trajectory
 
 from stl_driver.config import STLDriverConfig
 from stl_driver.fallback import emergency_brake_plan, hold_plan
-from stl_driver.frenet import build_route_table, project_to_frenet
+from stl_driver.frenet import build_route_table, distance_behind_start, project_to_frenet
 from stl_driver.optimizer import PlanSolution, RobustnessOptimizer
 from stl_driver.perception import forecast_actors, pad_actor_discs, read_traffic_light
 from stl_driver.rollout import RolloutInputs, plan_xy
@@ -280,14 +280,17 @@ class EgoPolicy(BaseDriver):
     ) -> RolloutInputs:
         """Everything the rollout needs that does not depend on the plan."""
         config = self.config
+        # The runtime publishes the route from the ego's projection, but a
+        # route starting ahead of it -- at the road network's start, or from
+        # another publisher -- must not pull the ego forward onto its first
+        # point: the table reaches back over the ego, and projecting rather
+        # than assuming then gives the ego its true station.
         table = build_route_table(
             route_in_rig,
             ds=config.route_table_ds_m,
             length_m=config.route_table_length_m(),
+            behind_m=distance_behind_start(route_in_rig, np.zeros(2)),
         )
-
-        # The runtime publishes the route from roughly the ego's position, but
-        # projecting rather than assuming keeps this correct when it does not.
         station, offset = project_to_frenet(table, np.zeros((1, 2)))
         station0, offset0 = float(station[0]), float(offset[0])
 
