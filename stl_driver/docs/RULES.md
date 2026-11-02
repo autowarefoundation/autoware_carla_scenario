@@ -288,7 +288,7 @@ under a percent.
 ## Liveness
 
 Standing still satisfies every rule above.  `makes_progress` is what stops
-the optimizer from discovering that and parking forever.  Stating them as logic
+the optimizer from discovering that and parking forever.  Stating it as logic
 rather than as a progress bonus in the cost keeps the whole specification in
 one language -- and means a stopped vehicle reports *which* requirement it is
 failing.

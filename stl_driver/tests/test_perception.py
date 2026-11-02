@@ -385,6 +385,38 @@ def test_a_lead_at_an_angle_reaches_back_by_its_corner():
     assert forecast.lead_station_m[0] == pytest.approx(corner, abs=1e-3)
 
 
+def test_a_lead_on_a_bend_is_reported_at_its_inner_rear_corner():
+    """On a left bend the inner rear corner is the nearest part of the box.
+
+    The car sits tangent to a 60 m left turn, centred 25 m round it. Its rear
+    bumper's middle is 22.75 m round the arc; the corner on the inside of the
+    turn sits on a tighter radius, so it is a little further back along the
+    route than that.
+    """
+    radius = 60.0
+    curved = build_route_table(
+        curved_route(radius_m=radius),
+        ds=CONFIG.route_table_ds_m,
+        length_m=CONFIG.route_table_length_m(),
+    )
+    angle = 25.0 / radius
+    heading = np.array([math.cos(angle), math.sin(angle)])
+    centre = radius * np.array([math.sin(angle), 1.0 - math.cos(angle)])
+    forecast = forecast_actors(
+        renderer(actor(float(centre[0]), float(centre[1]), yaw=angle, length=4.5, width=2.0)),
+        Pose.identity(),
+        curved,
+        0.0,
+        CONFIG,
+    )
+    inner_corner = centre - 2.25 * heading + 1.0 * np.array([-heading[1], heading[0]])
+    # Arc length to the corner's foot on the circle (centre of turn at (0, R)).
+    expected = radius * math.atan2(inner_corner[0], radius - inner_corner[1])
+    assert expected < 25.0 - 2.25
+    # Within the route polyline's chord error, a few millimetres here.
+    assert forecast.lead_station_m[0] == pytest.approx(expected, abs=0.01)
+
+
 def test_a_stopped_queue_closes_to_the_standstill_gap():
     """At rest, `safe_headway` holds exactly down to `standstill_gap_m`.
 
