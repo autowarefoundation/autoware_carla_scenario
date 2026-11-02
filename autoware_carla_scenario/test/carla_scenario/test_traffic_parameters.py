@@ -428,6 +428,147 @@ def test_entity_overrides_are_forgotten_when_the_run_closes() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A vehicle's first draw keeps what it was told before it (#1096)
+# ---------------------------------------------------------------------------
+
+
+def _speed_calls(client: _Client) -> List[Tuple[str, Any]]:
+    return [
+        (name, args[1])
+        for name, args in client.tm.calls
+        if name in ("set_desired_speed", "vehicle_percentage_speed_difference")
+    ]
+
+
+class _SpawningWorld(_World):
+    """Enough of a world to spawn one background vehicle in."""
+
+    def __init__(self, actor: _Actor) -> None:
+        super().__init__([actor])
+        self.actor = actor
+
+    def get_blueprint_library(self) -> Any:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        return SimpleNamespace(
+            filter=lambda pattern: [SimpleNamespace(has_attribute=lambda n: False)]
+        )
+
+    def try_spawn_actor(self, blueprint: Any, transform: Any) -> _Actor:
+        return self.actor
+
+    def get_map(self) -> Any:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        return SimpleNamespace(
+            get_waypoint=lambda location, **kwargs: SimpleNamespace(
+                transform=carla.Transform(location, carla.Rotation())
+            )
+        )
+
+
+def test_a_background_vehicle_spawned_before_start_keeps_its_exact_speed() -> None:
+    """The background cap of #967 survives the draw at start."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(speed_factor=Spread(1.0))
+    )
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    client.tm.calls.clear()
+    npc = _Actor(7)
+    npc.set_target_velocity = lambda velocity: None  # type: ignore[attr-defined]
+    world = _SpawningWorld(npc)
+    spot = carla.Transform(carla.Location(x=10.0), carla.Rotation())
+    backend.spawn_background(world, spot, speed_kmh=20.0)  # type: ignore[arg-type]
+    backend.start(world)  # type: ignore[arg-type]
+    assert _speed_calls(client) == [("set_desired_speed", 20.0)]
+    assert backend._exact_kmh == {7: 20.0}
+    assert backend._speed_differences == {}
+
+
+def test_a_speed_set_before_start_is_kept_over_the_speed_factor() -> None:
+    """An init-phase SetSpeed, as a SetSpeed after the draw is."""
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(speed_factor=Spread(0.9))
+    )
+    npc = _Actor(3)
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    client.tm.calls.clear()
+    backend.set_desired_speed(_Entity(npc), world, 0.0)  # type: ignore[arg-type]
+    backend.start(world)  # type: ignore[arg-type]
+    assert _speed_calls(client) == [("set_desired_speed", 0.0)]
+    assert backend._exact_kmh == {3: 0.0}
+
+
+def test_a_speed_set_while_released_is_kept_on_resume() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.9))
+    )
+    backend.set_desired_speed(entity, world, 15.0)  # type: ignore[arg-type]
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_calls(client) == [("set_desired_speed", 15.0)]
+    assert backend._exact_kmh == {42: 15.0}
+    # Its speed factor was drawn all the same: a later override still draws.
+    backend.override_vehicle_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(0.8)),
+    )
+    assert _speed_calls(client)[-1] == (
+        "vehicle_percentage_speed_difference",
+        pytest.approx(20.0),
+    )
+
+
+def test_a_route_given_before_start_keeps_lane_changes_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``follow_route`` turns the TrafficManager's lane changes off; the
+    first draw of ``lane_changes: true`` does not turn them back on."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    import autoware_carla_scenario.coordinate.map_manager as map_manager  # noqa: PLC0415
+    import autoware_carla_scenario.coordinate.transform as transform  # noqa: PLC0415
+    import autoware_carla_scenario.odd.route_plan as route_plan  # noqa: PLC0415
+    import autoware_carla_scenario.traffic.traffic_manager as traffic_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(route_plan, "route_poses", lambda *a, **k: [0, 1, 2])
+    monkeypatch.setattr(transform, "to_carla_location", lambda pose: pose)
+    monkeypatch.setattr(
+        map_manager.MapManager,
+        "get_instance",
+        staticmethod(lambda: SimpleNamespace(lanelet_map=None, routing_graph=None)),
+    )
+    monkeypatch.setattr(traffic_manager, "run_carla_map", lambda world: None)
+    monkeypatch.setattr(
+        traffic_manager, "_clear_of_junctions", lambda m, points: list(points)
+    )
+    monkeypatch.setattr(traffic_manager, "_in_junction", lambda m, p: False)
+    monkeypatch.setattr(traffic_manager, "_at_junction_mouth", lambda m, p: False)
+
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(lane_changes=True)
+    )
+    npc, other = _Actor(5), _Actor(6)
+    world = _World([npc, other])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    client.tm.calls.clear()
+    backend.follow_route(
+        _Entity(npc),  # type: ignore[arg-type]
+        world,  # type: ignore[arg-type]
+        [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+    )
+    backend.start(world)  # type: ignore[arg-type]
+    assert client.tm.called("auto_lane_change") == [(npc, False), (other, True)]
+
+
+# ---------------------------------------------------------------------------
 # Pedestrians
 # ---------------------------------------------------------------------------
 
