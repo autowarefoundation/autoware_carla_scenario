@@ -270,9 +270,9 @@ class TestLaneOfALaneletIsReadInLanelet2:
     def test_a_change_onto_another_road_fires(self, loaded_map: None) -> None:
         """37 is road 16, 38 beside it road 17: road 16 has no lane beside."""
         condition = self._lane_of(37, 25.0, "right")
-        assert condition.get_details()["lanelet_ids"][0] == 38
         assert _fires_along(condition, 38)
         assert not _fires_along(condition, 37)
+        assert condition.get_details()["lanelet_ids"][0] == 38
 
     def test_staying_on_the_lanelet_does_not_fire(self, loaded_map: None) -> None:
         """Part of 136's centreline reads as road 62's lane beside it."""
