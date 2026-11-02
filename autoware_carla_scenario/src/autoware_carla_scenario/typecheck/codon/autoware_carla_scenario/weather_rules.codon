@@ -8,11 +8,15 @@ def weather_range(quantity: str, inputs: Dict[str, float]) -> Tuple[float, float
     raise NotImplementedError()
 
 
-def vehicle_range(
-    quantity: str, inputs: Dict[str, float], type_id: str, role: str
-) -> Tuple[float, float]:
+def vehicle_rules_in_use() -> bool:
     raise NotImplementedError()
 
 
-def vehicle_rules_in_use() -> bool:
+def weather_at(quantity: str, inputs: Dict[str, float], quantile: float) -> float:
+    raise NotImplementedError()
+
+
+def vehicle_at(
+    quantity: str, inputs: Dict[str, float], quantile: float, type_id: str, role: str
+) -> float:
     raise NotImplementedError()

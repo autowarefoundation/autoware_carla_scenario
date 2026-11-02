@@ -990,7 +990,9 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     """A Distance condition measures to a place it names (a route pose or a
     lanelet: lanelet 0 is the empty field); an Entity Distance's signed
     distance is ahead or behind along the road, so it is measured in the lane
-    frame.  Both are refused when the condition is built, at setup."""
+    frame.  Along the road, a distance is one-dimensional (no lateral
+    component) and neither it nor a TTC can be taken between bounding boxes
+    (#1097).  All are refused when the condition is built, at setup."""
     params = node.params
     if node.type == "temporary_stop" and params.get("stop_lanelets", []) in ([], ()):
         out.error(
@@ -1014,6 +1016,30 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
             f"{path}.signed",
             "A signed distance is ahead or behind along the road: measure it "
             "in the lane frame (measure: lane), or clear signed.",
+            node.id,
+        )
+    in_lane = str(params.get("measure", "entity")) == "lane"
+    if (
+        node.type == "entity_distance"
+        and in_lane
+        and str(params.get("distance_type", "EUCLIDEAN")) == "LATERAL"
+    ):
+        out.error(
+            f"{path}.distance_type",
+            "Along the road a distance is one-dimensional, so it has no "
+            "lateral component: measure the lateral offset in a straight "
+            "line, or choose another component.",
+            node.id,
+        )
+    if (
+        node.type in ("entity_distance", "ttc")
+        and in_lane
+        and params.get("edge_to_edge") is True
+    ):
+        out.error(
+            f"{path}.edge_to_edge",
+            "Between bounding boxes cannot be measured along the road: "
+            "measure in a straight line, or clear Between bounding boxes.",
             node.id,
         )
 

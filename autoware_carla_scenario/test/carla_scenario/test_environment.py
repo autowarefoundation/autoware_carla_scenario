@@ -35,7 +35,8 @@ def test_a_lock_pins_every_distribution(tmp_path: Path) -> None:
     assert lock[1] == f"# environment id: {summary['id']}"
     pins = [line for line in lock if line and not line.startswith("#")]
     assert len(pins) == len(capture().packages)
-    assert any(line.startswith("openodd-py==") for line in pins)
+    # From an index (``openodd-py==``) or a git source (``openodd-py @ git+``).
+    assert any(line.startswith(("openodd-py==", "openodd-py @ ")) for line in pins)
     doc = json.loads((tmp_path / "Demo_environment.json").read_text())
     assert doc["schema"] == "autoware_carla_scenario.environment/1"
     assert doc["id"] == summary["id"]

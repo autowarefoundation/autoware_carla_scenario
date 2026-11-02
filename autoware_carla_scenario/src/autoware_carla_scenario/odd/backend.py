@@ -16,8 +16,8 @@ attributes are measured and set. Here:
   parameters set;
 * **where the ego is** -- in the world (the metres a tick stands for in
   coverage) and on Earth (the positions of an exported COD);
-* **rules** -- the grip and the visibility the weather leaves, fuzzy rules
-  openodd infers (:mod:`autoware_carla_scenario.weather_rules`).
+* **rules** -- the grip and the visibility the weather leaves, conditional
+  distributions openodd reads (:mod:`autoware_carla_scenario.weather_rules`).
 
 :class:`CarlaBackend` derives openodd's :class:`~openodd.Backend` for these;
 everything else -- the model, the reader, coverage, the sampler -- is
@@ -171,6 +171,19 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
 }
 
 
+#: Rule input -> the knob (of :data:`DEFAULT_KNOBS`) that writes it.
+#: ``environment.rain`` writes ``precipitation`` (and the ``wetness`` and
+#: standing water CARLA's rain presets pair with it).
+_RULE_INPUT_KNOBS: dict[str, str] = {
+    "precipitation": "environment.rain",
+    "fog_density": "environment.fog_density",
+    "sun_altitude_angle": "environment.sun_altitude_angle",
+    "wetness": "environment.wetness",
+    "wind_intensity": "environment.wind_intensity",
+    "cloudiness": "environment.cloudiness",
+}
+
+
 def _measure(key: str) -> tuple[ScenarioMeasure, str]:
     probe = scenario_measure(key)
     return probe, probe.unit
@@ -202,6 +215,17 @@ class CarlaBackend(Backend):
     # The grip and the visibility the weather leaves (:mod:`..weather_rules`).
     rules: Optional[Rules] = field(default_factory=weather_rules.default_rules)
     rule_inputs: Sequence[str] = weather_rules.WEATHER_INPUTS
+    # The knob whose written value each input is, so a tool can follow an
+    # ODD attribute through its knob to the rules (Backend.manifest).
+    rule_input_knobs: Mapping[str, str] = field(
+        default_factory=lambda: dict(_RULE_INPUT_KNOBS)
+    )
+    rule_input_text: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "water": "The larger of wetness and precipitation_deposits: the "
+            "road's water, which the grip follows.",
+        }
+    )
 
     def rule_values(self, values: Mapping[str, float]) -> dict[str, float]:
         """The weather's fields, and ``water``, which the grip follows."""

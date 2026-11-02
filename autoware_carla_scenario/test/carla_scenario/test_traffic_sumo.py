@@ -968,9 +968,10 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
     crossroads: Path, tmp_path: Path
 ) -> None:
     from autoware_carla_scenario.visibility import (
+        driver_quantile,
         forget_visibility,
         set_world_visibility,
-        sight_speed,
+        sight_speed_at,
     )
 
     forget_visibility()
@@ -985,10 +986,20 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
         backend.tick(world, 0.0)
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
 
-        # Fog: 20 m, so held to what a car stops from within 20 m.
+        # Fog: 20 m, so held to what its driver keeps in 20 m (the weather
+        # rules' sight_speed at the driver's own quantile).
         set_world_visibility(11, 20.0)
         backend.tick(world, 0.05)
-        held = sight_speed(20.0, tc.vehicle.getDecel(handle), tc.vehicle.getTau(handle))
+
+        def kept(sumo_id: str) -> float:
+            return sight_speed_at(
+                20.0,
+                driver_quantile(sumo_id),
+                tc.vehicle.getDecel(sumo_id),
+                tc.vehicle.getTau(sumo_id),
+            )
+
+        held = kept(handle)
         assert held < 60.0 / 3.6
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(held)
         # The scenario's own vehicle is the scenario's.
@@ -1000,7 +1011,7 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
         )
         assert later is not None
         backend.tick(world, 0.1)
-        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(held)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(kept(later))
         assert backend.describe()["visibility_m"] == 20.0
 
         # The fog lifts: each gets its own speed back.
@@ -1048,9 +1059,10 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
 ) -> None:
     from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
     from autoware_carla_scenario.visibility import (
+        driver_quantile,
         forget_visibility,
         set_world_visibility,
-        sight_speed,
+        sight_speed_at,
     )
 
     forget_visibility()
@@ -1100,7 +1112,7 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
         set_world_visibility(13, 20.0)
         backend.tick(world, 0.1)
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
-            max(sight_speed(20.0, 3.0, taus[0]), 1.0)
+            max(sight_speed_at(20.0, driver_quantile(handle), 3.0, taus[0]), 1.0)
         )
     finally:
         backend.close()

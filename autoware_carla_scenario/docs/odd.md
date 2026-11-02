@@ -984,21 +984,22 @@ by the larger of `wetness` and `precipitation_deposits`:
 | 50 (wet) | 0.65-0.85 | `rain=30` (standing water 50) |
 | 100 (flooded) | 0.45-0.65 | `rain=100` |
 
-Between the rows the bounds are interpolated (the rules' terms overlap so
-that they read as this table). Measured tire-road friction
+Between the rows the bounds are interpolated (the rules write the
+distribution at these points). Measured tire-road friction
 is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
 film; each range spans what tires, their wear and the asphalt make of the
 same water, and a dry road's is centred on CARLA's own grip, so a dry run
 drives as it did before.
 
-Where in the range a run's grip is, is `environment.tire_friction_quantile`
-(0 its low end, 1 its high end; the middle when not set). A
+Where in the range a run's grip is, is `environment.tire_friction_quantile`:
+the quantile of the grip's distribution (0 its low end, 1 its high end; the
+median when not set). A
 `sweep.odd_sample` draws it for every case (`environment.tire_friction_quantile=0.412`
 among the case's overrides, recorded in its coverage file), from the sweep's
 `seed` and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
-`odd_sample` leaves every case at the middle of its range, and
+`odd_sample` leaves every case at the median, and
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
 `tire_friction` probe draws it through that knob).
@@ -1060,20 +1061,20 @@ Between the rows the bounds are interpolated; through civil twilight (0 to
 -6 degrees) the day's range shortens to the night's. An `EnvironmentAction`
 that sets the fog, the rain (`rain` or `precipitation`) or the sun records
 the visibility of the weather it leaves for its world, at
-`environment.visibility_quantile` in that range (0 its low end, 1 its high
-end; the middle when not set); `environment.visibility_m` fixes it whatever
+`environment.visibility_quantile` of its distribution (0 its low end, 1 its
+high end; the median when not set); `environment.visibility_m` fixes it whatever
 the weather. A `sweep.odd_sample` draws the quantile for every case, as it
 draws the grip, so the ODD's `rain`, `fog` and `illumination` knobs are what
 shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
-`visibility: false` in the `odd_sample` leaves every case at the middle of
-its range. An ODD that names the visibility itself (the `visibility` probe)
+`visibility: false` in the `odd_sample` leaves every case at the median. An ODD that names the visibility itself (the `visibility` probe)
 sets it through its own knob, `environment.visibility_m`, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.
 
 What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`):
 the `sumo` backend holds its own
-traffic to the speed it stops from within it, by default
+traffic to the speed its drivers keep in it -- the weather rules'
+[`sight_speed`](#weather-rules), which reads the visibility -- by default
 ([Visibility](traffic_backends.md#the-sumo-backend)); the `traffic_manager`
 backend holds every vehicle it drives to it with `follow_visibility: true`,
 under its road's speed limit
@@ -1082,66 +1083,87 @@ and otherwise only logs the speed it would hold traffic to.
 
 ### Weather rules
 
-The ranges of the grip and of the visibility are fuzzy rules, not code:
+The grip and the visibility are conditional distributions, not code:
 `weather_rules.yaml` in the package (`autoware_carla_scenario.weather_rules`),
 the CARLA backend's own rules (`CarlaBackend.rules`), which openodd reads and
-infers in its Rust core (Sugeno, zero order;
-[its rules docs](https://github.com/hakuturu583/openodd_py/blob/main/docs/rules.md)
+evaluates in its Rust core
+([its rules docs](https://github.com/hakuturu583/openodd_py/blob/main/docs/rules.md)
 have the file format in full). A **quantity** (`tire_friction`, `visibility`)
-is one or more **rule bases**; each reads some of the weather's fields, sorts
-each into fuzzy terms, and its rules give the `low` and `high` ends of the
-range per combination of terms:
+is one or more **parts**; each reads some of the weather's fields and gives
+the quantity's distribution at points of them:
 
 ```yaml
-version: 1
+version: 2
 quantities:
   tire_friction:
-    rule_bases:
+    parts:
       water:
-        inputs:
-          water:
-            universe: [0, 100]
-            terms:
-              dry: {trapezoid: [0, 0, 0, 50]}
-              wet: {triangle: [0, 50, 100]}
-              flooded: {trapezoid: [50, 100, 100, 100]}
-        rules:
-          - if: (water IS dry)
-            then: {low: 0.90, high: 1.10}
-          - if: (water IS wet)
-            then: {low: 0.65, high: 0.85}
-          - if: (water IS flooded)
-            then: {low: 0.45, high: 0.65}
+        at: {water: [0, 50, 100]}        # dry, wet, flooded
+        uniform:
+          low:  [0.90, 0.65, 0.45]
+          high: [1.10, 0.85, 0.65]
 ```
 
-- A rule base's range is its rules' ends, averaged by how strongly each rule
-  fires. Triangles that peak where their neighbours end split every value
-  between two terms, so one-term rules read linearly between the peaks: the
-  default rules give exactly the tables above.
-- An antecedent is clauses `(input IS term)` joined by `AND`, `OR` and
-  `NOT`, so a rule may read more than one input --
-  `(water IS wet) AND (sun_altitude_angle IS night)`.
-- The inputs a rule base may read are the weather's `cloudiness`,
+- A part's distribution is `uniform` (`low`, `high`), `triangular` (`low`,
+  `mode`, `high`) or `normal` (`mean`, `sd`, cut to `low`..`high`). Each
+  parameter is one number or one value per point; between the points it is
+  interpolated linearly, beyond them it holds the outermost point's value.
+  So the default rules give exactly the tables above.
+- A part may read several inputs -- `at: {water: [0, 100],
+  sun_altitude_angle: [-6, 0]}` -- with a value at every combination of their
+  points, as nested lists.
+- The inputs a part may read are the weather's `cloudiness`,
   `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity`,
   `fog_density`, `fog_distance`, `sun_altitude_angle` and
   `sun_azimuth_angle`, and `water`, the larger of `wetness` and
-  `precipitation_deposits` (`weather_rules.WEATHER_INPUTS`). A value outside
-  an input's `universe` is clamped to it. An `EnvironmentAction` hands the
-  rules every field of the weather it leaves; `tire_friction_range()` and
-  `visibility_range()` hand only their own arguments, so an input they do not
-  take needs a `default`.
-- With more than one rule base, `combine` (`min`, the default, or `max`)
-  joins their ranges end by end: the visibility's fog, rain and light are
-  three rule bases, and the shortest bound holds.
+  `precipitation_deposits` (`weather_rules.WEATHER_INPUTS`). An
+  `EnvironmentAction` hands the rules every field of the weather it leaves;
+  `tire_friction_range()` and `visibility_range()` hand only their own
+  arguments, so an input they do not take needs a `default` (the file's
+  `inputs: {name: {default: ...}}`).
+- **A run's value** is the one at its quantile (`tire_friction_quantile`,
+  `visibility_quantile`): the value with that share of the distribution
+  below it (`weather_rules.weather_at`). With more than one part, every part
+  gives its value at the same quantile and `combine` (`min`, the default, or
+  `max`) joins them: the visibility's fog, rain and light are three parts,
+  and the shortest holds. The parts move together -- a case at quantile 0.1
+  is at the worse end of the fog's, the rain's and the light's alike -- so
+  the quantity's range is the least of the parts' lows to the least of their
+  highs, as before.
 
-A rule file is checked when it is read: every term and rule well formed,
-every input's universe covered by its terms, and some rule firing wherever
-the inputs can be (`openodd.RulesError` says where).
+**A chain: the speed drivers keep.** A part may read another quantity, so
+the rules chain: `sight_speed`, the speed (m/s) a driver keeps, reads the
+`visibility`. Its distribution is triangular at each visibility: at most the
+speed SUMO's default car (braking at 4.5 m/s² a second after it sees) stops
+from within it, `v * tau + v² / (2 * decel)` = the visibility, and down to
+three quarters of that (`visibility.sight_speed`).
+
+| Visibility, m | 15 | 50 | 100 | 250 | 400 |
+|---|---|---|---|---|---|
+| `sight_speed`, km/h (low / mode / high) | 22 / 27 / 29 | 46 / 59 / 62 | 70 / 88 / 93 | 117 / 148 / 155 | 150 / 190 / 200 |
+
+`visibility.sight_speed_at(visibility_m, quantile, decel, reaction_s)` reads
+it at a quantile for a car that brakes and reacts otherwise: the rules'
+value scaled by that car's stopping speed over the default car's, and never
+above that car's stopping speed. A traffic backend holds each of its
+vehicles to it at a quantile of the vehicle's own
+(`visibility.driver_quantile`, from its id: the same in every run, spread
+over the traffic), so some drivers keep close to what they can stop from and
+others well below it. `weather_rules.default_rules().sample(weather)` gives
+every quantity of a weather at once -- the grip, the visibility at its
+median, and the speed kept in that visibility.
+
+A rule file is checked when it is read: every field known, every input's
+points increasing, one value per point, and the distribution valid at every
+point (`low` not above `high`, a `mode` between them, a positive `sd`;
+`openodd.RulesError` says where). Version 1, the fuzzy rules these replaced,
+is no longer read; openodd's rules docs ("From version 1") convert one point
+for point.
 
 **A run's rules.** `environment.rules` names a rule file -- a path, absolute
 or relative to the directory the run starts in, or an `https://` URL --
-merged over the default rules: it names only what it changes (a rule base's
-`rules` without its `inputs`, say), and may `extends` other files, by path,
+merged over the default rules: it names only what it changes (a part's
+`uniform` without its `at`, say), and may `extends` other files, by path,
 URL (pinned with `{url, sha256}`) or git source. A sweep sets it like any
 other key (`environment.rules=/data/grip_measured.yaml`); every run sets the
 rules it names, or the default ones, so one run's do not reach the next.

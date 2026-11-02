@@ -135,11 +135,11 @@ SAMPLE_FIELDS = {
     "visibility",
 }
 
-#: The setting a case's grip is drawn into: where in the range of grip its
-#: weather leaves it is (``EnvironmentAction``'s ``tire_friction_quantile``).
+#: The setting a case's grip is drawn into: the quantile of the distribution
+#: of grip its weather leaves (``EnvironmentAction``'s ``tire_friction_quantile``).
 TIRE_FRICTION_KEY = "environment.tire_friction_quantile"
-#: The setting a case's visibility is drawn into: where in the range of
-#: visibility its weather leaves it is (``EnvironmentAction``'s
+#: The setting a case's visibility is drawn into: the quantile of the
+#: distribution of visibility its weather leaves (``EnvironmentAction``'s
 #: ``visibility_quantile``).
 VISIBILITY_KEY = "environment.visibility_quantile"
 #: The fields of ``sweep.odd_sample.flaky``: :class:`~openodd.FlakySearch`'s
