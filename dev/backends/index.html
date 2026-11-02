@@ -2227,9 +2227,12 @@ free:</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>(needed: ardy (24000 MiB GPU, 16000 MiB host)). Free the memory, or lower what
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>a backend is said to take (backends.&lt;name&gt;.gpu_memory_mb / memory_mb).
 </code></pre></div>
-<p>Each backend is placed on the GPU with the most room left, and starts on that
-GPU. A container set to one GPU (<code>gpus: device=N</code>) is checked on that GPU, and
-one with <code>gpus: none</code> needs no GPU at all.</p>
+<p>A container set to one GPU (<code>gpus: device=N</code>) is placed first, and checked on
+that GPU. Then each of the others, the largest first, is placed on the GPU with
+the most room left, and starts on that GPU. When that leaves one without room,
+the other ways to place them are tried, and the run is refused only when none
+fits them all; the message then names the ones the first placement left out.
+One with <code>gpus: none</code> needs no GPU at all.</p>
 <p>The check is a snapshot of what is free when the backends start. It cannot see
 what others are about to take:</p>
 <ul>
@@ -2315,7 +2318,7 @@ are, at <code>hf_home</code>. It also gets <code>HF_TOKEN</code> when this proce
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 03:48:02 UTC"><span class="timeago" datetime="2026-11-01T03:48:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 03:48:02 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 08:42:22 UTC"><span class="timeago" datetime="2026-11-02T08:42:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 08:42:22 UTC">2026-11-02</span>
   </span>
 
     
