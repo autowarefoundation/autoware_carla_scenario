@@ -313,6 +313,120 @@ def test_the_traffic_manager_without_parameters_sets_nothing_more() -> None:
     assert "vehicles" not in backend.describe()
 
 
+class _Entity:
+    def __init__(self, actor: _Actor) -> None:
+        self.actor = actor
+        self.role_name = "npc"
+
+
+def _released_before_start(
+    vehicles: VehicleParameters,
+) -> Tuple[_Client, TrafficManagerBackend, _World, _Actor, _Entity]:
+    """A vehicle the scenario drives from its init (a trajectory), so not put
+    on autopilot at start."""
+    client = _Client()
+    backend = TrafficManagerBackend(client=client, vehicles=vehicles)
+    npc = _Actor(42)
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.release_actor(world, npc)  # type: ignore[arg-type]
+    backend.start(world)  # type: ignore[arg-type]
+    return client, backend, world, npc, _Entity(npc)
+
+
+def _speed_differences(client: _Client) -> List[float]:
+    return [args[1] for args in client.tm.called("vehicle_percentage_speed_difference")]
+
+
+def test_an_entity_override_before_its_first_autopilot_is_kept() -> None:
+    """#1090: the first draw on autopilot draws the override, not the run's."""
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.8), min_gap_m=Spread(3.5))
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_differences(client) == [pytest.approx(-30.0)]
+    # The fields it does not override are the run's.
+    assert client.tm.called("distance_to_leading_vehicle") == [(npc, 3.5)]
+    assert backend._speed_differences[42] == pytest.approx(-30.0)
+
+
+def test_entity_overrides_layer_in_order() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.8), min_gap_m=Spread(3.5))
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3), min_gap_m=Spread(6.0)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(0.5)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_differences(client) == [pytest.approx(50.0)]
+    assert client.tm.called("distance_to_leading_vehicle") == [(npc, 6.0)]
+
+
+def test_an_entity_override_of_a_vehicle_on_autopilot_draws_at_once() -> None:
+    client = _Client()
+    backend = TrafficManagerBackend(
+        client=client, vehicles=VehicleParameters(speed_factor=Spread(0.8))
+    )
+    npc = _Actor(1)
+    world = _World([npc])
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(world)  # type: ignore[arg-type]
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3)),
+        _Entity(npc),  # type: ignore[arg-type]
+    )
+    assert _speed_differences(client) == [pytest.approx(20.0), pytest.approx(-30.0)]
+
+
+def test_a_later_override_of_every_vehicle_wins_over_an_entity_override() -> None:
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.8))
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3), min_gap_m=Spread(6.0)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.override_vehicle_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(0.9)),
+    )
+    backend.resume_actor(world, npc)  # type: ignore[arg-type]
+    assert _speed_differences(client) == [pytest.approx(10.0)]
+    assert client.tm.called("distance_to_leading_vehicle") == [(npc, 6.0)]
+
+
+def test_entity_overrides_are_forgotten_when_the_run_closes() -> None:
+    """The next run (whose actor may have the same id) draws its own."""
+    client, backend, world, npc, entity = _released_before_start(
+        VehicleParameters(speed_factor=Spread(0.8))
+    )
+    backend.override_entity_parameters(
+        world,  # type: ignore[arg-type]
+        VehicleParameters(speed_factor=Spread(1.3)),
+        entity,  # type: ignore[arg-type]
+    )
+    backend.close()
+    assert backend._entity_overrides == {}
+    client.tm.calls.clear()
+    backend.prepare(TrafficContext(client=client, random_seed=1))
+    backend.start(_World([_Actor(42)]))  # type: ignore[arg-type]
+    assert _speed_differences(client) == [pytest.approx(20.0)]
+
+
 # ---------------------------------------------------------------------------
 # Pedestrians
 # ---------------------------------------------------------------------------
