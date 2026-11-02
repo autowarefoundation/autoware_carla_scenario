@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -520,7 +521,12 @@ def test_no_wait_submits_and_the_collect_job_writes_the_results(
     )
     assert status == 0
     layout = BatchLayout(batch)
-    assert len(layout.read_submission(0)["chunks"]) == 6
+    submission = layout.read_submission(0)
+    assert len(submission["chunks"]) == 6
+    # The collect job runs a script beside the tasks' (#1159).
+    collect_script = layout.root / "jobs" / "0-collect.sh"
+    assert submission["collect_sbatch"][-1] == str(collect_script)
+    assert collect_script.read_text().startswith("#!/bin/bash\n")
     _wait_for(lambda: _jobs_done(fake_slurm), 120, "the array and its collect job")
     assert (batch / "batch_results.json").read_bytes() == (
         local / "batch_results.json"
@@ -1763,15 +1769,129 @@ def test_remote_collect_job_runs_the_node_s_python_where_the_batch_is() -> None:
 
 
 def test_without_remote_cwd_the_collect_job_runs_launcher_python() -> None:
-    from autoware_carla_scenario.slurm.submit import _collect_command
+    from autoware_carla_scenario.slurm.submit import _collect_command, collect_script
 
     layout = BatchLayout(Path("/work/outputs/2026-10-19/12-00-00"))
     manifest = {"python": "/usr/bin/python3", "cwd": "/work", "env": {}}
     settings = SlurmSettings.from_mapping({"python": ".venv/bin/python"})
-    command = _collect_command(layout, manifest, settings, "41")
+    script = collect_script(manifest, settings, layout).splitlines()
+    assert script[-1] == (
+        "exec .venv/bin/python -m autoware_carla_scenario.slurm.cli collect "
+        "/work/outputs/2026-10-19/12-00-00"
+    )
+    assert "cd /work || exit 1" in script
+    path = layout.root / "jobs" / "0-collect.sh"
+    command = _collect_command(layout, manifest, settings, "41", path)
     assert "--chdir=/work" in command
-    wrap = next(arg for arg in command if arg.startswith("--wrap="))
-    assert wrap.startswith("--wrap=.venv/bin/python -m ")
+    assert not any(arg.startswith("--wrap") for arg in command)
+
+
+def _environment_lines(script: str) -> list[str]:
+    """The lines of *script* that set the job's environment up, in order."""
+    return [
+        line
+        for line in script.splitlines()
+        if line.startswith(("export ", "module ", "source ", "set +u", "set -u"))
+        or line.startswith("# launcher.")
+    ]
+
+
+def test_without_remote_cwd_the_collect_job_sets_up_the_environment_as_a_task(
+    tmp_path: Path,
+) -> None:
+    """#1159: the collect job ran launcher.python without launcher.setup and
+    launcher.env, which a cluster that loads modules or activates a venv in
+    setup needs to find it."""
+    from autoware_carla_scenario.slurm.submit import (
+        _collect_command,
+        collect_script,
+        job_script,
+    )
+
+    batch = tmp_path / "work dir" / "outputs" / "d" / "t"
+    layout = BatchLayout(batch)
+    manifest = {
+        "python": "/submit/python",
+        "cwd": str(tmp_path / "work dir"),
+        "env": {"PATH": "/usr/bin", "CARLA_ROOT": "/opt/carla's root"},
+    }
+    settings = SlurmSettings.from_mapping(
+        {
+            "python": "python3",
+            "export": "NONE",
+            "setup": [
+                "module load python/3.12",
+                "source '/shared/my venv/bin/activate'",
+            ],
+            "env": {"ONEPLANNER_X": 'say "hi"', "A": "1"},
+        }
+    )
+    task = job_script(layout, manifest, settings, 0)
+    script = collect_script(manifest, settings, layout)
+    assert _environment_lines(script) == _environment_lines(task)
+    lines = script.splitlines()
+    assert "module load python/3.12" in lines
+    assert "source '/shared/my venv/bin/activate'" in lines
+    assert "export ONEPLANNER_X='say \"hi\"'" in lines
+    assert lines.index("export ONEPLANNER_X='say \"hi\"'") < lines.index(
+        f"exec python3 -m autoware_carla_scenario.slurm.cli collect '{batch}'"
+    )
+    assert f"cd '{tmp_path / 'work dir'}' || exit 1" in lines
+    completed = subprocess.run(["bash", "-n"], input=script, text=True, check=False)
+    assert completed.returncode == 0
+
+    path = layout.root / "jobs" / "0-collect.sh"
+    command = _collect_command(layout, manifest, settings, "41", path)
+    assert "--dependency=afterany:41" in command
+    assert f"--output={layout.logs}/collect-%j.out" in command
+    assert "--export=NONE" in command
+    assert command[-1] == str(path)
+    with pytest.raises(ValueError, match="runs a script"):
+        _collect_command(layout, manifest, settings, "41")
+
+
+def test_without_remote_cwd_the_collect_script_runs_setup_before_python(
+    tmp_path: Path,
+) -> None:
+    """The collect script, run as the job runs it, reaches the interpreter only
+    once launcher.setup and launcher.env have run."""
+    from autoware_carla_scenario.slurm.submit import collect_script
+
+    work = tmp_path / "work dir"
+    bin_dir = tmp_path / "setup's bin"
+    bin_dir.mkdir()
+    record = tmp_path / "record"
+    fake_python = bin_dir / "fake-python"
+    fake_python.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "$PWD" "$ONEPLANNER_X" "$CARLA_ROOT" "$@" > {shlex.quote(str(record))}\n'
+    )
+    fake_python.chmod(0o755)
+    layout = BatchLayout(work / "outputs" / "d" / "t")
+    layout.root.mkdir(parents=True)
+    manifest = {"python": "/x", "cwd": str(work), "env": {"CARLA_ROOT": "/c"}}
+    settings = SlurmSettings.from_mapping(
+        {
+            "python": "fake-python",
+            "setup": [f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"'],
+            "env": {"ONEPLANNER_X": "it's x"},
+        }
+    )
+    script = layout.root / "collect.sh"
+    script.write_text(collect_script(manifest, settings, layout))
+    completed = subprocess.run(
+        ["bash", str(script)], cwd=tmp_path, text=True, capture_output=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert record.read_text().splitlines() == [
+        str(work),
+        "it's x",
+        "/c",
+        "-m",
+        "autoware_carla_scenario.slurm.cli",
+        "collect",
+        str(layout.batch_dir),
+    ]
 
 
 def test_the_batch_must_lie_under_the_submitting_directory(tmp_path: Path) -> None:
