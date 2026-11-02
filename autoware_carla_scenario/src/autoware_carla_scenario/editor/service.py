@@ -666,8 +666,12 @@ class EditorService:
         controller that is gone: that would be a validation error the user did
         not cause, and worse, the next "add controller" takes the first unused
         name -- this one -- and the card would silently drive that new,
-        unrelated cycle.  A controller still called the same thing (a document
-        mid-rename may hold two) keeps its cards and offsets.
+        unrelated cycle.  While another controller is still called the same
+        thing, the name still resolves, so its cards and offsets are kept.  The
+        editor never makes two (adding takes an unused name, renaming refuses a
+        taken one), but a document written by hand may hold them, and the
+        validator reports the duplicate rather than this delete guessing which
+        of the two the cards meant.
         """
         controller = self._signal_controller(document, index)
         name = controller.name

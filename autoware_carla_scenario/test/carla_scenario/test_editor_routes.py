@@ -2549,7 +2549,7 @@ class TestTheJunctionEditor:
     def test_deleting_one_of_two_same_named_controllers_keeps_the_cards(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
-        """Mid-rename duplicates: the name the cards use is still declared."""
+        """A hand-written duplicate: the name the cards use is still declared."""
         self._groups(client, draft_id, "ns")
         client.post(f"/draft/{draft_id}/signal-controller")
         client.post(f"/draft/{draft_id}/signal-controller")
