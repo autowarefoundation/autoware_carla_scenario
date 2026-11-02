@@ -149,3 +149,49 @@ def test_sharing_the_frame_changes_no_value() -> None:
     frames.append((on_road(50, 1.75, 14.0, 1), [braking]))
     for ego, others in frames:
         assert shared.evaluate(ego, others, crime) == copied.evaluate(ego, others, crime)
+
+
+def test_the_threat_numbers_are_the_required_accelerations_over_the_most(
+    evaluator: Evaluator,
+) -> None:
+    ego = on_road(50, 1.75, 15.0, 1)
+    lead = on_road(80, 1.75, 5.0, 2)
+    values, errors = evaluator.evaluate(
+        ego,
+        [lead],
+        ["crime_a_long_req_mps2", "crime_a_lat_req_mps2", "crime_btn", "crime_stn"],
+    )
+    assert errors == {}
+    # CriMe's most a car can brake and steer: 11.5 and 8 m/s^2.
+    assert values["crime_btn"] == pytest.approx(-values["crime_a_long_req_mps2"] / 11.5, abs=1e-3)
+    assert values["crime_stn"] == pytest.approx(abs(values["crime_a_lat_req_mps2"]) / 8.0, abs=1e-3)
+
+
+def test_the_worst_case_time_to_react(evaluator: Evaluator) -> None:
+    ego = on_road(50, 1.75, 15.0, 1)
+    # Closing at 10 m/s on a 25.5 m gap, the next lane free: time to react,
+    # but less than until they would meet.
+    values, errors = evaluator.evaluate(
+        ego, [on_road(80, 1.75, 5.0, 2)], ["crime_wttr_s", "crime_ttc_s"]
+    )
+    assert errors == {}
+    assert 0.0 < values["crime_wttr_s"] < values["crime_ttc_s"]
+    # Both lanes blocked 40 m ahead: less time than with a lane to swerve into
+    # and a car going away.
+    blocked, _ = evaluator.evaluate(
+        ego, [on_road(90, 1.75, 0.0, 2), on_road(90, 5.25, 0.0, 3)], ["crime_wttr_s"]
+    )
+    assert 0.0 < blocked["crime_wttr_s"] < values["crime_wttr_s"]
+    # Both lanes blocked 12 m ahead at 15 m/s: no way is left.
+    trapped, _ = evaluator.evaluate(
+        ego, [on_road(62, 1.75, 0.0, 2), on_road(62, 5.25, 0.0, 3)], ["crime_wttr_s"]
+    )
+    assert trapped["crime_wttr_s"] == 0.0
+
+
+def test_no_collision_ahead_leaves_all_the_time_to_react(evaluator: Evaluator) -> None:
+    ego = on_road(50, 1.75, 15.0, 1)
+    alone, _ = evaluator.evaluate(ego, [], ["crime_wttr_s"])
+    beside, _ = evaluator.evaluate(ego, [on_road(80, 5.25, 5.0, 2)], ["crime_wttr_s"])
+    assert alone["crime_wttr_s"] == math.inf
+    assert beside["crime_wttr_s"] == math.inf

@@ -51,6 +51,9 @@ evaluates the measures asked for on the ego at the first step:
 | `crime_dce_m` | DCE | m |
 | `crime_a_long_req_mps2` | ALongReq | m/s^2 |
 | `crime_a_lat_req_mps2` | ALatReq | m/s^2 |
+| `crime_btn` | BTN (brake threat number) | ratio |
+| `crime_stn` | STN (steer threat number) | ratio |
+| `crime_wttr_s` | WTTR (worst-case time-to-react), by Reach | s |
 | `reach_drivable_area_m2` | the drivable area at the end of the horizon | m^2 |
 | `reach_drivable_area_sum_m2` | the drivable area summed over the horizon (CriMe's DA) | m^2 |
 
@@ -63,11 +66,23 @@ turn.
 CriMe's measures share each frame's scenario rather than each copying it,
 and the ego's reference path and a lanelet's smoothed bounds are built once a
 frame (`EvaluatorSettings.share_frame`; a test checks the values match CriMe's
-own copying run). On a frame of ten road users the eight measures take about
-95 ms together, against 520 ms as CriMe runs them. The drivable area is
+own copying run). On a frame of ten road users the eight measures from TTC to
+ALatReq take about 95 ms together, against 520 ms as CriMe runs them; BTN and
+STN, which compute ALongReq and ALatReq again, about 170 ms more. The drivable area is
 CommonRoad-Reach's C++ computation: about 155 ms over a 3 s horizon, 45 ms
 over 2 s (`horizon_steps`); its grid size changes neither the time nor the
 area.
+
+WTTR is not CriMe's class, which loads CommonRoad-Reach's scenario from a
+file, but its algorithm on the frame: the ego goes on along its predicted
+trajectory until it would hit a road user (TTC\*); before that step, the latest
+one from which the reachable set still reaches the end of the horizon is found
+by bisection, each try a reachable set from the ego's predicted state there.
+WTTR is the time to the step after it: `Infinity` when the ego hits no one, `0`
+when no way is left even now. Unlike CriMe's TTC\*, the road's boundary is no
+obstacle: the ego's prediction goes straight on and would leave every bend. A
+frame with a collision ahead takes about 110 ms (a few reachable sets, each
+over what is left of the horizon); one without, next to nothing.
 
 CriMe's TTS and TTR (time-to-steer, time-to-react) are left out: they simulate
 the ego's manoeuvres and take seconds a frame.

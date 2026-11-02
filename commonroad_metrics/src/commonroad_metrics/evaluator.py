@@ -9,13 +9,16 @@ acceleration, over the horizon -- and evaluates the measures asked for on the
 ego at its first time step:
 
 * CriMe's (``commonroad_crime``) time, distance and acceleration measures --
-  TTC, THW, TTB and the rest -- each the most critical over the other road
-  users, as CriMe folds them (the least TTC, the greatest required
-  deceleration);
+  TTC, THW, TTB, the threat numbers BTN and STN and the rest -- each the most
+  critical over the other road users, as CriMe folds them (the least TTC, the
+  greatest required deceleration);
 * CommonRoad-Reach's (``commonroad_reach``) reachable set of the ego, its
   drivable area at the end of the horizon: what is left of the road the ego can
   still reach without hitting anyone.  ``0`` means none: a collision can no
-  longer be avoided within the horizon.
+  longer be avoided within the horizon;
+* the worst-case time-to-react (WTTR, :meth:`Evaluator._wttr`): how long the
+  ego can go on as it goes before no way it can go is free of collisions to
+  the end of the horizon, by the reachable set.
 
 The lanelet network is read once, and cut down every frame to the lanelets
 within :attr:`EvaluatorSettings.radius_m` of the ego, so that a measure deep-
@@ -51,12 +54,22 @@ CRIME_MEASURES: dict[str, str] = {
     "crime_dce_m": "DCE",
     "crime_a_long_req_mps2": "ALongReq",
     "crime_a_lat_req_mps2": "ALatReq",
+    "crime_btn": "BTN",
+    "crime_stn": "STN",
 }
 #: CommonRoad-Reach's: the area of the ego's drivable area at the end of the
 #: horizon (m^2), and summed over the horizon's steps (CriMe's DA, m^2 * steps).
 REACH_DRIVABLE_AREA_M2 = "reach_drivable_area_m2"
 REACH_DRIVABLE_AREA_SUM_M2 = "reach_drivable_area_sum_m2"
-REACH_MEASURES: tuple[str, ...] = (REACH_DRIVABLE_AREA_M2, REACH_DRIVABLE_AREA_SUM_M2)
+#: The worst-case time-to-react (s), after CriMe's WTTR (Sontges, Koschi and
+#: Althoff, IV 2018), read here: CriMe's own loads CommonRoad-Reach's scenario
+#: from a file rather than the frame's.
+CRIME_WTTR_S = "crime_wttr_s"
+REACH_MEASURES: tuple[str, ...] = (
+    REACH_DRIVABLE_AREA_M2,
+    REACH_DRIVABLE_AREA_SUM_M2,
+    CRIME_WTTR_S,
+)
 
 MEASURES: tuple[str, ...] = (*CRIME_MEASURES, *REACH_MEASURES)
 
@@ -390,46 +403,48 @@ class Evaluator:
         errors: dict[str, str],
     ) -> None:
         try:
-            areas = self._reachable_areas(scenario, ego)
+            frame = _ReachFrame.of(scenario, ego, self._id_base)
         except Exception as exc:
             for key in wanted:
                 values[key] = None
                 errors[key] = f"{type(exc).__name__}: {exc}"
             return
+        areas: list[float] | None = None
         for key in wanted:
-            if key == REACH_DRIVABLE_AREA_M2:
-                values[key] = areas[-1] if areas else 0.0
-            else:
-                values[key] = float(sum(areas))
+            try:
+                if key == CRIME_WTTR_S:
+                    values[key] = self._wttr(frame, ego)
+                    continue
+                if areas is None:
+                    areas = self._reachable_areas(frame, ego)
+                if key == REACH_DRIVABLE_AREA_M2:
+                    values[key] = areas[-1] if areas else 0.0
+                else:
+                    values[key] = float(sum(areas))
+            except Exception as exc:
+                values[key] = None
+                errors[key] = f"{type(exc).__name__}: {exc}"
 
-    def _reachable_areas(self, scenario: Any, ego: Actor) -> list[float]:
-        """The area of the ego's drivable area at each step of the horizon."""
+    def _reachable_set(self, frame: _ReachFrame, ego: Actor, start: int = 0) -> Any:
+        """CommonRoad-Reach's reachable set of the ego, from where *ego* is at
+        step *start* to the end of the horizon, among the other road users as
+        they go on."""
         from commonroad.common.util import Interval
         from commonroad.geometry.shape import Rectangle
         from commonroad.planning.goal import GoalRegion
         from commonroad.planning.planning_problem import PlanningProblem
         from commonroad.scenario.state import InitialState
-        from commonroad_clcs.pycrccosy import CurvilinearCoordinateSystem
-        from commonroad_crime.utility.general import generate_reference_path
         from commonroad_reach.data_structure.configuration_builder import (
             ConfigurationBuilder,
         )
         from commonroad_reach.data_structure.reach.reach_interface import (
             ReachableSetInterface,
         )
-        from commonroad_reach.utility.reach_operation import compute_area_of_reach_nodes
 
-        lanelet_ids = scenario.lanelet_network.find_lanelet_by_position([np.array([ego.x, ego.y])])[
-            0
-        ]
-        reference = generate_reference_path(
-            _best_lanelet(scenario.lanelet_network, lanelet_ids, ego.yaw),
-            scenario.lanelet_network,
-        )
-        clcs = CurvilinearCoordinateSystem(reference, 25.0, 0.1)
+        horizon = self.settings.horizon_steps
         speed = math.hypot(ego.vx, ego.vy)
         initial = InitialState(
-            time_step=0,
+            time_step=start,
             position=np.array([ego.x, ego.y]),
             orientation=ego.yaw,
             velocity=speed,
@@ -440,24 +455,19 @@ class Evaluator:
         goal = GoalRegion(
             [
                 InitialState(
-                    time_step=Interval(0, self.settings.horizon_steps),
+                    time_step=Interval(start, horizon),
                     position=Rectangle(1.0, 1.0, np.array([ego.x, ego.y])),
                 )
             ]
         )
         # Past every road user's id.
         problem = PlanningProblem(self._id_base * 2 + 1 + ego.id, initial, goal)
-        others = scenario.__class__(scenario.dt, scenario.scenario_id)
-        others.add_objects(scenario.lanelet_network)
-        for obstacle in scenario.obstacles:
-            if obstacle.obstacle_id != self._id_base + ego.id:
-                others.add_objects(obstacle)
 
-        config = ConfigurationBuilder().build_configuration(str(scenario.scenario_id))
+        config = ConfigurationBuilder().build_configuration(str(frame.others.scenario_id))
         # Reach saves its configuration under ./output/ every computation.
         config.debug.save_config = False
         config.planning.dt = self.settings.dt
-        config.planning.steps_computation = self.settings.horizon_steps
+        config.planning.steps_computation = horizon - start
         config.vehicle.ego.length = ego.length
         config.vehicle.ego.width = ego.width
         config.vehicle.ego.v_max = max(config.vehicle.ego.v_max, speed + 1.0)
@@ -466,11 +476,120 @@ class Evaluator:
             target = getattr(config, section)
             for name, value in overrides.items():
                 setattr(target, name, value)
-        config.update(scenario=others, planning_problem=problem, CLCS=clcs)
+        config.update(scenario=frame.others, planning_problem=problem, CLCS=frame.clcs)
         interface = ReachableSetInterface(config)
         interface.compute_reachable_sets(verbose=False)
+        return interface
+
+    def _reachable_areas(self, frame: _ReachFrame, ego: Actor) -> list[float]:
+        """The area of the ego's drivable area at each step of the horizon."""
+        from commonroad_reach.utility.reach_operation import compute_area_of_reach_nodes
+
+        interface = self._reachable_set(frame, ego)
         steps = sorted(interface.reachable_set)
         return [float(compute_area_of_reach_nodes(interface.reachable_set[t])) for t in steps]
+
+    def _wttr(self, frame: _ReachFrame, ego: Actor) -> float:
+        """The worst-case time-to-react (s), as CriMe's WTTR reads it.
+
+        The ego goes on as it goes until it would hit a road user (TTC*, by
+        its predicted trajectory; ``inf`` when it hits no one within the
+        horizon).  Before that, the latest step from which a way to the end of
+        the horizon free of collisions is still left -- the reachable set
+        from the ego's predicted state there is not empty at the end -- is
+        found by bisection, as CriMe finds it; WTTR is the time to the step
+        after it: ``0`` when no way is left even now.
+        """
+        hit = frame.first_collision_step(self.settings.horizon_steps)
+        if hit is None:
+            return math.inf
+        low, high = 0, hit
+        while low < high:
+            mid = (low + high) // 2
+            interface = self._reachable_set(frame, frame.ego_at(ego, mid), mid)
+            if interface.reachable_set_at_step(self.settings.horizon_steps):
+                low = mid + 1
+            else:
+                high = mid
+        return round(low * self.settings.dt, 6)
+
+
+@dataclass
+class _ReachFrame:
+    """What CommonRoad-Reach reads of a frame, made once for every reachable
+    set computed on it: the ego's predicted trajectory, the other road users
+    without it, and the curvilinear frame along the ego's lane."""
+
+    ego_obstacle: Any
+    others: Any
+    clcs: Any
+
+    @classmethod
+    def of(cls, scenario: Any, ego: Actor, id_base: int) -> _ReachFrame:
+        from commonroad_clcs.pycrccosy import CurvilinearCoordinateSystem
+        from commonroad_crime.utility.general import generate_reference_path
+
+        network = scenario.lanelet_network
+        lanelet_ids = network.find_lanelet_by_position([np.array([ego.x, ego.y])])[0]
+        reference = generate_reference_path(_best_lanelet(network, lanelet_ids, ego.yaw), network)
+        clcs = CurvilinearCoordinateSystem(reference, 25.0, 0.1)
+        ego_id = id_base + ego.id
+        others = scenario.__class__(scenario.dt, scenario.scenario_id)
+        others.add_objects(network)
+        ego_obstacle = None
+        for obstacle in scenario.obstacles:
+            if obstacle.obstacle_id == ego_id:
+                ego_obstacle = obstacle
+            else:
+                others.add_objects(obstacle)
+        return cls(ego_obstacle, others, clcs)
+
+    def ego_at(self, ego: Actor, step: int) -> Actor:
+        """*ego* where its predicted trajectory has it at *step*."""
+        state = self.ego_obstacle.state_at_time(step)
+        vx = float(state.velocity)
+        vy = float(getattr(state, "velocity_y", 0.0) or 0.0)
+        return replace(
+            ego,
+            x=float(state.position[0]),
+            y=float(state.position[1]),
+            yaw=float(state.orientation),
+            vx=vx,
+            vy=vy,
+        )
+
+    def first_collision_step(self, horizon: int) -> int | None:
+        """The first step at which the ego, on its predicted trajectory, hits
+        another road user on theirs (TTC* over the time step); ``None`` when
+        it hits no one within *horizon* steps.  Unlike CriMe's TTC*, the road's
+        boundary is no obstacle: the ego's prediction goes straight on, and
+        would leave every bend."""
+        import commonroad_dc.pycrcc as pycrcc
+        from commonroad_dc.collision.collision_detection.pycrcc_collision_dispatch import (
+            create_collision_checker,
+        )
+
+        if not self.others.dynamic_obstacles:
+            return None
+        checker = create_collision_checker(self.others)
+        shape = self.ego_obstacle.obstacle_shape
+        for step in range(horizon + 1):
+            state = self.ego_obstacle.state_at_time(step)
+            if state is None:
+                break
+            box = pycrcc.TimeVariantCollisionObject(step)
+            box.append_obstacle(
+                pycrcc.RectOBB(
+                    0.5 * shape.length,
+                    0.5 * shape.width,
+                    float(state.orientation),
+                    float(state.position[0]),
+                    float(state.position[1]),
+                )
+            )
+            if checker.collide(box):
+                return step
+        return None
 
 
 @contextmanager

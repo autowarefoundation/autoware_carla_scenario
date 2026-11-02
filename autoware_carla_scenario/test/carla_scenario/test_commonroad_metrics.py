@@ -34,8 +34,10 @@ from autoware_carla_scenario.metric_batch import Frame, FrameRecorder, evaluate_
 from autoware_carla_scenario.metrics import (
     BUILT_IN_METRICS,
     COMMONROAD_METRICS,
+    CRIME_BTN,
     CRIME_HW_M,
     CRIME_TTC_S,
+    CRIME_WTTR_S,
     REACH_DRIVABLE_AREA_M2,
     read_metric,
 )
@@ -69,8 +71,10 @@ def test_the_commonroad_metrics_are_built_in() -> None:
         assert metric.title and metric.text and metric.unit
         assert key.startswith(("crime_", "reach_"))
         # The most critical frame of a run: the least time, gap or area, the
-        # hardest braking; the most lateral acceleration needed.
-        expected = "max" if key == "crime_a_lat_req_mps2" else "min"
+        # hardest braking; the most lateral acceleration needed, the greatest
+        # threat number.
+        most = ("crime_a_lat_req_mps2", "crime_btn", "crime_stn")
+        expected = "max" if key in most else "min"
         assert metric.aggregation == expected
         assert metrics._FAILURE_CATEGORIES[key] is FailureCategory.SAFETY_MARGIN
 
@@ -434,12 +438,16 @@ def test_crime_and_reach_through_the_real_worker(
         command=tuple(command), cache_dir=tmp_path / "maps", workers=2
     )
     world = _following(opendrive)
-    keys = [CRIME_TTC_S, CRIME_HW_M, REACH_DRIVABLE_AREA_M2]
+    keys = [CRIME_TTC_S, CRIME_HW_M, CRIME_BTN, CRIME_WTTR_S, REACH_DRIVABLE_AREA_M2]
     series = evaluate_metrics(_recorded(world, [0.0, 0.1, 0.2]), world.get_map(), keys)
 
     assert series[CRIME_TTC_S].values == [pytest.approx(2.55, abs=0.05)] * 3
     assert series[CRIME_HW_M].values == [pytest.approx(25.5, abs=0.1)] * 3
     assert all(v is not None and v > 0.0 for v in series[REACH_DRIVABLE_AREA_M2].values)
+    # 1.96 m/s^2 to brake of CriMe's 11.5.
+    assert series[CRIME_BTN].values == [pytest.approx(0.17, abs=0.01)] * 3
+    # Time to react, but less than until they would meet.
+    assert all(v is not None and 0.0 < v < 2.55 for v in series[CRIME_WTTR_S].values)
     for condition in (
         MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 3.0, label="ttc"),
         MetricCondition(CRIME_HW_M, ComparisonRule.LESS_THAN, 30.0, label="hw"),

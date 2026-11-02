@@ -38,10 +38,13 @@ CRIME_TTCE_S: str = "crime_ttce_s"
 CRIME_DCE_M: str = "crime_dce_m"
 CRIME_A_LONG_REQ_MPS2: str = "crime_a_long_req_mps2"
 CRIME_A_LAT_REQ_MPS2: str = "crime_a_lat_req_mps2"
+CRIME_BTN: str = "crime_btn"
+CRIME_STN: str = "crime_stn"
+CRIME_WTTR_S: str = "crime_wttr_s"
 REACH_DRIVABLE_AREA_M2: str = "reach_drivable_area_m2"
 REACH_DRIVABLE_AREA_SUM_M2: str = "reach_drivable_area_sum_m2"
 
-COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str] = (
+COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str, str, str, str] = (
     "crime_ttc_s",
     "crime_thw_s",
     "crime_hw_m",
@@ -50,6 +53,9 @@ COMMONROAD_METRICS: Tuple[str, str, str, str, str, str, str, str, str, str] = (
     "crime_dce_m",
     "crime_a_long_req_mps2",
     "crime_a_lat_req_mps2",
+    "crime_btn",
+    "crime_stn",
+    "crime_wttr_s",
     "reach_drivable_area_m2",
     "reach_drivable_area_sum_m2",
 )
@@ -296,6 +302,36 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         text="The lateral acceleration the ego needs to steer clear of a "
         "road user (CriMe ALatReq)",
         aggregation="max",
+    ),
+    CRIME_BTN: Metric(
+        CRIME_BTN,
+        _acs_unread,
+        title="Brake threat number (CriMe)",
+        unit="ratio",
+        text="The deceleration the ego needs not to hit the road user "
+        "ahead over the most it can brake; above 1 braking alone no "
+        "longer avoids it (CriMe BTN)",
+        aggregation="max",
+    ),
+    CRIME_STN: Metric(
+        CRIME_STN,
+        _acs_unread,
+        title="Steer threat number (CriMe)",
+        unit="ratio",
+        text="The lateral acceleration the ego needs to steer clear of a "
+        "road user over the most it can steer; above 1 steering alone no "
+        "longer avoids it (CriMe STN)",
+        aggregation="max",
+    ),
+    CRIME_WTTR_S: Metric(
+        CRIME_WTTR_S,
+        _acs_unread,
+        title="Worst-case time to react (CriMe)",
+        unit="s",
+        text="Seconds the ego can go on as it goes before no way it can go "
+        "is free of collisions to the end of the horizon; 0 when none is "
+        "left (CriMe WTTR, by CommonRoad-Reach)",
+        aggregation="min",
     ),
     REACH_DRIVABLE_AREA_M2: Metric(
         REACH_DRIVABLE_AREA_M2,
