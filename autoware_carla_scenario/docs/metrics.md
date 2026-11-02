@@ -1,12 +1,12 @@
 # Metrics
 
-A run reads two kinds of quantity off the world while it drives, under keys
-the framework fixes:
+A run reads two kinds of quantity off the world, under keys the framework
+fixes:
 
 | | Reads | Example | An ODD maps onto it | Watched by |
 |---|---|---|---|---|
-| **Measure** ([Scenario measures](odd.md#scenario-measures)) | A condition the ego drives in: what the scenario sets up | `vehicle_ahead_gap_m` | Yes (`measure:` in a binding file) | Coverage; a sweep draws a scenario's parameters from it |
-| **Metric** (this page) | How the ego drives: an outcome | `collision_at_fault` | No | `MetricCondition` |
+| **Measure** ([Scenario measures](odd.md#scenario-measures)) | A condition the ego drives in: what the scenario sets up, while it drives | `vehicle_ahead_gap_m` | Yes (`measure:` in a binding file) | Coverage; a sweep draws a scenario's parameters from it |
+| **Metric** (this page) | How the ego drove: an outcome, computed once the run is over | `collision_at_fault` | No | `MetricCondition` |
 
 An ODD describes the conditions a system is built to operate in, whatever it
 then does there. A metric reads what it did, so it has no place in one: were
@@ -156,35 +156,32 @@ self.register_fail_condition(
 )
 ```
 
-**How they are read.** CommonRoad's packages cannot share the framework's
-environment: commonroad-io pins protobuf 3.20, where the framework's gRPC code
-needs 4 or later, and CommonRoad-Reach builds for CPython 3.10 and 3.11 only.
-They run in a worker process of their own, the `commonroad_metrics` project at
-the root of the repository (`commonroad_metrics/README.md`), which the runner
-speaks to in JSON lines. Every tick of a run that reads one -- a
-`MetricCondition` on one asks for it as it is built; code reading one with
-`read_metric()` calls `want_metric(key)` in `setup()` -- the runner sends the
-worker the ego and the road users within 100 m, and publishes what it answers
-before the conditions are checked. Only the metrics asked for are evaluated,
-every 0.2 s of simulated time; they hold their values in between. A run that
-reads none starts nothing.
-
-The worker reads the world's map as CommonRoad: roadgen (>= 0.42.0, the `map`
+CommonRoad's packages cannot share the framework's environment: commonroad-io
+pins protobuf 3.20, where the framework's gRPC code needs 4 or later, and
+CommonRoad-Reach builds for CPython 3.10 and 3.11 only. They run in worker
+processes of their own, the `commonroad_metrics` project at the root of the
+repository (`commonroad_metrics/README.md`), spoken to in JSON lines, on the
+frames a run recorded every 0.1 s of simulated time
+([How metrics are computed](#how-metrics-are-computed)), the frames shared
+among several workers at once (four, or as many as the machine has cores).
+The workers read the world's map as CommonRoad: roadgen (>= 0.42.0, the `map`
 extra) converts the world's OpenDRIVE once per machine, cached under
-`~/.cache/autoware_carla_scenario/commonroad`. The worker evaluates each frame
-in a frame of its own, moved to the ego and turned so the lane under it runs
-along +x: CriMe projects speeds onto a lane with the cosine of the lane's own
-heading, which is the speed along the lane only there.
+`~/.cache/autoware_carla_scenario/commonroad`, and stay up for the next run on
+the map. A worker evaluates each frame moved to the ego and turned so the lane
+under it runs along +x: CriMe projects speeds onto a lane with the cosine of
+the lane's own heading, which is the speed along the lane only there. On a
+frame of ten road users the eight CriMe measures take about 95 ms together,
+the drivable area about 155 ms (over 2 s instead of 3, 45 ms).
 
-The runner starts the worker with, in order, the command in
+The workers are started with, in order, the command in
 `$AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER`, `commonroad-metrics-worker` on
 the `PATH`, or, in a checkout, `uv run --project commonroad_metrics
 commonroad-metrics-worker` (which builds its environment the first time). A run
-that reads a CommonRoad metric and cannot start the worker fails with
-`CommonRoadWorkerError` rather than let a fail condition that reads nothing
-pass it. `configure_commonroad_metrics()` (in
-`autoware_carla_scenario.commonroad`) changes the period, the horizon, the
-radius, CommonRoad-Reach's settings and the command.
+judged on a CommonRoad metric whose workers cannot be started fails with
+`CommonRoadWorkerError` rather than pass on a metric that read nothing.
+`configure_commonroad_metrics()` (in `autoware_carla_scenario.commonroad`)
+changes the period, the number of workers, the horizon, the radius,
+CommonRoad-Reach's settings and the command.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
 
@@ -196,18 +193,22 @@ AlpaSim's other metrics need more than the world, and are not metrics here:
 | `img_is_black` | A camera image |
 | `dist_traveled_m`, `duration_frac_20s`, `avg_dist_between_incidents` | The run, not a frame |
 
-## Watching a metric
+## Judging a run on a metric
 
-`MetricCondition(metric, rule, value, tolerance, *, label)` holds while the
-metric satisfies the comparison. The rule defaults to
-`GREATER_THAN_OR_EQUAL` and the value to `1`, so an event metric on its own
-reads "it happens". A frame the metric reads nothing in does not satisfy it.
-It is usually a fail condition:
+`MetricCondition(metric, rule, value, tolerance, *, max_ng_seconds, label)` is
+a fail condition judged once the run is over. A frame is **NG** when the
+metric satisfies the comparison; the rule defaults to `GREATER_THAN_OR_EQUAL`
+and the value to `1`, so an event metric on its own reads "it happens". The
+run fails when its NG frames add up to more than `max_ng_seconds` of
+simulated time -- with the default `0`, at its first NG frame -- at the time
+they do. Each NG frame counts until the next frame evaluated (the last, the
+run's end, counts nothing); a frame the metric reads nothing in is not NG.
 
 ```python
 from autoware_carla_scenario import ComparisonRule, MetricCondition
 from autoware_carla_scenario.metrics import (
     COLLISION_AT_FAULT,
+    CRIME_TTC_S,
     MIN_DISTANCE_TO_OBSTACLE_M,
     OFFROAD,
 )
@@ -219,7 +220,10 @@ class MyScenario(BaseScenario):
         self.register_fail_condition(
             MetricCondition(COLLISION_AT_FAULT, label="collision at fault")
         )
-        self.register_fail_condition(MetricCondition(OFFROAD, label="off the road"))
+        # Off the road for more than a second, in all.
+        self.register_fail_condition(
+            MetricCondition(OFFROAD, max_ng_seconds=1.0, label="off the road")
+        )
         self.register_fail_condition(
             MetricCondition(
                 MIN_DISTANCE_TO_OBSTACLE_M,
@@ -228,24 +232,54 @@ class MyScenario(BaseScenario):
                 label="closer than half a metre",
             )
         )
+        self.register_fail_condition(
+            MetricCondition(
+                CRIME_TTC_S,
+                ComparisonRule.LESS_THAN,
+                1.5,
+                max_ng_seconds=0.3,
+                label="TTC under 1.5 s",
+            )
+        )
 ```
 
-It composes like any other condition: `PersistentCondition` to require a
-metric to hold for a while (off the road for more than a second), `NotCondition`
-to pass only while it does not. In the [Scenario Editor](scenario_editor.md) it
-is the **Metric** card, under World.
+Judged after the run, a metric condition neither ends a run early nor
+composes: `PersistentCondition`, `NotCondition`, `AndCondition`,
+`OrCondition` and `StickyCondition` refuse one (`max_ng_seconds` is how long
+it must hold), and so does `register_pass_condition`. A run that passed, or
+failed later than the metric did, fails on the metric: the earliest wins, its
+failure records the condition, when and what it found. Every metric
+condition's status in the result says what it found: `ng_seconds`, when it
+first went NG (`first_ng_at`) and its most critical value (`worst`). In the
+[Scenario Editor](scenario_editor.md) it is the **Metric** card, under World,
+with its **Max NG seconds**.
 
 A run a metric condition fails is a failure of what the metric reads
 ([Why a run failed](usage.md#output-files)): a collision
 metric `collision`, `offroad` and `min_distance_to_lane_boundary_m`
-`lane_keeping`, `wrong_lane` `traffic_rule`, `min_distance_to_obstacle_m`
-`safety_margin`, and the weaving metrics and `turn_indicator_changes`
-`stability`. `offroad_or_collision` and its at-fault twin read two things and
-say neither, nor does the importance-sampling weight: register a condition on
-them with its `category`.
+`lane_keeping`, `wrong_lane` `traffic_rule`, `min_distance_to_obstacle_m` and
+the CommonRoad metrics `safety_margin`, and the weaving metrics and
+`turn_indicator_changes` `stability`. `offroad_or_collision` and its at-fault
+twin read two things and say neither, nor does the importance-sampling weight:
+register a condition on them with its `category`.
 
-To read a metric yourself -- in a probe, a test, a recorder --
-`read_metric(key, world)` returns its value in the frame, or `None`.
+### How metrics are computed
+
+A run with a metric condition records its road users every tick -- each
+vehicle's and walker's place, velocity, acceleration and box, the ego's
+steering and light state, the importance-sampling weight
+(`autoware_carla_scenario.metric_batch.FrameRecorder`) -- and nothing more:
+the simulation never waits on a metric. When the run is over, while its CARLA
+map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
+own every tick, in order, by the code that reads them off a live world, on a
+stand-in world answering with the recorded actors and the run's map; the
+CommonRoad metrics every 0.1 s, by the workers at once. Then each metric
+condition judges its metric's series.
+
+To read an AlpaSim metric off a live world yourself -- in a probe, a test --
+`read_metric(key, world)` returns its value in the frame, or `None`; a
+CommonRoad metric reads nothing there. `evaluate_metrics(frames, carla_map,
+keys)` computes any of them over recorded frames.
 
 ### Off the road as a fail condition
 
@@ -253,7 +287,8 @@ To read a metric yourself -- in a probe, a test, a recorder --
 corner of the ego's box is on no driving lane. A corner over a gap between
 lanes at a junction entry, or a small offset between the OpenDRIVE lanes and
 where the vehicle drives, counts though the vehicle is in its lane, so
-`MetricCondition(OFFROAD, ...)` fails such runs. To judge a run by how much of
+`MetricCondition(OFFROAD, ...)` fails such runs (unless its `max_ng_seconds`
+lets them through). To judge a run by how much of
 the box is off instead, use `OffRoadFractionCondition(fraction, entity_name,
 *, label)`, a condition rather than a metric:
 

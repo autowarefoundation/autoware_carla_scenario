@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
-from .base import BaseCondition, ScenarioResult
+from .base import BaseCondition, ScenarioResult, refuse_post_run
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -51,6 +51,8 @@ class AndCondition(BaseCondition):
     ) -> None:
         if len(conditions) < 2:
             raise ValueError("AndCondition requires at least 2 conditions")
+        for condition in conditions:
+            refuse_post_run(condition, "AndCondition")
         auto_label = " AND ".join(c.label for c in conditions)
         super().__init__(label=label if label is not None else auto_label)
         self._conditions: Sequence[BaseCondition] = conditions

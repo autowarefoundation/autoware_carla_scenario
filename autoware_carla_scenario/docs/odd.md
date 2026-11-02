@@ -428,7 +428,7 @@ the traffic, how close it comes to other road users -- is an outcome, read by a
 refused. Were it allowed, the ego's own driving would decide whether a run is
 inside the domain it is tested in, and an ODD excluding `offroad` would report
 a run that left the road as outside the ODD rather than as failed. A run
-watches a metric with `MetricCondition` instead.
+is judged on a metric with `MetricCondition` instead, once it is over.
 
 ## Writing an ODD in OpenODD YAML
 

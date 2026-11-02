@@ -40,11 +40,10 @@ runner hands this module every tick (:func:`track_ego_motion`).
 Ten read the criticality of the frame with TU Munich's CommonRoad tools: eight
 CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`, ...) and the area the
 ego can still reach by CommonRoad-Reach (:data:`REACH_DRIVABLE_AREA_M2`,
-:data:`REACH_DRIVABLE_AREA_SUM_M2`).  Those packages run in a worker process
-of their own (:mod:`autoware_carla_scenario.commonroad`), which the runner
-asks every tick for the ones the run reads (:func:`want_metric`,
-:func:`commonroad_metrics_wanted`) and publishes here
-(:func:`set_commonroad_values`).
+:data:`REACH_DRIVABLE_AREA_SUM_M2`).  Those packages run in worker processes
+of their own (:mod:`autoware_carla_scenario.commonroad`), on the frames a run
+recorded, once it is over (:mod:`autoware_carla_scenario.metric_batch`):
+:func:`read_metric` reads nothing of them off a live world.
 
 AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
@@ -98,16 +97,12 @@ __all__ = [
     "STEERING_REVERSALS",
     "TURN_INDICATOR_CHANGES",
     "WRONG_LANE",
-    "commonroad_metrics_wanted",
     "is_metric",
     "read_metric",
     "ego_progress",
-    "reset_commonroad_metrics",
     "reset_ego_motion",
-    "set_commonroad_values",
     "set_importance_sampling_weight",
     "track_ego_motion",
-    "want_metric",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -908,53 +903,11 @@ def _turn_indicator_changes(world: "carla.World") -> Optional[float]:
 # CommonRoad: CriMe's and CommonRoad-Reach's, read in a worker of their own
 # ---------------------------------------------------------------------------
 
-#: The CommonRoad metrics of the frame evaluated last, which the runner
-#: publishes (:func:`set_commonroad_values`); one that read nothing is absent.
-_COMMONROAD_VALUES: dict[str, float] = {}
-#: The CommonRoad metrics the run reads, which the runner asks the worker
-#: for (:func:`want_metric`).  A dict for its order.
-_COMMONROAD_WANTED: dict[str, bool] = {}
-
-
-def want_metric(key: str) -> None:
-    """Have the runner evaluate the metric *key* every tick from now on.
-
-    Only the CommonRoad metrics are evaluated on demand (the worker takes
-    time): :class:`~autoware_carla_scenario.conditions.MetricCondition` asks
-    for the one it watches as it is built.  Code that reads one itself with
-    :func:`read_metric` -- a probe, a recorder -- asks for it in the
-    scenario's ``setup()``.  The run forgets what was asked for as it ends
-    (:func:`reset_commonroad_metrics`).  A key of another metric, or of none,
-    is ignored.
-    """
-    if key in COMMONROAD_METRICS:
-        _COMMONROAD_WANTED[key] = True
-
-
-def commonroad_metrics_wanted() -> list[str]:
-    """The CommonRoad metrics this run reads (:func:`want_metric`)."""
-    return list(_COMMONROAD_WANTED)
-
-
-def set_commonroad_values(values: dict[str, Optional[float]]) -> None:
-    """Publish the CommonRoad metrics of the frame just evaluated; a key
-    absent, or ``None``, reads nothing."""
-    _COMMONROAD_VALUES.clear()
-    for key, value in values.items():
-        if value is not None:
-            _COMMONROAD_VALUES[key] = float(value)
-
-
-def reset_commonroad_metrics() -> None:
-    """Forget the CommonRoad metrics read and asked for: the runner calls it
-    as a run ends."""
-    _COMMONROAD_VALUES.clear()
-    _COMMONROAD_WANTED.clear()
-
 
 def _commonroad(key: str) -> Optional[float]:
-    if key in _COMMONROAD_VALUES:
-        return _COMMONROAD_VALUES[key]
+    """Nothing: a CommonRoad metric is computed from a run's recorded frames
+    once it is over (:mod:`autoware_carla_scenario.metric_batch`), not read
+    off a live world."""
     return None
 
 
@@ -1375,9 +1328,9 @@ def read_metric(key: str, world: "carla.World") -> Optional[float]:
     """The built-in metric *key* in *world*.
 
     ``None`` when there is nothing to read, the key is not a metric's, or the
-    metric raised.  A CommonRoad metric reads the frame the runner had the
-    worker evaluate last, and nothing unless the run asked for it
-    (:func:`want_metric`).
+    metric raised.  A CommonRoad metric reads nothing here: it is computed
+    from a run's recorded frames once the run is over
+    (:mod:`autoware_carla_scenario.metric_batch`).
     """
     if key not in BUILT_IN_METRICS:
         return None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from .base import BaseCondition, ScenarioResult
+from .base import BaseCondition, ScenarioResult, refuse_post_run
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -60,6 +60,7 @@ class NotCondition(BaseCondition):
         label: str | None = None,
         holds_when_pending: bool = False,
     ) -> None:
+        refuse_post_run(condition, "NotCondition")
         super().__init__(label=label if label is not None else condition.label)
         self._condition = condition
         self._holds_when_pending = holds_when_pending

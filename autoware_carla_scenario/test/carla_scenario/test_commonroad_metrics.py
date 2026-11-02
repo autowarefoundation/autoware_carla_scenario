@@ -1,4 +1,5 @@
-"""The CommonRoad metrics: CriMe's and CommonRoad-Reach's, by the worker.
+"""The CommonRoad metrics: CriMe's and CommonRoad-Reach's, by the workers,
+on the frames a run recorded, once it is over.
 
 A stand-in world on a map roadgen generates -- one straight road heading
 36.87 degrees off +x in the OpenDRIVE frame, two lanes forward and one back --
@@ -29,18 +30,14 @@ from autoware_carla_scenario.commonroad.map import MAP_FILE, commonroad_map
 from autoware_carla_scenario.conditions import ComparisonRule, MetricCondition
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.failure import FailureCategory
+from autoware_carla_scenario.metric_batch import Frame, FrameRecorder, evaluate_metrics
 from autoware_carla_scenario.metrics import (
+    BUILT_IN_METRICS,
     COMMONROAD_METRICS,
     CRIME_HW_M,
     CRIME_TTC_S,
-    OFFROAD,
     REACH_DRIVABLE_AREA_M2,
-    BUILT_IN_METRICS,
-    commonroad_metrics_wanted,
     read_metric,
-    reset_commonroad_metrics,
-    set_commonroad_values,
-    want_metric,
 )
 
 from ._fake_world import ActorsById
@@ -52,15 +49,12 @@ COS, SIN = 0.8, 0.6
 
 @pytest.fixture(autouse=True)
 def _clean() -> Iterator[None]:
-    """Each test asks for its own metrics and starts its own worker."""
-    reset_commonroad_metrics()
-    cr_session.close_commonroad_worker()
+    """Each test starts its own workers, with its own settings."""
+    cr_session.close_commonroad_workers()
     settings = cr_session.commonroad_settings()
     yield
-    reset_commonroad_metrics()
-    cr_session.close_commonroad_worker()
-    cr_session.end_commonroad_run()
-    cr_session._SESSION.settings = settings
+    cr_session.close_commonroad_workers()
+    cr_session._POOL.settings = settings
 
 
 # ---------------------------------------------------------------------------
@@ -81,50 +75,25 @@ def test_the_commonroad_metrics_are_built_in() -> None:
         assert metrics._FAILURE_CATEGORIES[key] is FailureCategory.SAFETY_MARGIN
 
 
-def test_a_commonroad_metric_reads_what_the_runner_publishes() -> None:
-    world = SimpleNamespace()
-    assert read_metric(CRIME_TTC_S, world) is None  # type: ignore[arg-type]
-    set_commonroad_values({CRIME_TTC_S: 1.25, CRIME_HW_M: None})
-    assert read_metric(CRIME_TTC_S, world) == 1.25  # type: ignore[arg-type]
-    assert read_metric(CRIME_HW_M, world) is None  # type: ignore[arg-type]
-    # The next frame replaces the last whole.
-    set_commonroad_values({CRIME_HW_M: 12.0})
-    assert read_metric(CRIME_TTC_S, world) is None  # type: ignore[arg-type]
-    reset_commonroad_metrics()
-    assert read_metric(CRIME_HW_M, world) is None  # type: ignore[arg-type]
+def test_a_commonroad_metric_reads_nothing_off_a_live_world() -> None:
+    for key in COMMONROAD_METRICS:
+        assert read_metric(key, SimpleNamespace()) is None  # type: ignore[arg-type]
 
 
-def test_reading_one_does_not_ask_for_it() -> None:
-    read_metric(CRIME_TTC_S, SimpleNamespace())  # type: ignore[arg-type]
-    assert commonroad_metrics_wanted() == []
-
-
-def test_a_condition_asks_for_its_commonroad_metric() -> None:
-    MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 2.0, label="ttc")
-    MetricCondition(OFFROAD, label="off the road")  # not CommonRoad's
-    want_metric(REACH_DRIVABLE_AREA_M2)
-    want_metric(CRIME_TTC_S)
-    want_metric("no_such_metric")
-    assert commonroad_metrics_wanted() == [CRIME_TTC_S, REACH_DRIVABLE_AREA_M2]
-    reset_commonroad_metrics()
-    assert commonroad_metrics_wanted() == []
-
-
-def test_a_metric_condition_reads_a_commonroad_value() -> None:
-    world = SimpleNamespace()
-    ttc = MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 2.0, label="ttc")
+def test_a_metric_condition_judges_a_commonroad_series() -> None:
+    ttc = MetricCondition(
+        CRIME_TTC_S, ComparisonRule.LESS_THAN, 2.0, max_ng_seconds=0.15, label="ttc"
+    )
     assert ttc.failure_category() is FailureCategory.SAFETY_MARGIN
     assert ttc.get_details()["unit"] == "s"
-
-    assert ttc.check(world, 1.0) is None  # type: ignore[arg-type]  # not read yet
-    set_commonroad_values({CRIME_TTC_S: math.inf})  # no conflict
-    assert ttc.check(world, 1.0) is None  # type: ignore[arg-type]
-    set_commonroad_values({CRIME_TTC_S: 3.0})
-    assert ttc.check(world, 1.0) is None  # type: ignore[arg-type]
-    set_commonroad_values({CRIME_TTC_S: 1.5})
-    result = ttc.check(world, 2.5)  # type: ignore[arg-type]
+    times = [0.0, 0.1, 0.2, 0.3, 0.4]
+    # No conflict (inf), then closing in: under 2 s from 0.2 s on.
+    values: list[Optional[float]] = [math.inf, None, 1.9, 1.5, 1.2]
+    result = ttc.judge(times, values)
     assert result is not None and result.passed
-    assert result.message == "crime_ttc_s 1.500 s less than 2.000 s at 2.50s"
+    assert result.elapsed_seconds == pytest.approx(0.35)
+    assert result.message.startswith("crime_ttc_s less than 2.000 s for 0.20s in total")
+    assert ttc.get_details()["worst"] == 1.2
 
     blocked = MetricCondition(
         REACH_DRIVABLE_AREA_M2,
@@ -132,8 +101,8 @@ def test_a_metric_condition_reads_a_commonroad_value() -> None:
         0.0,
         label="no way out",
     )
-    set_commonroad_values({REACH_DRIVABLE_AREA_M2: 0.0})
-    assert blocked.check(world, 3.0) is not None  # type: ignore[arg-type]
+    assert blocked.judge([0.0, 0.1], [120.0, 0.0]) is not None
+    assert blocked.judge([0.0, 0.1], [120.0, 40.0]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +155,9 @@ class _Actor:
         self.type_id = type_id
         self.attributes = {"role_name": role, "base_type": base_type}
         self.bounding_box = SimpleNamespace(
-            extent=_v(2.25, 0.9, 0.8), location=_v(0.0, 0.0, 0.8)
+            extent=_v(2.25, 0.9, 0.8),
+            location=_v(0.0, 0.0, 0.8),
+            rotation=SimpleNamespace(yaw=0.0),
         )
         self._location = _v(x, -y, 0.5)
         self._yaw = -math.degrees(math.atan2(SIN, COS))
@@ -286,12 +257,12 @@ def test_the_map_is_converted_once(opendrive: str, tmp_path: Path) -> None:
 #: front in the ego's lane, HW refused, and every request logged.
 _STAND_IN = textwrap.dedent(
     """
-    import json, math, sys
+    import json, math, os, sys
 
     log = open(sys.argv[1], "a")
     for line in sys.stdin:
         request = json.loads(line)
-        log.write(line)
+        log.write(json.dumps({**request, "pid": os.getpid()}) + "\\n")
         log.flush()
         op = request["op"]
         if op == "init":
@@ -333,6 +304,7 @@ def stand_in(tmp_path: Path) -> Path:
         command=(sys.executable, str(script), str(log)),
         cache_dir=tmp_path / "maps",
         period_s=0.5,
+        workers=2,
     )
     return log
 
@@ -341,59 +313,67 @@ def _requests(log: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in log.read_text().splitlines()]
 
 
-def test_nothing_runs_while_no_commonroad_metric_is_read(
+def _recorded(world: _World, times: list[float]) -> list[Frame]:
+    recorder = FrameRecorder()
+    for t in times:
+        recorder.record(world, t, None)  # type: ignore[arg-type]
+    return recorder.frames
+
+
+TIMES = [round(0.1 * i, 1) for i in range(11)]
+
+
+def test_the_workers_evaluate_the_recorded_frames(
     opendrive: str, stand_in: Path
 ) -> None:
-    cr_session.track_commonroad_metrics(_following(opendrive), 0.0)  # type: ignore[arg-type]
-    assert not stand_in.exists()
-    assert cr_session._SESSION.worker is None
+    world = _following(opendrive)
+    series = evaluate_metrics(
+        _recorded(world, TIMES), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+    )
+
+    # Every 0.5 s of the run: 0.0, 0.5 and 1.0.
+    ttc = series[CRIME_TTC_S]
+    assert ttc.times == [0.0, 0.5, 1.0]
+    assert ttc.values == [pytest.approx(2.55)] * 3
+    # What the worker could not read reads nothing.
+    assert series[CRIME_HW_M].values == [None, None, None]
+
+    requests = _requests(stand_in)
+    inits = [r for r in requests if r["op"] == "init"]
+    evaluated = [r for r in requests if r["op"] == "evaluate"]
+    # Two workers, the frames shared between them.
+    assert len(inits) == 2 and len({r["pid"] for r in evaluated}) == 2
+    assert Path(inits[0]["map"]).name == MAP_FILE
+    assert inits[0]["settings"]["horizon_steps"] == 30
+    assert evaluated[0]["measures"] == [CRIME_TTC_S, CRIME_HW_M]
+    assert {o["id"] for o in evaluated[0]["others"]} == {2, 3, 5}
 
 
-def test_a_metric_condition_reads_the_worker_s_ttc(
-    opendrive: str, stand_in: Path, caplog: pytest.LogCaptureFixture
+def test_a_metric_condition_judges_the_workers_ttc(
+    opendrive: str, stand_in: Path
 ) -> None:
     world = _following(opendrive)
     ttc = MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 3.0, label="ttc")
-    hw = MetricCondition(CRIME_HW_M, ComparisonRule.LESS_THAN, 100.0, label="hw")
+    series = evaluate_metrics(_recorded(world, TIMES), world.get_map(), [CRIME_TTC_S])[
+        CRIME_TTC_S
+    ]
 
-    cr_session.track_commonroad_metrics(world, 0.0)  # type: ignore[arg-type]
-
-    result = ttc.check(world, 0.0)  # type: ignore[arg-type]
-    assert result is not None
-    assert read_metric(CRIME_TTC_S, world) == pytest.approx(2.55)  # type: ignore[arg-type]
-    # A measure the worker could not read reads nothing, and is said once.
-    assert hw.check(world, 0.0) is None  # type: ignore[arg-type]
-    assert "crime_hw_m reads nothing: undefined here" in caplog.text
-
-    init, evaluate = _requests(stand_in)
-    assert init["op"] == "init" and Path(init["map"]).name == MAP_FILE
-    assert init["settings"]["horizon_steps"] == 30
-    assert evaluate["measures"] == [CRIME_TTC_S, CRIME_HW_M]
-    assert {o["id"] for o in evaluate["others"]} == {2, 3, 5}
+    result = ttc.judge(series.times, series.values)
+    assert result is not None and result.elapsed_seconds == 0.0
+    # The workers stay up for the next run on the map.
+    evaluate_metrics(_recorded(world, TIMES), world.get_map(), [CRIME_TTC_S])
+    assert [r["op"] for r in _requests(stand_in)].count("init") == 2
 
 
-def test_the_metrics_hold_between_evaluations(opendrive: str, stand_in: Path) -> None:
-    world = _following(opendrive)
-    want_metric(CRIME_TTC_S)
-    for elapsed in (0.0, 0.1, 0.2, 0.4, 0.5, 0.6, 1.0):
-        cr_session.track_commonroad_metrics(world, elapsed)  # type: ignore[arg-type]
-    evaluated = [r for r in _requests(stand_in) if r["op"] == "evaluate"]
-    assert len(evaluated) == 3  # at 0.0, 0.5 and 1.0
-    # One worker for the run, and the next run on the map.
-    cr_session.end_commonroad_run()
-    cr_session.track_commonroad_metrics(world, 0.0)  # type: ignore[arg-type]
-    assert [r["op"] for r in _requests(stand_in)].count("init") == 1
-
-
-def test_a_run_reading_one_needs_the_worker(
-    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> None:
     cr_session.configure_commonroad_metrics(
-        command=(str(tmp_path / "no-such-worker"),), cache_dir=tmp_path / "maps"
+        command=(str(tmp_path / "no-such-worker"),),
+        cache_dir=tmp_path / "maps",
+        workers=1,
     )
-    want_metric(CRIME_TTC_S)
+    world = _following(opendrive)
     with pytest.raises(cr_worker.CommonRoadWorkerError, match="could not start"):
-        cr_session.track_commonroad_metrics(_following(opendrive), 0.0)  # type: ignore[arg-type]
+        evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
 
 
 def test_the_worker_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -451,19 +431,18 @@ def test_crime_and_reach_through_the_real_worker(
             "(`uv sync` in commonroad_metrics/, or $" + cr_worker.WORKER_ENV + ")"
         )
     cr_session.configure_commonroad_metrics(
-        command=tuple(command), cache_dir=tmp_path / "maps", period_s=0.0
+        command=tuple(command), cache_dir=tmp_path / "maps", workers=2
     )
     world = _following(opendrive)
-    ttc = MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 3.0, label="ttc")
-    hw = MetricCondition(CRIME_HW_M, ComparisonRule.LESS_THAN, 30.0, label="hw")
-    area = MetricCondition(
-        REACH_DRIVABLE_AREA_M2, ComparisonRule.GREATER_THAN, 0.0, label="way out"
-    )
+    keys = [CRIME_TTC_S, CRIME_HW_M, REACH_DRIVABLE_AREA_M2]
+    series = evaluate_metrics(_recorded(world, [0.0, 0.1, 0.2]), world.get_map(), keys)
 
-    cr_session.track_commonroad_metrics(world, 0.0)  # type: ignore[arg-type]
-
-    assert read_metric(CRIME_TTC_S, world) == pytest.approx(2.55, abs=0.05)  # type: ignore[arg-type]
-    assert read_metric(CRIME_HW_M, world) == pytest.approx(25.5, abs=0.1)  # type: ignore[arg-type]
-    assert read_metric(REACH_DRIVABLE_AREA_M2, world) > 0.0  # type: ignore[arg-type,operator]
-    for condition in (ttc, hw, area):
-        assert condition.check(world, 0.0) is not None  # type: ignore[arg-type]
+    assert series[CRIME_TTC_S].values == [pytest.approx(2.55, abs=0.05)] * 3
+    assert series[CRIME_HW_M].values == [pytest.approx(25.5, abs=0.1)] * 3
+    assert all(v is not None and v > 0.0 for v in series[REACH_DRIVABLE_AREA_M2].values)
+    for condition in (
+        MetricCondition(CRIME_TTC_S, ComparisonRule.LESS_THAN, 3.0, label="ttc"),
+        MetricCondition(CRIME_HW_M, ComparisonRule.LESS_THAN, 30.0, label="hw"),
+    ):
+        metric = series[condition.metric]
+        assert condition.judge(metric.times, metric.values) is not None

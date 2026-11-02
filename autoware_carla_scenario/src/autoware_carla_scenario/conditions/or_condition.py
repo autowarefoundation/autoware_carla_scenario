@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
-from .base import BaseCondition, ScenarioResult
+from .base import BaseCondition, ScenarioResult, refuse_post_run
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -34,6 +34,8 @@ class OrCondition(BaseCondition):
     ) -> None:
         if len(conditions) < 2:
             raise ValueError("OrCondition requires at least 2 conditions")
+        for condition in conditions:
+            refuse_post_run(condition, "OrCondition")
         auto_label = " OR ".join(c.label for c in conditions)
         super().__init__(label=label if label is not None else auto_label)
         self._conditions: Sequence[BaseCondition] = conditions

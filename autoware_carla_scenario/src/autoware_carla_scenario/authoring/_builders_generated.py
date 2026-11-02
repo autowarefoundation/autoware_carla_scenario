@@ -883,6 +883,7 @@ def build_metric_condition(
         metric=str(params["metric"]),
         rule=ComparisonRule[str(params["rule"]).upper()],
         value=params["value"],
+        max_ng_seconds=params["max_ng_seconds"],
         label=compiled.label,
     )
 

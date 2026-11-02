@@ -11,8 +11,9 @@ reachable set -- for the framework's CommonRoad metrics (`crime_ttc_s`,
 It is a project of its own, with its own lock, rather than an extra of the
 framework: commonroad-io pins protobuf 3.20, where the framework's gRPC code
 needs 4 or later, and CommonRoad-Reach builds wheels for CPython 3.10 and 3.11
-only, where the framework runs on 3.10 through 3.14. The framework starts it
-as a process and speaks to it in JSON lines.
+only, where the framework runs on 3.10 through 3.14. Once a run is over, the
+framework starts several of these as processes and shares the run's recorded
+frames out among them, speaking to each in JSON lines.
 
 ## Install
 

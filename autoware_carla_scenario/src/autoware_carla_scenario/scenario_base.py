@@ -23,7 +23,7 @@ import typesafe_carla.carla as carla
 
 from .actions import BaseAction, RoutingAction
 from .actions.environment import follow_tire_friction
-from .conditions.base import BaseCondition, find_actor_by_role_name
+from .conditions.base import BaseCondition, find_actor_by_role_name, is_post_run
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .coverage.items import CoverItem, CrossItem, SamplingEvent
 from .coordinate import (
@@ -851,7 +851,17 @@ class BaseScenario(ABC):
 
         Args:
             condition: Condition to add to the pass-condition list.
+
+        Raises:
+            ValueError: *condition* is a MetricCondition, judged once the run
+                is over: a fail condition only.
         """
+        if is_post_run(condition):
+            raise ValueError(
+                f"register_pass_condition: {condition.label!r} is a "
+                "MetricCondition, judged once the run is over: register it "
+                "with register_fail_condition"
+            )
         self._pass_conditions.append(condition)
 
     def register_fail_condition(

@@ -760,6 +760,9 @@ class ElapsedTimeCondition(BaseCondition):
 
 
 class MetricCondition(BaseCondition):
+    # What tells the runner a condition is judged once the run is over.
+    IS_POST_RUN: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("MetricCondition(): no constructor takes these arguments "
                       "(required: metric, keyword label)")
@@ -767,12 +770,23 @@ class MetricCondition(BaseCondition):
     def __init__(self, metric: str,
                  rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
                  value: float = 1.0, tolerance: float = 1e-06, *_kw,
+                 max_ng_seconds: float = 0.0,
                  label = _Required()):
-        _keyword_only(_kw, "MetricCondition(): label")
+        _keyword_only(_kw, "MetricCondition(): max_ng_seconds, label")
         super().__init__(_required_str(label, "MetricCondition(): label"))
 
     @property
     def metric(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def max_ng_seconds(self) -> float:
+        raise NotImplementedError()
+
+    def is_ng(self, value: Optional[float]) -> bool:
+        raise NotImplementedError()
+
+    def judge(self, times: List[float], values: List[Optional[float]]) -> Optional[ScenarioResult]:
         raise NotImplementedError()
 
 

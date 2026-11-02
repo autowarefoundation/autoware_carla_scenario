@@ -878,7 +878,9 @@ collision condition is `collision`, a timeout `progress`, a time-to-collision
 or headway condition `safety_margin`, the ego's existence `infrastructure`,
 and a `MetricCondition` what its metric reads (the
 collision metrics `collision`, `offroad` `lane_keeping`, `wrong_lane`
-`traffic_rule`, the weaving ones `stability`). A sticky or persistent
+`traffic_rule`, the weaving ones `stability`, the CommonRoad ones
+`safety_margin`); it is judged once the run is over, and fails it at the time
+its metric's NG time ran out ([Metrics](metrics.md#judging-a-run-on-a-metric)). A sticky or persistent
 condition says what it wraps. A combination of conditions (AND, OR, NOT) says
 nothing, and the run's failure is `other`: give it a category.
 

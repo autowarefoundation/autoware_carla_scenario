@@ -29,7 +29,12 @@ from .conditions import (
     StickyCondition,
     TimeoutCondition,
 )
-from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
+from .conditions.base import (
+    BaseCondition,
+    ConditionStatus,
+    find_actor_by_role_name,
+    is_post_run,
+)
 from .actions.base import reset_control_slots
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
@@ -41,11 +46,9 @@ from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .metrics import (
     ego_progress,
-    reset_commonroad_metrics,
     reset_ego_motion,
     set_importance_sampling_weight,
     track_ego_motion,
-    want_metric,
 )
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
@@ -276,8 +279,26 @@ def _build_condition_status(
         world: CARLA world.
         elapsed: Elapsed time in seconds.
     """
-    check = cond.check(world, elapsed)
     cond_type = type(cond).__name__
+    if is_post_run(cond):
+        # Judged once the run is over (_judge_metrics), not checked here:
+        # what the judgement found, or that there has been none yet.
+        details = cond.get_details()
+        if cond._last_satisfied:
+            message = cond._last_message
+        elif "ng_seconds" in details:
+            message = "not triggered"
+        else:
+            message = "judged after the run"
+        return ConditionStatus(
+            label=_status_label(role, index, cond),
+            satisfied=cond._last_satisfied,
+            message=message,
+            condition_type=cond_type,
+            role=role,
+            details=details,
+        )
+    check = cond.check(world, elapsed)
     details = cond.get_details()
 
     if check is not None:
@@ -362,36 +383,102 @@ def _npc_collision_monitor() -> "NpcCollisionMonitor":
     return NpcCollisionMonitor()
 
 
-def _want_commonroad(scenario: BaseScenario) -> None:
-    """Ask for the CommonRoad metrics the scenario's pass and fail conditions
-    watch: a condition built in ``__init__`` asked as it was built, and a run
-    of the same scenario object before this one forgot that as it ended.
+def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
+    """What records the run's frames for its MetricConditions, judged once it
+    is over (:mod:`~autoware_carla_scenario.metric_batch`); ``None`` when it
+    has none.  Recorded frames are duck-typed actors, which the check
+    (docs/typecheck.md) does not compile."""
+    if not any(is_post_run(c) for c in scenario._fail_conditions):
+        return None
+    from .metric_batch import FrameRecorder  # noqa: PLC0415
+
+    return FrameRecorder()
+
+
+def _judge_metrics(
+    scenario: BaseScenario,
+    recorder: Optional[Any],
+    world: "carla.World",
+    result: ScenarioResult,
+    scenario_name: str,
+) -> ScenarioResult:
+    """Judge the run's MetricConditions on the metrics of the frames it
+    recorded, computed now, on the run's map (still loaded); the run's result,
+    failed by the first that fails when it fails earlier than the run did.
+
+    Raises:
+        ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A CommonRoad
+            metric is judged and its workers cannot be started.
     """
-    from .conditions.metric import MetricCondition  # noqa: PLC0415
+    if recorder is None:
+        return result
+    from .metric_batch import evaluate_metrics  # noqa: PLC0415
 
-    for condition in [*scenario._pass_conditions, *scenario._fail_conditions]:
-        if isinstance(condition, MetricCondition):
-            want_metric(condition.metric)
-
-
-def _track_commonroad(world: "carla.World", elapsed: float) -> None:
-    """Have the CommonRoad worker evaluate the CommonRoad metrics read in the
-    run (:mod:`~autoware_carla_scenario.commonroad`); nothing while none is.
-
-    The worker is a process spoken to in JSON, and the map is converted by
-    roadgen, neither of which the check (docs/typecheck.md) compiles.
-    """
-    from .commonroad.session import track_commonroad_metrics  # noqa: PLC0415
-
-    track_commonroad_metrics(world, elapsed)
-
-
-def _end_commonroad() -> None:
-    """Forget the run's CommonRoad evaluations; the worker stays up for the
-    next run on the map."""
-    from .commonroad.session import end_commonroad_run  # noqa: PLC0415
-
-    end_commonroad_run()
+    judged = [(i, c) for i, c in enumerate(scenario._fail_conditions) if is_post_run(c)]
+    keys = [c.metric for _, c in judged]  # type: ignore[attr-defined]
+    logger.info(
+        "[%s] Computing %d metric(s) over %d recorded frames: %s",
+        scenario_name,
+        len(set(keys)),
+        len(recorder.frames),
+        ", ".join(sorted(set(keys))),
+    )
+    series = evaluate_metrics(recorder.frames, run_carla_map(world), keys)
+    first: Optional[tuple[int, BaseCondition, ScenarioResult]] = None
+    for i, condition in judged:
+        metric = series[condition.metric]  # type: ignore[attr-defined]
+        verdict = condition.judge(metric.times, metric.values)  # type: ignore[attr-defined]
+        if verdict is None:
+            logger.info(
+                "[%s] Metric condition [%d](%s) held: %s",
+                scenario_name,
+                i,
+                condition.label,
+                condition.get_details(),
+            )
+            continue
+        logger.info(
+            "[%s] Metric condition [%d](%s) TRIGGERED: %s",
+            scenario_name,
+            i,
+            condition.label,
+            verdict.message,
+        )
+        if first is None or verdict.elapsed_seconds < first[2].elapsed_seconds:
+            first = (i, condition, verdict)
+    statuses = _condition_statuses(
+        scenario, world, result.elapsed_seconds, scenario_name
+    )
+    if first is None or (
+        not result.passed and result.elapsed_seconds <= first[2].elapsed_seconds
+    ):
+        # The run's own outcome stands; its statuses now hold the judgements.
+        judged_labels = {_status_label("fail", i, c) for i, c in judged}
+        result.condition_statuses = [
+            s for s in result.condition_statuses if s.label not in judged_labels
+        ] + [s for s in statuses if s.label in judged_labels]
+        if result.failure is not None:
+            also = result.failure.also_triggered
+            also.extend(
+                s.label
+                for s in statuses
+                if s.label in judged_labels and s.satisfied and s.label not in also
+            )
+        return result
+    i, condition, verdict = first
+    return ScenarioResult(
+        passed=False,
+        message=verdict.message,
+        elapsed_seconds=verdict.elapsed_seconds,
+        condition_statuses=statuses,
+        failure=_failure(
+            _status_label("fail", i, condition),
+            scenario.fail_category(i),
+            verdict.elapsed_seconds,
+            verdict.message,
+            statuses,
+        ),
+    )
 
 
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
@@ -1646,12 +1733,12 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
+            metric_recorder: Optional[Any] = None
             if TYPE_CHECKING:
-                # isinstance() of a condition class (UNCALLED in
-                # typecheck/library.py).
+                # Duck-typed recorded actors (UNCALLED in typecheck/library.py).
                 pass
             else:
-                _want_commonroad(scenario)
+                metric_recorder = _metric_recorder(scenario)
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
@@ -1754,13 +1841,16 @@ class ScenarioRunner:
                 # The ego's motion, which the weaving metrics read.
                 track_ego_motion(world, elapsed)
                 if TYPE_CHECKING:
-                    # A worker process spoken to in JSON, and roadgen (UNCALLED
-                    # in typecheck/library.py).
+                    # Duck-typed recorded actors (UNCALLED in
+                    # typecheck/library.py).
                     pass
                 else:
-                    # The CommonRoad metrics read in the run (CriMe's and
-                    # CommonRoad-Reach's), before the conditions read them.
-                    _track_commonroad(world, elapsed)
+                    # The frames the MetricConditions are judged on once the
+                    # run is over.
+                    if metric_recorder is not None:
+                        metric_recorder.record(
+                            world, elapsed, scenario.importance_sampling_weight
+                        )
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1809,6 +1899,9 @@ class ScenarioRunner:
 
                 # Check fail conditions
                 for i, condition in enumerate(scenario._fail_conditions):
+                    if is_post_run(condition):
+                        # A MetricCondition: judged once the run is over.
+                        continue
                     check = condition.check(world, elapsed)
                     trajectory.record_condition(
                         "fail", i, condition.label, check is not None
@@ -1880,6 +1973,17 @@ class ScenarioRunner:
                     elapsed_seconds=elapsed,
                 )
 
+            if TYPE_CHECKING:
+                # Duck-typed recorded actors, and worker processes spoken to
+                # in JSON (UNCALLED in typecheck/library.py).
+                pass
+            else:
+                # The MetricConditions, on the metrics of the recorded frames,
+                # while the run's map is still loaded.
+                result = _judge_metrics(
+                    scenario, metric_recorder, world, result, scenario_name
+                )
+
             # Sampled before teardown, while the ego still exists.
             coverage.end(world, clock.simulated)
 
@@ -1888,12 +1992,6 @@ class ScenarioRunner:
             set_measured_scenario(None)
             set_importance_sampling_weight(None)
             reset_ego_motion()
-            # The CommonRoad metrics read in this run are this run's.
-            reset_commonroad_metrics()
-            if TYPE_CHECKING:
-                pass
-            else:
-                _end_commonroad()
             # The walkers the trajectory runs and the vehicles led out of their
             # junctions measured were this run's.
             forget_walkers()

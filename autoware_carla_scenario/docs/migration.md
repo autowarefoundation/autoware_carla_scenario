@@ -1,5 +1,27 @@
 # Migrating
 
+## To 22.0.0: metrics are judged once the run is over
+
+`MetricCondition` is now a fail condition judged after the run, on metrics
+computed from the frames the run recorded ([Metrics](metrics.md#judging-a-run-on-a-metric)),
+instead of a condition checked every tick. A run fails when the metric met the
+rule for more than `max_ng_seconds` (new, default `0`: at the first frame that
+does) in all.
+
+### What to change
+
+- `PersistentCondition(MetricCondition(m, ...), seconds)` becomes
+  `MetricCondition(m, ..., max_ng_seconds=seconds)`. Note the meaning moves
+  from "held for `seconds` in a row" to "held for `seconds` in all".
+- A `MetricCondition` wrapped in `NotCondition`, `AndCondition`,
+  `OrCondition` or `StickyCondition`, or registered with
+  `register_pass_condition`, is refused: register it on its own with
+  `register_fail_condition`.
+- A metric condition no longer ends a run early: a run that collides runs on
+  to its other conditions or its timeout, and is failed on the metric
+  afterwards, at the time the metric went NG. Give a scenario that should stop
+  at a collision a `CollisionCondition` as well.
+
 ## The viewer and the editor bind 127.0.0.1 by default
 
 `viewer` and `scenario-editor` now take command-line options (`--help`,
