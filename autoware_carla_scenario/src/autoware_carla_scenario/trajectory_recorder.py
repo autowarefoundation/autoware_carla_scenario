@@ -100,7 +100,7 @@ import hashlib
 import logging
 import math
 from pathlib import Path
-from typing import IO, Any, Optional
+from typing import IO, Any, Optional, Union
 
 import orjson
 import typesafe_carla.carla as carla
@@ -155,6 +155,18 @@ def _rear_axle(actor: Any) -> Optional[float]:
 
 def _r(value: float) -> float:
     return round(value, 3)
+
+
+def _metric_value(
+    value: Optional[Union[float, bool, str]],
+) -> Optional[Union[float, bool, str]]:
+    """A metric's value as a ``metric`` record holds it: a boolean or a
+    string as it is (a bool is not a number here), a number as a float, null
+    for one that is not finite."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _light_record(tl: Any) -> dict[str, Any]:
@@ -540,19 +552,22 @@ class TrajectoryRecorder:
         )
 
     def record_metric(
-        self, frame: int, t: float, values: dict[str, Optional[float]]
+        self,
+        frame: int,
+        t: float,
+        values: "dict[str, Optional[Union[float, bool, str]]]",
     ) -> None:
         """Write the metrics computed once the run was over for the tick of
-        CARLA frame *frame* at *t* (:mod:`~autoware_carla_scenario.metric_batch`);
-        a value that reads nothing, or no finite number, as null.  Values are
+        CARLA frame *frame* at *t* (:mod:`~autoware_carla_scenario.metric_batch`).
+
+        A value is a number in the metric's unit, a boolean (a yes/no
+        metric) or a string (a metric that names one of its states); one that
+        reads nothing, or no finite number, is written as null.  Numbers are
         written as they are, not to the millimetre: an importance-sampling
         weight is far smaller."""
         if self._out is None:
             return
-        written = {
-            key: None if value is None or not math.isfinite(value) else float(value)
-            for key, value in values.items()
-        }
+        written = {key: _metric_value(value) for key, value in values.items()}
         self._guarded(
             "stopped",
             lambda: self._emit(
