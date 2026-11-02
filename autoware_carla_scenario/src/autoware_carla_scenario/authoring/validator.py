@@ -185,7 +185,9 @@ def _check_field(
                 object_id,
             )
         else:
-            _check_bounds(out, path, spec, float(int(str(value).strip())), object_id)
+            # Compared as an int: a whole number too large for a float is
+            # still one, and float() of it would raise.
+            _check_bounds(out, path, spec, int(str(value).strip()), object_id)
     elif spec.kind == "number":
         if not _coercible_float(value):
             out.error(

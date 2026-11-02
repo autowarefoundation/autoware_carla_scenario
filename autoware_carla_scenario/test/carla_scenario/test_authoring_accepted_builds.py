@@ -28,6 +28,7 @@ from autoware_carla_scenario.authoring.models import LaneletChoice, ScenarioDocu
 from autoware_carla_scenario.authoring.registry import FieldSpec
 from autoware_carla_scenario.authoring.validator import (
     ValidationReport,
+    _traffic_mean_bounds,
     validate_document,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
@@ -881,11 +882,141 @@ def test_validator_refuses_a_bound_the_action_refuses(
 
 
 def test_every_traffic_mean_field_has_the_runtimes_bounds() -> None:
-    from autoware_carla_scenario.authoring.validator import _traffic_mean_bounds
-
     bounds = _traffic_mean_bounds()
     for type_id in ("traffic_parameters", "vehicle_parameters"):
         spec = registry.get_action_spec(type_id)
         assert spec is not None
         means = {f.name for f in spec.fields if f.name.endswith("_mean")}
         assert means <= set(bounds), means - set(bounds)
+
+
+def _on_the_bounds(spec: FieldSpec) -> list[float]:
+    """Values on or just inside *spec*'s bounds, which the runtime takes."""
+    values: list[float] = []
+    if spec.exclusive_minimum is not None:
+        values.append(spec.exclusive_minimum + 1e-3)
+    if spec.minimum is not None:
+        values.append(spec.minimum)
+    if spec.maximum is not None:
+        values.append(spec.maximum)
+    return values
+
+
+#: What a card needs beyond its defaults to build, so a value on a bound is
+#: built and not only validated.
+_BOUNDS_BASE: dict[str, dict[str, Any]] = {
+    "construction_zone": {"start_s": 0.0, "end_s": 50.0},
+    "urban_construction_zone": {"start_s": 0.0, "end_s": 50.0},
+    "traffic_source": {"constraints": "[{type: is_junction}]"},
+    "routing": {"goal_lanelet_id": _LANELET},
+    "spawn": {"name": None},
+}
+
+
+def _with_value(
+    type_id: str,
+    fields: tuple[FieldSpec, ...],
+    name: str,
+    value: float,
+    samples: dict[tuple[str, str], Any],
+) -> dict[str, Any]:
+    """The card's defaults, its blank required fields sampled, with *name* (a
+    field or a record's) set."""
+    params = registry.default_params(fields)
+    for spec in fields:
+        blank = params.get(spec.name) in (None, "", [], ())
+        if spec.kind == "lanelet" and not params.get(spec.name):
+            blank = True
+        if spec.required and blank:
+            params[spec.name] = _sample(type_id, spec, samples)
+    params.update(_BOUNDS_BASE.get(type_id, {}))
+    if name.endswith("_std"):
+        # A std is given with its mean: the least mean the runtime takes.
+        mean = name[: -len("_std")] + "_mean"
+        params[mean] = _traffic_mean_bounds()[mean][0]
+    for spec in fields:
+        if spec.kind == "record_list" and any(i.name == name for i in spec.item_fields):
+            rows = params.get(spec.name) or [registry.default_params(spec.item_fields)]
+            params[spec.name] = [{**row, name: value} for row in rows]
+    if name in params:
+        params[name] = value
+    return params
+
+
+@pytest.mark.parametrize(
+    ("card", "name", "value"),
+    [
+        (card, spec.name, value)
+        for card in _ALL_SPECS
+        for spec in _bounded(card.fields)
+        for value in _on_the_bounds(spec)
+    ],
+    ids=lambda v: getattr(v, "type_id", str(v)),
+)
+def test_a_value_on_a_fields_bounds_is_accepted_and_builds(
+    card: Any, name: str, value: float, samples: dict[tuple[str, str], Any]
+) -> None:
+    """The validator is no stricter than the runtime: a value on a bound (or
+    just inside an exclusive one) is no error, and the card builds."""
+    params = _with_value(card.type_id, card.fields, name, value, samples)
+    action_spec = registry.get_action_spec(card.type_id)
+    logging.disable(logging.CRITICAL)
+    try:
+        if action_spec is not None:
+            actor = None
+            if action_spec.scope != "environment":
+                actor = _ENTITIES[action_spec.actor_kinds[0]]
+            document = _card(card.type_id, actor, **params)
+            report = validate_document(document)
+            assert not [
+                i for i in report.errors if i.path.endswith(f".{name}")
+            ], _errors(report)
+            if report.ok:
+                assert _built_or_failure(lambda: _build(document)) is None
+        else:
+            node: dict[str, Any] = {"type": card.type_id, "params": params}
+            if card.min_children:
+                node["children"] = [
+                    {"type": "elapsed_time", "params": {"duration_seconds": 1.0}}
+                ] * card.min_children
+            document = _document(trigger=node)
+            report = validate_document(document)
+            assert not [
+                i for i in report.errors if i.path.endswith(f".{name}")
+            ], _errors(report)
+            if report.ok:
+                compiled = compile_document(document).pass_conditions[0]
+                assert (
+                    _built_or_failure(
+                        lambda: instantiate_condition(
+                            compiled, BuildContext(scenario=None)
+                        )
+                    )
+                    is None
+                )
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        (name, value)
+        for name, (low, high) in sorted(_traffic_mean_bounds().items())
+        for value in ([low] if high == float("inf") else [low, high])
+    ],
+)
+def test_a_traffic_mean_on_its_bounds_is_accepted_and_builds(
+    name: str, value: float
+) -> None:
+    document = _card("traffic_parameters", None, **{name: value})
+    report = validate_document(document)
+    assert report.ok, _errors(report)
+    _build(document)
+
+
+def test_a_whole_number_too_large_for_a_float_does_not_break_the_validator() -> None:
+    document = _document(
+        trigger={"type": "entity_count", "params": {"count": "9" * 400}}
+    )
+    validate_document(document)

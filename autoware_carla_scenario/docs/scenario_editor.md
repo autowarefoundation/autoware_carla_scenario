@@ -668,8 +668,9 @@ FieldSpec("speed_threshold", "Counts as stopped below", "number", 0.1,
 ```
 
 A field whose constructor raises for a value needs the matching bound;
-`test_authoring_accepted_builds.py` checks each bound is refused and each
-default lies inside it.
+`test_authoring_accepted_builds.py` checks each bound is refused, a value on
+it (or just inside an exclusive one) is accepted and builds, and each default
+lies inside it.
 
 ### A list of records
 
