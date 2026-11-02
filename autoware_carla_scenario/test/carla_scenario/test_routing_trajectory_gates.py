@@ -562,6 +562,21 @@ def _square() -> Trajectory:
     )
 
 
+def _big_square() -> Trajectory:
+    """A closed 100 m square: a 400 m loop, much longer than the window the
+    entity is projected in."""
+    return Trajectory(
+        "big_square",
+        [
+            TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0)),
+            TrajectoryVertex(CarlaWorldPose(100.0, 0.0, 0.0)),
+            TrajectoryVertex(CarlaWorldPose(100.0, 100.0, 0.0)),
+            TrajectoryVertex(CarlaWorldPose(0.0, 100.0, 0.0)),
+        ],
+        closed=True,
+    )
+
+
 def _drive(
     trajectory: Trajectory,
     *,
@@ -721,6 +736,54 @@ class TestFollow:
             unregister_entity("walker1")
         assert action.finished
         assert walker.x > 18.5
+
+    def test_a_vehicle_follows_a_long_closed_loop_into_its_next_lap(self) -> None:
+        """A 400 m loop, far longer than the projection window: past the first
+        vertex the vehicle is found on lap 2, drives on along the loop, and
+        lap 2's gates are looked at (#1168)."""
+        gates = {index: _Recorder(AlwaysTrueCondition()) for index in range(4)}
+        action, actor, _, _ = _drive(
+            _big_square().gated(gates),
+            seconds=66.0,
+            speed=8.0,
+            start_speed=8.0,
+            stop_when_finished=False,
+        )
+        # 528 m at 8 m/s: past the start again and up lap 2's second side.
+        assert actor.x == pytest.approx(100.0, abs=1.5)
+        assert 10.0 < actor.y < 40.0
+        assert not action.finished
+        for index in (0, 1):
+            assert sum(gates[index].answers) == 2, index
+        for index in (2, 3):
+            assert sum(gates[index].answers) == 1, index
+
+    def test_a_walker_follows_a_long_closed_loop_into_its_next_lap(self) -> None:
+        """The walker starts 30 m before the end of the 400 m loop, so the
+        first vertex is crossed onto lap 2 early in the run (#1168)."""
+        walker = _Walker(speed=2.0)
+        walker.x, walker.y, walker.yaw = 0.0, 30.0, -90.0
+        register_entity("walker1", _Entity(walker))
+        gates = {index: _Recorder(AlwaysTrueCondition()) for index in range(4)}
+        try:
+            action = _route(
+                "walker1",
+                _big_square().gated(gates),
+                mode=RoutingMode.FOLLOW,
+                initial_distance_offset=370.0,
+                speed=2.0,
+            )
+            _run(action, walker, 70.0)
+        finally:
+            unregister_entity("walker1")
+        # 140 m at 2 m/s: over the first vertex, along lap 2's first side and
+        # round its first corner.
+        assert walker.x == pytest.approx(100.0, abs=1.0)
+        assert 2.0 < walker.y < 20.0
+        assert not action.finished
+        for index in (0, 1):
+            assert sum(gates[index].answers) == 1, index
+        assert not any(gates[index].answers for index in (2, 3))
 
 
 # ---------------------------------------------------------------------------

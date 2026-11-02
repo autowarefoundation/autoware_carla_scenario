@@ -430,8 +430,9 @@ vertex** it is the departure from the start (a time: wait at the start until
 then). Vertices before the point a run starts from (`initial_distance_offset`)
 are not checked. A repeating action (`once=False`) re-arms every condition at
 the start of each run, and a **closed** path -- which cannot carry times --
-checks its conditions again on every lap in `POSITION` mode. Whatever state a
-condition object keeps is its own: a latched `StickyCondition` stays latched.
+checks its conditions again on every lap, in `POSITION` and `FOLLOW` alike.
+Whatever state a condition object keeps is its own: a latched
+`StickyCondition` stays latched.
 
 ```python
 from autoware_carla_scenario import (
@@ -504,9 +505,10 @@ held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
 - `FOLLOW` (walker): looked at early in the same way, walked onto the vertex,
   slowing as it gets close; within 0.3 m it has reached it and stands.
 - On a **closed** path `FOLLOW` finds where the entity is by projecting it
-  near where it was, and that projection does not wrap from the end of the
-  path to its start -- so in `FOLLOW` mode a closed path's conditions are
-  reliable on the first lap only. `POSITION` has no such limit.
+  near where it was, and that search wraps from the end of the path to its
+  start, so the entity is found on its next lap once it crosses the first
+  vertex and the conditions are checked again on every lap, as in
+  `POSITION`.
 
 `RoutingAction.held_vertex` names the
 vertex (0-based) the entity waits at for a condition other than a time, or

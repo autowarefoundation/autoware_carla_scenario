@@ -1041,18 +1041,56 @@ class ResolvedTrajectory:
             near: Where along the path to look, so that a path which passes the
                 same place twice (a loop, a U-turn) answers with the pass the
                 entity is on.  ``None`` searches the whole path.
-            window: How far either side of *near* to look (m).
+            window: How far either side of *near* to look (m).  On a closed
+                path the window wraps: past the end it goes on from the start,
+                and before the start from the end, so an entity crossing the
+                first vertex onto its next lap is found there.  The answer is
+                in ``[0, length]`` either way.
         """
+        length = self.length
+        loop = self.closed and length > _EPSILON_M
+        if near is None or (loop and 2.0 * window >= length):
+            # The whole path; on a loop, also when the window covers it.
+            return self._nearest(x, y, 0, len(self._arc) - 1)[1]
+        if not loop:
+            first, stop = self._window(near - window, near + window)
+            return self._nearest(x, y, first, stop)[1]
+        # A closed path: the window, its centre taken modulo the length, and
+        # whatever of it falls before the start or past the end searched on
+        # the other side of the first vertex.
+        centre = near % length
+        if centre < 0.0:
+            centre += length
+        low, high = centre - window, centre + window
+        first, stop = self._window(low, high)
+        best = self._nearest(x, y, first, stop)
+        if low < 0.0:
+            first, stop = self._window(low + length, length)
+            wrapped = self._nearest(x, y, first, stop)
+            if wrapped[0] < best[0]:
+                best = wrapped
+        if high > length:
+            first, stop = self._window(0.0, high - length)
+            wrapped = self._nearest(x, y, first, stop)
+            if wrapped[0] < best[0]:
+                best = wrapped
+        return best[1]
+
+    def _window(self, low: float, high: float) -> tuple[int, int]:
+        """The segments ``[first, stop)`` that reach into ``[low, high]`` (m)
+        along the path: from the one ending at or past *low* to the last one
+        starting at or before *high* (_arc does not decrease)."""
+        first = max(bisect.bisect_left(self._arc, low) - 1, 0)
+        stop = min(bisect.bisect_right(self._arc, high), len(self._arc) - 1)
+        return first, stop
+
+    def _nearest(
+        self, x: float, y: float, first: int, stop: int
+    ) -> tuple[float, float]:
+        """``(gap, along)``: the point of segments ``[first, stop)`` nearest
+        ``(x, y)``, how far it is, and how far along the path."""
         best_distance = math.inf
         best_along = 0.0
-        # The segments that reach into [near - window, near + window]: from the
-        # one ending at or past its start to the last one starting at or
-        # before its end (_arc does not decrease).
-        first = 0
-        stop = len(self._arc) - 1
-        if near is not None:
-            first = max(bisect.bisect_left(self._arc, near - window) - 1, 0)
-            stop = min(bisect.bisect_right(self._arc, near + window), stop)
         for index in range(first, stop):
             x0, y0 = self.xs[index], self.ys[index]
             dx, dy = self.xs[index + 1] - x0, self.ys[index + 1] - y0
@@ -1066,7 +1104,7 @@ class ResolvedTrajectory:
             if gap < best_distance:
                 best_distance = gap
                 best_along = self._arc[index] + fraction * math.sqrt(squared)
-        return best_along
+        return best_distance, best_along
 
     def vertices(self) -> list[TrajectorySample]:
         """Every vertex, with the heading it resolved to and its times' velocity."""
