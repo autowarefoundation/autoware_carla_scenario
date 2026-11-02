@@ -663,7 +663,20 @@ def _lead_station(
     # is picked up by the next replan a tenth of a second later, and its
     # geometry is `collision_free`'s business in the meantime -- that rule
     # watches every actor's footprint, not just the one we follow.
-    ahead_now = (stations[0] > station0_m + 0.5) & in_lane[0]
+    #
+    # "Ahead" starts at the middle of our own body, not at the front bumper,
+    # even though the gap is then measured from the bumper. A vehicle whose
+    # centre is in our lane and which is level with the front half of the car
+    # is one cutting in -- partly alongside, its nose ahead of ours or about
+    # to be -- and the right answer to it is to drop back and let it in.
+    # Starting "ahead" at the bumper would ignore it until it had fully
+    # cleared our nose, and would meanwhile follow whatever was beyond it,
+    # inviting the policy to close up on the merger. Followed from here, its
+    # rear edge lies behind our bumper, the gap is negative, and
+    # `safe_headway` asks for exactly the room the merge needs. Something
+    # level with our back half is the merger's to yield to, not ours, and is
+    # `collision_free`'s business.
+    ahead_now = (stations[0] > station0_m + limits.ego_rear_axle_to_centre_m) & in_lane[0]
     if not ahead_now.any():
         return np.full((n_steps,), np.inf), np.zeros((n_steps,))
 

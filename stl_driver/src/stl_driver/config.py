@@ -298,6 +298,16 @@ class Limits:
             self.max_accel_mps2 * self.plan_bound_inset,
         )
 
+    def ego_front_m(self) -> float:
+        """Distance from the rig origin, at the rear axle, to the front bumper.
+
+        3.75 m with the defaults. Anything that measures a gap *ahead* of the
+        ego -- the RSS following distance in particular -- has to start from
+        here rather than from the origin, or it credits the ego with the
+        whole front of the car as free road.
+        """
+        return self.ego_rear_axle_to_centre_m + self.ego_length_m / 2.0
+
     def plan_jerk_limit(self) -> float:
         """The largest rate of change of acceleration a plan may command."""
         return self.max_jerk_mps3 * self.plan_bound_inset

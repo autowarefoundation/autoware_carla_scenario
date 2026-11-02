@@ -269,6 +269,123 @@ def test_the_lead_moves_away_as_it_drives_off():
     assert forecast.lead_station_m[-1] > forecast.lead_station_m[0] + 2.0
 
 
+def headway_slack_now(forecast, speed0_mps: float = 0.0, lead_speed_mps: float = 0.0) -> float:
+    """`headway_slack` at t = 0 for the lead this forecast found."""
+    import torch
+
+    from stl_driver.rollout import N_PARAMS, rollout
+    from stl_driver.signals import Col
+    from tests.conftest import make_inputs
+
+    inputs = make_inputs(
+        CONFIG,
+        speed0_mps=speed0_mps,
+        lead_station_m=float(forecast.lead_station_m[0]),
+        lead_speed_mps=lead_speed_mps,
+    )
+    signal = rollout(torch.zeros(N_PARAMS, dtype=torch.float32), inputs, CONFIG)
+    return float(signal[0, Col.HEADWAY_SLACK])
+
+
+def ego_front_m() -> float:
+    """Rear axle to front bumper, written out rather than asked of the config."""
+    limits = CONFIG.limits
+    return limits.ego_rear_axle_to_centre_m + limits.ego_length_m / 2.0
+
+
+def test_a_stopped_car_half_a_metre_off_the_bumper_violates_safe_headway():
+    """Issue #1140: the gap was measured from the rear axle, not the bumper.
+
+    The lead's station is its rear edge, the ego's is its rear axle, and the
+    RSS requirement is bumper to bumper. With nothing taking off the 3.75 m
+    from axle to bumper, a stopped car 0.5 m off the bumper read as +1.2 m of
+    slack against a 2.5 m standstill gap.
+    """
+    limits = CONFIG.limits
+    length = 4.5
+    for bumper_gap in (0.5, 1.0, 2.0):
+        centre = ego_front_m() + bumper_gap + length / 2.0
+        forecast = forecast_actors(
+            renderer(actor(centre, 0.0, length=length)), Pose.identity(), table(), 0.0, CONFIG
+        )
+        slack = headway_slack_now(forecast)
+        # The disc cover reports the rear up to 0.6 m short of the box (the
+        # rear disc's radius reaches past the box's corners on the centreline).
+        assert slack == pytest.approx(bumper_gap - limits.standstill_gap_m, abs=0.7)
+        assert slack < 0.0, f"a stopped car {bumper_gap} m off the bumper must violate"
+
+
+def test_the_following_distance_is_kept_from_the_front_bumper():
+    """At speed the required RSS distance is bumper to bumper, too."""
+    limits = CONFIG.limits
+    length = 4.5
+    speed = 8.0
+    rho = limits.rss_response_s
+    required = (
+        speed * rho
+        + 0.5 * limits.rss_response_accel_mps2 * rho * rho
+        + (speed + rho * limits.rss_response_accel_mps2) ** 2 / (2 * limits.rss_brake_mps2)
+        - speed**2 / (2 * limits.rss_lead_brake_mps2)
+    )
+    # Exactly the required distance between bumpers: on the edge of the rule.
+    centre = ego_front_m() + required + length / 2.0
+    forecast = forecast_actors(
+        renderer(actor(centre, 0.0, vx=speed, length=length)),
+        Pose.identity(),
+        table(),
+        0.0,
+        CONFIG,
+    )
+    slack = headway_slack_now(forecast, speed0_mps=speed, lead_speed_mps=speed)
+    # The first sample is one step in, by which time the ego has covered
+    # `speed * step_s` towards a lead the inputs hold still, and the disc
+    # cover puts the rear up to 0.6 m short of the box. Measured from the
+    # axle instead, this read about +2.9 m.
+    expected = -speed * CONFIG.horizon.step_s
+    assert slack == pytest.approx(expected, abs=0.7)
+
+
+def test_a_vehicle_cutting_in_beside_our_front_half_is_the_lead():
+    """What counts as ahead starts at the middle of the ego, not at its bumper.
+
+    A car moving into our lane level with our front half -- its rear still
+    beside us -- is one to let in. Followed, its gap is negative and
+    `safe_headway` asks the policy to drop back; ignored until it cleared our
+    nose, the policy would follow whatever was beyond it and close up on the
+    merger instead.
+    """
+    limits = CONFIG.limits
+    centre = limits.ego_rear_axle_to_centre_m + 1.1
+    forecast = forecast_actors(
+        renderer(actor(centre, 1.2, track_id="merger"), actor(40.0, 0.0, track_id="far")),
+        Pose.identity(),
+        table(),
+        0.0,
+        CONFIG,
+    )
+    assert forecast.lead_station_m[0] < ego_front_m()
+    assert headway_slack_now(forecast) < -limits.standstill_gap_m
+
+
+def test_a_vehicle_reaching_into_our_front_half_is_followed():
+    """Its centre is behind ours, but its nose is past the middle of the ego."""
+    # A 4.5 m car centred on the rear axle: its front disc sits 1.69 m ahead
+    # of the axle, past the ego's middle (1.4 m).
+    forecast = forecast_actors(renderer(actor(0.0, 0.0)), Pose.identity(), table(), 0.0, CONFIG)
+    assert np.isfinite(forecast.lead_station_m).all()
+
+
+def test_a_vehicle_level_with_our_back_half_is_not_the_lead():
+    """Beside our rear, it is the merger's turn to yield, not ours.
+
+    Its front disc is 0.69 m ahead of the rear axle: past the old mark of
+    axle + 0.5 m, which made it the lead and had the policy brake for a car
+    that was behind its own middle.
+    """
+    forecast = forecast_actors(renderer(actor(-1.0, 1.2)), Pose.identity(), table(), 0.0, CONFIG)
+    assert not np.isfinite(forecast.lead_station_m).any()
+
+
 # ---------------------------------------------------------------------------
 # Traffic light
 # ---------------------------------------------------------------------------
