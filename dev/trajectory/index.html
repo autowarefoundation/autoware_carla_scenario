@@ -2573,7 +2573,8 @@ graph by following on, a lane change or a short path, the closest sequence
 chosen (<code>traffic.route_match</code>) -- and the route goes through where it leaves
 each one. A track that cannot be matched falls back to its waypoints one by
 one, leaving out those no lane route reaches, with a warning. The
-TrafficManager is given the route with its own lane changes off, and a route
+TrafficManager is given the route with its own lane changes off (given back
+by <code>end_route</code> when a run that watches the route ends), and a route
 ending in a junction is carried on along the lane after it until it is clear
 of the junction, so it is never handed an empty path.</p>
 <p><strong>When it ends.</strong> A route given as a goal (and Lanelet2 waypoints) with
@@ -2981,7 +2982,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 11:36:44 UTC"><span class="timeago" datetime="2026-11-01T11:36:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 11:36:44 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 02:43:58 UTC"><span class="timeago" datetime="2026-11-02T02:43:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 02:43:58 UTC">2026-11-02</span>
   </span>
 
     

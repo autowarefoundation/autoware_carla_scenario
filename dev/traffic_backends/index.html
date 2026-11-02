@@ -3308,6 +3308,7 @@ own bookkeeping on the vehicle rather than in a table of its own:</p>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">lane_change_finished</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">turn_at_junction</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">follow_route</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">stops</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">end_route</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
 <p><code>direction</code> is <code>LaneChangeDirection</code> or <code>TurnDirection</code> — intents, not CARLA
 values. <code>stops</code> is the whole way a vehicle is to drive, as Lanelet2 poses:
@@ -3321,6 +3322,16 @@ point, and there a point lies on several ways through. A backend that has no ans
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what <code>LaneChangeAction</code> sees when it asks whether the
 manoeuvre finished.</p>
+<p><code>end_route</code> is called when a route a <code>RoutingAction</code> watched is over: the
+vehicle arrived, or the action was stopped, overridden or closed first. It gives
+back what the route changed in how the vehicle drives, and does nothing by
+default. The TrafficManager backend turns its own lane changes, which
+<code>follow_route</code> turned off, back to the run's <code>lane_changes</code> (and the vehicle's
+overrides); unset, the TrafficManager's default, on. A route handed over untimed
+ends its action at once, with nothing left to watch it: the TrafficManager
+backend gives the lane changes back itself once the vehicle comes within a path
+point's spacing (5 m) of its path's last point, where the TrafficManager has
+used the path up and drives on as it likes.</p>
 <h3 id="handing-a-vehicle-back">Handing a vehicle back<a class="headerlink" href="#handing-a-vehicle-back" title="Permanent link">&para;</a></h3>
 <p><code>release(entity, world)</code> is the one-authority-per-vehicle rule of
 <code>skip_actor_ids</code>, applied during the run: an action that drives a vehicle
@@ -4035,7 +4046,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 01:54:59 UTC"><span class="timeago" datetime="2026-11-02T01:54:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 01:54:59 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 02:43:58 UTC"><span class="timeago" datetime="2026-11-02T02:43:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 02:43:58 UTC">2026-11-02</span>
   </span>
 
     
