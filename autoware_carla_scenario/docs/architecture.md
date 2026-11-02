@@ -501,11 +501,19 @@ classDiagram
 > `TimeHeadwayCondition` and `TimeToCollisionCondition` each take a
 > `coordinate_system`, which is OpenSCENARIO's `coordinateSystem` attribute:
 >
-> - `ENTITY` (the default, so existing documents keep their meaning) is a
->   world-frame offset projected onto the subject's heading or direction of
->   travel. It equals the along-lane gap on a straight road, under-reads on a
->   curve, and past a half turn (an arc of π·R or more) inverts — at which
->   point a headway stops firing for a leader that is ahead along the lane.
+> - `ENTITY` (the default, so existing documents keep their meaning) is the
+>   straight-line separation in the world frame: on a curve, the chord. The
+>   directional measures project it onto the subject's axes: a `LONGITUDINAL`
+>   or `LATERAL` distance along or across its heading, a headway along its
+>   direction of travel. The chord and the projection along the subject equal
+>   the along-lane gap on a straight road and under-read on a curve: for a
+>   leader 20 m ahead along the lane, the chord (2R·sin(L/2R), a `EUCLIDEAN`
+>   distance or a TTC's range) reads 19.9 / 19.5 / 18.6 m at R = 50 / 25 /
+>   15 m, the projection (R·sin(L/R), a headway or a `LONGITUDINAL` distance)
+>   19.5 / 17.9 / 14.6 m. Past a half turn (an arc of π·R or more) the
+>   projection changes sign, as does a TTC's closing speed, taken along the
+>   chord: a headway and a TTC both stop firing for a leader that is ahead
+>   along the lane. A `LONGITUDINAL` distance takes the magnitude and does not.
 > - `LANE` projects both entities onto the OpenDRIVE road they share and
 >   compares their `s`, which is what `scenario_simulator_v2` measures. For
 >   TTC the closing speed is resolved onto the road too, so a vehicle's

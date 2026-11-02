@@ -27,9 +27,12 @@ class DistanceCoordinateSystem(Enum):
     of one.
 
     Attributes:
-        ENTITY: A straight-line offset in the world frame, projected onto a
-            direction belonging to the subject.  The default, so a document
-            written before this existed keeps its meaning.
+        ENTITY: The straight-line separation in the world frame -- on a
+            curve, the chord.  A directional measure projects it onto a
+            direction belonging to the subject: a longitudinal or lateral
+            distance along or across its heading, a headway along its
+            direction of travel.  The default, so a document written before
+            this existed keeps its meaning.
         LANE: The distance *along the road*, which is the gap a driver would
             describe.  Follows the chain of connected roads between the two, a
             junction's connecting roads included; where several chains reach
@@ -38,10 +41,17 @@ class DistanceCoordinateSystem(Enum):
             loaded map.
 
     The two agree on a straight road and part company on a curve, where the
-    entity frame reads short: for a leader 20 m ahead along the lane it gives
-    19.5 m at a 50 m radius and 14.6 m at 15 m.  Past a half turn (an arc of
-    ``pi * R`` or more) the projection changes sign, and a condition that only
-    looks ahead stops firing for a leader that is ahead along the lane.
+    entity frame reads short, and a projection shorter still.  For a
+    leader 20 m ahead along the lane (an arc *L* on radius *R*), the chord
+    (``2 * R * sin(L / (2 * R))``: a Euclidean distance, a TTC's range) is
+    19.9 m at a 50 m radius, 19.5 m at 25 m and 18.6 m at 15 m; the projection
+    onto the heading (``R * sin(L / R)``: a headway, a longitudinal distance)
+    is 19.5 m, 17.9 m and 14.6 m.  Past a half turn (an arc of ``pi * R`` or
+    more) the projection changes sign, and so does a TTC's closing speed,
+    which is taken along the chord: a headway and a TTC both stop firing for a
+    leader that is ahead along the lane.  A longitudinal distance takes the
+    magnitude and does not.  Short of a half turn the closing speed falls by a
+    factor of ``cos(L / (2 * R))``, faster than the range, so a TTC reads long.
     """
 
     ENTITY = auto()
