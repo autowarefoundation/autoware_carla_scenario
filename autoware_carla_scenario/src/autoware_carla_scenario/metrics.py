@@ -237,6 +237,8 @@ class Metric:
         aggregation: How AlpaSim folds a run's frames into one value:
             ``"max"`` (an event that happened at some point), ``"min"`` (the
             closest the ego came), ``"mean"`` or ``"last"``.
+        boolean: A yes/no event: it reads ``1`` or ``0`` (and is judged so),
+            and the run's trajectory log writes it as ``true`` or ``false``.
     """
 
     key: str
@@ -245,6 +247,7 @@ class Metric:
     unit: str = ""
     text: str = ""
     aggregation: str = "max"
+    boolean: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1069,6 +1072,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_ANY,
             _collision_any,
             title="Collision (any)",
+            boolean=True,
             text="1 while the ego's bounding box overlaps another vehicle's or "
             "a pedestrian's, else 0 (AlpaSim collision_any)",
         ),
@@ -1076,6 +1080,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_FRONT,
             _collision_front,
             title="Collision (front)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's front edge "
             "(AlpaSim collision_front)",
         ),
@@ -1083,6 +1088,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_REAR,
             _collision_rear,
             title="Collision (rear)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's rear edge "
             "and not its front (AlpaSim collision_rear)",
         ),
@@ -1090,6 +1096,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_LATERAL,
             _collision_lateral,
             title="Collision (lateral)",
+            boolean=True,
             text="1 while another road user's box overlaps the ego's and "
             "neither its front nor its rear edge (AlpaSim collision_lateral)",
         ),
@@ -1097,12 +1104,14 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             COLLISION_AT_FAULT,
             _collision_at_fault,
             title="Collision at fault",
+            boolean=True,
             text="1 during a front or a lateral collision (AlpaSim collision_at_fault)",
         ),
         Metric(
             OFFROAD,
             _offroad,
             title="Off the road",
+            boolean=True,
             text="1 while a corner of the ego's box is on no driving lane "
             "(AlpaSim offroad)",
         ),
@@ -1110,6 +1119,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             OFFROAD_OR_COLLISION,
             _offroad_or_collision,
             title="Off the road or collision",
+            boolean=True,
             text="1 while off the road or in any collision "
             "(AlpaSim offroad_or_collision)",
         ),
@@ -1117,6 +1127,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             OFFROAD_OR_COLLISION_AT_FAULT,
             _offroad_or_collision_at_fault,
             title="Off the road or collision at fault",
+            boolean=True,
             text="1 while off the road or in a collision at fault "
             "(AlpaSim offroad_or_collision_at_fault)",
         ),
@@ -1124,6 +1135,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             WRONG_LANE,
             _wrong_lane,
             title="Against the lane",
+            boolean=True,
             text="1 while the ego heads more than 120 degrees away from the "
             "driving lane under it, else 0; unread off the road "
             "(AlpaSim wrong_lane)",

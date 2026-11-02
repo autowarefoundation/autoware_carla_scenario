@@ -23,7 +23,9 @@ They are the per-timestep driving-quality metrics of NVIDIA's
 under AlpaSim's own names so results read the same in both, computed from
 CARLA's actors and map (`autoware_carla_scenario.metrics`,
 `BUILT_IN_METRICS`). An event reads `1` while it holds and `0` while it does
-not; every metric reads nothing without an ego, and those of the road nothing
+not; the collisions, `offroad` and `wrong_lane` (`Metric.boolean`) are yes/no events, which
+the trajectory log writes as `true` and `false` (and the Rerun recording
+draws as states); every metric reads nothing without an ego, and those of the road nothing
 without a map. A metric reads one frame; AlpaSim folds a run's frames into one
 value with the aggregation in the last column (`Metric.aggregation`).
 

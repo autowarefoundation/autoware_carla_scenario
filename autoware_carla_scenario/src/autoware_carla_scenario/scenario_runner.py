@@ -7,7 +7,7 @@ import math
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Optional
+from typing import TYPE_CHECKING, Any, Collection, Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -44,6 +44,7 @@ from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .metrics import (
+    BUILT_IN_METRICS,
     ego_progress,
     reset_ego_motion,
     set_importance_sampling_weight,
@@ -394,6 +395,14 @@ def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
     return FrameRecorder()
 
 
+def _as_bool(value: Optional[float]) -> Optional[bool]:
+    """A yes/no metric's reading as a boolean: ``None`` (and NaN) for one
+    that read nothing."""
+    if value is None or math.isnan(value):
+        return None
+    return value != 0.0
+
+
 def _record_metrics(
     trajectory: Any,
     frames: list[Any],
@@ -403,12 +412,14 @@ def _record_metrics(
     """Write the metrics of *series* into the *trajectory* log, a ``metric``
     record per frame evaluated, and each condition of *judged* as
     ``condition`` records: whether its metric was NG, on its first frame and
-    whenever that changed."""
+    whenever that changed.  A yes/no metric (``Metric.boolean``) is written
+    as ``true`` or ``false``, not ``1`` or ``0``."""
     frame_at = {frame.t: frame.frame for frame in frames}
-    rows: dict[float, dict[str, Optional[float]]] = {}
+    rows: dict[float, dict[str, Optional[Union[float, bool]]]] = {}
     for key, metric in series.items():
+        boolean = key in BUILT_IN_METRICS and BUILT_IN_METRICS[key].boolean
         for t, value in zip(metric.times, metric.values):
-            rows.setdefault(t, {})[key] = value
+            rows.setdefault(t, {})[key] = _as_bool(value) if boolean else value
     for t in sorted(rows):
         trajectory.record_metric(frame_at.get(t, 0), t, rows[t])
     for i, condition in judged:

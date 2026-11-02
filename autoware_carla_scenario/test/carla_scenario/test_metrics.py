@@ -1000,18 +1000,48 @@ class _Log:
     """What a run's trajectory log is told once the run is over."""
 
     def __init__(self) -> None:
-        self.metrics: list[tuple[int, float, dict[str, Optional[float]]]] = []
+        self.metrics: list[tuple[int, float, dict[str, Any]]] = []
         self.conditions: list[tuple[int, float, str, int, str, bool]] = []
 
-    def record_metric(
-        self, frame: int, t: float, values: dict[str, Optional[float]]
-    ) -> None:
+    def record_metric(self, frame: int, t: float, values: dict[str, Any]) -> None:
         self.metrics.append((frame, t, values))
 
     def record_condition_at(
         self, frame: int, t: float, role: str, index: int, label: str, satisfied: bool
     ) -> None:
         self.conditions.append((frame, t, role, index, label, satisfied))
+
+
+def test_the_collision_offroad_and_wrong_lane_metrics_are_yes_no() -> None:
+    from autoware_carla_scenario.metrics import (
+        BUILT_IN_METRICS,
+        COLLISION_ANY,
+        COLLISION_FRONT,
+        COLLISION_LATERAL,
+        COLLISION_REAR,
+        OFFROAD,
+        OFFROAD_OR_COLLISION,
+        OFFROAD_OR_COLLISION_AT_FAULT,
+        WRONG_LANE,
+    )
+
+    boolean = {key for key, metric in BUILT_IN_METRICS.items() if metric.boolean}
+    assert boolean == {
+        COLLISION_ANY,
+        COLLISION_FRONT,
+        COLLISION_REAR,
+        COLLISION_LATERAL,
+        COLLISION_AT_FAULT,
+        OFFROAD,
+        OFFROAD_OR_COLLISION,
+        OFFROAD_OR_COLLISION_AT_FAULT,
+        WRONG_LANE,
+    }
+    # Each one an event: no unit, folded with max.
+    assert all(
+        BUILT_IN_METRICS[key].unit == "" and BUILT_IN_METRICS[key].aggregation == "max"
+        for key in boolean
+    )
 
 
 def test_the_metrics_and_their_ng_frames_go_into_the_log() -> None:
@@ -1026,13 +1056,19 @@ def test_the_metrics_and_their_ng_frames_go_into_the_log() -> None:
         trajectory=log,
     )
 
-    # A record a frame, every metric judged in it, in frame order.
+    # A record a frame, every metric judged in it, in frame order; a yes/no
+    # metric (a collision, the wrong lane) as a boolean.
     assert [(t, values) for _, t, values in log.metrics] == [
-        (0.0, {COLLISION_AT_FAULT: 0.0, WRONG_LANE: 0.0}),
-        (1.0, {COLLISION_AT_FAULT: 0.0, WRONG_LANE: 0.0}),
-        (2.0, {COLLISION_AT_FAULT: 1.0, WRONG_LANE: 0.0}),
-        (3.0, {COLLISION_AT_FAULT: 1.0, WRONG_LANE: 0.0}),
+        (0.0, {COLLISION_AT_FAULT: False, WRONG_LANE: False}),
+        (1.0, {COLLISION_AT_FAULT: False, WRONG_LANE: False}),
+        (2.0, {COLLISION_AT_FAULT: True, WRONG_LANE: False}),
+        (3.0, {COLLISION_AT_FAULT: True, WRONG_LANE: False}),
     ]
+    assert all(
+        type(value) is bool  # not 1.0 or 0.0, which == True or False
+        for _, _, values in log.metrics
+        for value in values.values()
+    )
     frames = [frame for frame, _, _ in log.metrics]
     assert frames == sorted(frames) and len(set(frames)) == 4
     # Each condition on its first frame and whenever it changed.
