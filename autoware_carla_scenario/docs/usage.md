@@ -93,7 +93,12 @@ Python version, and the viewer's Run form reads it the same way.
 
 **Batch constraints:**
 
-- All scenarios in a batch **must share the same map** (CARLA loads one map per session)
+- All scenarios in a batch **must share the same map** (CARLA loads one map per session):
+  the same `map.name`, `map.source`, `map.directory`, `map.lanelet2_path`,
+  `map.xodr_path`, `map.projector_type` and `map.overwrite_xodr`, as
+  configured. A batch whose cases differ in any of them is refused, naming the
+  key and the cases (`map.no_3d_model_lanelet_ids` may differ: only a sweep's
+  constraints read it)
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
   then `HH-MM-SS-2`, ...: every batch has a directory of its own)
@@ -1611,10 +1616,15 @@ uv run scenario scenario='intersection_passing/*' --resume-from 4
 
 ### "batch scenarios must share the same map"
 
-**Cause**: Glob pattern matched scenarios configured for different maps.
+**Cause**: Glob pattern matched scenarios configured for different maps --
+another `map.name`, or the same name with another `map.source`,
+`map.directory`, `map.lanelet2_path`, `map.xodr_path`, `map.projector_type` or
+`map.overwrite_xodr`. The message names the key that differs and the cases
+setting each value.
 
 **Solution**:
-- Use `map=<name>` override to force all scenarios to use the same map
+- Use `map=<name>` override to force all scenarios to use the same map, or set
+  the differing key on the command line (e.g. `map.lanelet2_path=...`)
 - Or narrow the glob pattern to match scenarios for one map only
 
 ### Ego vehicle falls through the ground

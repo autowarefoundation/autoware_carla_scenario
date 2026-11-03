@@ -1500,10 +1500,78 @@ class RunConfigError(ValueError):
     """
 
 
-def check_batch_configs(configs: list[DictConfig]) -> None:
+#: The ``map`` settings that decide which map a run is on: what
+#: :func:`resolve_map_paths` reads (and :func:`_map_source`, the queue's
+#: record of where the map came from).  A batch shares one CARLA world, built
+#: from its first case's map, so its cases must agree on all of them.
+#: ``no_3d_model_lanelet_ids`` is not among them: only a sweep's constraints
+#: read it (``${map.no_3d_model_lanelet_ids}``), each case's own, when the
+#: sweep is expanded.
+_BATCH_MAP_KEYS = (
+    "name",
+    "directory",
+    "source",
+    "lanelet2_path",
+    "xodr_path",
+    "projector_type",
+    "overwrite_xodr",
+)
+
+
+def _map_setting(cfg: DictConfig, key: str) -> str | bool | None:
+    """``map.<key>`` of *cfg* as :func:`resolve_map_paths` reads it: a string
+    stripped, ``None`` when unset or empty; ``overwrite_xodr`` a flag."""
+    map_cfg = cfg.get("map") or {}
+    value = map_cfg.get(key)
+    text = None if value is None else str(value).strip() or None
+    if key == "overwrite_xodr":
+        return text is not None and text.lower() in {"1", "true", "yes", "on"}
+    return text
+
+
+def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) -> None:
+    """Refuse a batch whose cases would run on different maps.
+
+    The batch's one queue -- and each SLURM task's -- is built on the map its
+    first case resolves to (:func:`_batch_queue`), so a case setting another
+    ``map.source``, ``map.lanelet2_path`` or any other of
+    :data:`_BATCH_MAP_KEYS` would silently run on the first case's map.  The
+    settings are compared as configured: nothing is fetched or read.
+
+    Args:
+        configs: The cases' configs.
+        labels: The cases' names, for the message; ``case <n>`` without them.
+
+    Raises:
+        RunConfigError: naming the first key that differs and the cases
+            setting each of its values.
+    """
+    names = labels if labels is not None else []
+    for key in _BATCH_MAP_KEYS:
+        cases: dict[str | bool | None, list[str]] = {}
+        for i, cfg in enumerate(configs):
+            label = names[i] if i < len(names) else f"case {i + 1}"
+            cases.setdefault(_map_setting(cfg, key), []).append(label)
+        if len(cases) > 1:
+            found = "; ".join(
+                f"{value!r} in {', '.join(labels_)}" for value, labels_ in cases.items()
+            )
+            raise RunConfigError(
+                f"batch scenarios must share the same map, but map.{key} "
+                f"differs: {found}.  Set it on the command line rather than "
+                "in a scenario's config"
+            )
+
+
+def check_batch_configs(
+    configs: list[DictConfig], labels: list[str] | None = None
+) -> None:
     """Refuse the configs of a batch's cases for the values a run reads of its
     config before it starts, building nothing that starts (no queue, no CARLA,
     no Autoware, no Rerun or T4 writer) and needing no map.
+
+    First that the cases share a map (:func:`check_batch_map`, which names
+    them by *labels*).
 
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout and
@@ -1517,6 +1585,7 @@ def check_batch_configs(configs: list[DictConfig]) -> None:
     Raises:
         RunConfigError: naming the key of the first value refused.
     """
+    check_batch_map(configs, labels)
     queue_settings: set[str] = set()
     try:
         _check_batch_writer_settings(configs)
@@ -1669,12 +1738,12 @@ def run_batch(
                 "s" if len(swept) == 1 else "ve",
             )
 
-    # Validate all configs share the same map (shared CARLA server constraint).
-    map_names = {str(cfg.map.name) for cfg in configs}
-    if len(map_names) > 1:
-        print(  # noqa: T201
-            f"Error: batch scenarios must share the same map, but found: {map_names}"
-        )
+    # Validate all configs share the same map (shared CARLA server constraint):
+    # the queue is built on the first case's (#1241).
+    try:
+        check_batch_map(configs, labels)
+    except RunConfigError as exc:
+        print(f"Error: {exc}")  # noqa: T201
         sys.exit(1)
 
     # One launcher for the whole batch: the queue prepares it (and puts its
@@ -1751,7 +1820,7 @@ def run_batch(
     if launcher == "slurm":
         # What the local queue refuses below, for every case: a task would
         # only refuse it on its node, once the batch was submitted.
-        check_batch_configs(configs)
+        check_batch_configs(configs, labels)
 
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
