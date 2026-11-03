@@ -2941,8 +2941,7 @@ value, so the result is not checked:</p>
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
   <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
-  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>utils/light_lanes</code> and
-  <code>utils/traffic_light</code>, each declaring exactly the names compared;
+  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
 <li><strong>Every public name of a modelled module</strong>: each name a module the model
   has exports in Python (its <code>__all__</code>, or the public names it defines when
@@ -4769,8 +4768,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-269 of the package's 393
-modules (68%; about 80,600 of
+270 of the package's 393
+modules (69%; about 80,800 of
 139,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4783,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 269 CHECKED modules</summary>
+<summary>The 270 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5833,6 +5832,10 @@ first paragraph of its docstring:</p>
 <td>What stands in a road user's way: walkers ahead of a vehicle, vehicles ahead of a walker (#521).</td>
 </tr>
 <tr>
+<td><code>utils.light_lanes</code></td>
+<td>Which traffic light regulatory elements a CARLA light shows, on the Lanelet2 map.</td>
+</tr>
+<tr>
 <td><code>utils.opendrive</code></td>
 <td>CARLA's OpenDRIVE, made acceptable to roadgen.</td>
 </tr>
@@ -6017,7 +6020,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 124 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6046,7 +6049,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 124 EXCLUDED modules, and why</summary>
+<summary>The 123 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc) and pedestrian.ardy, which are neither checked nor modelled, and reads a keyframes file with json.loads into values of any type (<code>Any</code>)</li>
@@ -6152,7 +6155,7 @@ the first:</p>
 <li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
 <li><code>t4_scene.live</code>: builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (<code>NDArray</code>); entity.carla_driver_entity (excluded) is all that uses it</li>
 <li><code>t4_scene.map_resource</code>: imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and builds protobuf messages (t4_scene._proto)</li>
-<li><code>t4_scene.route</code>: imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and lanelet2's routing graph; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
+<li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse</li>
 <li><code>traffic.registry</code>: holds backend factories behind the alias <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> (registry.py:44, "expected type expression") and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package</li>
@@ -6170,7 +6173,6 @@ the first:</p>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), odd.controls and sweeper.expand (omegaconf), which are not checked</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields) and takes the options as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
-<li><code>utils.light_lanes</code>: reads a Lanelet2 map's lanelets into numpy arrays typed with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; utils/light_lanes.codon models what the checked coordinate.traffic_light uses of it</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it</li>
 </ul>
 </details>
@@ -7992,7 +7994,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 14:22:29 UTC"><span class="timeago" datetime="2026-11-03T14:22:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 14:22:29 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 17:26:58 UTC"><span class="timeago" datetime="2026-11-03T17:26:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 17:26:58 UTC">2026-11-03</span>
   </span>
 
     
