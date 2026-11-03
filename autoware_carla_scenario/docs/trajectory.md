@@ -144,9 +144,12 @@ nowhere and the condition does not hold. A route pose without an `anchor`,
 counted from the ego, follows the ego the same way.
 A `SpawnAction` placed against an entity places it once, against where that
 entity stands when the action fires, facing along the lane it is placed on
-where it states no `yaw`; an entity that is not in the scene then (parked
-under the map included) leaves the place unresolved, said in a warning: the
-road user is brought in where it was declared, and a prop is not added.
+where it states no `yaw`. An entity another `SpawnAction` brought in on that
+same frame (the same tick phase, as two spawn cards fired together) is not
+where the world shows it until the next tick, so it is read where it was put.
+An entity that is not in the scene then (parked under the map included, and
+not brought in on that frame) leaves the place unresolved, said in a warning:
+the road user is brought in where it was declared, and a prop is not added.
 
 How a vertex is placed, on the Lanelet2 map and its routing graph:
 

@@ -95,6 +95,12 @@ _ENTRY_GAP_M = 2.0
 _ENTERED: dict[int, tuple[int, float]] = {}
 #: How deep (m) under the map a hidden entity is parked (``HIDDEN_DEPTH_M``).
 _PARKED_DEPTH_M: float = 500.0
+#: Where an entity was brought in, by ``(world id, role name)``: the frame and
+#: the CARLA pose it was put at.  A client sees an actor's new transform only
+#: from the next tick on, so a place written against it on the same frame
+#: (another spawn of the same phase) is placed against this
+#: (:class:`_BroughtInReferences`).
+_BROUGHT_IN: dict[tuple[int, str], tuple[int, CarlaWorldPose]] = {}
 
 #: The props standing now, by name.
 _STANDING: dict[str, "carla.Actor"] = {}
@@ -123,6 +129,51 @@ def clear_props() -> None:
     the next starts: a batch runs several scenarios against one world."""
     for name in list(_STANDING.keys()):
         remove_prop(name)
+    _BROUGHT_IN.clear()
+
+
+def _frame(world: "carla.World") -> int:
+    """The world's frame now, or ``-1`` where it cannot be read."""
+    try:
+        return int(world.get_snapshot().frame)
+    except (AttributeError, RuntimeError):
+        return -1
+
+
+def _world_id(world: "carla.World") -> int:
+    """The world's id, or ``-1`` where it has none (a test double)."""
+    try:
+        return int(world.id)
+    except AttributeError:
+        return -1
+
+
+class _BroughtInReferences:
+    """The reference poses a spawn's place is resolved against: an entity
+    brought in on this very frame where it was put (:data:`_BROUGHT_IN`; the
+    world still shows it parked under the map), any other where it is now if
+    it is in the scene (:class:`~..conditions.entity_existence.ReferencePoses`
+    with ``present_only``)."""
+
+    # Declared for the static check (docs/typecheck.md).
+    _world_id: int
+    _frame: int
+    _present: ReferencePoses
+
+    def __init__(self, world: "carla.World") -> None:
+        self._world_id = _world_id(world)
+        self._frame = _frame(world)
+        self._present = ReferencePoses(world, present_only=True)
+
+    def pose(self, entity_ref: Optional[Union[EntityRole, str]]) -> CarlaWorldPose:
+        """Where *entity_ref* is now (:meth:`ReferencePoses.pose`)."""
+        if entity_ref is not None and self._frame >= 0:
+            key = (self._world_id, str(entity_ref))
+            if key in _BROUGHT_IN:
+                frame, put = _BROUGHT_IN[key]
+                if frame == self._frame:
+                    return put
+        return self._present.pose(entity_ref)
 
 
 class SpawnAction(BaseAction):
@@ -143,10 +194,13 @@ class SpawnAction(BaseAction):
             route pose -- and 0 where it is on none).  A place written
             against an entity (a ``RelativeLanePose``'s ``entity_ref``; the
             ego, for a route pose without an ``anchor``) is placed against
-            where that entity stands when the action fires; while it is not
-            in the scene (not spawned yet, gone, or spawned hidden and parked
-            under the map) the place cannot be resolved (said): an entity is
-            brought in where it was declared, a prop is not added.  An entity's
+            where that entity stands when the action fires -- or, brought in
+            by a SpawnAction on that very frame (which the world shows only
+            from the next tick on), where it was put; while it is not in the
+            scene (not spawned yet, gone, or spawned hidden and parked under
+            the map, and not brought in on this frame) the place cannot be
+            resolved (said): an entity is brought in where it was declared,
+            a prop is not added.  An entity's
             ``None`` (or a Lanelet2 pose on lanelet 0 or less, what a card
             leaves empty): where it was declared to spawn, which it waits
             under.  A prop needs one.
@@ -362,10 +416,15 @@ class SpawnAction(BaseAction):
         x, y, z, yaw = place
         _put(world, found, x, y, z, yaw, self._speed)
         _keep_entry_speed(found, self._speed)
-        try:
-            _ENTERED[int(found.id)] = (int(world.get_snapshot().frame), self._speed)
-        except (AttributeError, RuntimeError):
-            pass
+        frame = _frame(world)
+        if frame >= 0:
+            _ENTERED[int(found.id)] = (frame, self._speed)
+            # Read by a place written against it on this frame: the world
+            # shows where it is put only from the next tick on.
+            _BROUGHT_IN[(_world_id(world), self._entity_name)] = (
+                frame,
+                CarlaWorldPose(x, y, z, yaw=yaw),
+            )
         self._spawned.append((self._entity_name, int(found.id)))
         logger.info(
             "%s: '%s' spawned at (%.1f, %.1f) at %.1f m/s",
@@ -444,7 +503,8 @@ class SpawnAction(BaseAction):
         taken (said either way); ``None`` with no place of its own (an
         entity's declared spawn) or one that cannot be resolved (said) --
         among them one written against an entity that is not in the scene
-        (not spawned yet, gone, or spawned hidden and parked under the map).
+        (not spawned yet, gone, or spawned hidden and parked under the map,
+        and not brought in on this frame: :class:`_BroughtInReferences`).
         A place written against an entity
         (:func:`~..trajectory.model.placed_against_entity`) with no ``yaw``
         faces along the lane it is placed on."""
@@ -461,8 +521,9 @@ class SpawnAction(BaseAction):
                 return None  # an entity's declared spawn
         # An entity parked under the map (spawned hidden, not brought in yet)
         # is not in the scene: nothing is placed against it, as against one
-        # not in the world.
-        reference = ReferencePoses(world, present_only=True)
+        # not in the world -- unless brought in on this very frame, which the
+        # world does not show yet: then where it was put.
+        reference = _BroughtInReferences(world)
         try:
             if placed_against_entity(position):
                 # Without a heading of its own, along the lane it is placed
