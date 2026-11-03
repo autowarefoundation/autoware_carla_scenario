@@ -5086,8 +5086,16 @@ in each bucket, and the buckets no route reaches
 <td>The Rerun recording of the trajectory log, with <code>rerun.enabled=true</code> (<a href="#seeing-a-run">Seeing a run</a>)</td>
 </tr>
 <tr>
+<td><code>{ScenarioName}.sensors.rrd</code></td>
+<td>The driver's sensors recorded during the run (<code>rerun.lidar</code>, <code>rerun.cameras</code>); merged into <code>{ScenarioName}.rrd</code> and removed, so only left behind by a run or merge that did not finish (<a href="#sensors-in-the-recording">Sensors in the recording</a>)</td>
+</tr>
+<tr>
 <td><code>{ScenarioName}.t4scene.pb</code>, <code>{ScenarioName}.t4scene.map.pb</code></td>
 <td>The trajectory log as a T4Scene and the map it names, with <code>t4scene.enabled=true</code> (<a href="../t4_scene/">T4 Scene</a>)</td>
+</tr>
+<tr>
+<td><code>{ScenarioName}.t4/</code></td>
+<td>The run as a T4 dataset (a directory, its version <code>0</code> inside), with <code>t4.enabled=true</code> (<a href="../t4_dataset/">T4 Dataset</a>)</td>
 </tr>
 <tr>
 <td><code>batch_results.json</code></td>
@@ -5096,22 +5104,101 @@ in each bucket, and the buckets no route reaches
 </tbody>
 </table>
 <p><strong>Result JSON format:</strong></p>
+<p><code>{ScenarioName}_result.json</code> holds the result (<code>passed</code>, <code>message</code>,
+<code>elapsed_seconds</code>, <code>condition_statuses</code>), then <code>rerun_recording</code> (the
+<code>.rrd</code> made of the run, with <code>rerun.enabled=true</code>) and <code>failure</code> (on a failed
+run, below) when they apply, then <code>environment</code> (the summary of
+<code>_environment.json</code>) and <code>traffic</code> (what drove the traffic: the backend's
+name, its settings and seed, and with SUMO how many vehicles it simulated at
+each level when the run ended). Either of the last two is left out when it
+could not be read. The scenario's name is not in it: the file is named after
+it, and <code>batch_results.json</code> adds it to each of its entries.</p>
 <p>On a pass, <code>message</code> is the message of the pass condition that fired -- here
 an <code>AndCondition</code> of two <code>StickyCondition</code>s, which joins its children's
 messages with <code>AND</code> -- or <code>Scenario completed successfully</code> when
 <code>is_done()</code> ended the run. When a fail condition ends the run, it is that
 condition's message.</p>
+<p><code>condition_statuses</code> has one entry per registered condition, pass conditions
+first, each labelled <code>pass[i](label)</code> or <code>fail[i](label)</code>: whether it was
+satisfied when the run ended, its message (<code>not triggered</code> for a fail
+condition that was not, <code>not yet satisfied</code> for a pass condition), its class,
+its role, and its <code>details</code> (an <code>AndCondition</code>'s are its children's statuses,
+cut short here). A run of <code>intersection_passing/straight</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="p">{</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s"</span><span class="p">,</span>
-<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
-<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 5 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">},</span>
-<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Road 12 visited"</span><span class="p">,</span><span class="w"> </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}</span>
-<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="p">}</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Entity 'Ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'Ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s"</span><span class="p">,</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.42</span><span class="p">,</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">  </span><span class="nt">"condition_statuses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pass[0](ego_on_road_5_sticky AND ego_on_road_12_sticky)"</span><span class="p">,</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="w">      </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="w">      </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Entity 'Ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'Ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s"</span><span class="p">,</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="w">      </span><span class="nt">"condition_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"AndCondition"</span><span class="p">,</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">      </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pass"</span><span class="p">,</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="w">      </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"operator"</span><span class="p">:</span><span class="w"> </span><span class="s2">"AND"</span><span class="p">,</span><span class="w"> </span><span class="nt">"children"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"..."</span><span class="p">]}</span>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail[0](speed_check_delay AND ego_min_speed)"</span><span class="p">,</span>
+<a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a><span class="w">      </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a><span class="w">      </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"not triggered"</span><span class="p">,</span>
+<a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a><span class="w">      </span><span class="nt">"condition_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"AndCondition"</span><span class="p">,</span>
+<a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a><span class="w">      </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail"</span><span class="p">,</span>
+<a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a><span class="w">      </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"operator"</span><span class="p">:</span><span class="w"> </span><span class="s2">"AND"</span><span class="p">,</span><span class="w"> </span><span class="nt">"children"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"..."</span><span class="p">]}</span>
+<a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail[1](scenario_timeout)"</span><span class="p">,</span>
+<a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a><span class="w">      </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a><span class="w">      </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"not triggered"</span><span class="p">,</span>
+<a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a><span class="w">      </span><span class="nt">"condition_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"TimeoutCondition"</span><span class="p">,</span>
+<a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a><span class="w">      </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail"</span><span class="p">,</span>
+<a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a><span class="w">      </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"timeout_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">15.0</span><span class="p">}</span>
+<a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-21-30" name="__codelineno-21-30" href="#__codelineno-21-30"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-21-31" name="__codelineno-21-31" href="#__codelineno-21-31"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail[2](ego_existence)"</span><span class="p">,</span>
+<a id="__codelineno-21-32" name="__codelineno-21-32" href="#__codelineno-21-32"></a><span class="w">      </span><span class="nt">"satisfied"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-21-33" name="__codelineno-21-33" href="#__codelineno-21-33"></a><span class="w">      </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"not triggered"</span><span class="p">,</span>
+<a id="__codelineno-21-34" name="__codelineno-21-34" href="#__codelineno-21-34"></a><span class="w">      </span><span class="nt">"condition_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"EntityExistenceCondition"</span><span class="p">,</span>
+<a id="__codelineno-21-35" name="__codelineno-21-35" href="#__codelineno-21-35"></a><span class="w">      </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"fail"</span><span class="p">,</span>
+<a id="__codelineno-21-36" name="__codelineno-21-36" href="#__codelineno-21-36"></a><span class="w">      </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"entity_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Ego"</span><span class="p">}</span>
+<a id="__codelineno-21-37" name="__codelineno-21-37" href="#__codelineno-21-37"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-21-38" name="__codelineno-21-38" href="#__codelineno-21-38"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-21-39" name="__codelineno-21-39" href="#__codelineno-21-39"></a><span class="w">  </span><span class="nt">"environment"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-21-40" name="__codelineno-21-40" href="#__codelineno-21-40"></a><span class="w">    </span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"731d9cc2a8447ef6f9230be81346e8e8297d9e85eb4570bdb68ce91964472fdf"</span><span class="p">,</span>
+<a id="__codelineno-21-41" name="__codelineno-21-41" href="#__codelineno-21-41"></a><span class="w">    </span><span class="nt">"python"</span><span class="p">:</span><span class="w"> </span><span class="s2">"3.12.3"</span><span class="p">,</span>
+<a id="__codelineno-21-42" name="__codelineno-21-42" href="#__codelineno-21-42"></a><span class="w">    </span><span class="nt">"platform"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Linux-6.8.0-60-generic-x86_64-with-glibc2.39"</span><span class="p">,</span>
+<a id="__codelineno-21-43" name="__codelineno-21-43" href="#__codelineno-21-43"></a><span class="w">    </span><span class="nt">"framework"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-21-44" name="__codelineno-21-44" href="#__codelineno-21-44"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"autoware-carla-scenario"</span><span class="p">,</span>
+<a id="__codelineno-21-45" name="__codelineno-21-45" href="#__codelineno-21-45"></a><span class="w">      </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"23.1.24"</span><span class="p">,</span>
+<a id="__codelineno-21-46" name="__codelineno-21-46" href="#__codelineno-21-46"></a><span class="w">      </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"index"</span><span class="p">}</span>
+<a id="__codelineno-21-47" name="__codelineno-21-47" href="#__codelineno-21-47"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-21-48" name="__codelineno-21-48" href="#__codelineno-21-48"></a><span class="w">    </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-21-49" name="__codelineno-21-49" href="#__codelineno-21-49"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"autoware-carla-scenario"</span><span class="p">,</span>
+<a id="__codelineno-21-50" name="__codelineno-21-50" href="#__codelineno-21-50"></a><span class="w">      </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"23.1.24"</span><span class="p">,</span>
+<a id="__codelineno-21-51" name="__codelineno-21-51" href="#__codelineno-21-51"></a><span class="w">      </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"index"</span><span class="p">}</span>
+<a id="__codelineno-21-52" name="__codelineno-21-52" href="#__codelineno-21-52"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-21-53" name="__codelineno-21-53" href="#__codelineno-21-53"></a><span class="w">    </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-21-54" name="__codelineno-21-54" href="#__codelineno-21-54"></a><span class="w">      </span><span class="nt">"openodd-py"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.18.0"</span><span class="p">,</span>
+<a id="__codelineno-21-55" name="__codelineno-21-55" href="#__codelineno-21-55"></a><span class="w">      </span><span class="nt">"typesafe-carla"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.8.1"</span><span class="p">,</span>
+<a id="__codelineno-21-56" name="__codelineno-21-56" href="#__codelineno-21-56"></a><span class="w">      </span><span class="nt">"simple-lanelet2"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.2.3"</span><span class="p">,</span>
+<a id="__codelineno-21-57" name="__codelineno-21-57" href="#__codelineno-21-57"></a><span class="w">      </span><span class="nt">"hydra-core"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.3.7"</span><span class="p">,</span>
+<a id="__codelineno-21-58" name="__codelineno-21-58" href="#__codelineno-21-58"></a><span class="w">      </span><span class="nt">"numpy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.5.3"</span>
+<a id="__codelineno-21-59" name="__codelineno-21-59" href="#__codelineno-21-59"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-21-60" name="__codelineno-21-60" href="#__codelineno-21-60"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-21-61" name="__codelineno-21-61" href="#__codelineno-21-61"></a><span class="w">  </span><span class="nt">"traffic"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-21-62" name="__codelineno-21-62" href="#__codelineno-21-62"></a><span class="w">    </span><span class="nt">"backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"traffic_manager"</span><span class="p">,</span>
+<a id="__codelineno-21-63" name="__codelineno-21-63" href="#__codelineno-21-63"></a><span class="w">    </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">8100</span><span class="p">,</span>
+<a id="__codelineno-21-64" name="__codelineno-21-64" href="#__codelineno-21-64"></a><span class="w">    </span><span class="nt">"random_seed"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-21-65" name="__codelineno-21-65" href="#__codelineno-21-65"></a><span class="w">    </span><span class="nt">"follow_visibility"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-21-66" name="__codelineno-21-66" href="#__codelineno-21-66"></a><span class="w">    </span><span class="nt">"visibility_m"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-21-67" name="__codelineno-21-67" href="#__codelineno-21-67"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-21-68" name="__codelineno-21-68" href="#__codelineno-21-68"></a><span class="p">}</span>
 </code></pre></div>
+<p><code>environment.scenario</code> names the distribution the scenario's class comes
+from, as <code>framework</code> does: the framework itself for a built-in scenario like
+this one, a scenario package's own otherwise, <code>null</code> when no installed
+distribution is found for it. A <code>source</code> other than <code>index</code> says where the
+distribution came from (<code>vcs</code> with its URL and commit, <code>editable</code> with its
+directory and commit, ...).</p>
 <p><strong>Why a run failed:</strong></p>
 <p>A failed run's result has a <code>failure</code>: the fail condition that ended it, and a
 <em>category</em> that names what went wrong the same way in every scenario, where
@@ -6011,7 +6098,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 05:19:52 UTC"><span class="timeago" datetime="2026-11-03T05:19:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 05:19:52 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 05:47:26 UTC"><span class="timeago" datetime="2026-11-03T05:47:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 05:47:26 UTC">2026-11-03</span>
   </span>
 
     
