@@ -822,7 +822,8 @@ controls:
 #### Checking controls
 
 `scenario-check` validates `controls:` of every config it checks, and
-`scenario-expand`, a sweep and a `--multirun` batch refuse invalid ones, each
+`scenario-expand`, a sweep and a `--multirun` batch refuse invalid ones -- a
+concrete scenario's, without a `sweep:`, as well as a logical one's -- each
 problem as one line with its config path, not a traceback:
 
 ```text
