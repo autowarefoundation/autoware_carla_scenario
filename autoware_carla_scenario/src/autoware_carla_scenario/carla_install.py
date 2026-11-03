@@ -377,8 +377,8 @@ def _require_extraction_filters() -> None:
     ``extractall(filter=...)`` and ``tarfile.data_filter``, which keep the
     archive from writing outside the destination, came in Python 3.12 and in
     the 3.10.12 and 3.11.4 security releases; ``requires-python`` still admits
-    the patch releases before those (Ubuntu 22.04 ships 3.10.6), where the
-    extraction would otherwise fail with a ``TypeError`` traceback.
+    the patch releases before those (Ubuntu 22.04 released with 3.10.4), where
+    the extraction would otherwise fail with a ``TypeError`` traceback.
 
     Raises:
         RuntimeError: The running Python is one of those older patch releases.

@@ -230,7 +230,7 @@ def test_the_cli_reports_failures(home: Path, tmp_path: Path) -> None:
 def no_extraction_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     """A ``tarfile`` as Python 3.10.0-3.10.11 and 3.11.0-3.11.3 have it."""
     monkeypatch.delattr(tarfile, "data_filter")
-    monkeypatch.setattr(carla_install.platform, "python_version", lambda: "3.10.6")
+    monkeypatch.setattr(carla_install.platform, "python_version", lambda: "3.10.4")
 
 
 @pytest.mark.usefixtures("no_extraction_filters")
@@ -241,7 +241,7 @@ def test_a_python_without_extraction_filters_is_reported_on_one_line(
     captured = capsys.readouterr()
     assert captured.err == (
         "scenario-setup: scenario-setup needs tarfile's extraction filters, which "
-        "Python 3.10.6 lacks: upgrade Python to 3.10.12, 3.11.4, 3.12 or later\n"
+        "Python 3.10.4 lacks: upgrade Python to 3.10.12, 3.11.4, 3.12 or later\n"
     )
     assert "Downloading" not in captured.out  # refused before anything is fetched
     assert installed_executable() is None
