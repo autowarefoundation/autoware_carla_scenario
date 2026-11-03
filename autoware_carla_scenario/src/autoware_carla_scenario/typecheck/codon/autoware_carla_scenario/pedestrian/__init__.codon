@@ -1,0 +1,2 @@
+# autoware_carla_scenario.pedestrian is checked from its source (typecheck/library.py);
+# this package holds models of the pedestrian modules that are not.

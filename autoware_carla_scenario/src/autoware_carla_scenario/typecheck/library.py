@@ -71,6 +71,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.despawn",
     "autoware_carla_scenario.actions.environment",
     "autoware_carla_scenario.actions.lane_change",
+    "autoware_carla_scenario.actions.play_motion",
     "autoware_carla_scenario.actions.routing",
     "autoware_carla_scenario.actions.set_speed",
     "autoware_carla_scenario.actions.spawn",
@@ -519,7 +520,6 @@ UNCALLED: dict[str, str] = {
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
-    "autoware_carla_scenario.actions.play_motion": "imports pedestrian.soma, which is neither checked nor modelled",
     "autoware_carla_scenario.actions.smart_pedestrian": "imports pedestrian.motion_client (grpc) and pedestrian.ardy, which are neither checked nor modelled, and reads a keyframes file with json.loads into values of any type (`Any`)",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
@@ -593,7 +593,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2_grpc": "imports grpc",
     "autoware_carla_scenario.pedestrian.ardy": "imports grpc, and prepare.docker, which is not checked",
     "autoware_carla_scenario.pedestrian.motion_client": "imports grpc and the generated protobuf modules (google.protobuf)",
-    "autoware_carla_scenario.pedestrian.soma": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks",
+    "autoware_carla_scenario.pedestrian.soma": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it",
     "autoware_carla_scenario.prepare.declare": "sets and reads a class attribute by name (setattr, `type.__dict__`, `__mro__`) and imports a module by name (importlib), which Codon cannot",
     "autoware_carla_scenario.prepare.docker": "runs docker through subprocess.Popen with a file object for its output (`IO[bytes]`) and more of subprocess and socket than their shims declare",
     "autoware_carla_scenario.prepare.pool": "builds backends from the classes it is handed, by attribute name (`getattr(cls, ...)`), which Codon cannot",

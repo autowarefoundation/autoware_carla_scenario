@@ -1,0 +1,43 @@
+# Model of autoware_carla_scenario.pedestrian.soma (docs/typecheck.md), which
+# reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot
+# read) and holds its bone directions as a numpy array typed with numpy.typing
+# (`NDArray`), which Codon's numpy lacks: what the checked actions.play_motion
+# uses of it, with the signatures of the Python module.
+
+from pathlib import Path
+
+
+class SomaMotion:
+    # Python's frozen dataclass.
+    fps: float
+    # tuple[str, ...] in Python: a List here, as a variadic tuple field is
+    # checked (docs/typecheck.md), so the constructor takes it untyped.
+    joints: List[str]
+
+    # Codon would build it by its fields too (docs/typecheck.md, #244).
+    def __init__(self, fps, joints):
+        compile_error("SomaMotion(): no constructor takes these arguments "
+                      "(required: fps, joints, directions)")
+
+    # SomaMotion(fps, joints, directions): directions is a numpy array
+    # (`NDArray[np.float64]`), taken as it comes.
+    def __init__(self, fps: float, joints, directions):
+        self.fps = fps
+        self.joints = [str(joint) for joint in joints]
+
+    @property
+    def frame_count(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def duration_s(self) -> float:
+        raise NotImplementedError()
+
+    def frame(self, index: int) -> Dict[str, Tuple[float, float, float]]:
+        raise NotImplementedError()
+
+
+# load_soma_motion(path, fps=None): a path is a str or a pathlib.Path.
+def load_soma_motion(path, fps: Optional[float] = None) -> SomaMotion:
+    Path(path)
+    raise NotImplementedError()

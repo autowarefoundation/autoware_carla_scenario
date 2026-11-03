@@ -778,7 +778,8 @@ What `test_typecheck_model.py` compares, model by model:
   `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
-  `maps/z_offset_cache`, `maps/road_network_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
+  `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
+  `ui/models`, `_ros2`, `metrics`, `measures` and
   `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
@@ -942,7 +943,7 @@ them (`OddModule`, `OddAttribute`, `BaseScenario`). The classes it finds:
 |---|---|
 | none | `RouteMatch`, `RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`, `CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport` (and `CycloneRos2Transport`, compared apart) |
 | the label | the conditions and actions whose constructor Python refuses one argument (`SpeedCondition`, `TurnAction`) |
-| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RunProgress` (four) |
+| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `SomaMotion` (two), `RunProgress` (four) |
 | an exception's | `FrameMismatchError` (one, two, ten), `DevContainerError`, `MapCacheError` (none, two, eight) |
 
 `RouteCoverage` declares Python's fields in Python's order (#298), so the
@@ -2802,7 +2803,7 @@ stands in for it in the check's workspace:
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
-  `ros2/cyclone.codon`), or, for a module of
+  `ros2/cyclone.codon`, `pedestrian/soma.codon`), or, for a module of
   the top-level package, a model of that module (`carla_install.codon`, for
   `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
