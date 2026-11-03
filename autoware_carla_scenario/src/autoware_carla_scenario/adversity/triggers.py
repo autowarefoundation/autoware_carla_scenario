@@ -5,21 +5,26 @@ TeraSim's triggers, on an :class:`~.observation.VehicleObservation` or
 an :class:`~.command.AdversarialCommand` when the agent may do its
 adversarial thing now, else None:
 
-* :attr:`AdversityKind.BRAKE_CHECK` (TeraSim's Follower): a follower close
-  behind, the agent not speeding up and the follower not slowing -- brake
-  as hard as it can, for 2 s;
-* :attr:`AdversityKind.IGNORE_LEADER` (Leader): held back by its leader by
+* :attr:`AdversityKind.BRAKE_CHECK` (TeraSim's Follower): a follower in its
+  lane within 40 m, the two not both stopped (under 0.5 m/s), the agent not
+  speeding up and the follower not slowing -- brake at the emergency
+  deceleration, for 2 s;
+* :attr:`AdversityKind.IGNORE_LEADER` (Leader): moving (at least 0.5 m/s),
+  at least 2 m/s off its leader's speed, and held back by its leader by
   more than 1.5 m/s² (free flow against car following) -- drive as if the
   road were empty, for 2 s;
-* :attr:`AdversityKind.CUT_IN` (LaneChange): a lane beside it may not change
-  into because the vehicle behind there is too close, while the one ahead
-  there is far enough -- change in anyway, in 1 s;
-* :attr:`AdversityKind.TRAFFIC_RULE` (TrafficRule): stopping for a red or
-  yellow light rather than for its leader, with free flow at least 1 m/s²
-  better (or braking while free flow would not) -- drive on through, 2 s;
+* :attr:`AdversityKind.CUT_IN` (LaneChange): a lane beside, left first,
+  blocked only by the vehicle behind there (closer than SUMO's secure gap),
+  while the one ahead there is far enough -- change in anyway, in 1 s;
+* :attr:`AdversityKind.TRAFFIC_RULE` (TrafficRule): a red or yellow light
+  within 40 m ahead; when it has a leader, car following beats its own
+  acceleration by more than 1.5 m/s² (the light holds it back, not the
+  leader); and free flow beats its acceleration by more than 1 m/s², or it
+  is braking while free flow is above 0.2 m/s² -- drive on through at the
+  free-flow rate, for 2 s;
 * :attr:`AdversityKind.LANE_CHANGE_ABORT` (LanechangeAbort): blocked beside
-  as for CUT_IN, moving, and the lanelet long enough for 1 s more -- drift
-  half a lane toward that side and back, in 1 s;
+  as for CUT_IN, moving, and the lanelet lasting more than 1 s more at its
+  speed -- drift half a lane toward that side and back, in 1 s;
 * :attr:`AdversityKind.HEAD_ON` (Headon): IGNORE_LEADER's command, where the
   leader's lanelet starts more than 120 degrees off the agent's;
 * :attr:`AdversityKind.MERGE` (Merge): not already changing lanes (turned
@@ -27,17 +32,18 @@ adversarial thing now, else None:
   right or its left, with traffic on it
   (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
   speed up as if the vehicle merging ahead were not there, when that beats
-  giving way by more than 1.5 m/s², for 2 s; two lanes over, change into
-  the lane between in 1 s when nobody there is within 2 s of headway;
-* :attr:`AdversityKind.JAYWALKING`: a pedestrian off any crosswalk, a road
-  within 10 m -- walk straight across it at its speed (1.4 m/s if it
-  stands) times U(0.5, 2.0), for up to 5 s;
+  giving way by more than 1.5 m/s² and it and its leader are not both
+  stopped, for 2 s; two lanes over, change into the lane between in 1 s
+  when nobody there is within 2 s of headway;
+* :attr:`AdversityKind.JAYWALKING` (Jaywalking): a pedestrian off any
+  crosswalk, a road within 10 m -- walk straight across it at its speed
+  (1.4 m/s if under 1 m/s) times U(0.5, 2.0), for 5 s;
 * :attr:`AdversityKind.RUNNING_RED_LIGHT` (RunningRedLight): a pedestrian
   waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red --
-  cross it anyway, from its near end to its far end, at full speed;
+  cross it anyway, from its near end to its far end, at 2.8 m/s;
 * :attr:`AdversityKind.STOP_CROSSING` (StopCrossing): a pedestrian on a
-  crosswalk -- stand still for N(2 s, 0.5 s), then cross at full speed, a
-  crosswalk's length on along its heading.
+  crosswalk -- stand still for N(2 s, 0.5 s), then walk a crosswalk's
+  length on along its heading at 2.8 m/s.
 
 The pedestrian kinds are only a pedestrian's, the others only a vehicle's.
 
