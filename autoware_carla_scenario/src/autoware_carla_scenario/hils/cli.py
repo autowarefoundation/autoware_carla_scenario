@@ -27,6 +27,7 @@ from typing import List, Optional
 from ..canvas import CanvasUnavailableError
 from .config import PHASES, HilsConfig, HilsConfigError, load_config
 from .signals import SIGNALS
+from .wire import DEFAULT_PORT, parse_address
 
 __all__ = ["example_config", "main"]
 
@@ -71,7 +72,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--listen",
-        help="where runs reach the bridge, host:port (overrides runner.listen)",
+        help=(
+            "where runs reach the bridge, host:port or [host]:port for an IPv6 "
+            "address (overrides runner.listen)"
+        ),
     )
     parser.add_argument(
         "--check",
@@ -144,6 +148,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     except HilsConfigError as exc:
         print(f"scenario-hils: {exc}", file=sys.stderr)
         return 2
+    if args.listen is not None:
+        # Checked as runner.listen is when the file loads, so --check catches it.
+        try:
+            parse_address(args.listen)
+        except ValueError as exc:
+            print(
+                f"scenario-hils: --listen: {exc}; write host:port, or [host]:port "
+                f"for an IPv6 address (--listen '[::]:{DEFAULT_PORT}')",
+                file=sys.stderr,
+            )
+            return 2
     overrides = {
         "host": args.host,
         "port": args.port,

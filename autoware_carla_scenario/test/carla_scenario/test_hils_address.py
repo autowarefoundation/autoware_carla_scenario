@@ -15,6 +15,7 @@ from typing import Dict
 import pytest
 
 from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig
+from autoware_carla_scenario.hils.cli import example_config, main
 from autoware_carla_scenario.hils.config import (
     HilsConfigError,
     load_config,
@@ -249,3 +250,72 @@ def test_runner_link_binds_the_address_family(
     RunnerLink(address, queue.Queue()).close()
     assert asked["address"] == where
     assert asked["family"] == family
+
+
+# -- follow-ups (issue #1291) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("dualstack", "address", "expected"),
+    [
+        (True, "[::]:7701", True),
+        (True, "::", True),
+        (False, "[::]:7701", False),
+        (True, "[::1]:7701", False),
+        (True, "0.0.0.0:7701", False),
+    ],
+)
+def test_runner_link_makes_any_ipv6_dualstack(
+    monkeypatch: pytest.MonkeyPatch, dualstack: bool, address: str, expected: bool
+) -> None:
+    """``[::]`` takes IPv4 too, where the OS can (``create_server`` faked)."""
+    import autoware_carla_scenario.hils.link as link_module
+
+    asked: Dict[str, object] = {}
+
+    class _Server:
+        def settimeout(self, _: float) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    def create_server(address: tuple, **kwargs: object) -> _Server:
+        asked.update(kwargs)
+        return _Server()
+
+    monkeypatch.setattr(link_module.socket, "create_server", create_server)
+    monkeypatch.setattr(link_module.socket, "has_dualstack_ipv6", lambda: dualstack)
+    RunnerLink(address, queue.Queue()).close()
+    assert asked.get("dualstack_ipv6", False) is expected
+
+
+@pytest.mark.parametrize("check", [True, False])
+@pytest.mark.parametrize("listen", ["[::1", "hils-pc:port", "[::1]x", "host:70000"])
+def test_the_command_refuses_a_bad_listen(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], listen: str, check: bool
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    argv = [str(path), "--listen", listen] + (["--check"] if check else [])
+    assert main(argv) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("scenario-hils: --listen: ")
+    assert "[host]:port" in captured.err
+
+
+def test_the_command_takes_an_ipv6_listen(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    assert main([str(path), "--check", "--listen", "[::]:7701"]) == 0
+    assert "runs reach the bridge at [::]:7701" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("host", [["::1"], ("::1",), 1, None])
+def test_hils_entity_host_must_be_text(host: object) -> None:
+    """An unquoted ``hils.host=[::1]`` reaches the entity as a list."""
+    with pytest.raises(ValueError, match=r"hils\.host.*quote it"):
+        HilsEgoConfig(host=host)  # type: ignore[arg-type]
