@@ -2271,7 +2271,7 @@ run's log alone, holds no sensor data, and needs neither CARLA nor any extra.</p
 <p>With <code>t4scene.enabled=true</code> the runner writes each run's scene itself, right
 after it closes the run's trajectory log, beside it in the run's output
 directory -- a batch's cases and a SLURM task's alike:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>t4scene.enabled<span class="o">=</span><span class="nb">true</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span>t4scene.enabled<span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2314,7 +2314,7 @@ carries the run so far as a T4Scene, in <code>CarlaRendererData.t4_scene</code>
 (carla-driver-interface 2.4 and later), for a policy that plans from scenes --
 <code>carla_driver_interface</code>'s <code>T4SceneDriver</code>, which hands it to a devkit driver
 (<code>t4_e2e_devkit.driver.AbstractT4Driver</code>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span>driver.map_dir<span class="o">=</span>/tmp/maps<span class="w"> </span>driver.t4_scene<span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <table>
@@ -2575,7 +2575,7 @@ copy the file again and regenerate.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 04:50:42 UTC"><span class="timeago" datetime="2026-11-02T04:50:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 04:50:42 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 05:19:52 UTC"><span class="timeago" datetime="2026-11-03T05:19:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 05:19:52 UTC">2026-11-03</span>
   </span>
 
     
