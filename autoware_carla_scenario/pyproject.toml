@@ -67,8 +67,12 @@ dependencies = [
     # distributions of the grip and the visibility the weather leaves
     # (weather_rules.py) -- openodd reads: rules version 2 (conditional
     # distributions), and 0.18 reads a part reading another quantity, as
-    # weather_rules.yaml's sight_speed reads the visibility.
-    "openodd-py>=0.18.0",
+    # weather_rules.yaml's sight_speed reads the visibility. 0.19.1 reads a
+    # normal or triangular distribution right however far its range lies
+    # from its mean or mode (0.18 could read NaN there), and fits rules to
+    # measured data (`Rules.fit`); 0.19.2's type stub parses (0.19.1's
+    # stopped mypy, and with it scenario-check's None check).
+    "openodd-py>=0.19.2",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",
