@@ -10,7 +10,7 @@ from typing import Optional
 
 from ..constants import FIXED_DELTA_SECONDS
 from .convert import LOG_SUFFIX, write_t4_scene
-from .grid import scene_stem
+from .grid import checked_max_distance, scene_stem
 
 
 def _logs(paths: list[Path]) -> list[Path]:
@@ -89,6 +89,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    try:
+        checked_max_distance(args.max_distance, "--max-distance", "--all-objects")
+    except ValueError as error:
+        parser.error(str(error))
 
     logs = _logs(args.paths)
     if not logs:

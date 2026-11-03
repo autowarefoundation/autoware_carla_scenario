@@ -1025,6 +1025,105 @@ def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> 
         )
 
 
+# 0, a negative distance and NaN would keep no road user, infinity is what
+# null says: each is refused, by every entry point, before a scene is written.
+_BAD_DISTANCES = (0.0, -100.0, math.nan, math.inf)
+_BAD_OVERRIDES = ("0", "-100", "nan", "inf")
+
+
+def _one_car_log(tmp_path: Path) -> Path:
+    return _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        _tick(100, _state(1, 0.0, 0.0), _state(2, 5.0, 0.0)),
+    )
+
+
+def _objects(scene: pb.T4Scene) -> int:
+    return int(_numeric(scene.annotations.box_offsets).compressed()[-1])
+
+
+@pytest.mark.parametrize("distance", _BAD_DISTANCES)
+def test_the_converter_refuses_a_distance_that_is_not_positive_and_finite(
+    tmp_path: Path, distance: float
+) -> None:
+    log = _one_car_log(tmp_path)
+    with pytest.raises(ValueError, match="max_distance_m must be positive and finite"):
+        trajectory_log_to_t4_scene(log, with_map=False, max_distance_m=distance)
+    with pytest.raises(ValueError, match="max_distance_m must be positive and finite"):
+        write_t4_scene(log, with_map=False, max_distance_m=distance)
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+@pytest.mark.parametrize("distance", [10.0, 100, None])
+def test_the_converter_takes_a_positive_distance_or_none(
+    tmp_path: Path, distance: Optional[float]
+) -> None:
+    scene = trajectory_log_to_t4_scene(
+        _one_car_log(tmp_path), with_map=False, max_distance_m=distance
+    ).scene
+    assert _objects(scene) == 1
+
+
+@pytest.mark.parametrize("distance", _BAD_DISTANCES)
+def test_the_exporter_refuses_a_distance_that_is_not_positive_and_finite(
+    distance: float,
+) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    with pytest.raises(ValueError, match="t4scene.max_distance_m must be positive"):
+        T4SceneExporter(max_distance_m=distance)
+
+
+@pytest.mark.parametrize("override", _BAD_OVERRIDES)
+def test_a_distance_that_is_not_positive_and_finite_is_refused_before_anything_runs(
+    override: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(ValueError, match="t4scene.max_distance_m must be positive"):
+        run.build_t4scene_exporter(
+            _shipped(["t4scene.enabled=true", f"t4scene.max_distance_m={override}"])
+        )
+
+
+def test_the_runner_takes_a_positive_distance() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    exporter = run.build_t4scene_exporter(
+        _shipped(["t4scene.enabled=true", "t4scene.max_distance_m=30"])
+    )
+    assert exporter is not None
+    assert exporter.max_distance_m == 30.0
+
+
+@pytest.mark.parametrize("override", _BAD_OVERRIDES)
+def test_cli_refuses_a_distance_that_is_not_positive_and_finite(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    log = _one_car_log(tmp_path)
+    with pytest.raises(SystemExit) as raised:
+        main([str(log), "--no-map", f"--max-distance={override}"])
+    assert raised.value.code == 2
+    assert "--max-distance must be positive and finite" in capsys.readouterr().err
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+@pytest.mark.parametrize("option", [["--max-distance", "10"], ["--all-objects"]])
+def test_cli_takes_a_positive_distance_or_every_object(
+    tmp_path: Path, option: list[str]
+) -> None:
+    log = _one_car_log(tmp_path)
+    assert main([str(log), "--no-map", *option]) == 0
+    scene = pb.T4Scene.FromString((tmp_path / f"Run{SCENE_SUFFIX}").read_bytes())
+    assert _objects(scene) == 1
+
+
 def test_the_runner_hands_each_closed_log_to_the_exporter(tmp_path: Path) -> None:
     from unittest.mock import MagicMock, patch
 

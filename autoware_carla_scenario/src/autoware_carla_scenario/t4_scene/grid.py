@@ -1,5 +1,6 @@
 """The pure pieces of a T4Scene's time grid: the step in ticks, the scene's
-stem, who the ego is, who is on the scene and the ego's turn indicator.
+stem, who the ego is, who is on the scene, the ego's turn indicator and how
+far from it a road user is still one of the scene's objects.
 
 t4_scene.convert (the offline converter), t4_scene.live (the scenes written
 as a run goes) and the ``scenario-t4scene`` command share these, so they
@@ -9,13 +10,21 @@ builds a message.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Optional
 
 from ..constants import EGO_ROLES, tick_multiple
 from ..rerun import TRAJECTORY_SUFFIX
 
-__all__ = ["indicator_at", "is_ego", "on_scene", "scene_stem", "step_frames"]
+__all__ = [
+    "checked_max_distance",
+    "indicator_at",
+    "is_ego",
+    "on_scene",
+    "scene_stem",
+    "step_frames",
+]
 
 
 def step_frames(step_s: float) -> int:
@@ -25,6 +34,38 @@ def step_frames(step_s: float) -> int:
         ValueError: If *step_s* is not a positive multiple of the tick.
     """
     return tick_multiple(step_s, "step_s")
+
+
+def checked_max_distance(
+    max_distance_m: Optional[float],
+    key: str = "max_distance_m",
+    unlimited: str = "None",
+) -> Optional[float]:
+    """*max_distance_m* as a float, which must be positive and finite;
+    ``None`` (every road user, however far) stays ``None``.
+
+    0, a negative distance or NaN would keep no road user and infinity is
+    what ``None`` says, so each is refused before a scene is written rather
+    than leaving it silently empty.
+
+    Args:
+        max_distance_m: The distance, metres.
+        key: The setting's name, which the error names (``t4scene.max_distance_m``).
+        unlimited: What the error says takes every road user instead
+            (``null``, ``--all-objects``).
+
+    Raises:
+        ValueError: If *max_distance_m* is not positive and finite.
+    """
+    if max_distance_m is None:
+        return None
+    value: float = float(max_distance_m)
+    if not (math.isfinite(value) and value > 0.0):
+        raise ValueError(
+            f"{key} must be positive and finite ({unlimited} for no limit), "
+            f"not {max_distance_m}"
+        )
+    return value
 
 
 def scene_stem(name: str) -> str:
