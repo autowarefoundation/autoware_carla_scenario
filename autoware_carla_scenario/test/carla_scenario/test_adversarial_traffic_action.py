@@ -18,17 +18,30 @@ from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions import adversarial_traffic
 from autoware_carla_scenario.actions.adversarial_traffic import AdversarialTrafficAction
+from autoware_carla_scenario.actions.base import control_holder
 from autoware_carla_scenario.adversity import AdversityKind, AdversityLocation
 from autoware_carla_scenario.adversity.nade import NadeAdversity, NadeSettings
+from autoware_carla_scenario.control_domain import (
+    MOVEMENT,
+    ControlConflictError,
+    ControlDomain,
+)
 from autoware_carla_scenario.trajectory.model import MapPose
 from autoware_carla_scenario.utils.turn_indicator import TurnIndicatorState
 
 from .test_adversity_feasible_condition import INNER, _actor, _world
 from .test_adversity_feasible_condition import crossroads as crossroads  # noqa: F401
+from .test_control_domain import _Command, _Switch
 
 EGO = "Ego"
 BRAKE = NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01)
 ALWAYS = NadeSettings(fixed_is_probability=1.0)
+
+#: The execution the stand-in replaces, for the tests that drive the real one.
+REAL_EXECUTION = executions.AdversarialExecution
+NADE = "AdversarialTrafficAction 'adversarial_traffic'"
+LON = ControlDomain.LONGITUDINAL
+LAT = ControlDomain.LATERAL
 
 #: Every stand-in execution made in the test, in order.
 made: list["_Execution"] = []
@@ -65,6 +78,9 @@ class _Execution:
 
     def tick(self, world: Any, elapsed: float) -> None:
         self.ticks += 1
+
+    def hold_movement(self, world: Any, at: float, holder: str) -> None:
+        self.holder = holder
 
     def close(self) -> None:
         self.closed = True
@@ -184,3 +200,81 @@ def test_background_vehicles_can_be_left_alone() -> None:
     action.set_traffic_backend(_Backend({"background_7": SimpleNamespace(id=7)}))  # type: ignore[arg-type]
     _run(action, 3, npc="background_7")
     assert made == []
+
+
+class TestControlDomains:
+    """What NADE drives, it holds the movement of (#1295)."""
+
+    @pytest.fixture
+    def real_executions(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The real execution, whose follow action finds no entity in the
+        # fake world and so keeps running without moving anything.
+        monkeypatch.setattr(executions, "AdversarialExecution", REAL_EXECUTION)
+
+    @pytest.mark.parametrize("domains", [MOVEMENT, (LAT,)])
+    def test_an_entity_another_action_holds_is_not_driven(
+        self, domains: tuple[ControlDomain, ...]
+    ) -> None:
+        _Command("route", domains, entity="npc1", until=_Switch()).tick(None, 0.0)
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 3)
+        assert made == [] and action.weight == 1.0
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_it_holds_the_movement_of_the_entity_it_drives(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        assert [c.name for c in action.choices] == ["npc1"]
+        for domain in MOVEMENT:
+            assert control_holder("npc1", domain, 5.0) == NADE
+        assert control_holder("npc2", LON, 5.0) is None
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_an_action_on_an_entity_it_drives_conflicts(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        speed = _Command("speed", (LON,), entity="npc1")
+        with pytest.raises(ControlConflictError) as raised:
+            speed.tick(None, 0.15)
+        assert raised.value.entity == "npc1"
+        assert raised.value.holder == NADE
+        assert speed.executed == 0
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_an_overriding_action_takes_the_entity_back_from_it(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        (run,) = action._executions
+        taking = _Command(
+            "brake", (LON,), entity="npc1", until=_Switch(), overrides=True
+        )
+        taking.tick(None, 0.15)
+        assert taking.executed == 1
+        # Handed back at once, before the overriding action commands it.
+        assert run.done
+        assert control_holder("npc1", LON, 0.15) == "_Command 'brake'"
+        assert control_holder("npc1", LAT, 0.15) is None
+        # NADE keeps running, and does not take the entity again.
+        _run(action, 3, start=2)
+        assert action.state is ActionState.RUNNING
+        assert action._executions == []
+        assert len(action.choices) == 1
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_the_movement_is_given_back_when_the_execution_ends(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        (run,) = action._executions
+        assert control_holder("npc1", LON, 5.0) == NADE
+        run.hand_back(None)
+        for domain in MOVEMENT:
+            assert control_holder("npc1", domain, 5.0) is None
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_closing_it_gives_the_movement_back(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        assert control_holder("npc1", LAT, 5.0) == NADE
+        action.close()
+        for domain in MOVEMENT:
+            assert control_holder("npc1", domain, 5.0) is None

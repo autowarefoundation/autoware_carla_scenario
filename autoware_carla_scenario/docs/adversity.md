@@ -157,6 +157,17 @@ an adversity, or responds to one, is taken over for as long as its path lasts
 and handed back to the backend after. SUMO's mesoscopic vehicles have no actor
 to take over, and SUMO's pedestrians are not driven.
 
+A road user NADE drives is held like any action's entity: from the tick its
+path starts to the tick it is handed back, NADE holds its movement (both
+[control domains](architecture.md), #1295). So it never picks
+a road user whose longitudinal or lateral domain another action holds, and an
+action that fires to command one it is driving raises `ControlConflictError`
+naming `AdversarialTrafficAction`. An action with `overrides=True` takes it
+instead: that road user's path is stopped and it is handed back to its driver
+before the overriding action commands it. Only that road user: NADE runs on,
+its weight as it was, and the others it drives (an adversary's victims, say)
+carry on.
+
 ### The weight
 
 Each tick of a run multiplies the run's likelihood ratio by one factor:
