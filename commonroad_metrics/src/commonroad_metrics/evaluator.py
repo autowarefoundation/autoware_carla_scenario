@@ -31,12 +31,15 @@ moved so the ego is at the origin and turned so the lane under it runs along
 from __future__ import annotations
 
 import copy
+import fcntl
+import functools
 import logging
 import math
 import warnings
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -156,6 +159,29 @@ class EvaluatorSettings:
     def from_mapping(cls, value: Mapping[str, Any]) -> EvaluatorSettings:
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in value.items() if k in known})
+
+
+@functools.cache
+def _import_reach() -> None:
+    """Import CommonRoad-Reach, which CriMe imports too, one process at a time.
+
+    Two of its modules compile a Cython module with pyximport the first
+    time they are imported. The module is built into a directory every
+    process shares (``~/.pyxbld``). Workers started together build it
+    together, and one then loads the other's half-written module: "file too
+    short", or "does not define module export function". Holding a lock on
+    that directory across the import makes the first worker build it and the
+    others load what it built.
+    """
+    build = Path.home() / ".pyxbld"
+    build.mkdir(parents=True, exist_ok=True)
+    with (build / ".commonroad_metrics.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            import commonroad_reach.data_structure.reach.reach_interface  # noqa: F401
+            import commonroad_reach.data_structure.regular_grid  # noqa: F401
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def _finite_or_none(value: Any) -> float | None:
@@ -375,6 +401,7 @@ class Evaluator:
         values: dict[str, float | None],
         errors: dict[str, str],
     ) -> None:
+        _import_reach()
         import commonroad_crime.measure as crime_measure
 
         config = self._crime_config()
@@ -439,6 +466,7 @@ class Evaluator:
         """CommonRoad-Reach's reachable set of the ego, from where *ego* is at
         step *start* to the end of the horizon, among the other road users as
         they go on."""
+        _import_reach()
         from commonroad.common.util import Interval
         from commonroad.geometry.shape import Rectangle
         from commonroad.planning.goal import GoalRegion
@@ -501,6 +529,7 @@ class Evaluator:
         once (from its YAML files, through omegaconf) and copied for each
         reachable set."""
         if self._reach_config is None:
+            _import_reach()
             from commonroad_reach.data_structure.configuration_builder import (
                 ConfigurationBuilder,
             )
@@ -518,6 +547,7 @@ class Evaluator:
 
     def _reachable_areas(self, frame: _ReachFrame, ego: Actor) -> list[float]:
         """The area of the ego's drivable area at each step of the horizon."""
+        _import_reach()
         from commonroad_reach.utility.reach_operation import compute_area_of_reach_nodes
 
         interface = self._reachable_set(frame, ego)

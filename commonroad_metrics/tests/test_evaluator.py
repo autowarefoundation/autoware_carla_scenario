@@ -12,6 +12,9 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -209,3 +212,27 @@ def test_the_time_to_react(evaluator: Evaluator) -> None:
         ego, [on_road(62, 1.75, 0.0, 2), on_road(62, 5.25, 0.0, 3)], ["crime_ttr_s"]
     )
     assert trapped["crime_ttr_s"] == 0.0
+
+
+def test_workers_started_together_import_reach_one_at_a_time(tmp_path: Path) -> None:
+    """CommonRoad-Reach compiles a Cython module into ~/.pyxbld on its first
+    import: workers that start together must not load each other's
+    half-built module (unlocked, about 2 in 5 of 8 such processes failed)."""
+    code = (
+        "from commonroad_metrics.evaluator import _import_reach\n"
+        "_import_reach()\n"
+        "import commonroad_crime.measure\n"
+    )
+    env = {**os.environ, "HOME": str(tmp_path)}
+    workers = [
+        subprocess.Popen(
+            [sys.executable, "-c", code],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        for _ in range(6)
+    ]
+    outputs = [worker.communicate(timeout=600)[0] for worker in workers]
+    assert [worker.returncode for worker in workers] == [0] * len(workers), outputs
