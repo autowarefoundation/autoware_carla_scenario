@@ -566,6 +566,9 @@ def test_slurm_without_sbatch_is_refused_before_the_batch_expands(
         ("scenario.timeout_seconds=nan", "scenario.timeout_seconds"),
         ("scenario.timeout_seconds=inf", "scenario.timeout_seconds"),
         ("scenario.timeout_seconds=0", "scenario.timeout_seconds"),
+        # #1188: not a number at all.
+        ("scenario.timeout_seconds=fast", "scenario.timeout_seconds"),
+        ("scenario.timeout_seconds=true", "scenario.timeout_seconds"),
         # The local queue's own settings, which a task reads only on its node.
         ("server.cooldown_max_retries=-1", "server.cooldown_max_retries"),
     ],
@@ -595,6 +598,16 @@ def test_slurm_refuses_what_a_local_batch_refuses_before_submitting(
     with pytest.raises(ValueError, match=re.escape(key)):
         fake_slurm.run.run_batch([_CONCRETE], [override])
     assert not (fake_slurm.state / "sbatch.log").exists()
+
+
+def test_a_null_timeout_gets_past_the_check(fake_slurm: SimpleNamespace) -> None:
+    """#1188: ``scenario.timeout_seconds=null`` (how a declarative scenario falls
+    back to its document's timeout) is the default run timeout, not a
+    TypeError that refuses the batch."""
+    run = fake_slurm.run
+    cfg = run._compose_config(_CONCRETE, ["scenario.timeout_seconds=null"])
+    assert cfg.scenario.timeout_seconds is None
+    run._check_slurm_cases([cfg])
 
 
 def test_slurm_checks_every_case_not_only_the_first(

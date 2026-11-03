@@ -44,12 +44,26 @@ def check_run_timeout(seconds: float) -> float:
 def run_timeout_seconds(cfg: Mapping[str, Any]) -> float:
     """The run's ``scenario.timeout_seconds`` in *cfg* (a run's config), checked.
 
-    :data:`DEFAULT_RUN_TIMEOUT_SECONDS` when the config sets none.
+    :data:`DEFAULT_RUN_TIMEOUT_SECONDS` when the config sets none: when the
+    key is absent, and when it is ``null``.  A ``DeclarativeScenarioConfig``
+    leaves it ``null`` to fall back to its document's own timeout, and an
+    exported package writes the key either way.  That needs no larger run
+    timeout: this one is only the default ``TimeoutCondition`` of a scenario
+    that registers none of its own, and a ``DeclarativeScenario`` always
+    registers its document's.
 
     Raises:
-        ValueError: naming the key, when it is not positive and finite.
+        ValueError: naming the key, when it is not a number (a string, a
+            bool, a list, ...), or not positive and finite.
     """
     scenario = cfg.get("scenario") or {}
-    return check_run_timeout(
-        float(scenario.get("timeout_seconds", DEFAULT_RUN_TIMEOUT_SECONDS))
-    )
+    value = scenario.get("timeout_seconds")
+    if value is None:
+        return DEFAULT_RUN_TIMEOUT_SECONDS
+    # A bool is an int to Python, and ``float("15")`` would read a string.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            "scenario.timeout_seconds must be a number of seconds, "
+            f"got {value!r} ({type(value).__name__})"
+        )
+    return check_run_timeout(float(value))

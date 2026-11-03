@@ -306,7 +306,11 @@ the same key; one that builds it from another (`traffic_light_compliance` with
 `timeout_after_green_seconds` set) does not. A `DeclarativeScenario` always has
 one: it registers its document's `timeout_seconds` (or the Hydra override of
 it) itself, so a `timeout` node in the document is a second limit beside it,
-and whichever fires first fails the run. A sweep keeps the wall-clock
+and whichever fires first fails the run. `scenario.timeout_seconds=null`, how a
+declarative scenario falls back to its document's timeout, leaves the run's
+default at 60 s, as an absent key does; a value that is not a number (a string,
+a bool, a list) is refused with a `ValueError` naming the key before the run
+starts. A sweep keeps the wall-clock
 `sweep.job_timeout_seconds` guard over every job either way.
 
 Wall-clock protection against a **stuck** simulator lives outside the scenario
