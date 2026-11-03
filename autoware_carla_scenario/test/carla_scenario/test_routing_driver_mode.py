@@ -632,6 +632,15 @@ def test_a_contact_is_logged_when_it_starts_and_when_it_ends() -> None:
     assert records[1].duration == pytest.approx(2.95, abs=0.06)
 
 
+def _register_walker(monkeypatch: pytest.MonkeyPatch, role: str, actor_id: int) -> None:
+    """An entity answering to *role* whose walker is *actor_id*, for the run."""
+    from autoware_carla_scenario.entity import registry
+
+    entity = SimpleNamespace(actor=SimpleNamespace(id=actor_id))
+    monkeypatch.setitem(registry._PEDESTRIANS, role, entity)  # noqa: SLF001
+    monkeypatch.setitem(registry._VEHICLES, role, entity)  # noqa: SLF001
+
+
 def test_a_fallen_walker_is_despawned_after_it_has_lain_there(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -644,6 +653,7 @@ def test_a_fallen_walker_is_despawned_after_it_has_lain_there(
         return 9
 
     monkeypatch.setattr(despawn, "despawn_entity", despawn_entity)
+    _register_walker(monkeypatch, "w1", 5)
     walker = _actor(5, "walker.pedestrian.0001", "w1")
     world = _MonitoredWorld([walker])
     monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
@@ -671,6 +681,7 @@ def test_a_fallen_walker_is_despawned_on_its_tick_on_a_summed_clock(
     import autoware_carla_scenario.actions.despawn as despawn
 
     monkeypatch.setattr(despawn, "despawn_entity", lambda world, name, label: 9)
+    _register_walker(monkeypatch, "w1", 5)
     walker = _actor(5, "walker.pedestrian.0001", "w1")
     world = _MonitoredWorld([walker])
     monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
@@ -688,6 +699,214 @@ def test_a_fallen_walker_is_despawned_on_its_tick_on_a_summed_clock(
             assert t - fell_at < 5.0  # the summed clock falls short
         t += 0.05
     assert fell is not None and despawned == fell + 100
+
+
+class _ActorList(list):
+    def filter(self, pattern: str) -> list[Any]:
+        prefix = pattern.rstrip("*")
+        return [a for a in self if str(a.type_id).startswith(prefix)]
+
+
+class _RemovableWorld(_MonitoredWorld):
+    """A world whose walkers (and their controllers) can be destroyed."""
+
+    def __init__(self, actors: list[SimpleNamespace]) -> None:
+        super().__init__(actors)
+        self.destroyed: list[int] = []
+        for actor in actors:
+            self._destroyable(actor)
+
+    def _destroyable(self, actor: SimpleNamespace) -> None:
+        def destroy() -> bool:
+            self.destroyed.append(actor.id)
+            self.actors.remove(actor)
+            self.poses.pop(actor.id, None)
+            return True
+
+        actor.destroy = destroy
+        actor.stop = lambda: None
+
+    def add(self, actor: SimpleNamespace) -> None:
+        self._destroyable(actor)
+        self.actors.append(actor)
+
+    def get_actors(self) -> _ActorList:
+        return _ActorList(self.actors)
+
+    def get_actor(self, actor_id: int) -> Any:
+        return next((a for a in self.actors if a.id == actor_id), None)
+
+
+class _WalkerOwner:
+    """A traffic backend that put walker *owned* in the world."""
+
+    def __init__(self, owned: int) -> None:
+        self.owned = owned
+        self.removed: list[int] = []
+
+    def remove_walker(self, world: Any, actor: Any) -> bool:
+        if actor.id != self.owned:
+            return False
+        self.removed.append(actor.id)
+        return True
+
+
+def _fall(
+    world: _MonitoredWorld, monitor: NpcCollisionMonitor, walker_id: int
+) -> tuple[Optional[float], list[tuple[str, int, float]]]:
+    """Tick *walker_id* down at 3 s and on for 15 s: when it fell, and what
+    was despawned when."""
+    fell_at: Optional[float] = None
+    out: list[tuple[str, int, float]] = []
+    for tick in range(300):
+        t = tick * 0.05
+        if walker_id in world.poses or tick == 0:
+            world.poses[walker_id] = (0.0, 0.0, 1.0, 80.0 if tick >= 60 else 0.0)
+        _, falls, gone = monitor.tick(world, t)  # type: ignore[arg-type]
+        if falls:
+            fell_at = t
+        out += [(name, actor_id, t) for name, actor_id in gone]
+    return fell_at, out
+
+
+def test_a_fallen_walker_no_entity_stands_for_is_destroyed_by_its_actor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1240: a walker with no role_name is not in the registry; it is
+    still destroyed, its AI controller first, and its despawn returned."""
+    import autoware_carla_scenario.actions.despawn as despawn
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        despawn, "despawn_entity", lambda world, name, label: called.append(name)
+    )
+    walker = SimpleNamespace(
+        id=5,
+        type_id="walker.pedestrian.0015",
+        attributes={},
+        bounding_box=SimpleNamespace(extent=SimpleNamespace(z=0.9)),
+    )
+    world = _RemovableWorld([walker])
+    controller = SimpleNamespace(
+        id=6, type_id="controller.ai.walker", attributes={}, parent=walker
+    )
+    world.add(controller)
+    other = SimpleNamespace(
+        id=8,
+        type_id="controller.ai.walker",
+        attributes={},
+        parent=SimpleNamespace(id=99),
+    )
+    world.add(other)
+    monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
+    fell_at, out = _fall(world, monitor, 5)
+    assert fell_at is not None
+    assert called == []
+    ((name, actor_id, at),) = out
+    assert (name, actor_id) == ("walker.pedestrian.0015", 5)
+    assert 5.0 <= at - fell_at < 5.5
+    assert world.destroyed == [6, 5]  # the controller, then the walker
+    assert monitor._down == {}  # noqa: SLF001
+
+
+def test_a_fallen_sumo_mirror_is_taken_back_from_its_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import autoware_carla_scenario.actions.despawn as despawn
+
+    monkeypatch.setattr(despawn, "despawn_entity", lambda world, name, label: None)
+    walker = _actor(5, "walker.pedestrian.0001", "sumo:p7")
+    world = _RemovableWorld([walker])
+    backend = _WalkerOwner(5)
+    monitor = NpcCollisionMonitor(
+        despawn_fallen_after_s=5.0,
+        traffic_backend=backend,  # type: ignore[arg-type]
+    )
+    fell_at, out = _fall(world, monitor, 5)
+    assert fell_at is not None
+    assert [(name, actor_id) for name, actor_id, _ in out] == [("sumo:p7", 5)]
+    assert backend.removed == [5]
+    assert world.destroyed == [5]
+
+
+def test_a_fallen_registered_walker_still_goes_through_despawn_entity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import autoware_carla_scenario.actions.despawn as despawn
+
+    called: list[str] = []
+
+    def despawn_entity(world: Any, name: str, label: str) -> int:
+        called.append(name)
+        return 5
+
+    monkeypatch.setattr(despawn, "despawn_entity", despawn_entity)
+    _register_walker(monkeypatch, "w1", 5)
+    walker = _actor(5, "walker.pedestrian.0001", "w1")
+    world = _RemovableWorld([walker])
+    backend = _WalkerOwner(5)
+    monitor = NpcCollisionMonitor(
+        despawn_fallen_after_s=5.0,
+        traffic_backend=backend,  # type: ignore[arg-type]
+    )
+    _, out = _fall(world, monitor, 5)
+    assert called == ["w1"]
+    assert [(name, actor_id) for name, actor_id, _ in out] == [("w1", 5)]
+    assert backend.removed == [] and world.destroyed == []
+
+
+def test_a_walker_under_a_registered_role_but_another_actor_is_removed_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entity answering to the role has another walker now: the fallen
+    one is removed by its actor, the entity left alone."""
+    import autoware_carla_scenario.actions.despawn as despawn
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        despawn, "despawn_entity", lambda world, name, label: called.append(name)
+    )
+    _register_walker(monkeypatch, "w1", 77)
+    walker = _actor(5, "walker.pedestrian.0001", "w1")
+    world = _RemovableWorld([walker])
+    monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
+    _, out = _fall(world, monitor, 5)
+    assert called == []
+    assert [(name, actor_id) for name, actor_id, _ in out] == [("w1", 5)]
+    assert world.destroyed == [5]
+
+
+def test_release_forgets_a_walker_lying_down() -> None:
+    """An actor released (despawned elsewhere) is not despawned as a fall
+    later: the role may answer to another actor by then."""
+    monitor = NpcCollisionMonitor(despawn_fallen_after_s=5.0)
+    monitor._down[42] = 0.0  # noqa: SLF001
+    monitor._fallen.add(42)  # noqa: SLF001
+    monitor.release(42)
+    assert monitor._down == {}  # noqa: SLF001
+    assert 42 not in monitor._fallen  # noqa: SLF001
+    assert monitor.tick(_RemovableWorld([]), 10.0)[2] == []  # type: ignore[arg-type]
+
+
+def test_sumo_lets_go_of_a_person_mirror_and_its_person() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    removed: list[str] = []
+    backend = object.__new__(SumoTrafficBackend)
+    mirror = _actor(5, "walker.pedestrian.0001", "sumo:p7")
+    backend._persons = {"p7": mirror}  # noqa: SLF001
+    backend._physics = {5: {}}  # noqa: SLF001
+    backend._constant_speed = {}  # noqa: SLF001
+    backend._box_offsets = {}  # noqa: SLF001
+    backend._traci = SimpleNamespace(  # noqa: SLF001
+        person=SimpleNamespace(remove=removed.append)
+    )
+    stranger = _actor(9, "walker.pedestrian.0001", "sumo:p8")
+    assert not backend.remove_walker(None, stranger)
+    assert not backend.remove_walker(None, _actor(6, "walker.pedestrian.0001", "w1"))
+    assert backend.remove_walker(None, mirror)
+    assert backend._persons == {} and backend._physics == {}  # noqa: SLF001
+    assert removed == ["p7"]
 
 
 class _SnapshotWorld:
