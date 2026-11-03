@@ -43,6 +43,8 @@ testpaths = ["tests"]
 # So test modules can import the scenario builders from `tests.conftest`.
 pythonpath = ["."]
 timeout = 300
+# A parametrize over an empty list is a test that never runs; make it an error.
+empty_parameter_set_mark = "fail_at_collect"
 markers = [
   "slow: closed-loop rollouts and latency benchmarks",
   "latency: wall-clock budgets, which hold on a quiet machine and not on a shared runner",
