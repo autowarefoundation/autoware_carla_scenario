@@ -816,7 +816,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
         Empty when ``send_renderer_data`` is off.  Note that a policy cannot tell
         that apart from "nothing to report": both read as no traffic light and no
-        other vehicles, so turning this off quietly weakens any policy that
+        other road users, so turning this off quietly weakens any policy that
         reasons about them.
         """
         if self._renderer is None:

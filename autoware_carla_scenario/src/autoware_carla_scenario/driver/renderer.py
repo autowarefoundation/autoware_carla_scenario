@@ -1,6 +1,6 @@
 """Build the CARLA ground-truth payload a driver policy reads.
 
-The alpasim contract carries no traffic lights and no other vehicles.  Both ride
+The alpasim contract carries no traffic lights and no other road users.  Both ride
 inside ``egodriver.DriveRequest.renderer_data``, an upstream-sanctioned ``bytes``
 extension point, as a serialized ``carla_driver.v0.CarlaRendererData``.  A policy
 that ignores those bytes stays fully compatible; one that wants CARLA ground
@@ -8,7 +8,7 @@ truth parses them.
 
 Sending this matters more than it looks.  A policy such as
 `stl_driver <https://github.com/hakuturu583/stl_driver>`_ reads the payload
-defensively -- a missing one yields "no light applies" and "no other vehicles"
+defensively -- a missing one yields "no light applies" and "no other road users"
 rather than an error -- so an empty ``renderer_data`` does not fail loudly.  It
 silently disables every rule that depends on the world outside the ego.
 
@@ -33,6 +33,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..coordinate.map_manager import run_carla_map
+from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
 
@@ -295,8 +296,10 @@ class RendererDataBuilder:
         scenario places (``static.prop.*``, :data:`_ACTOR_PATTERNS`), each told
         apart by its ``type_id``.  Not the ego, not a walker's AI controller,
         a sensor or the spectator; and not an actor parked under the map
-        (hidden), which the horizon cuts: it is measured in 3D, and hidden
-        actors are parked hundreds of metres down.
+        (hidden): one whose CARLA ``z`` is below ``_HIDDEN_BELOW_M``
+        (:mod:`~autoware_carla_scenario.utils.clearance`'s, the threshold the
+        other consumers of the world share) is skipped explicitly, whatever
+        the horizon (#1248).
 
         Poses carry yaw only.  A policy reads this quaternion to orient the
         actor's bounding box in the ground plane, which roll and pitch do not
@@ -325,11 +328,16 @@ class RendererDataBuilder:
         for actor in actors:
             if actor.id == self._ego.id:
                 continue
+            transform = actor.get_transform()
+            # Parked under the map until brought in: not on the road (#1248).
+            # Compared in CARLA's world frame, as every other consumer does.
+            if float(transform.location.z) < _HIDDEN_BELOW_M:
+                continue
             box = actor.bounding_box
             centre = box.location
             # The offset is in the actor's own CARLA frame (y right): its y
             # flips into the right-handed local frame, like the pose's.
-            pose = to_local_pose(actor.get_transform()) @ Pose.from_xyz_yaw(
+            pose = to_local_pose(transform) @ Pose.from_xyz_yaw(
                 float(centre.x), -float(centre.y), float(centre.z), 0.0
             )
             if float(np.linalg.norm(pose.position - ego_position)) > horizon:

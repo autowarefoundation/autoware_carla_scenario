@@ -486,6 +486,30 @@ def test_a_hidden_pedestrian_is_beyond_the_horizon() -> None:
     assert [a.track_id for a in message.actors] == ["3"]
 
 
+def test_hidden_actors_are_dropped_whatever_the_horizon() -> None:
+    """#1248: a horizon wider than the 500 m an entity is parked under the map
+    still does not report it -- hidden actors are excluded explicitly."""
+    actors = [
+        _walker(2, x=0.0, z=-500.0),
+        _vehicle(3, x=5.0, z=-500.0),
+        _vehicle(4, x=0.0, z=-500.0, type_id="static.prop.box01"),
+        _walker(5, x=10.0),
+    ]
+    message = _build(_world(actors=actors), _ego(), actor_horizon_m=1000.0)
+    assert [a.track_id for a in message.actors] == ["5"]
+
+
+def test_actors_on_a_map_below_sea_level_are_not_taken_for_hidden() -> None:
+    """The threshold is the one every other consumer compares CARLA's ``z``
+    with: a map tens of metres below zero is still on the road."""
+    message = _build(
+        _world(actors=[_walker(2, x=10.0, z=-60.0), _vehicle(3, x=20.0, z=-60.0)]),
+        _ego(),
+        actor_horizon_m=1000.0,
+    )
+    assert sorted(a.track_id for a in message.actors) == ["2", "3"]
+
+
 def test_pedestrians_beyond_the_horizon_are_dropped() -> None:
     message = _build(
         _world(actors=[_walker(2, x=40.0), _walker(3, x=200.0)]),
