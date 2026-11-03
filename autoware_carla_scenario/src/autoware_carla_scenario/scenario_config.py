@@ -81,7 +81,7 @@ class ServerConfig:
     #: Cooldown (seconds) between consecutive scenario runs.  Gives the
     #: CARLA server time to finish cleanup (destroy actors, restore settings)
     #: before the next scenario connects.  0 disables the cooldown.
-    cooldown_seconds: float = 3.0
+    cooldown_seconds: float = 2.0
 
     #: Maximum number of retries when a scenario run fails after cooldown
     #: (e.g. due to CARLA communication errors or initialization failures).
