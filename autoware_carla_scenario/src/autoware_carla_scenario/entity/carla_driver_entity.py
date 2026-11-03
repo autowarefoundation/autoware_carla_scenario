@@ -503,6 +503,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._world = None
         self._pending_egomotion = []
         self._map = None
+        if self._renderer is not None:
+            # Where the walkers stood: no velocity measured across runs.
+            self._renderer.reset()
         self._renderer = None
         self._t4 = None
         self._road_ahead = None

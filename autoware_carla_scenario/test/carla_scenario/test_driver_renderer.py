@@ -412,9 +412,9 @@ def _other(actor_id: int, type_id: str, x: float = 10.0) -> MagicMock:
     return _vehicle(actor_id, x, type_id=type_id)
 
 
-def test_pedestrians_are_reported_with_their_walking_velocity() -> None:
+def test_pedestrians_are_reported_with_their_box() -> None:
     """#1244: a policy that never sees a walker plans straight through it."""
-    walker = _walker(2, x=10.0, y=1.0, vy=-1.4, yaw=-90.0, box_location=(0.0, 0.0, 0.9))
+    walker = _walker(2, x=10.0, y=1.0, yaw=-90.0, box_location=(0.0, 0.0, 0.9))
     message = _build(_world(actors=[walker]), _ego())
 
     assert [a.type_id for a in message.actors] == ["walker.pedestrian.0015"]
@@ -425,8 +425,87 @@ def test_pedestrians_are_reported_with_their_walking_velocity() -> None:
     assert (actor.aabb.size_x, actor.aabb.size_y, actor.aabb.size_z) == pytest.approx(
         (0.5, 0.5, 1.8)
     )
+
+
+def _place(actor: MagicMock, x: float, y: float, z: float = 0.0) -> None:
+    """Move *actor* the way CARLA's walker controller does: by placing it,
+    while ``get_velocity()`` keeps reporting what it did."""
+    actor.get_transform.return_value = SimpleNamespace(
+        location=SimpleNamespace(x=x, y=y, z=z),
+        rotation=actor.get_transform.return_value.rotation,
+    )
+
+
+def _velocity(blob: bytes, track_id: str = "2") -> tuple:
+    message = carla_driver_pb2.CarlaRendererData()
+    message.ParseFromString(blob)
+    (actor,) = [a for a in message.actors if a.track_id == track_id]
+    v = actor.dynamic_state.linear_velocity
+    return (v.x, v.y, v.z)
+
+
+def test_a_walker_on_its_controller_is_reported_with_its_measured_velocity() -> None:
+    """#1252: CARLA reports 0 for a walker walking on its controller; the
+    policy must not see it standing.  Its velocity is measured between two
+    builds, and resolved in the local frame like any other."""
+    walker = _walker(2, x=10.0, y=1.0, yaw=-90.0)  # get_velocity() reads 0
+    builder = RendererDataBuilder(_world(actors=[walker]), _ego(), DriverClientConfig())
+    builder.build(1_000_000, Pose.identity())
+    # 0.14 m north (CARLA -y) and 0.07 m east in 0.1 s.
+    _place(walker, x=10.07, y=0.86)
+    velocity = _velocity(builder.build(1_100_000, Pose.identity()))
     # CARLA y is South: walking North in CARLA is +y in the local frame.
-    assert actor.dynamic_state.linear_velocity.y == pytest.approx(1.4)
+    assert velocity == pytest.approx((0.7, 1.4, 0.0))
+
+
+def test_a_walker_is_reported_with_what_carla_reports_at_the_first_build() -> None:
+    """Nothing to measure from yet: the first build reports CARLA's velocity."""
+    walker = _walker(2, x=10.0, y=1.0, vy=-1.4, yaw=-90.0)
+    blob = RendererDataBuilder(
+        _world(actors=[walker]), _ego(), DriverClientConfig()
+    ).build(1_000_000, Pose.identity())
+    assert _velocity(blob) == pytest.approx((0.0, 1.4, 0.0))
+
+
+def test_vehicles_keep_the_velocity_carla_reports() -> None:
+    car = _vehicle(2, x=10.0, vx=5.0)
+    builder = RendererDataBuilder(_world(actors=[car]), _ego(), DriverClientConfig())
+    builder.build(1_000_000, Pose.identity())
+    _place(car, x=20.0, y=0.0)
+    assert _velocity(builder.build(1_100_000, Pose.identity())) == pytest.approx(
+        (5.0, 0.0, 0.0)
+    )
+
+
+def test_reset_forgets_where_walkers_stood() -> None:
+    """No velocity is measured across runs."""
+    walker = _walker(2, x=10.0, y=1.0)
+    builder = RendererDataBuilder(_world(actors=[walker]), _ego(), DriverClientConfig())
+    builder.build(1_000_000, Pose.identity())
+    builder.reset()
+    _place(walker, x=10.1, y=1.0)
+    assert _velocity(builder.build(1_100_000, Pose.identity())) == pytest.approx(
+        (0.0, 0.0, 0.0)
+    )
+
+
+def test_a_walker_brought_in_from_under_the_map_is_no_walk() -> None:
+    """A hidden walker is read though not reported, so being brought in --
+    a teleport -- does not read as a velocity (#1250)."""
+    walker = _walker(2, x=10.0, y=1.0, z=-500.0)
+    builder = RendererDataBuilder(_world(actors=[walker]), _ego(), DriverClientConfig())
+    blob = builder.build(1_000_000, Pose.identity())
+    message = carla_driver_pb2.CarlaRendererData()
+    message.ParseFromString(blob)
+    assert list(message.actors) == []
+    _place(walker, x=10.0, y=1.0)
+    assert _velocity(builder.build(1_100_000, Pose.identity())) == pytest.approx(
+        (0.0, 0.0, 0.0)
+    )
+    _place(walker, x=10.1, y=1.0)
+    assert _velocity(builder.build(1_200_000, Pose.identity())) == pytest.approx(
+        (1.0, 0.0, 0.0)
+    )
 
 
 def test_props_are_reported_standing_still() -> None:
