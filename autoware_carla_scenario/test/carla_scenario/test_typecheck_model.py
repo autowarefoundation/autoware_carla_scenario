@@ -1016,11 +1016,11 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),
-    # The model of one module of the checked utils package, which the scenario
-    # check resolves (typecheck/check.py).
     # What the checked actions.play_motion reads of the unchecked
     # pedestrian.soma (numpy.load, numpy.typing).
     "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
+    # The model of one module of the checked utils package, which the scenario
+    # check resolves (typecheck/check.py).
     "utils/traffic_light": (
         utils_traffic_light,
         (
@@ -1561,7 +1561,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
     # What #225, #236 and #244 found: the rule would pass for nothing if the
     # detector found nothing. A class without fields (RouteMatch, #224, and
     # those of #225) by no argument; a condition or an action by its label;
-    # DebugMarkers, CoverItem, OddCondition and RunProgress by their fields
+    # DebugMarkers, CoverItem, OddCondition, SomaMotion and RunProgress by their fields
     # (RouteCoverage's are Python's since #298); the exceptions by Exception's constructor and their
     # fields (BaseException's eight first).
     found = _ARITIES_ONLY_CODON_TAKES
@@ -1593,6 +1593,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
             "MapCacheError",
             "OddCondition",
             "RunProgress",
+            "SomaMotion",
         )
     } == {
         "CoverItem": [1],
@@ -1602,6 +1603,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
         "MapCacheError": [0, 2, 8],
         "OddCondition": [1],
         "RunProgress": [4],
+        "SomaMotion": [2],
     }
     # Their `*_kw` refuses what the fields would take (#244's review).
     for name in ("BaseScenario", "OddAttribute", "OddModule"):
