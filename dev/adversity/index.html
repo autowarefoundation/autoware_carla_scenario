@@ -2463,14 +2463,14 @@ behaviour generation (#385). There are three ways to use it:</p>
 <td><code>BRAKE_CHECK</code></td>
 <td><code>AdversarialBrakeAction</code></td>
 <td>Follower</td>
-<td>A follower is close behind, and neither is stopped. The agent is not speeding up, and the follower is not slowing.</td>
+<td>A vehicle follows it in its lane within 40 m, and they are not both stopped (under 0.5 m/s). The agent is not speeding up, and the follower is not slowing.</td>
 <td>Brakes at the emergency deceleration (9 m/s²) for 2 s.</td>
 </tr>
 <tr>
 <td><code>IGNORE_LEADER</code></td>
 <td><code>IgnoreLeaderAction</code></td>
 <td>Leader</td>
-<td>Its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s.</td>
+<td>It is moving (at least 0.5 m/s), its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s.</td>
 <td>Accelerates at the free-flow rate for 2 s.</td>
 </tr>
 <tr>
@@ -2484,7 +2484,7 @@ behaviour generation (#385). There are three ways to use it:</p>
 <td><code>LANE_CHANGE_ABORT</code></td>
 <td><code>LaneChangeAbortAction</code></td>
 <td>LanechangeAbort</td>
-<td>Blocked as for <code>CUT_IN</code>. The agent is moving, and its lanelet lasts at least 1 s more at its speed.</td>
+<td>Blocked as for <code>CUT_IN</code>. The agent is moving, and its lanelet lasts more than 1 s more at its speed.</td>
 <td>Drifts half a lane toward that side and back in 1 s.</td>
 </tr>
 <tr>
@@ -2498,7 +2498,7 @@ behaviour generation (#385). There are three ways to use it:</p>
 <td><code>TRAFFIC_RULE</code></td>
 <td><code>RunTrafficRuleAction</code></td>
 <td>TrafficRule</td>
-<td>It is stopping for a red or yellow light rather than for its leader.</td>
+<td>A red or yellow light is within 40 m ahead, and it is held back by the light rather than by its leader (car following beats its acceleration by more than 1.5 m/s²). Free flow beats its acceleration by more than 1 m/s², or it is braking while free flow is above 0.2 m/s².</td>
 <td>Drives on through at the free-flow rate for 2 s.</td>
 </tr>
 <tr>
@@ -2506,14 +2506,14 @@ behaviour generation (#385). There are three ways to use it:</p>
 <td><code>AdversarialMergeAction</code></td>
 <td>Merge</td>
 <td>It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane).</td>
-<td>One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s², for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway.</td>
+<td>One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway.</td>
 </tr>
 <tr>
 <td><code>JAYWALKING</code></td>
 <td><code>JaywalkAction</code></td>
 <td>Jaywalking</td>
 <td>A pedestrian is off any crosswalk, with a road within 10 m.</td>
-<td>Walks straight across at its speed (1.4 m/s if it stands) × U(0.5, 2.0), for up to 5 s.</td>
+<td>Walks straight across at its speed (1.4 m/s if under 1 m/s) × U(0.5, 2.0), for 5 s.</td>
 </tr>
 <tr>
 <td><code>RUNNING_RED_LIGHT</code></td>
@@ -2981,7 +2981,7 @@ action starts from these values.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 17:27:08 UTC"><span class="timeago" datetime="2026-11-01T17:27:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 17:27:08 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 14:02:58 UTC"><span class="timeago" datetime="2026-11-03T14:02:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 14:02:58 UTC">2026-11-03</span>
   </span>
 
     
