@@ -780,6 +780,26 @@ def test_a_null_timeout_gets_past_the_check(fake_slurm: SimpleNamespace) -> None
     run.check_batch_configs([cfg])
 
 
+def test_the_check_reads_the_t4scene_settings_as_the_batch_does(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """#1233: the batch's T4Scenes are written with the first case's settings
+    that enables them (build_t4scene_exporter, the queue's first case), so a
+    later case's are not refused under SLURM when a local batch runs them."""
+    run = fake_slurm.run
+    good = run._compose_config(
+        _CONCRETE, ["t4scene.enabled=true", "t4scene.step_s=0.1"]
+    )
+    bad = run._compose_config(
+        _CONCRETE, ["t4scene.enabled=true", "t4scene.step_s=0.07"]
+    )
+    disabled = run._compose_config(_CONCRETE, [])
+    run.check_batch_configs([good, bad])
+    for configs in ([bad], [disabled, bad], [bad, good]):
+        with pytest.raises(run.RunConfigError, match="t4scene.step_s"):
+            run.check_batch_configs(configs)
+
+
 def test_slurm_checks_every_case_not_only_the_first(
     fake_slurm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:

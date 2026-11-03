@@ -345,7 +345,10 @@ an unknown `server.world_reset` or `traffic.backend`, a
 `scenario.timeout_seconds` that is not positive, ...) exits 2 before the map is
 fetched or any case runs, naming the key, rather than have every case refuse
 it in turn. So does one asking for an extra (`rerun`, `t4`) that is not
-installed.
+installed. A value only a case's own overrides set (its ODD draw, a
+binding) is refused by that case, which ends the sweep with 2 as a refused
+case does; outside a lanelet sweep the same value is a configuration error,
+exit 1.
 
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map

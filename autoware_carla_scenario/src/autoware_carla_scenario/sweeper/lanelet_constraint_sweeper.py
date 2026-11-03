@@ -465,6 +465,8 @@ class LaneletConstraintSweeper(Sweeper):
         max_retries: int = int(
             OmegaConf.select(cfg, "server.cooldown_max_retries", default=0)
         )
+        # Refused at step 0 already (check_run_config); kept for a caller
+        # that reaches here without it.
         if max_retries < 0:
             raise ValueError(
                 "LaneletConstraintSweeper: server.cooldown_max_retries must be "

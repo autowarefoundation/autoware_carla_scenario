@@ -1471,22 +1471,23 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
     build_autoware_launcher(cfg)
 
 
-def _check_case_settings(cfg: DictConfig) -> None:
-    """Refuse what a run reads of *cfg* alone before it starts, beyond its
-    queue's settings: its timeout, its ODD case, and its Rerun, T4 and
-    T4Scene settings -- without the extras those need, which
-    :func:`check_run_extras` asks for.
+def _check_batch_writer_settings(configs: list[DictConfig]) -> None:
+    """Refuse what :func:`build_rerun_converter`, :func:`build_t4_recorder`
+    and :func:`build_t4scene_exporter` refuse of a batch's *configs*, read as
+    they read them -- ``rerun.lidar_max_points`` of every case asking for
+    recordings, the ``t4`` and ``driver`` settings and the ``t4scene``
+    settings of the first case enabling each -- without the extras those
+    need, which :func:`check_run_extras` asks for.
 
     Raises:
         ValueError: naming the key of the first value refused.
     """
-    run_timeout_seconds(cfg)
-    _odd_case(cfg)
-    if _rerun_settings(cfg)[0]:
-        _rerun_lidar_max_points(cfg)
-    _t4_settings(cfg)
+    for cfg in configs:
+        if _rerun_settings(cfg)[0]:
+            _rerun_lidar_max_points(cfg)
+    _t4_settings(*configs)
     # Holds nothing that starts: built to be checked, and dropped.
-    build_t4scene_exporter(cfg)
+    build_t4scene_exporter(*configs)
 
 
 class RunConfigError(ValueError):
@@ -1504,21 +1505,24 @@ def check_batch_configs(configs: list[DictConfig]) -> None:
     config before it starts, building nothing that starts (no queue, no CARLA,
     no Autoware, no Rerun or T4 writer) and needing no map.
 
-    Each case's timeout, ``odd_case``, ``rerun.lidar_max_points``, ``t4`` and
-    ``driver`` settings and ``t4scene`` settings; and the server, traffic and
-    Autoware launcher settings its queue is built from (:func:`_batch_queue`,
-    :func:`run_scenario`), once for each distinct set of them.  A SLURM batch
-    is refused for these before anything is submitted (each task would only
-    refuse them on its node), and a lanelet sweep before any case is forked
-    (each case would refuse them in turn).
+    The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
+    reads them (:func:`_check_batch_writer_settings`); each case's timeout and
+    ``odd_case``; and the server, traffic and Autoware launcher settings its
+    queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
+    each distinct set of them.  A SLURM batch is refused for these before
+    anything is submitted (each task would only refuse them on its node), and
+    a lanelet sweep before any case is forked (each case would refuse them in
+    turn).
 
     Raises:
         RunConfigError: naming the key of the first value refused.
     """
     queue_settings: set[str] = set()
     try:
+        _check_batch_writer_settings(configs)
         for cfg in configs:
-            _check_case_settings(cfg)
+            run_timeout_seconds(cfg)
+            _odd_case(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
             # ego's entity too: build_autoware_launcher reads the launcher only
             # for an ``ego.entity=autoware`` case.
