@@ -10,10 +10,10 @@ clearance barely depends on the speed profile -- the plan goes through the
 obstacle at any speed -- so the gradient there is close to flat and descent
 alone would never escape.  Sampling does not care.
 
-**Then descend.**  A handful of Adam steps on the single best sample, against
-a smoothed robustness.  This is what makes the result precise rather than
-merely the best of sixty-four guesses: it converts "brake somewhat" into
-"brake exactly hard enough to stop at the line".
+**Then descend.**  A few Adam steps from each of the best samples, in one
+batch, against a smoothed robustness.  This is what makes the result precise
+rather than merely the best of sixty-four guesses: it converts "brake
+somewhat" into "brake exactly hard enough to stop at the line".
 
 Sampling without descent plans coarsely; descent without sampling gets stuck.
 The combination is worth more than either.
