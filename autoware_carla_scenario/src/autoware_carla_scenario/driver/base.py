@@ -324,7 +324,7 @@ class DriverClientConfig:
     send_renderer_data: bool = True
     """Whether to send CARLA ground truth in ``DriveRequest.renderer_data``.
 
-    The alpasim contract carries no traffic lights and no other vehicles, so a
+    The alpasim contract carries no traffic lights and no other road users, so a
     policy that reasons about either reads them from this extension payload.
     Policies that ignore it are unaffected; policies that read it treat an absent
     payload as "no light applies, no traffic present" **without erroring**, which
@@ -705,7 +705,7 @@ class BaseEgoDriverClient(ABC):
             time_now_us: Planning time; the plan is anchored to the pose at this instant.
             time_query_us: The instant the runtime will next advance to.
             renderer_data: Serialized ``carla_driver.v0.CarlaRendererData`` giving
-                the policy CARLA ground truth (traffic light, other vehicles,
+                the policy CARLA ground truth (traffic light, other road users,
                 speed limit).  Empty means "no ground truth available".
 
         Returns:

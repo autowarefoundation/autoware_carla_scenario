@@ -397,7 +397,7 @@ CarlaDriverEntity(config, client=MyFakeDriverClient(config))
 
 ## CARLA ground truth
 
-The alpasim contract has no field for a traffic light and none for other vehicles.
+The alpasim contract has no field for a traffic light and none for other road users.
 Both ride inside `DriveRequest.renderer_data`, an upstream-sanctioned `bytes` extension
 point, as a serialized `carla_driver.v0.CarlaRendererData`:
 
@@ -708,7 +708,8 @@ See `carla_driver_interface/proto/README.md` for the full provenance.
 * Actor reporting covers vehicles, pedestrians and props (`vehicle.*`, `walker.*`,
   `static.prop.*`) within `actor_horizon_m` of the ego, the ego itself excluded. Walker
   AI controllers, sensors, the spectator, traffic lights and signs are not reported, and
-  neither is an actor parked under the map (hidden), which is far beyond the horizon. A
-  prop's velocity is zero unless its physics has it moving.
+  neither is an actor parked under the map (hidden): one whose CARLA `z` is below the
+  hidden threshold every other consumer of the world shares is excluded explicitly,
+  whatever `actor_horizon_m` is. A prop's velocity is zero unless its physics has it moving.
 * Actor `dynamic_state` carries linear velocity; angular velocity and acceleration are
   left zero, matching the reference runtime.
