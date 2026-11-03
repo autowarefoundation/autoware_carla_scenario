@@ -65,11 +65,13 @@ class ActionState(enum.Enum):
     stays there for good -- unless it was put on the tick loop instead:
     :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`
     does that for every action whose :attr:`BaseAction.needs_tick_loop` is
-    true.  An action can opt out, as the traffic-backend actions do: a
-    background-traffic source registered for initialization reissues by
-    default (``REISSUES_BY_DEFAULT = True``) with ``needs_tick_loop`` false,
-    so it holds ``RUNNING`` for the rest of the run, even with an ``until``
-    that already holds.
+    true.  An action can opt out, as the background-traffic source and sink
+    (``TrafficSourceAction``, ``TrafficSinkAction``) do (a
+    ``ConstructionZoneAction`` with a later start or an end time does not):
+    registered for initialization, one reissues by default
+    (``REISSUES_BY_DEFAULT = True``) with ``needs_tick_loop`` false, so it
+    holds ``RUNNING`` for the rest of the run, even with an ``until`` that
+    already holds.
 
     There is deliberately no failure state: OpenSCENARIO has none either.  An
     action whose completion criteria are never met stays ``RUNNING``, and it is

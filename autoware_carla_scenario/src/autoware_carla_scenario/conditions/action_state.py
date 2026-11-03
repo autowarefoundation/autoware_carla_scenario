@@ -39,8 +39,8 @@ class ActionStateCondition(BaseCondition):
     ``completeState`` (``standbyState`` when ``once=False``, or
     ``startTransition`` again if its trigger still holds), so a condition
     waiting on either of them for such an action never holds.  Neither does
-    one on ``endTransition`` of an action stopped by an ``overrides=True``
-    one, or of an init-phase action
+    one on ``endTransition`` of the run an ``overrides=True`` action stops,
+    or of an init-phase action
     (:class:`~autoware_carla_scenario.action_state.ActionState`).
 
     Args:
