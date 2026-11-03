@@ -88,6 +88,13 @@ class HilsEgoConfig:
 
     def __post_init__(self) -> None:
         host = self.host
+        if not isinstance(host, str):
+            # Hydra reads an unquoted ``hils.host=[::1]`` as a list.
+            raise ValueError(
+                f"hils.host must be a host name or address, got {host!r}; write "
+                "an IPv6 address without brackets (hils.host=::1), or quote it "
+                "('hils.host=\"[::1]\"')"
+            )
         if host.startswith("[") and host.endswith("]") and len(host) > 2:
             # socket.create_connection takes an IPv6 host without brackets.
             object.__setattr__(self, "host", host[1:-1])

@@ -41,7 +41,10 @@ class RunnerLink:
     """Listens for scenario runs at *address* (``host:port``; port 0 picks one).
 
     An IPv6 address is written in brackets to give a port (``[::1]:7700``);
-    :func:`~.wire.parse_address` lists the forms.
+    :func:`~.wire.parse_address` lists the forms. ``[::]`` also takes IPv4
+    connections where the OS supports dual-stack sockets
+    (:func:`socket.has_dualstack_ipv6`); elsewhere it is IPv6 only, and
+    ``0.0.0.0`` listens on IPv4.
 
     Args:
         address: Where to listen.
@@ -51,8 +54,11 @@ class RunnerLink:
     def __init__(self, address: str, events: "queue.Queue[Event]") -> None:
         host, port = parse_address(address)
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        # ``[::]`` is every address: IPv4 too, where the OS can serve both on
+        # one socket (else it is IPv6 only, and ``0.0.0.0`` is for IPv4).
+        dualstack = host == "::" and socket.has_dualstack_ipv6()
         self._server = socket.create_server(
-            (host, port), family=family, reuse_port=False
+            (host, port), family=family, dualstack_ipv6=dualstack, reuse_port=False
         )
         self._server.settimeout(_POLL_S)
         self._events = events
