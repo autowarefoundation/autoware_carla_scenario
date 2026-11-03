@@ -47,9 +47,25 @@ class ActionState(enum.Enum):
     it may fire again on that same tick), and is never seen in ``RUNNING`` or
     ``END_TRANSITION``.  A condition waiting on either of those for such an
     action never holds; wait on ``COMPLETE`` (or ``START_TRANSITION``)
-    instead.  An action fired in the init phase is settled there at once
-    (:meth:`BaseAction._settle_start`) and never holds ``END_TRANSITION``
-    either.
+    instead.  A repeating one whose trigger still holds does fire again on
+    that tick, so it stays ``START_TRANSITION`` from tick to tick and is not
+    seen in ``STANDBY`` until its trigger stops holding.
+
+    An action stopped by another built with ``overrides=True`` goes straight
+    to ``COMPLETE`` (:meth:`BaseAction._stop_overridden`, OpenSCENARIO's stop
+    transition), even with ``once=False``, and never holds
+    ``END_TRANSITION``.
+
+    An action fired in the init phase never holds ``END_TRANSITION`` either:
+    it is settled there at once (:meth:`BaseAction._settle_start`), to
+    ``COMPLETE`` (``STANDBY`` when ``once=False``) if it is instantaneous or
+    its ``until`` already holds at ``elapsed=0``.  One that runs on is left in
+    ``RUNNING``, and as the init phase never ticks it again it stays there for
+    good -- unless it is moved to the tick loop
+    (:attr:`BaseAction.needs_tick_loop`), as
+    :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`
+    does for every action that keeps acting.  A background-traffic source
+    registered for initialization, whose ``until`` defaults to never, is one.
 
     There is deliberately no failure state: OpenSCENARIO has none either.  An
     action whose completion criteria are never met stays ``RUNNING``, and it is
