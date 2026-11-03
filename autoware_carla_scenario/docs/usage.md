@@ -898,10 +898,22 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
 | `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
+| `{ScenarioName}.t4/` | The run as a T4 dataset (a directory, its version `0` inside), with `t4.enabled=true` ([T4 Dataset](t4_dataset.md)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
+
+`{ScenarioName}_result.json` holds the result (`passed`, `message`,
+`elapsed_seconds`, `condition_statuses`), then `rerun_recording` (the
+`.rrd` made of the run, with `rerun.enabled=true`) and `failure` (on a failed
+run, below) when they apply, then `environment` (the summary of
+`_environment.json`) and `traffic` (what drove the traffic: the backend's
+name, its settings and seed, and with SUMO how many vehicles it simulated at
+each level when the run ended). Either of the last two is left out when it
+could not be read. The scenario's name is not in it: the file is named after
+it, and `batch_results.json` adds it to each of its entries.
 
 On a pass, `message` is the message of the pass condition that fired -- here
 an `AndCondition` of two `StickyCondition`s, which joins its children's
@@ -909,18 +921,90 @@ messages with ` AND ` -- or `Scenario completed successfully` when
 `is_done()` ended the run. When a fail condition ends the run, it is that
 condition's message.
 
+`condition_statuses` has one entry per registered condition, pass conditions
+first, each labelled `pass[i](label)` or `fail[i](label)`: whether it was
+satisfied when the run ended, its message (`not triggered` for a fail
+condition that was not, `not yet satisfied` for a pass condition), its class,
+its role, and its `details` (an `AndCondition`'s are its children's statuses,
+cut short here). A run of `intersection_passing/straight`:
+
 ```json
 {
-  "scenario": "intersection_passing/straight",
   "passed": true,
-  "message": "Entity 'ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s",
+  "message": "Entity 'Ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'Ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s",
   "elapsed_seconds": 3.42,
   "condition_statuses": [
-    {"label": "Road 5 visited", "satisfied": true, "message": "..."},
-    {"label": "Road 12 visited", "satisfied": true, "message": "..."}
-  ]
+    {
+      "label": "pass[0](ego_on_road_5_sticky AND ego_on_road_12_sticky)",
+      "satisfied": true,
+      "message": "Entity 'Ego' is on road '5' (any lane) (s=12.40, t=-1.75) at 1.10s AND Entity 'Ego' is on road '12' (any lane) (s=3.05, t=-1.80) at 3.42s",
+      "condition_type": "AndCondition",
+      "role": "pass",
+      "details": {"operator": "AND", "children": ["..."]}
+    },
+    {
+      "label": "fail[0](speed_check_delay AND ego_min_speed)",
+      "satisfied": false,
+      "message": "not triggered",
+      "condition_type": "AndCondition",
+      "role": "fail",
+      "details": {"operator": "AND", "children": ["..."]}
+    },
+    {
+      "label": "fail[1](scenario_timeout)",
+      "satisfied": false,
+      "message": "not triggered",
+      "condition_type": "TimeoutCondition",
+      "role": "fail",
+      "details": {"timeout_seconds": 15.0}
+    },
+    {
+      "label": "fail[2](ego_existence)",
+      "satisfied": false,
+      "message": "not triggered",
+      "condition_type": "EntityExistenceCondition",
+      "role": "fail",
+      "details": {"entity_name": "Ego"}
+    }
+  ],
+  "environment": {
+    "id": "731d9cc2a8447ef6f9230be81346e8e8297d9e85eb4570bdb68ce91964472fdf",
+    "python": "3.12.3",
+    "platform": "Linux-6.8.0-60-generic-x86_64-with-glibc2.39",
+    "framework": {
+      "name": "autoware-carla-scenario",
+      "version": "23.1.24",
+      "source": {"kind": "index"}
+    },
+    "scenario": {
+      "name": "autoware-carla-scenario",
+      "version": "23.1.24",
+      "source": {"kind": "index"}
+    },
+    "packages": {
+      "openodd-py": "0.18.0",
+      "typesafe-carla": "0.8.1",
+      "simple-lanelet2": "1.2.3",
+      "hydra-core": "1.3.7",
+      "numpy": "2.5.3"
+    }
+  },
+  "traffic": {
+    "backend": "traffic_manager",
+    "port": 8100,
+    "random_seed": 0,
+    "follow_visibility": false,
+    "visibility_m": null
+  }
 }
 ```
+
+`environment.scenario` names the distribution the scenario's class comes
+from, as `framework` does: the framework itself for a built-in scenario like
+this one, a scenario package's own otherwise, `null` when no installed
+distribution is found for it. A `source` other than `index` says where the
+distribution came from (`vcs` with its URL and commit, `editable` with its
+directory and commit, ...).
 
 **Why a run failed:**
 
