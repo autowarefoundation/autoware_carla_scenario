@@ -2940,7 +2940,8 @@ value, so the result is not checked:</p>
   <code>trajectory_recorder</code>, <code>environment</code>, <code>autoware_bridge/grpc_server</code>,
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
-  <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and
+  <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
+  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and
   <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
 <li><strong>Every public name of a modelled module</strong>: each name a module the model
@@ -3103,7 +3104,7 @@ them (<code>OddModule</code>, <code>OddAttribute</code>, <code>BaseScenario</cod
 </tr>
 <tr>
 <td>the fields</td>
-<td><code>DebugMarkers</code>, <code>CoverItem</code>, <code>OddCondition</code> (one), <code>RunProgress</code> (four)</td>
+<td><code>DebugMarkers</code>, <code>CoverItem</code>, <code>OddCondition</code> (one), <code>SomaMotion</code> (two), <code>RunProgress</code> (four)</td>
 </tr>
 <tr>
 <td>an exception's</td>
@@ -4768,8 +4769,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-268 of the package's 392
-modules (68%; about 80,000 of
+269 of the package's 392
+modules (69%; about 80,300 of
 138,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4782,7 +4783,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 268 CHECKED modules</summary>
+<summary>The 269 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -4854,6 +4855,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>actions.lane_change</code></td>
 <td>Lane-change action: force a lane change via TrafficManager.</td>
+</tr>
+<tr>
+<td><code>actions.play_motion</code></td>
+<td>Play-motion action: pose a pedestrian after a SOMA motion file.</td>
 </tr>
 <tr>
 <td><code>actions.routing</code></td>
@@ -6012,7 +6017,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 124 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6041,10 +6046,9 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 124 EXCLUDED modules, and why</summary>
+<summary>The 123 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
-<li><code>actions.play_motion</code>: imports pedestrian.soma, which is neither checked nor modelled</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc) and pedestrian.ardy, which are neither checked nor modelled, and reads a keyframes file with json.loads into values of any type (<code>Any</code>)</li>
 <li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)</li>
 <li><code>authoring._builders_generated</code>: its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models</li>
@@ -6118,7 +6122,7 @@ the first:</p>
 <li><code>pedestrian._proto.pedestrian_motion_pb2_grpc</code>: imports grpc</li>
 <li><code>pedestrian.ardy</code>: imports grpc, and prepare.docker, which is not checked</li>
 <li><code>pedestrian.motion_client</code>: imports grpc and the generated protobuf modules (google.protobuf)</li>
-<li><code>pedestrian.soma</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks</li>
+<li><code>pedestrian.soma</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it</li>
 <li><code>prepare.declare</code>: sets and reads a class attribute by name (setattr, <code>type.__dict__</code>, <code>__mro__</code>) and imports a module by name (importlib), which Codon cannot</li>
 <li><code>prepare.docker</code>: runs docker through subprocess.Popen with a file object for its output (<code>IO[bytes]</code>) and more of subprocess and socket than their shims declare</li>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
@@ -6480,7 +6484,7 @@ stands in for it in the check's workspace:</p>
   a model of that module alone (<code>utils/traffic_light.codon</code>,
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
   <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>,
-  <code>ros2/cyclone.codon</code>), or, for a module of
+  <code>ros2/cyclone.codon</code>, <code>pedestrian/soma.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>carla_install.codon</code>, for
   <code>server</code>, declares <code>installed_executable()</code>; <code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
@@ -7987,7 +7991,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 1, 2026 16:18:03 UTC"><span class="timeago" datetime="2026-11-01T16:18:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 1, 2026 16:18:03 UTC">2026-11-01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 03:24:36 UTC"><span class="timeago" datetime="2026-11-03T03:24:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 03:24:36 UTC">2026-11-03</span>
   </span>
 
     
