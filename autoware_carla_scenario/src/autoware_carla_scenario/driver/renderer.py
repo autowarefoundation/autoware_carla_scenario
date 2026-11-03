@@ -237,24 +237,32 @@ class RendererDataBuilder:
         and lane, which is how the policy finds them in its map file.
         """
         if self._lights is None:
-            self._lights = [
-                (
-                    light,
-                    str(light.get_opendrive_id()),
-                    [
-                        carla_driver_pb2.StopPoint(
-                            road_id=int(waypoint.road_id),
-                            section_id=int(waypoint.section_id),
-                            lane_id=int(waypoint.lane_id),
-                            position_local=_vec3(
-                                to_local_pose(waypoint.transform).position
-                            ),
-                        )
-                        for waypoint in stop_waypoints(light)
-                    ],
+            lights: List[
+                Tuple["carla.TrafficLight", str, List[carla_driver_pb2.StopPoint]]
+            ] = []
+            for actor in self._world.get_actors().filter("traffic.traffic_light*"):
+                if TYPE_CHECKING:
+                    light = actor.as_traffic_light()
+                else:
+                    light = actor
+                lights.append(
+                    (
+                        light,
+                        str(light.get_opendrive_id()),
+                        [
+                            carla_driver_pb2.StopPoint(
+                                road_id=int(waypoint.road_id),
+                                section_id=int(waypoint.section_id),
+                                lane_id=int(waypoint.lane_id),
+                                position_local=_vec3(
+                                    to_local_pose(waypoint.transform).position
+                                ),
+                            )
+                            for waypoint in stop_waypoints(light)
+                        ],
+                    )
                 )
-                for light in self._world.get_actors().filter("traffic.traffic_light*")
-            ]
+            self._lights = lights
         return [
             carla_driver_pb2.TrafficLight(
                 opendrive_id=opendrive_id,
