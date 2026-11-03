@@ -99,7 +99,8 @@ _PARKED_DEPTH_M: float = 500.0
 #: the CARLA pose it was put at.  A client sees an actor's new transform only
 #: from the next tick on, so a place written against it on the same frame
 #: (another spawn of the same phase) is placed against this
-#: (:class:`_BroughtInReferences`).
+#: (:class:`_BroughtInReferences`).  Hidden or despawned again on that frame,
+#: it is forgotten (:func:`forget_brought_in`).
 _BROUGHT_IN: dict[tuple[int, str], tuple[int, CarlaWorldPose]] = {}
 
 #: The props standing now, by name.
@@ -130,6 +131,17 @@ def clear_props() -> None:
     for name in list(_STANDING.keys()):
         remove_prop(name)
     _BROUGHT_IN.clear()
+
+
+def forget_brought_in(world: "carla.World", role: str) -> None:
+    """Forget where a SpawnAction brought *role* in on this frame (if it did):
+    hidden again or despawned since, it is no longer there, so a place written
+    against it reads it as the world shows it (absent).  Called by every path
+    that hides or despawns an entity."""
+    key = (_world_id(world), role)
+    # Looked up first: Codon's dict.pop takes no default.
+    if key in _BROUGHT_IN:
+        _BROUGHT_IN.pop(key)
 
 
 def _frame(world: "carla.World") -> int:
@@ -414,7 +426,9 @@ class SpawnAction(BaseAction):
                 standing.rotation.yaw,
             )
         x, y, z, yaw = place
-        _put(world, found, x, y, z, yaw, self._speed)
+        # Where it is put, as its next tick shows it: a walker stood on the
+        # ground under the place and raised by half its height.
+        put_z = _put(world, found, x, y, z, yaw, self._speed)
         _keep_entry_speed(found, self._speed)
         frame = _frame(world)
         if frame >= 0:
@@ -423,7 +437,7 @@ class SpawnAction(BaseAction):
             # shows where it is put only from the next tick on.
             _BROUGHT_IN[(_world_id(world), self._entity_name)] = (
                 frame,
-                CarlaWorldPose(x, y, z, yaw=yaw),
+                CarlaWorldPose(x, y, put_z, yaw=yaw),
             )
         self._spawned.append((self._entity_name, int(found.id)))
         logger.info(
@@ -732,10 +746,11 @@ def _put(
     z: float,
     yaw: float,
     speed: float,
-) -> None:
+) -> float:
     """Put *actor* at CARLA ``(x, y, z)`` facing *yaw*, physics on, moving at
     *speed*: a walker stood on the ground under it (the lane's height is the
-    road's, and a walker set into a raised kerb's mesh never moves)."""
+    road's, and a walker set into a raised kerb's mesh never moves).  The z
+    its origin was put at."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     from ..coordinate.snap import refine_z_with_ground_projection  # noqa: PLC0415
@@ -750,8 +765,9 @@ def _put(
         except RuntimeError:
             pass
         lift = float(actor.bounding_box.extent.z)
+    put_z = z + lift
     actor.set_transform(
-        carla.Transform(carla.Location(x=x, y=y, z=z + lift), carla.Rotation(yaw=yaw))
+        carla.Transform(carla.Location(x=x, y=y, z=put_z), carla.Rotation(yaw=yaw))
     )
     heading = math.radians(yaw)
     direction = carla.Vector3D(math.cos(heading), math.sin(heading), 0.0)
@@ -763,6 +779,7 @@ def _put(
         actor.set_target_velocity(
             carla.Vector3D(speed * direction.x, speed * direction.y, 0.0)
         )
+    return put_z
 
 
 def _taken(

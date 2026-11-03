@@ -324,6 +324,38 @@ class TestRunScenarioStartsFromACleanSlate:
 
         assert held == [{}]
 
+    def test_where_a_spawn_put_an_entity_before_the_run_is_forgotten(
+        self, tmp_path: Any
+    ) -> None:
+        """A spawn card ticked outside any run records where it put its
+        entity; the next run starts without it, though its world's id and
+        frame may match (#1278)."""
+        from autoware_carla_scenario.actions import spawn as spawn_module
+        from autoware_carla_scenario.coordinate.poses import CarlaWorldPose
+
+        spawn_module._BROUGHT_IN[(1, "npc1")] = (0, CarlaWorldPose(1.0, 2.0, 0.0))
+        runner = _runner(tmp_path)
+        scenario = _Registers(ego_entity=_fake_ego())
+        recorded: list[dict[Any, Any]] = []
+
+        def clock(world: Any) -> None:
+            recorded.append(dict(spawn_module._BROUGHT_IN))
+            raise _Stop("clock")
+
+        try:
+            with (
+                patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+                patch("autoware_carla_scenario.scenario_runner._ScenarioClock", clock),
+            ):
+                with pytest.raises(_Stop):
+                    runner.run_scenario(
+                        scenario, timeout_seconds=12.0, reset_world=False
+                    )
+        finally:
+            spawn_module._BROUGHT_IN.clear()
+
+        assert recorded == [{}]
+
     def test_the_ego_s_base_link_is_only_this_run_s(self, tmp_path: Any) -> None:
         """Where the last run's ego had its base_link is gone before this run's
         ego starts, and this run's is gone when the run ends -- even when the

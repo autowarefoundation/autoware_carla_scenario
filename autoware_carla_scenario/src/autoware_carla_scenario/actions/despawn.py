@@ -155,6 +155,10 @@ def despawn_entity(world: "carla.World", name: str, label: str) -> Optional[int]
         except RuntimeError:
             _already_gone(label, name)
     unregister_entity(name)
+    # Brought in on this frame, it is not where a SpawnAction put it any more.
+    from .spawn import forget_brought_in  # noqa: PLC0415
+
+    forget_brought_in(world, name)
     actor_id = -1
     if actor is not None:
         gone: "carla.Actor" = actor

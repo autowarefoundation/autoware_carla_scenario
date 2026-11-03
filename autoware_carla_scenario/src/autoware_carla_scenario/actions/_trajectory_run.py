@@ -573,7 +573,7 @@ class TrajectoryRun(BaseAction):
         if self._following_mode is TrajectoryFollowingMode.POSITION:
             sample = self._position_sample(world)
             if self._hidden_outside and self._absent():
-                self._hide(actor, sample)
+                self._hide(world, actor, sample)
                 return
             self._show(actor)
             _place(actor, sample, walker)
@@ -738,9 +738,13 @@ class TrajectoryRun(BaseAction):
         it from."""
         return self._trajectory_time() < self._clock_start - 1e-9
 
-    def _hide(self, actor: "carla.Actor", sample: TrajectorySample) -> None:
+    def _hide(
+        self, world: "carla.World", actor: "carla.Actor", sample: TrajectorySample
+    ) -> None:
         """Park *actor* under where *sample* is, out of the simulation."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        from .spawn import forget_brought_in  # noqa: PLC0415
 
         if not self._hidden:
             actor.set_simulate_physics(False)
@@ -751,6 +755,8 @@ class TrajectoryRun(BaseAction):
                 carla.Rotation(yaw=sample.yaw),
             )
         )
+        # Brought in on this frame, it is not where a SpawnAction put it.
+        forget_brought_in(world, str(self._entity_name))
 
     def _show(self, actor: "carla.Actor") -> None:
         """Bring a hidden *actor* back into the simulation."""
