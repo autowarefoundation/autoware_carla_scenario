@@ -15,6 +15,7 @@ from ..trajectory.model import (
     RouteOppositePose,
     RouteRoadsidePose,
     TrajectoryVertex,
+    placed_against_entity,
 )
 from .base import BaseCondition, ScenarioResult
 
@@ -33,10 +34,17 @@ class PlaceClearCondition(BaseCondition):
     The rectangle faces along the lane at a Lanelet2 *position*, turned by
     its ``heading``; any other position faces the way it resolves to (a
     route pose is placed on the scenario's route when the place is first
-    looked at).  An actor parked under the map (spawned out of sight) does
-    not count; one put on the place this very tick, which the world's snapshot
-    does not show yet, does.  Typically an entity's appearance spot, so that it
-    is not brought in on top of another road user.  Other road users'
+    looked at).  A place written against an entity -- a
+    :class:`~..trajectory.model.RelativeLanePose`, against its
+    ``entity_ref``; a route pose without an anchor, against the ego -- moves
+    with it, so it is placed afresh on every tick, facing along the lane it
+    is placed on where it states no ``yaw``; while that entity is not in
+    the scene (not spawned yet, gone, or parked under the map) the place is
+    nowhere and the condition does not hold.  An actor parked under the map
+    (spawned out of sight) does not count; one put on the place this very
+    tick, which the world's snapshot does not show yet, does.  Typically an
+    entity's appearance spot, so that it is not brought in on top of another
+    road user.  Other road users'
     outlines are their bounding boxes where they stand, ahead of a car's
     origin; the rectangle itself is centred on *position*, no actor's box
     being known to it (a vehicle spawned on *position* puts its origin there,
@@ -44,7 +52,8 @@ class PlaceClearCondition(BaseCondition):
 
     Args:
         position: The place's centre: a Lanelet2 pose, or any position a
-            trajectory vertex takes (a route pose, say).
+            trajectory vertex takes (a route pose, or a pose relative to an
+            entity, say).
         length: Its length (m), along its heading.
         width: Its width (m).
         margin: How near (m) another's outline may come.
@@ -58,7 +67,10 @@ class PlaceClearCondition(BaseCondition):
     _width: float
     _margin: float
     _spot: Optional[tuple[float, float, float]]
+    # Placed against an entity, afresh on every tick (placed_against_entity).
+    _follows: bool
     _unplaced: bool
+    _said_unplaced: bool
     _said_blocker: int
 
     def __init__(
@@ -91,7 +103,9 @@ class PlaceClearCondition(BaseCondition):
         self._width = float(width)
         self._margin = float(margin)
         self._spot = None
+        self._follows = placed_against_entity(position)
         self._unplaced = False
+        self._said_unplaced = False
         self._said_blocker = -1
 
     def reset(self) -> None:
@@ -100,6 +114,7 @@ class PlaceClearCondition(BaseCondition):
         super().reset()
         self._spot = None
         self._unplaced = False
+        self._said_unplaced = False
         self._said_blocker = -1
 
     def get_details(self) -> dict[str, Any]:
@@ -132,38 +147,17 @@ class PlaceClearCondition(BaseCondition):
 
         Returns:
             ScenarioResult with passed=True while nothing stands there,
-            ``None`` while something does (its actor said once).
+            ``None`` while something does (its actor said once), or while
+            the place is nowhere.
         """
         spot = self._spot
-        if spot is None:
+        if spot is None or self._follows:
             if self._unplaced:
                 return None
-            from ..trajectory.resolve import resolve_position  # noqa: PLC0415
-
-            try:
-                x0, y0, _z, yaw0 = resolve_position(self._at.position)
-            except ValueError as exc:
-                # Said once: the place will not resolve on a later tick.
-                self._unplaced = True
-                logger.warning("%s: no place to look at: %s", self.label, exc)
-                return None
-            # Branched: Codon types no conditional expression of a None and a
-            # float.
-            yaw_deg = 0.0
-            if yaw0 is not None:
-                yaw_deg = float(yaw0)
-            else:
-                # No heading of its own (a route pose without a yaw): along
-                # the lane it is on, where it is on one.
-                from ..route.active import lane_place  # noqa: PLC0415
-
-                along = lane_place(self._at.position)
-                if along is not None:
-                    _lx, _ly, _lz, lane_yaw = resolve_position(along)
-                    if lane_yaw is not None:
-                        yaw_deg = float(lane_yaw)
-            spot = (x0, y0, yaw_deg)
+            spot = self._placed(world)
             self._spot = spot
+            if spot is None:
+                return None
         x, y, yaw = spot
         blocker = _occupant(
             world,
@@ -192,6 +186,53 @@ class PlaceClearCondition(BaseCondition):
             message=f"The place ({x:.1f}, {y:.1f}) is clear at {elapsed:.2f}s",
             elapsed_seconds=elapsed,
         )
+
+    def _placed(self, world: "carla.World") -> Optional[tuple[float, float, float]]:
+        """CARLA ``(x, y, yaw)`` of the place now; ``None`` while the entity it
+        is written against is not in the scene, or where it cannot be placed
+        (said once; a fixed place is not tried again)."""
+        from ..route.active import lane_place  # noqa: PLC0415
+        from ..trajectory.resolve import (  # noqa: PLC0415
+            resolve_along_lane,
+            resolve_position,
+        )
+        from .entity_existence import ReferenceAbsentError, ReferencePoses  # noqa: PLC0415
+
+        reference = ReferencePoses(world, present_only=True)
+        position = self._at.position
+        try:
+            if self._follows:
+                # Without a heading of its own, along the lane it is placed
+                # on: no lane is looked up for it afterwards (lane_place).
+                x0, y0, _z, yaw0 = resolve_along_lane(position, reference.pose)
+            else:
+                x0, y0, _z, yaw0 = resolve_position(position, reference.pose)
+        except ReferenceAbsentError:
+            # Waited for, quietly: the place is nowhere until it is there.
+            return None
+        except ValueError as exc:
+            # A fixed place will not resolve on a later tick; one that moves
+            # with an entity may, so it is tried again, said once.
+            if not self._follows:
+                self._unplaced = True
+            if not self._said_unplaced:
+                self._said_unplaced = True
+                logger.warning("%s: no place to look at: %s", self.label, exc)
+            return None
+        # Branched: Codon types no conditional expression of a None and a
+        # float.
+        yaw_deg = 0.0
+        if yaw0 is not None:
+            yaw_deg = float(yaw0)
+        else:
+            # No heading of its own (a route pose without a yaw): along the
+            # lane it is on, where it is on one.
+            along = lane_place(position)
+            if along is not None:
+                _lx, _ly, _lz, lane_yaw = resolve_position(along, reference.pose)
+                if lane_yaw is not None:
+                    yaw_deg = float(lane_yaw)
+        return (x0, y0, yaw_deg)
 
 
 def _occupant(

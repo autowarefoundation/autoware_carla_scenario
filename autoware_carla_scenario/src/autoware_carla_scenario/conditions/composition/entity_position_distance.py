@@ -16,6 +16,7 @@ from ...trajectory.model import (
     RouteOppositePose,
     RouteRoadsidePose,
     TrajectoryVertex,
+    placed_against_entity,
 )
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
@@ -33,8 +34,9 @@ class EntityPositionDistanceCondition(CompositionCondition):
     """Pass condition on the distance from an entity to a place on the map.
 
     The sibling of :class:`EntityDistanceCondition`, which measures between two
-    *entities*.  This one measures to somewhere that does not move: a stop
-    line, a conflict point, the mouth of a junction.  Both readings are wanted
+    *entities*.  This one measures to a place: a stop line, a conflict point,
+    the mouth of a junction, or a spot written against an entity (20 m ahead
+    of the ego in its lane, say).  Both readings are wanted
     and neither substitutes for the other, which is why this is a second
     condition rather than a target that may be either.
 
@@ -58,11 +60,19 @@ class EntityPositionDistanceCondition(CompositionCondition):
         the scenario's route -- is resolved when it is first measured to; one
         that cannot be placed holds nothing, said once.
 
+        A place written against an entity -- a
+        :class:`~autoware_carla_scenario.trajectory.model.RelativeLanePose`,
+        against its ``entity_ref``; a route pose without an anchor, against
+        the ego -- moves with it, so it is placed afresh on every tick.
+        While that entity is not in the scene (not spawned yet, gone, or
+        parked under the map) the place is nowhere and nothing is measured,
+        as for an absent second entity of :class:`EntityDistanceCondition`.
+
     Args:
         entity_name: The ``role_name`` attribute of the actor to measure from.
         position: Where to measure to, as a Lanelet2, OpenDRIVE or CARLA world
             pose, or any position a trajectory vertex takes (a route pose,
-            say).  Unlike :class:`EntityLanePositionCondition`, which uses only
+            or a pose relative to an entity, say).  Unlike :class:`EntityLanePositionCondition`, which uses only
             the lane a pose names, this uses the point: ``s`` along the lanelet
             is part of the answer.
         value: Threshold distance in metres.
@@ -83,7 +93,10 @@ class EntityPositionDistanceCondition(CompositionCondition):
     _target: Optional[Vector3]
     # False when the place has no height: neither its own nor the road's.
     _height_known: bool
+    # Placed against an entity, afresh on every tick (placed_against_entity).
+    _follows: bool
     _unplaced: bool
+    _said_unplaced: bool
     _placed_on_build: bool
     _vertical: bool
     _comparison: ScalarComparisonRule
@@ -116,7 +129,9 @@ class EntityPositionDistanceCondition(CompositionCondition):
         self._at = TrajectoryVertex(position)
         self._target = None
         self._height_known = True
+        self._follows = placed_against_entity(position)
         self._unplaced = False
+        self._said_unplaced = False
         # A map pose now (a lanelet the map lacks fails here); any other
         # when it is first measured to.  Named as the class: Codon does not
         # narrow a union by isinstance() (docs/typecheck.md).
@@ -164,30 +179,45 @@ class EntityPositionDistanceCondition(CompositionCondition):
         placed on the run's route, which may be another."""
         super().reset()
         self._unplaced = False
+        self._said_unplaced = False
         if not self._placed_on_build:
             self._target = None
             self._height_known = True
 
     def _place(self, world: "carla.World") -> Optional[Vector3]:
-        """The place in CARLA's world, placed the first time it is asked for;
-        ``None`` (said once) when it cannot be.
+        """The place in CARLA's world, placed the first time it is asked for
+        (on every call, one placed against an entity); ``None`` while that
+        entity is not in the scene, or (said once) when it cannot be placed.
 
         A place with no height of its own (a :class:`MapPose` without ``z``, a
         crosswalk or roadside pose) stands on the road under it, read once from
         the run's map; where none can be read the height is unknown and left
         out of a vertical measurement."""
         target = self._target
-        if target is not None or self._unplaced:
+        if self._unplaced or (target is not None and not self._follows):
             return target
         from ...coordinate.map_manager import run_carla_map  # noqa: PLC0415
         from ...trajectory.resolve import resolve_position, road_height  # noqa: PLC0415
+        from ..entity_existence import ReferenceAbsentError, ReferencePoses  # noqa: PLC0415
 
+        reference = ReferencePoses(world, present_only=True)
         try:
-            x, y, z, _yaw = resolve_position(self._at.position)
-        except ValueError as exc:
-            logger.warning("%s: no place to measure to: %s", self.label, exc)
-            self._unplaced = True
+            x, y, z, _yaw = resolve_position(self._at.position, reference.pose)
+        except ReferenceAbsentError:
+            # Waited for, quietly: the place is nowhere until it is there.
+            self._target = None
             return None
+        except ValueError as exc:
+            # A fixed place will not resolve on a later call; one that moves
+            # with an entity may, so it is tried again, said once.
+            self._target = None
+            if not self._follows:
+                self._unplaced = True
+            if not self._said_unplaced:
+                self._said_unplaced = True
+                logger.warning("%s: no place to measure to: %s", self.label, exc)
+            return None
+        self._height_known = True
         # Branched: Codon types no conditional expression of a None and a float.
         height = 0.0
         if z is not None:
