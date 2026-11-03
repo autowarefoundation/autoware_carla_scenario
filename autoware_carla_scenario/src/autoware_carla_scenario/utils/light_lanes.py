@@ -19,12 +19,12 @@ A lit lanelet in a scene is therefore the light a scenario sets.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
-import numpy.typing as npt
 
 if TYPE_CHECKING:
+    import lanelet2
     import typesafe_carla.carla as carla
 
 __all__ = [
@@ -51,22 +51,22 @@ class LightLanes(NamedTuple):
     lanelets that start where it ends.  Map frame."""
 
     ids: tuple[int, ...]
-    outlines: tuple[npt.NDArray[np.float64], ...]
+    outlines: tuple[np.ndarray[tuple[int, int], np.dtype[np.float64]], ...]
     #: ``(L, 4)``: each outline's min x, min y, max x, max y.
-    boxes: npt.NDArray[np.float64]
+    boxes: np.ndarray[tuple[int, int], np.dtype[np.float64]]
     lengths: Mapping[int, float]
     elements: Mapping[int, tuple[int, ...]]
     successors: Mapping[int, tuple[int, ...]]
 
 
-def light_lanes(lanelet_map: Any) -> LightLanes:
+def light_lanes(lanelet_map: lanelet2.core.LaneletMap) -> LightLanes:
     """The lanelets of *lanelet_map*, read for :func:`elements_ahead`."""
     ids: list[int] = []
-    outlines: list[npt.NDArray[np.float64]] = []
+    outlines: list[np.ndarray[tuple[int, int], np.dtype[np.float64]]] = []
     lengths: dict[int, float] = {}
     elements: dict[int, tuple[int, ...]] = {}
-    starts: dict[int, npt.NDArray[np.float64]] = {}
-    ends: dict[int, npt.NDArray[np.float64]] = {}
+    starts: dict[int, np.ndarray[tuple[int], np.dtype[np.float64]]] = {}
+    ends: dict[int, np.ndarray[tuple[int], np.dtype[np.float64]]] = {}
     for lanelet in lanelet_map.laneletLayer:
         left = np.array([(p.x, p.y) for p in lanelet.leftBound], dtype=np.float64)
         right = np.array([(p.x, p.y) for p in lanelet.rightBound], dtype=np.float64)
@@ -91,7 +91,10 @@ def light_lanes(lanelet_map: Any) -> LightLanes:
     successors = {
         lanelet_id: tuple(
             start_ids[k]
-            for k in np.flatnonzero(np.hypot(*(start_points - end).T) < JOIN_M)
+            for k in np.flatnonzero(
+                np.hypot(start_points[:, 0] - end[0], start_points[:, 1] - end[1])
+                < JOIN_M
+            )
             if start_ids[k] != lanelet_id
         )
         for lanelet_id, end in ends.items()
@@ -102,18 +105,24 @@ def light_lanes(lanelet_map: Any) -> LightLanes:
     return LightLanes(tuple(ids), tuple(outlines), boxes, lengths, elements, successors)
 
 
-def _inside(point: npt.NDArray[np.float64], outline: npt.NDArray[np.float64]) -> bool:
+def _inside(
+    point: np.ndarray[tuple[int], np.dtype[np.float64]],
+    outline: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> bool:
     """Whether *point* is inside the polygon *outline* (even-odd rule)."""
     x, y = float(point[0]), float(point[1])
     xs, ys = outline[:, 0], outline[:, 1]
     xs2, ys2 = np.roll(xs, -1), np.roll(ys, -1)
     crosses = (ys > y) != (ys2 > y)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        at = xs + (y - ys) * (xs2 - xs) / (ys2 - ys)
+    # Only an edge that crosses the point's y counts, and its ends differ in y:
+    # the others divide by 1 instead of 0 (no warning to silence).
+    at = xs + (y - ys) * (xs2 - xs) / np.where(crosses, ys2 - ys, 1.0)
     return bool(np.count_nonzero(crosses & (x < at)) % 2)
 
 
-def elements_ahead(lanes: LightLanes, point: npt.NDArray[np.float64]) -> list[int]:
+def elements_ahead(
+    lanes: LightLanes, point: np.ndarray[tuple[int], np.dtype[np.float64]]
+) -> list[int]:
     """The traffic light regulatory elements of the first lanelets on or ahead
     of the lanelets *point* (map frame) is on that carry one: each branch
     stops at its first such lanelet, or once :data:`LIGHT_SEARCH_M` of
@@ -136,7 +145,8 @@ def elements_ahead(lanes: LightLanes, point: npt.NDArray[np.float64]) -> list[in
             continue
         seen.add(lanelet_id)
         if lanes.elements[lanelet_id]:
-            found.update(dict.fromkeys(lanes.elements[lanelet_id]))
+            for element in lanes.elements[lanelet_id]:
+                found[element] = None
             continue
         ahead = (
             travelled if lanelet_id in start else travelled + lanes.lengths[lanelet_id]
@@ -151,7 +161,7 @@ def elements_ahead(lanes: LightLanes, point: npt.NDArray[np.float64]) -> list[in
 _LANES: dict[int, LightLanes] = {}
 
 
-def _lanes_of(lanelet_map: Any) -> LightLanes:
+def _lanes_of(lanelet_map: lanelet2.core.LaneletMap) -> LightLanes:
     """:func:`light_lanes` of *lanelet_map*, read once."""
     key = id(lanelet_map)
     if key not in _LANES:
@@ -162,7 +172,7 @@ def _lanes_of(lanelet_map: Any) -> LightLanes:
 
 def lights_of_element(
     world: carla.World,
-    lanelet_map: Any,
+    lanelet_map: lanelet2.core.LaneletMap,
     offset: tuple[float, float],
     lanelet2_tl_id: int,
 ) -> list[carla.Actor]:
