@@ -38,6 +38,8 @@ from .constants import EGO_ROLE_NAME
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from .traffic.base import TrafficBackend
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -201,11 +203,13 @@ class NpcCollisionMonitor:
     _gone: set[int]
     _fallen: set[int]
     _broken: bool
+    _backend: Optional["TrafficBackend"]
 
     def __init__(
         self,
         ego_role: Optional[str] = None,
         despawn_fallen_after_s: Optional[float] = FALLEN_DESPAWN_S,
+        traffic_backend: Optional["TrafficBackend"] = None,
     ) -> None:
         self._ego_role = str(EGO_ROLE_NAME) if ego_role is None else ego_role
         self._ticks = 0
@@ -226,6 +230,9 @@ class NpcCollisionMonitor:
         self._gone: set[int] = set()
         self._fallen: set[int] = set()
         self._broken = False
+        #: The run's traffic backend, which a fallen walker no entity stands
+        #: for (a SUMO pedestrian's mirror) is taken back from.
+        self._backend = traffic_backend
         global _ACTIVE
         _ACTIVE = self
 
@@ -254,6 +261,10 @@ class NpcCollisionMonitor:
             _release(sensed.sensor)
         self._walkers.pop(actor_id, None)
         self._heights.pop(actor_id, None)
+        # Not despawned again as a fall: an actor that comes back under its
+        # role is another one.
+        self._down.pop(actor_id, None)
+        self._fallen.discard(actor_id)
         self._gone.add(actor_id)
 
     def close(self) -> None:
@@ -283,7 +294,11 @@ class NpcCollisionMonitor:
     def _despawn_fallen(
         self, world: "carla.World", elapsed: float
     ) -> list[tuple[str, int]]:
-        """Despawn the walkers down :data:`FALLEN_DESPAWN_S` (never the ego)."""
+        """Despawn the walkers down :data:`FALLEN_DESPAWN_S` (never the ego).
+
+        A walker an entity stands for goes as a ``DespawnAction`` takes it;
+        any other -- a SUMO pedestrian's mirror, one with no ``role_name`` --
+        by its actor (:meth:`_remove_walker`)."""
         after = self._despawn_fallen_after
         if after is None or len(self._down) == 0:
             return []
@@ -297,12 +312,41 @@ class NpcCollisionMonitor:
                 continue
             del self._down[walker_id]
             role = self._names.get(walker_id, "")
-            if not role or role == self._ego_role:
+            if role == self._ego_role:
                 continue
-            gone = despawn_entity(world, role, "fallen walker")
-            if gone is not None:
-                out.append((role, int(gone)))
+            if role and _entity_actor_id(role) == walker_id:
+                gone = despawn_entity(world, role, "fallen walker")
+                if gone is not None:
+                    out.append((role, int(gone)))
+                continue
+            name = role if role else str(walker_id)
+            if self._remove_walker(world, walker_id, name):
+                out.append((name, walker_id))
         return out
+
+    def _remove_walker(self, world: "carla.World", walker_id: int, name: str) -> bool:
+        """Take the walker *walker_id* no entity stands for out of the world,
+        as :func:`~.actions.despawn.despawn_entity` takes an entity's: its
+        traffic backend lets go of it, its AI controller is stopped and
+        destroyed, then the walker.  Whether it was there to remove."""
+        found: Optional["carla.Actor"] = world.get_actor(walker_id)
+        if found is None:
+            logger.warning("fallen walker: '%s' is not in the world", name)
+            self.release(walker_id)
+            return False
+        walker: "carla.Actor" = found
+        backend = self._backend
+        if backend is not None:
+            owner: "TrafficBackend" = backend
+            owner.remove_walker(world, walker)
+        _release_controllers(world, walker_id)
+        self.release(walker_id)
+        try:
+            walker.destroy()
+        except RuntimeError:
+            logger.info("fallen walker: '%s' was already gone from the world", name)
+        logger.info("fallen walker: '%s' despawned", name)
+        return True
 
     def _scan(self, world: "carla.World") -> None:
         """Hear new vehicles, let go of gone ones, note the walkers."""
@@ -488,6 +532,50 @@ def _name_of(actor: "carla.Actor") -> str:
     attributes = actor.attributes
     role = attributes.get("role_name", "") if hasattr(attributes, "get") else ""
     return str(role) if role else str(actor.type_id)
+
+
+def _entity_actor_id(role: str) -> int:
+    """The actor id of the entity answering to *role*; ``-1`` when none
+    does, or it has no actor."""
+    from .entity.registry import (  # noqa: PLC0415
+        find_pedestrian_entity,
+        find_vehicle_entity,
+    )
+
+    actor: Optional["carla.Actor"] = None
+    pedestrian = find_pedestrian_entity(role)
+    if pedestrian is not None:
+        actor = pedestrian.actor
+    else:
+        vehicle = find_vehicle_entity(role)
+        if vehicle is not None:
+            # As despawn_entity reads it: BackendDriven, the mixin, declares
+            # no actor (docs/typecheck.md).
+            if hasattr(vehicle, "actor"):
+                actor = vehicle.actor
+    if actor is None:
+        return -1
+    known: "carla.Actor" = actor
+    return int(known.id)
+
+
+def _release_controllers(world: "carla.World", walker_id: int) -> None:
+    """Stop and destroy the AI controllers attached to *walker_id*: the
+    framework's own (:mod:`.entity._walker_ai`) and any other in the world."""
+    from .entity._walker_ai import release  # noqa: PLC0415
+
+    release(walker_id)
+    for controller in world.get_actors().filter("controller.ai.walker"):
+        parent: Optional["carla.Actor"] = None
+        try:
+            parent = controller.parent
+        except RuntimeError:  # destroyed since the listing
+            continue
+        if parent is None:
+            continue
+        attached: "carla.Actor" = parent
+        if int(attached.id) == walker_id:
+            _release(controller)
 
 
 def _release(sensor: "carla.Actor") -> None:

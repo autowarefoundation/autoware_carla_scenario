@@ -2090,6 +2090,27 @@ class SumoTrafficBackend(TrafficBackend):
             self._draw_vehicle(sumo_id, overrides)
         logger.info("SUMO: ambient %s resumed; SUMO drives it again", sumo_id)
 
+    def remove_walker(self, world: Any, actor: Any) -> bool:
+        """Let go of a SUMO pedestrian's mirror the caller is destroying (a
+        fallen one): its person leaves SUMO too, so the person sync does not
+        follow a destroyed walker nor mirror the person again, standing."""
+        del world
+        person = self._mirrored_id(actor)
+        if person is None or person not in self._persons:
+            return False
+        if int(self._persons[person].id) != int(actor.id):
+            return False
+        del self._persons[person]
+        self._physics.pop(actor.id, None)
+        self._constant_speed.pop(actor.id, None)
+        self._box_offsets.pop(actor.id, None)
+        try:
+            self._traci.person.remove(person)
+        except Exception as exc:  # noqa: BLE001 - gone from SUMO already
+            logger.debug("SUMO could not remove person %s: %s", person, exc)
+        logger.info("SUMO: pedestrian %s removed with its mirror", person)
+        return True
+
     @staticmethod
     def _mirrored_id(actor: Any) -> Optional[str]:
         """The SUMO id a mirror's role name names, if it is one."""

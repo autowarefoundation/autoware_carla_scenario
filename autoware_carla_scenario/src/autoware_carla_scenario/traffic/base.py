@@ -884,6 +884,20 @@ class TrafficBackend:
             world: The CARLA world.
         """
 
+    def remove_walker(self, world: "carla.World", actor: "carla.Actor") -> bool:
+        """Let go of the walker *actor* for good: the caller destroys it next.
+
+        For a walker no entity stands for (a fallen one,
+        :class:`~autoware_carla_scenario.npc_collisions.NpcCollisionMonitor`):
+        a backend that put it in the world forgets it, and does not put it
+        back.  Whether it was this backend's.  The base owns no walkers.
+
+        Args:
+            world: The CARLA world.
+            actor: The walker leaving the world.
+        """
+        return False
+
     # ------------------------------------------------------------------
     # Level of detail -- microscopic near what matters, mesoscopic elsewhere
     # ------------------------------------------------------------------

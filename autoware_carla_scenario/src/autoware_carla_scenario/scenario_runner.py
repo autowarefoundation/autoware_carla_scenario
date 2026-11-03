@@ -375,12 +375,13 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
-def _npc_collision_monitor() -> "NpcCollisionMonitor":
+def _npc_collision_monitor(backend: TrafficBackend) -> "NpcCollisionMonitor":
     """The run's :class:`~autoware_carla_scenario.npc_collisions.NpcCollisionMonitor`:
-    the road users' own collisions and falls, logged, not judged."""
+    the road users' own collisions and falls, logged, not judged; a fallen
+    walker *backend* put in the world is taken back from it."""
     from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
 
-    return NpcCollisionMonitor()
+    return NpcCollisionMonitor(traffic_backend=backend)
 
 
 def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
@@ -1816,7 +1817,7 @@ class ScenarioRunner:
             coverage.start(world, clock.simulated)
 
             # The road users' own collisions and falls, logged (not judged).
-            npc_events = _npc_collision_monitor()
+            npc_events = _npc_collision_monitor(backend)
 
             # Tick loop
             while not scenario.is_done():
