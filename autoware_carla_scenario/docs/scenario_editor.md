@@ -294,8 +294,8 @@ single action:
 | --- | --- |
 | `standbyState` | Instantiated, waiting for its start trigger |
 | `startTransition` | The trigger fired and `execute()` ran -- held for one tick |
-| `runningState` | The work is under way |
-| `endTransition` | The completion criteria were met -- held for one tick |
+| `runningState` | The work is under way -- only for an action that runs on (below) |
+| `endTransition` | The completion criteria were met -- held for one tick, only for an action that runs on (below) |
 | `completeState` | Finished (a repeating action returns to `standbyState`) |
 
 `completeState` is the one that makes "after the cut-in" verifiable. A forced
@@ -312,6 +312,14 @@ OpenSCENARIO has neither. A manoeuvre that never happens stays in
 that did not occur; ending such a run is the scenario timeout's job, which is
 already a FAIL condition. The two transition states are each held for exactly
 one tick, so a condition watching `startTransition` sees it.
+
+`runningState` and `endTransition` are only reached by an action that *runs
+on*: one with an `until` condition, or one that re-sends its command every
+tick. An action with neither -- a traffic light set, say -- is over the moment
+it is commanded: on the tick after `startTransition` it goes straight to
+`completeState` (back to `standbyState` when it repeats), so waiting on
+*Running* or *End* for it never holds. Wait on *Complete* instead
+([architecture](architecture.md), "Action lifecycle").
 
 Which is also why a card can be moved into an **empty** step rather than only
 swapped with its neighbour: a reaction has to be placeable to the right of the

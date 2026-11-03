@@ -29,11 +29,27 @@ class ActionState(enum.Enum):
         manoeuvre, because the request to the traffic backend returns long
         before the vehicle has moved.
     ``END_TRANSITION``
-        The completion criteria have been met.  Also held for one tick.
+        The completion criteria have been met.  Also held for one tick --
+        but only by an action that runs on (see below).
     ``COMPLETE``
         Finished.  A repeating action (``once=False``) returns to ``STANDBY``
         instead, matching OpenSCENARIO's behaviour for an element with a
         maximum execution count above one.
+
+    ``RUNNING`` and ``END_TRANSITION`` are only seen on an action that *runs
+    on*: one given an ``until`` condition, or one that reissues its command
+    every tick (:attr:`BaseAction.reissues_while_running`).  Such an action
+    sits in ``RUNNING`` on every tick its ``until`` has not yet held -- none,
+    if that is the tick after it fired, or if it reissues with no ``until`` --
+    and then holds ``END_TRANSITION`` for one tick.  An action with neither is
+    over the moment it is commanded: on the tick after ``START_TRANSITION`` it
+    goes straight to ``COMPLETE`` (``STANDBY`` when ``once=False``, from which
+    it may fire again on that same tick), and is never seen in ``RUNNING`` or
+    ``END_TRANSITION``.  A condition waiting on either of those for such an
+    action never holds; wait on ``COMPLETE`` (or ``START_TRANSITION``)
+    instead.  An action fired in the init phase is settled there at once
+    (:meth:`BaseAction._settle_start`) and never holds ``END_TRANSITION``
+    either.
 
     There is deliberately no failure state: OpenSCENARIO has none either.  An
     action whose completion criteria are never met stays ``RUNNING``, and it is
