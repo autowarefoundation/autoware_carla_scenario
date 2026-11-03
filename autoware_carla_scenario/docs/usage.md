@@ -339,6 +339,14 @@ loading. A case that ended normally stopped its server itself, so nothing is
 waited for; nor is a server the case did not launch (one you started
 yourself, which it reused), which no case stops.
 
+A sweep whose config sets a value its runs would refuse (a `t4scene.step_s`
+that is not a multiple of the tick, a negative `server.cooldown_max_retries`,
+an unknown `server.world_reset` or `traffic.backend`, a
+`scenario.timeout_seconds` that is not positive, ...) exits 2 before the map is
+fetched or any case runs, naming the key, rather than have every case refuse
+it in turn. So does one asking for an extra (`rerun`, `t4`) that is not
+installed.
+
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` / `sweep.resume_from` is
@@ -1076,7 +1084,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error |
-| 2 | Refused before anything ran: the scenario does not type-check, or an extra it asks for (`rerun`, `t4`) is not installed |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a

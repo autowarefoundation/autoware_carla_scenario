@@ -777,7 +777,7 @@ def test_a_null_timeout_gets_past_the_check(fake_slurm: SimpleNamespace) -> None
     run = fake_slurm.run
     cfg = run._compose_config(_CONCRETE, ["scenario.timeout_seconds=null"])
     assert cfg.scenario.timeout_seconds is None
-    run._check_slurm_cases([cfg])
+    run.check_batch_configs([cfg])
 
 
 def test_slurm_checks_every_case_not_only_the_first(
@@ -814,9 +814,9 @@ def test_slurm_checks_the_launcher_of_an_autoware_case_after_an_autopilot_one(
     first = run._compose_config(_CONCRETE, ["autoware.launcher.type=bogus"])
     second = run._compose_config(_CONCRETE, ["autoware.launcher.type=bogus"])
     second.ego.entity = "autoware"
-    run._check_slurm_cases([first])
+    run.check_batch_configs([first])
     with pytest.raises(ValueError, match="autoware.launcher.type"):
-        run._check_slurm_cases([first, second])
+        run.check_batch_configs([first, second])
 
 
 def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
