@@ -701,6 +701,13 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_dict": _FROM_MAPPING,
     },
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
+    "DriverConfig": {
+        "bridge": (
+            "a Hydra mapping of AutowareBridgeConfig's fields, or None "
+            "(`dict[str, Any] | None`), which Codon has no type for; the run "
+            "builds the bridge from it (examples/run.py), not a scenario"
+        )
+    },
     "TrajectoryRecorder": {
         "record_metric": (
             "writes the metrics computed once the run is over; only "
