@@ -1378,6 +1378,47 @@ class TestResolveDirectory:
         assert resolved.directory == local_map
         assert resolved.lanelet2_path == local_map / "other.osm"
 
+    def test_a_named_osm_with_an_upper_case_suffix_is_the_one_used(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        # Not the lanelet2_map.osm beside it (#1266).
+        (local_map / "Edited.OSM").write_text(_OSM)
+        resolved = resolve_directory(local_map / "Edited.OSM", cache=cache)
+        assert resolved.directory == local_map
+        assert resolved.lanelet2_path == local_map / "Edited.OSM"
+
+    def test_a_lone_named_osm_with_an_upper_case_suffix_resolves(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        directory = tmp_path / "TownU"
+        directory.mkdir()
+        (directory / "only.OSM").write_text(_OSM)
+        resolved = resolve_directory(directory / "only.OSM", cache=cache)
+        assert resolved.lanelet2_path == directory / "only.OSM"
+
+    def test_an_unnamed_directory_still_matches_the_suffix_exactly(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        # A stray .OSM does not make the directory's one .osm ambiguous ...
+        (local_map / "notes.OSM").write_text(_OSM)
+        resolved = resolve_directory(local_map, cache=cache)
+        assert resolved.lanelet2_path == local_map / "lanelet2_map.osm"
+        # ... and a directory holding only one is still one with no map.
+        lone = local_map.parent / "UpperOnly"
+        lone.mkdir()
+        (lone / "map.OSM").write_text(_OSM)
+        with pytest.raises(MapResolutionError, match=r"no Lanelet2 \(\.osm\)"):
+            resolve_directory(lone, cache=cache)
+
+    def test_a_named_osm_linked_out_of_its_directory_is_an_error_not_a_fallback(
+        self, local_map: Path, cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside.osm"
+        outside.write_text(_OSM)
+        (local_map / "linked.osm").symlink_to(outside)
+        with pytest.raises(MapResolutionError, match="is a link out of"):
+            resolve_directory(local_map / "linked.osm", cache=cache)
+
     def test_a_named_osm_that_is_missing_is_an_error_not_a_fallback(
         self, local_map: Path, cache: GitMapCache
     ) -> None:

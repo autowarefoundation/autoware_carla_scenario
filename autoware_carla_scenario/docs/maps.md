@@ -282,7 +282,10 @@ uv run scenario map=town10hd_opt map.directory=/path/to/autoware_maps/Town10HD_O
 
 The directory is read exactly as a map directory in a repository is: its `.osm`
 (`lanelet2_map.osm` when there are several), `map_projector_info.yaml`, and any
-`.xodr` it ships. It may name the `.osm` itself to pick one out of several.
+`.xodr` it ships. It may name the `.osm` itself to pick one out of several;
+that file is used whatever the case of its suffix (`Edited.OSM`), and is never
+swapped for another `.osm` beside it. A directory itself is searched for
+`*.osm` and `*.xodr` with the case matched exactly, as a repository is.
 Nothing is cloned and no revision is recorded, so such a map cannot be pinned.
 
 `map.directory` wins over `map.source`, which is what lets a run be pointed at a

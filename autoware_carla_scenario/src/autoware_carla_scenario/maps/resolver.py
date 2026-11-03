@@ -349,7 +349,12 @@ def resolve_directory(
     ``.osm`` (``lanelet2_map.osm`` when there are several), its
     ``map_projector_info.yaml`` and any ``.xodr`` it ships.  *directory* may
     also name the ``.osm`` itself, which picks that file out of a directory
-    holding several.
+    holding several.  That file is the one used, whatever the case of its
+    suffix (``Edited.OSM``): it is never swapped for another ``.osm`` beside
+    it.  A directory, on the other hand, is searched for ``*.osm`` (and
+    ``*.xodr``) exactly as a checkout is, case and all, so a stray ``.OSM``
+    beside a map's one ``.osm`` never turns that one match into an ambiguous
+    one.
 
     An OpenDRIVE fetched from CARLA for this map is kept under the map root
     rather than written into *directory*, which is the user's and may well be
@@ -383,7 +388,20 @@ def resolve_directory(
     slug = _SLUG_UNSAFE.sub("-", path.name).strip("-").lower() or "root"
     derived = store.root / DERIVED_SUBDIR / LOCAL_DERIVED_SUBDIR / f"{slug}-{digest}"
 
-    lanelet2_path = _find_lanelet2(path, named=named)
+    if named:
+        # The file named outright is used as it is, never looked up again: the
+        # suffix test above ignores case (``Edited.OSM`` is a Lanelet2 map),
+        # and handing the name to _find_lanelet2 -- whose ``named`` and glob
+        # match ``.osm`` exactly, as a repository path is matched -- ran the
+        # ``lanelet2_map.osm`` beside it instead, or reported no map at all.
+        lanelet2_path = path / named
+        if not _is_map_file(path, lanelet2_path):
+            raise MapResolutionError(
+                f"Lanelet2 map {lanelet2_path} is a link out of {path}, so it "
+                "is not that map's file."
+            )
+    else:
+        lanelet2_path = _find_lanelet2(path)
     if is_lfs_pointer(lanelet2_path):
         raise MapResolutionError(
             f"{lanelet2_path} is a git-lfs pointer, not a map. Run "
