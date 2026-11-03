@@ -456,6 +456,8 @@ def test_batch_settings_cases_name_a_case_for_each_setting(
     """The cases recorded decide what every case decides: one per distinct
     ``rerun`` block, the first naming a canvas."""
     pytest.importorskip("autoware_carla_scenario_rerun")
+    # rerun.lidar records the sensors with the Rerun SDK itself.
+    pytest.importorskip("rerun")
     run = fake_slurm.run
     lidar = ["rerun.enabled=true", "rerun.lidar=true", "rerun.lidar_max_points=7"]
     canvas = ["++canvas.config=/canvas.yaml"]
