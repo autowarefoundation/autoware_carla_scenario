@@ -21,6 +21,7 @@ from .protocol import (
     RUNNER_MESSAGES,
     LineReader,
     encode,
+    format_address,
     parse_address,
 )
 
@@ -39,6 +40,9 @@ _POLL_S = 0.2
 class RunnerLink:
     """Listens for scenario runs at *address* (``host:port``; port 0 picks one).
 
+    An IPv6 address is written in brackets to give a port (``[::1]:7700``);
+    :func:`~.wire.parse_address` lists the forms.
+
     Args:
         address: Where to listen.
         events: Where the runs' requests go.
@@ -46,7 +50,10 @@ class RunnerLink:
 
     def __init__(self, address: str, events: "queue.Queue[Event]") -> None:
         host, port = parse_address(address)
-        self._server = socket.create_server((host, port), reuse_port=False)
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        self._server = socket.create_server(
+            (host, port), family=family, reuse_port=False
+        )
         self._server.settimeout(_POLL_S)
         self._events = events
         self._conn: Optional[socket.socket] = None
@@ -70,7 +77,7 @@ class RunnerLink:
     def start(self) -> None:
         """Start serving runs."""
         self._thread.start()
-        logger.info("waiting for scenario runs on %s:%d", *self.address)
+        logger.info("waiting for scenario runs on %s", format_address(*self.address))
 
     def send(self, message: Mapping[str, Any]) -> bool:
         """Send *message* to the connected run; whether there was one to send to."""
@@ -101,7 +108,10 @@ class RunnerLink:
                 continue
             except OSError:
                 return
-            logger.info("scenario run connected from %s:%d", *peer[:2])
+            logger.info(
+                "scenario run connected from %s",
+                format_address(str(peer[0]), int(peer[1])),
+            )
             with self._lock:
                 self._conn = conn
             self.send({"type": "hello", "protocol": PROTOCOL_VERSION})

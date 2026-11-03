@@ -55,7 +55,13 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from .measurements import CAMERA_ENCODINGS
-from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT, command_value
+from .protocol import (
+    COMMAND_FIELDS,
+    COMMAND_MODES,
+    DEFAULT_PORT,
+    command_value,
+    parse_address,
+)
 from .signals import SIGNALS
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
@@ -847,6 +853,14 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
             f'(listen: "0.0.0.0:{DEFAULT_PORT}"), or null for no run link'
         )
     listen = "" if listen is None else listen
+    if listen:
+        try:
+            parse_address(listen)
+        except ValueError as exc:
+            raise HilsConfigError(
+                f"runner.listen: {exc}; write host:port, or [host]:port for "
+                f'an IPv6 address (listen: "[::]:{DEFAULT_PORT}")'
+            ) from exc
     commands = _mapping(root.get("commands"), "commands")
     _only(commands, ("mode",), "commands")
     mode = _text(commands.get("mode", "control"), "commands.mode")

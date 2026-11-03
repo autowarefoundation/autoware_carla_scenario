@@ -22,7 +22,8 @@ ego:
 # canvas: canvas.yaml
 
 # Where runs with ego.entity=hils reach the bridge (their hils.host/port).
-# null: no run link; the ego appearing then starts a scenario.
+# null: no run link; the ego appearing then starts a scenario. An IPv6
+# address goes in brackets, quoted: "[::]:7700".
 runner:
   listen: 0.0.0.0:7700
 

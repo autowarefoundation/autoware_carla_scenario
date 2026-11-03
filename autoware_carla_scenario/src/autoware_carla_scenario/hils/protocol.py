@@ -31,9 +31,9 @@ bridge -> runner
 ========================  ===================================================
 
 Only the standard library is needed here, so a run reaches the bridge without
-hilspy installed.  The constants and :func:`encode` / :func:`parse_address`
-live in :mod:`.wire`, which needs no socket (so the static check compiles
-it); they are re-exported here.
+hilspy installed.  The constants and :func:`encode`, :func:`parse_address` and
+:func:`format_address` live in :mod:`.wire`, which needs no socket (so the
+static check compiles it); they are re-exported here.
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from .wire import (
     PROTOCOL_VERSION,
     RUNNER_MESSAGES,
     encode,
+    format_address,
     parse_address,
 )
 
@@ -63,6 +64,7 @@ __all__ = [
     "PROTOCOL_VERSION",
     "LineReader",
     "encode",
+    "format_address",
     "parse_address",
 ]
 
