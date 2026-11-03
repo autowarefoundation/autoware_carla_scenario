@@ -140,7 +140,7 @@ tree internally:
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `TurnIndicatorAction` | Light a vehicle's turn indicators (`TurnIndicatorState`: `OFF` / `LEFT` / `RIGHT` / `HAZARD`), its other lights as they are; they stay so until set again. |
 | `CommunicationLossAction` | Stop data between the HILS bridge and an ECU under test (`ego.entity=hils`) while the action runs (until `until` fires or `duration` passes, else to the scenario's end): `messages` by name (a CAN frame, a LiDAR's `scan`) or everything of a `device` (or of every device), `to_ecu` / `from_ecu` / `both`; no effect on any other ego. See [HILS](hils.md#communication-loss). |
-| `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
+| `LaneChangeAction`, `LaneChangeDirection` | Ask a vehicle's traffic backend for a lane change (TrafficManager `force_lane_change`, SUMO `changeLane`); an ego driven by its own stack refuses. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
 | `RoutingAction`, `RoutingMode` | Send the ego, a vehicle or a pedestrian to a goal through waypoints (a goal with Lanelet2 waypoints, or a `trajectory`); `mode` is `DRIVER` (its own driver, Lanelet2 legs, paced by speed to the waypoints' times), `FOLLOW` or `POSITION` (straight legs, as OpenSCENARIO follows a trajectory); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; it routes an entity in the scene (bring a hidden one in with `SpawnAction`), starting where it stands. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 

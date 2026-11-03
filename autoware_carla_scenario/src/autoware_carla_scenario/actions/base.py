@@ -65,7 +65,7 @@ class BaseAction(ABC):
             (default) -- :attr:`overrides`.
 
     Firing and finishing are two different moments.  :meth:`execute` only
-    *starts* the work -- ``force_lane_change`` returns long before the vehicle
+    *starts* the work -- a lane change request returns long before the vehicle
     is in the next lane -- so an action stays observable afterwards through
     *until*, and :attr:`state` reports where it is in the :class:`ActionState`
     lifecycle.  Anything reacting to a manoeuvre having finished has to wait for
@@ -85,8 +85,8 @@ class BaseAction(ABC):
       on every tick to move it at all.
 
     Keeping them apart is what lets both shapes exist.  An action that hands
-    work to the simulator and then watches for it to land -- ``force_lane_change``
-    returns long before the vehicle is in the next lane -- says when it is over
+    work to the simulator and then watches for it to land -- a lane change
+    request returns long before the vehicle is in the next lane -- says when it is over
     without ever repeating its command.  An action that keeps acting says both.
 
     Whether a command has to be reissued is a property of **whatever is driving

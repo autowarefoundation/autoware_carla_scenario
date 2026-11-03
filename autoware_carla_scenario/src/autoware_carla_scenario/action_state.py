@@ -25,9 +25,9 @@ class ActionState(enum.Enum):
         for exactly the tick it happens on, which is what makes it usable as a
         trigger for something else.
     ``RUNNING``
-        The work is under way.  A forced lane change sits here for the whole
-        manoeuvre, because ``force_lane_change`` returns long before the vehicle
-        has moved.
+        The work is under way.  A lane change sits here for the whole
+        manoeuvre, because the request to the traffic backend returns long
+        before the vehicle has moved.
     ``END_TRANSITION``
         The completion criteria have been met.  Also held for one tick.
     ``COMPLETE``

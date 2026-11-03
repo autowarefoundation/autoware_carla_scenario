@@ -1,4 +1,4 @@
-"""Lane-change action: force a lane change via TrafficManager."""
+"""Lane-change action: ask a vehicle's traffic backend for a lane change."""
 
 from __future__ import annotations
 
@@ -21,16 +21,38 @@ logger = logging.getLogger(__name__)
 
 
 class LaneChangeAction(BaseAction):
-    """Force a lane change via TrafficManager.
+    """Ask a vehicle to change one lane, through whatever drives it.
 
     When the associated condition is satisfied, this action:
 
     1. Locates the target vehicle by its ``role_name``
-    2. Calls ``TrafficManager.force_lane_change(actor, direction)`` to
-       command an immediate lane change
+    2. Calls ``entity.change_lane(world, direction)`` on it
 
-    ``force_lane_change`` only queues the manoeuvre, so the action keeps
-    watching the vehicle afterwards and stays
+    The action does not name a mechanism: the entity carries the request out
+    itself, and what happens depends on what drives it.
+
+    * A vehicle the run's traffic backend drives (an NPC, or a plain
+      :class:`~autoware_carla_scenario.entity.ego.EgoVehicle`; see
+      :class:`~autoware_carla_scenario.traffic.driven.BackendDriven`) hands
+      the request to that backend's ``change_lane``:
+
+      * the TrafficManager backend (the default) calls
+        ``TrafficManager.force_lane_change(actor, direction)``;
+      * the SUMO backend calls ``traci.vehicle.changeLane`` towards the
+        adjacent lane (logging a warning, but still asking, when the marking
+        forbids the change).  A vehicle SUMO simulates mesoscopically has no
+        lanes, so it logs a warning and does nothing; a scenario vehicle SUMO
+        leaves to the TrafficManager gets ``force_lane_change`` as above;
+      * a backend that cannot change lane (the ``none`` backend, or SUMO for a
+        vehicle it does not drive) logs a warning and does nothing.
+
+    * An ego driven by a stack of its own (an
+      :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`:
+      Autoware, an external driver policy, ROS 2 nodes) refuses: the stack
+      plans its own manoeuvres, so it logs a warning and does nothing.
+
+    The command only starts the manoeuvre, so the action keeps watching the
+    vehicle afterwards and stays
     :attr:`~autoware_carla_scenario.actions.base.ActionState.RUNNING` until the
     vehicle has actually settled onto the next lane.  That is the signal another
     actor can react to; ``done`` would fire while the car is still straddling
@@ -39,8 +61,8 @@ class LaneChangeAction(BaseAction):
     The waiting is a :class:`LaneChangeSettledCondition` supplied as the run's
     *until*, so the end of the manoeuvre is written in the same vocabulary as
     the trigger that started it.  The command itself is **not** reissued: one
-    ``force_lane_change`` queues the manoeuvre, and sending it again every tick
-    would restart it.
+    request starts the manoeuvre, and sending it again every tick would restart
+    it.
 
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.

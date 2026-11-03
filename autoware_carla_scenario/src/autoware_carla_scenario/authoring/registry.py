@@ -1036,7 +1036,11 @@ register_action_spec(
                 options=_DIRECTIONS,
             ),
         ),
-        description="Force a lane change through the CARLA TrafficManager.",
+        description=(
+            "Ask a vehicle to change one lane, through the traffic backend "
+            "driving it (the TrafficManager by default, or SUMO); an ego "
+            "driven by its own stack refuses."
+        ),
     )
 )
 
