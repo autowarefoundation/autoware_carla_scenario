@@ -131,6 +131,16 @@ self.register_pre_tick(
 | `offset` | `offset` | Metres from the **target lane's centreline**, positive to the left -- the sign of `Lanelet2Pose.t`. The reference entity's own lateral position does not carry over. |
 | `yaw` | `Orientation` (relative) | Radians from the target lane's direction, positive to the left (anticlockwise) -- the sense of `Lanelet2Pose.heading`. `None` faces along the path, as for `MapPose`. |
 
+A `RelativeLanePose` is also a place a condition can name:
+`PlaceClearCondition(RelativeLanePose(ds=20.0, entity_ref=EGO_ROLE_NAME), 5.0, 2.0, label=...)`
+holds while the spot 20 m ahead of the ego is clear, and
+`EntityPositionDistanceCondition` measures to such a spot. There it needs an
+`entity_ref` (no action moves an entity), and it follows that entity: it is
+placed afresh on every tick, and while the entity is not in the scene (not
+spawned yet, gone, or spawned hidden and parked under the map) the place is
+nowhere and the condition does not hold. A route pose without an `anchor`,
+counted from the ego, follows the ego the same way.
+
 How a vertex is placed, on the Lanelet2 map and its routing graph:
 
 1. **The reference's lane.** The lanelet the reference entity is on, and the

@@ -39,7 +39,8 @@ import logging
 import math
 from typing import TYPE_CHECKING, Callable, Optional, Sequence, Union
 
-from ..conditions.base import BaseCondition, find_actor_by_role_name
+from ..conditions.base import BaseCondition
+from ..conditions.entity_existence import ReferencePoses
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.map_manager import run_carla_map
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
@@ -121,24 +122,6 @@ def clear_props() -> None:
     the next starts: a batch runs several scenarios against one world."""
     for name in list(_STANDING.keys()):
         remove_prop(name)
-
-
-class _ReferencePose:
-    """Where an entity a relative position is written against is, in *world*."""
-
-    _world: "carla.World"
-
-    def __init__(self, world: "carla.World") -> None:
-        self._world = world
-
-    def pose(self, entity_ref: Optional[Union[EntityRole, str]]) -> CarlaWorldPose:
-        if entity_ref is None:
-            raise ValueError("a place relative to no entity")
-        actor = find_actor_by_role_name(self._world, str(entity_ref))
-        if actor is None:
-            raise ValueError(f"'{entity_ref}' is not in the world")
-        found: "carla.Actor" = actor
-        return CarlaWorldPose.from_carla_transform(found.get_transform())
 
 
 class SpawnAction(BaseAction):
@@ -462,7 +445,7 @@ class SpawnAction(BaseAction):
             given: Lanelet2Pose = position
             if int(given.lanelet_id) <= 0:
                 return None  # an entity's declared spawn
-        reference = _ReferencePose(world)
+        reference = ReferencePoses(world)
         try:
             x0, y0, z0, yaw0 = resolve_position(position, reference.pose)
         except ValueError as exc:

@@ -69,6 +69,7 @@ __all__ = [
     "TrajectorySample",
     "TrajectoryTiming",
     "TrajectoryVertex",
+    "placed_against_entity",
 ]
 
 #: Segments shorter than this (m) have no direction of their own.
@@ -451,6 +452,41 @@ TrajectoryPosition = Union[
     RouteCrosswalkPose,
     RouteRoadsidePose,
 ]
+
+
+def placed_against_entity(
+    position: Union[
+        CarlaWorldPose,
+        Lanelet2Pose,
+        OpenDrivePose,
+        MapPose,
+        RelativeLanePose,
+        RouteLanePose,
+        RouteOppositePose,
+        RouteCrossingPose,
+        RouteCrosswalkPose,
+        RouteRoadsidePose,
+    ],
+) -> bool:
+    """Whether *position* is placed against where an entity is now, and so
+    moves with it: a :class:`RelativeLanePose` (its ``entity_ref``), or a
+    route pose counted from the ego (a :class:`RouteLanePose`,
+    :class:`RouteOppositePose` or :class:`RouteRoadsidePose` without an
+    ``anchor``).  Any other is a fixed place."""
+    if isinstance(position, RelativeLanePose):
+        return True
+    # Each class on its own, named as the class: Codon reads no attribute of
+    # a union (docs/typecheck.md).
+    if isinstance(position, RouteLanePose):
+        on_lane: RouteLanePose = position
+        return on_lane.anchor is None
+    if isinstance(position, RouteOppositePose):
+        opposite: RouteOppositePose = position
+        return opposite.anchor is None
+    if isinstance(position, RouteRoadsidePose):
+        roadside: RouteRoadsidePose = position
+        return roadside.anchor is None
+    return False
 
 
 #: How a vertex's time is written now, for the errors below.

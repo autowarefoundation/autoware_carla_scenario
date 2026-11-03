@@ -3671,7 +3671,9 @@ register_condition_spec(
                 required=False,
                 help=(
                     "The place as one route vertex ('kind key=value ...', as Route "
-                    "vertices take them), placed on the scenario's route; it "
+                    "vertices take them), placed on the scenario's route (one "
+                    "without an anchor follows the ego, placed afresh every "
+                    "tick); it "
                     "takes the place of lanelet and s."
                 ),
             ),
@@ -4611,7 +4613,9 @@ register_condition_spec(
                 required=False,
                 help=(
                     "The place as one route vertex ('kind key=value ...', as Route "
-                    "vertices take them), placed on the scenario's route; it "
+                    "vertices take them), placed on the scenario's route (one "
+                    "without an anchor follows the ego, placed afresh every "
+                    "tick); it "
                     "takes the place of lanelet, s, t and heading."
                 ),
             ),

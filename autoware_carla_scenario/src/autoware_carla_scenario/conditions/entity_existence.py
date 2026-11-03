@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from ..coordinate.poses import CarlaWorldPose
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
 from ..failure import FailureCategory
@@ -42,6 +43,62 @@ def find_present_actor_by_role_name(
     if actor is None or float(actor.get_location().z) < HIDDEN_BELOW_M:
         return None
     return actor
+
+
+class ReferenceAbsentError(ValueError):
+    """The entity a relative place is written against is not in the scene
+    (:meth:`ReferencePoses.pose`): a place that waits for it, rather than one
+    that cannot be placed at all."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class ReferencePoses:
+    """Where the entities relative places are written against are now, in
+    *world*: the ``reference`` of
+    :func:`~autoware_carla_scenario.trajectory.resolve.resolve_position`.
+
+    A :class:`~autoware_carla_scenario.trajectory.model.RelativeLanePose` is
+    placed against its ``entity_ref``, and a route pose without an anchor
+    against the ego (:func:`~autoware_carla_scenario.trajectory.model.placed_against_entity`).
+
+    Args:
+        world: The CARLA world the entities are looked up in.
+        present_only: Count an actor parked under the map (spawned hidden, not
+            yet brought in) as absent, as a condition reads a second entity
+            (:func:`find_present_actor_by_role_name`).  Off, the actor is
+            read wherever it is, as :class:`~autoware_carla_scenario.actions.SpawnAction`
+            reads it.
+    """
+
+    # Declared for the static check (docs/typecheck.md).
+    _world: "carla.World"
+    _present_only: bool
+
+    def __init__(self, world: "carla.World", present_only: bool = False) -> None:
+        self._world = world
+        self._present_only = present_only
+
+    def pose(self, entity_ref: Optional[Union[EntityRole, str]]) -> CarlaWorldPose:
+        """Where *entity_ref* is now.
+
+        Raises:
+            ValueError: For no entity (``None``: a place relative to "the
+                entity the action moves", which a lookup by name has not got).
+            ReferenceAbsentError: When the entity is not in the scene.
+        """
+        if entity_ref is None:
+            raise ValueError("a place relative to no entity")
+        name = str(entity_ref)
+        if self._present_only:
+            actor = find_present_actor_by_role_name(self._world, name)
+        else:
+            actor = find_actor_by_role_name(self._world, name)
+        if actor is None:
+            raise ReferenceAbsentError(f"'{entity_ref}' is not in the world")
+        found: "carla.Actor" = actor
+        return CarlaWorldPose.from_carla_transform(found.get_transform())
 
 
 class EntityExistenceCondition(BaseCondition):
