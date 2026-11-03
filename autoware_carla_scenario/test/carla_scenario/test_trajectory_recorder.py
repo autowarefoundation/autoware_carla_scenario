@@ -312,7 +312,8 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     assert records[2]["stops"] == [[5.0, 18.0, 0.0, -90.0]]
     # Only vehicles/walkers are recorded; the camera is looked up once and skipped.
     assert records[3]["id"] == 1 and records[3]["role"] == "Ego"
-    # The ego's rear axle: half its box behind, the vehicle having no wheels.
+    # The ego's rear axle: half its box's half-length (-0.5 * extent.x, a
+    # quarter of its length) behind, the vehicle having no wheels.
     assert records[4] == {"type": "rear_axle", "id": 1, "offset": -1.225}
     first, second = records[5], records[6]
     assert first["actors"] == [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0]]

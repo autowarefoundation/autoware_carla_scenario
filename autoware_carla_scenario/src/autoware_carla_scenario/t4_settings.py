@@ -81,7 +81,7 @@ class T4Settings:
     #: (``driver.image_quality``, which the policy's frames have too).
     jpeg_quality: int = 90
     #: The rig origin's offset from the actor, ``driver.rear_axle_offset_m``;
-    #: None derives it from the vehicle's wheels.  Used only when the running
+    #: None derives it from the vehicle's wheels, else its box.  Used only when the running
     #: ego set no base_link of its own (``ego_base_link``), as a ROS 2 or a
     #: bridged stack's ego and a driver entity do.
     rear_axle_offset_m: Optional[float] = None

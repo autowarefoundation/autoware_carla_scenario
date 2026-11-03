@@ -11,7 +11,7 @@ meant to be referenced from other repositories:
 ```yaml
 - uses: actions/checkout@v4
 
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
   with:
     scenario-package-path: my_scenario_package
     image: ghcr.io/my-org/my-scenario
@@ -19,7 +19,8 @@ meant to be referenced from other repositories:
 ```
 
 Your repository needs to contain only your scenario package: the framework
-comes from the ref you reference the action by. Push to a registry with
+comes from the ref you reference the action by, so pin a release tag
+(`vX.Y.Z`) for a reproducible framework version. Push to a registry with
 `docker/login-action` first; this action does not handle credentials.
 
 The virtualenv ships as four layers -- the CARLA client (typesafe-carla with

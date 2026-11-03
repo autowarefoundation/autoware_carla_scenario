@@ -147,7 +147,7 @@ driver:
   warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
-  rear_axle_offset_m: null   # null derives it from the wheel physics
+  rear_axle_offset_m: null   # null: from the wheels, else the box
   send_ground_truth: false
   send_renderer_data: true       # CARLA ground truth: lights, traffic, speed limit
   send_actor_ground_truth: true
@@ -608,14 +608,15 @@ Two conversions sit between CARLA and the contract, both handled in
   negated, and angular velocity — a pseudovector — picks up an extra sign flip.
 * **Rig origin.** alpasim puts the rig origin at the rear-axle centre projected to the
   ground, while a CARLA actor's origin is at the vehicle centre. The offset is derived
-  from the vehicle's wheel physics and logged at session start. Sensor mounts
-  (`driver.cameras`, `driver.lidars`) are relative to the actor origin; the cameras'
+  from the vehicle's wheels, else its bounding box, and logged at session start.
+  Sensor mounts (`driver.cameras`, `driver.lidars`) are relative to the actor origin; the cameras'
   `rig_to_camera` and the LiDAR sweeps are moved by the offset into the rig.
 
 !!! warning "Rear-axle offset on CARLA 0.9.x"
     CARLA 0.9.x reports wheel positions in world coordinates and centimetres, so the
     derived offset can land far outside a plausible range. When that happens the value
-    falls back to half the bounding-box length and a warning is logged. Set
+    falls back to half the bounding box's half-length (`-0.5 * extent.x`, a quarter
+    of the box's length) behind the origin and a warning is logged. Set
     `driver.rear_axle_offset_m` (e.g. `-1.4`) to pin it explicitly.
 
 Observations are submitted with the ego pose in the **local** frame and velocities in

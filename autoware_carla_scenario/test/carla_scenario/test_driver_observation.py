@@ -193,7 +193,7 @@ def test_explicit_override_wins() -> None:
 
 
 def test_falls_back_to_the_bounding_box() -> None:
-    """Without usable wheel physics, half the vehicle length is a sane estimate."""
+    """Without usable wheel physics, a quarter of the box length is the estimate."""
     actor = MagicMock()
     actor.get_physics_control.side_effect = RuntimeError("no physics")
     actor.bounding_box.extent.x = 2.4

@@ -307,9 +307,9 @@ class DriverClientConfig:
 
     alpasim places the rig origin at the rear-axle centre projected to the ground while
     CARLA places the actor origin at the vehicle centre.  ``None`` derives the offset
-    from the vehicle's wheel physics; set it explicitly (e.g. ``-1.4``) if the derived
-    value looks wrong, which is a known CARLA 0.9.x quirk where wheel positions are
-    reported in world coordinates and centimetres.
+    from the vehicle's wheels, else its bounding box; set it explicitly (e.g.
+    ``-1.4``) if the derived value looks wrong, which is a known CARLA 0.9.x quirk
+    where wheel positions are reported in world coordinates and centimetres.
     """
 
     send_ground_truth: bool = False
