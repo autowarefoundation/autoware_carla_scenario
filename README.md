@@ -49,8 +49,10 @@ through it, your own policy included.
 ### Working on this repository
 
 Python 3.10 to 3.14. Every dependency installs from a wheel or from git — no apt
-packages, no C++ toolchain, no container. `git` has to be on `PATH`, because
-uv clones the converter.
+packages, no C++ toolchain, no container. On Python 3.10 to 3.12, `git` has to
+be on `PATH`: uv clones [t4-devkit](https://github.com/tier4/t4-devkit), the
+dev dependency the T4 dataset tests read their datasets back with (it supports
+only Python 3.10 to 3.12, so 3.13 and 3.14 skip it).
 
 ```bash
 uv sync --dev
