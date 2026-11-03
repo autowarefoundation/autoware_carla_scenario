@@ -105,8 +105,10 @@ def export_map(
     run's Lanelet2 map, the set holds it as its ``t4`` format (and ``t4`` is
     written even if ``formats`` leaves it out); without, ``t4`` cannot be
     written. A complete set already holding every format is reused
-    as it is. A set is built in a scratch directory beside its destination and
-    moved into place whole, so a reader never sees one half written.
+    as it is. One lacking some is built again holding the formats it has and
+    those asked for: a set only ever grows, its id unchanged. A set is built in
+    a scratch directory beside its destination and moved into place whole, so
+    a reader never sees one half written.
     """
     provided: Dict[str, Path] = {}
     if lanelet2_path is not None:
@@ -136,69 +138,100 @@ def export_map(
     )
     root = Path(map_dir)
     target = root / map_id
-    if _has_formats(target, formats):
+    present = _formats_in(target)
+    if set(formats) <= set(present):
         logger.info("map %s already written to %s", map_id, target)
         return map_id
 
-    converted = [name for name in formats if name not in provided and name not in given]
-    roadgen = _import_roadgen(converted) if converted else None
-
+    # The id names the content, not the formats, so a set grows by the formats
+    # a run asks for and never loses one an earlier run wrote. Every run of one
+    # id gives the same files (they are in the id): whatever the set holds that
+    # this run does not give was converted, and is converted again, so that
+    # every format's trace leads into the same IR.
     root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
-        out = Path(scratch)
-        (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
-        manifest: Dict[str, Any] = {
-            "map_id": map_id,
-            "map_name": map_name,
-            "roadgen_version": "",
-            "source": SOURCE_FILE,
-            "ir": IR_FILE,
-            "read_trace": READ_TRACE_FILE,
-        }
-        written: Dict[str, Dict[str, Any]] = {}
-        if roadgen is not None:
-            sanitized = out / READ_FILE
-            sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
-            world_map = roadgen.read_opendrive(str(sanitized))
-            for warning in world_map.read_warnings():
-                logger.info("roadgen read %s: %s", map_name, warning)
+    for _ in range(len(MAP_FORMATS) + 2):
+        formats = tuple(dict.fromkeys((*formats, *present)))
+        with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
+            out = Path(scratch) / "set"
+            aside = Path(scratch) / "old"
+            _build(out, map_id, map_name, opendrive, formats, provided, given)
 
-            world_map.export_ir(str(out / IR_FILE))
-            world_map.write_read_trace(str(out / READ_TRACE_FILE))
-            manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
-            written = {name: _export(world_map, name, out) for name in converted}
-        else:
-            _write_json(out / IR_FILE, {})
-            _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
-        for name, path in provided.items():
-            written[name] = _copy_provided(path, out / MAP_FORMATS[name])
-        for name, data in given.items():
-            written[name] = _write_given(data, out / MAP_FORMATS[name])
-        manifest["formats"] = {name: written[name] for name in formats}
-        (out / MANIFEST_FILE).write_text(
-            json.dumps(manifest, indent=1), encoding="utf-8"
-        )
-
-        # Runs in other processes may write the same set meanwhile (the tasks
-        # of a SLURM batch, docs/slurm.md): one complete by now is theirs, and
-        # as good as this one -- the id is the content's.
-        if _has_formats(target, formats):
-            logger.info("map %s written to %s meanwhile", map_id, target)
-            return map_id
-        if target.exists():
-            shutil.rmtree(target)
-        try:
-            out.rename(target)
-        except OSError:
-            if _has_formats(target, formats):
+            # Runs in other processes may write the same set meanwhile (the
+            # tasks of a SLURM batch, docs/slurm.md). Theirs is kept if it
+            # holds every format this one does -- the id is the content's;
+            # one holding formats this one lacks is built again with them.
+            present = _formats_in(target)
+            if set(formats) <= set(present):
                 logger.info("map %s written to %s meanwhile", map_id, target)
                 return map_id
-            raise
-        # The scratch directory is gone; recreate it so the context manager's
-        # cleanup has something to remove.
-        out.mkdir()
-    logger.info("wrote map %s (%s) to %s", map_id, ", ".join(formats), target)
-    return map_id
+            if set(present) <= set(formats):
+                # Each rename moves a complete set: a reader never sees one half
+                # written (only, between the two, none).
+                try:
+                    if target.exists():
+                        target.rename(aside)
+                    if set(_formats_in(aside)) <= set(formats):
+                        out.rename(target)
+                        logger.info(
+                            "wrote map %s (%s) to %s",
+                            map_id,
+                            ", ".join(formats),
+                            target,
+                        )
+                        return map_id
+                    aside.rename(target)  # grown meanwhile: put it back
+                except OSError:
+                    pass
+            present = {**_formats_in(target), **_formats_in(aside)}
+    raise RuntimeError(f"map {map_id} kept changing in {target} while written")
+
+
+def _build(
+    out: Path,
+    map_id: str,
+    map_name: str,
+    opendrive: str,
+    formats: Tuple[str, ...],
+    provided: Mapping[str, Path],
+    given: Mapping[str, bytes],
+) -> None:
+    """Write the set holding ``formats`` to the new directory ``out``.
+
+    The manifest is written last, so a set without it is incomplete.
+    """
+    converted = [name for name in formats if name not in provided and name not in given]
+    roadgen = _import_roadgen(converted) if converted else None
+    out.mkdir()
+    (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
+    manifest: Dict[str, Any] = {
+        "map_id": map_id,
+        "map_name": map_name,
+        "roadgen_version": "",
+        "source": SOURCE_FILE,
+        "ir": IR_FILE,
+        "read_trace": READ_TRACE_FILE,
+    }
+    written: Dict[str, Dict[str, Any]] = {}
+    if roadgen is not None:
+        sanitized = out / READ_FILE
+        sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
+        world_map = roadgen.read_opendrive(str(sanitized))
+        for warning in world_map.read_warnings():
+            logger.info("roadgen read %s: %s", map_name, warning)
+
+        world_map.export_ir(str(out / IR_FILE))
+        world_map.write_read_trace(str(out / READ_TRACE_FILE))
+        manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
+        written = {name: _export(world_map, name, out) for name in converted}
+    else:
+        _write_json(out / IR_FILE, {})
+        _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
+    for name, path in provided.items():
+        written[name] = _copy_provided(path, out / MAP_FORMATS[name])
+    for name, data in given.items():
+        written[name] = _write_given(data, out / MAP_FORMATS[name])
+    manifest["formats"] = {name: written[name] for name in formats}
+    (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
 
 _EMPTY_TRACE: Dict[str, Any] = {"links": []}
@@ -265,9 +298,11 @@ def _export(world_map: Any, name: str, out: Path) -> Dict[str, Optional[str]]:
     return {"path": path, "trace": f"{path}.trace.json"}
 
 
-def _has_formats(directory: Path, formats: Tuple[str, ...]) -> bool:
+def _formats_in(directory: Path) -> Dict[str, Any]:
+    """The formats a complete set in ``directory`` holds; none if there is none."""
     try:
         manifest = json.loads((directory / MANIFEST_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return set(formats) <= set(manifest.get("formats", {}))
+        return {}
+    formats = manifest.get("formats") if isinstance(manifest, dict) else None
+    return dict(formats) if isinstance(formats, dict) else {}

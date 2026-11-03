@@ -512,7 +512,10 @@ and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
 (Lanelet2 by default; `lanelet2`, `opendrive`, `osm`, `clipgt` and `commonroad`, a
 CommonRoad 2020a scenario), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
 is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
-once per map and a changed map gets a new id.
+once per map and a changed map gets a new id. The id does not depend on the formats:
+a run asking for a format the set lacks writes it again with the formats it already
+holds and the new ones, under the same id, so a set only grows. The new set is
+built beside the old one and renamed into its place whole.
 
 Each step then carries only what changes: every light's state, named by its OpenDRIVE
 signal id, with its stop points on OpenDRIVE lanes. A policy that sets `map_dir` (its

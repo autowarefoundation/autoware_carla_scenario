@@ -13,7 +13,7 @@ import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Set
+from typing import Any, Dict, Set, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -139,6 +139,101 @@ def test_the_map_is_written_once_under_its_content_id(
     written = (directory / MANIFEST_FILE).stat().st_mtime_ns
     assert export_map(opendrive, "Carla/Maps/Town", tmp_path) == map_id
     assert (directory / MANIFEST_FILE).stat().st_mtime_ns == written, "rewrote a set"
+    assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
+
+
+def _manifest(directory: Path) -> Dict[str, Any]:
+    return json.loads((directory / MANIFEST_FILE).read_text())
+
+
+def test_asking_for_other_formats_grows_the_set(opendrive: str, tmp_path: Path) -> None:
+    first = export_map(opendrive, "Town", tmp_path, formats=("lanelet2", "osm"))
+    osm = (tmp_path / first / "openstreetmap.osm").read_bytes()
+    second = export_map(opendrive, "Town", tmp_path, formats=("commonroad",))
+
+    assert first == second == map_id_for("Town", opendrive), "the id is unchanged"
+    directory = tmp_path / first
+    formats = _manifest(directory)["formats"]
+    assert set(formats) == {"lanelet2", "osm", "commonroad"}
+    for entry in formats.values():
+        assert (directory / entry["path"]).exists()
+        assert (directory / entry["trace"]).is_file()
+    assert (directory / "openstreetmap.osm").read_bytes() == osm
+    assert [p.name for p in tmp_path.iterdir()] == [first], "left scratch behind"
+
+
+def test_formats_already_in_the_set_write_nothing(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("lanelet2", "osm"))
+    written = (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns
+    monkeypatch.setitem(sys.modules, "roadgen", None)  # importing it now fails
+    assert export_map(opendrive, "Town", tmp_path, formats=("osm",)) == map_id
+    assert export_map(opendrive, "Town", tmp_path, formats=()) == map_id
+    assert (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns == written
+    assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
+
+
+def test_a_grown_set_is_moved_into_place_whole(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    target = tmp_path / map_id
+    moved_in = []
+    rename = Path.rename
+
+    def checked_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target:
+            # What takes the set's name is complete: every format it lists is
+            # there, and it lists the formats the set had too.
+            formats = _manifest(self)["formats"]
+            assert set(formats) == {"osm", "commonroad"}
+            for entry in formats.values():
+                assert (self / entry["path"]).exists()
+            assert not target.exists(), "renamed onto a set"
+            moved_in.append(self)
+        return rename(self, destination)
+
+    monkeypatch.setattr(Path, "rename", checked_rename)
+    export_map(opendrive, "Town", tmp_path, formats=("commonroad",))
+    assert moved_in, "the set was not moved into place"
+    assert set(_manifest(target)["formats"]) == {"osm", "commonroad"}
+    assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
+
+
+@pytest.mark.parametrize(
+    ("theirs", "expected"),
+    [
+        (("commonroad",), {"lanelet2", "osm", "commonroad"}),  # rebuilt with both
+        (("lanelet2", "osm", "commonroad"), {"lanelet2", "osm", "commonroad"}),
+    ],
+)
+def test_a_set_written_meanwhile_keeps_its_formats(
+    opendrive: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    theirs: Tuple[str, ...],
+    expected: Set[str],
+) -> None:
+    """Another process writes the set while this one builds it."""
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    build = hdmap_export._build  # noqa: SLF001
+    calls = []
+
+    def racing_build(*args: object, **kwargs: object) -> None:
+        calls.append(args)
+        if len(calls) == 1:
+            export_map(opendrive, "Town", tmp_path, formats=theirs)
+        build(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hdmap_export, "_build", racing_build)
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("lanelet2", "osm"))
+    directory = tmp_path / map_id
+    formats = _manifest(directory)["formats"]
+    assert set(formats) == expected
+    for entry in formats.values():
+        assert (directory / entry["path"]).exists()
     assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
 
 
