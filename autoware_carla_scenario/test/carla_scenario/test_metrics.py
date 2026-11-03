@@ -26,6 +26,7 @@ from autoware_carla_scenario.conditions import (
     NotCondition,
     OrCondition,
     PersistentCondition,
+    ScenarioResult,
     StickyCondition,
 )
 from autoware_carla_scenario.metric_batch import FrameRecorder, evaluate_metrics
@@ -823,6 +824,74 @@ def test_a_condition_fails_once_its_metric_was_ng_long_enough() -> None:
     # Under the limit: it holds.
     assert condition.judge(times[:4], values[:4]) is None
     assert condition.get_details()["ng_seconds"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("ticks", [2, 3, 6, 10, 14, 20])
+@pytest.mark.parametrize("start", [0, 1, 7, 13, 50, 123, 250])
+def test_ng_for_exactly_max_ng_seconds_on_a_summed_clock_holds(
+    ticks: int, start: int
+) -> None:
+    # The runner's clock is a running sum of the 0.05 s tick, so NG for
+    # exactly the limit adds up a hair over it (1.0000000000000002 s);
+    # that is not "more than" the limit (#1236).
+    times: list[float] = []
+    t = 0.0
+    for _ in range(400):
+        times.append(t)
+        t += 0.05
+    limit = round(ticks * 0.05, 10)
+
+    def judge(ng_ticks: int) -> Optional[ScenarioResult]:
+        values: list[Optional[float]] = [5.0] * len(times)
+        for k in range(start, start + ng_ticks):
+            values[k] = 0.5
+        return condition.judge(times, values)
+
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=limit,
+        label="near",
+    )
+    assert judge(ticks) is None
+    assert not condition._last_satisfied
+    assert condition._last_message == ""
+    assert condition.get_details()["ng_seconds"] == pytest.approx(limit)
+    # One tick more is more than the limit: the run fails when the limit is
+    # up, at the end of the last tick it was allowed.
+    result = judge(ticks + 1)
+    assert result is not None
+    assert condition._last_satisfied
+    assert result.elapsed_seconds == pytest.approx(times[start] + limit)
+    assert result.elapsed_seconds == pytest.approx(times[start + ticks])
+    assert condition.get_details()["ng_seconds"] == pytest.approx(limit + 0.05)
+    assert condition.get_details()["ng_seconds"] > limit
+
+
+def test_ng_after_ng_for_exactly_the_limit_fails_no_earlier_than_its_frame() -> None:
+    # NG for exactly the limit sums to a hair over it (held, #1236); the
+    # next NG frame fails the run at its own time, not a hair before it,
+    # which would beat a live failure on that frame.
+    times: list[float] = []
+    t = 0.0
+    for _ in range(200):
+        times.append(t)
+        t += 0.05
+    values: list[Optional[float]] = [5.0] * len(times)
+    for k in range(7, 27):
+        values[k] = 0.5
+    values[150] = 0.5
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=1.0,
+        label="near",
+    )
+    result = condition.judge(times, values)
+    assert result is not None
+    assert result.elapsed_seconds == times[150]
 
 
 def test_nothing_read_is_not_ng() -> None:
