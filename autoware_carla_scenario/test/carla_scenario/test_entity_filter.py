@@ -155,6 +155,38 @@ class TestEntityFilter:
         (alone,) = EntityFilter().select(_world(AHEAD))
         assert math.isnan(alone.distance)
 
+    def test_a_reference_parked_under_the_map_counts_as_absent(self) -> None:
+        # A pedestrian spawned hidden, 500 m under where it will appear; a
+        # vehicle already stands next to that spot.
+        hidden_ped = _Actor(10, "walker.pedestrian.0001", "Ped", 100.0, 0.0, z=-500.0)
+        car = _Actor(11, "vehicle.lincoln.mkz", "npc9", 105.0, 0.5)
+        near_ped = EntityFilter(
+            reference="Ped",
+            kind=RoadUserKind.VEHICLE,
+            min_ahead_m=0.0,
+            max_ahead_m=10.0,
+            min_left_m=-2.0,
+            max_left_m=2.0,
+        )
+        assert _names(near_ped, _world(hidden_ped, car, EGO)) == []
+        # Even with every point under the road in range: no distance at all.
+        assert (
+            _names(
+                EntityFilter(reference="Ped", max_distance_m=1e6),
+                _world(hidden_ped, car),
+            )
+            == []
+        )
+        # No relative bound: as without the reference, nan distances.
+        (alone,) = EntityFilter(reference="Ped").select(_world(hidden_ped, car))
+        assert alone.name == "npc9"
+        assert math.isnan(alone.distance) and math.isnan(alone.ahead)
+        # Once it is brought in, it is the reference again.
+        shown_ped = _Actor(10, "walker.pedestrian.0001", "Ped", 100.0, 0.0)
+        (entity,) = near_ped.select(_world(shown_ped, car, EGO))
+        assert entity.name == "npc9"
+        assert entity.ahead == pytest.approx(5.0)
+
     def test_bounds_that_can_never_hold_are_refused(self) -> None:
         with pytest.raises(ValueError, match="above"):
             EntityFilter(min_ahead_m=5.0, max_ahead_m=1.0).validate()
@@ -203,6 +235,38 @@ class TestEntityCountCondition:
             EntityFilter(), ComparisonRule.GREATER_THAN, 4, label="crowd"
         )
         assert crowded.check(WORLD, 0.0) is None
+
+    def test_a_hidden_reference_is_like_a_missing_one(self) -> None:
+        hidden_ped = _Actor(10, "walker.pedestrian.0001", "Ped", 100.0, 0.0, z=-500.0)
+        shown_ped = _Actor(10, "walker.pedestrian.0001", "Ped", 100.0, 0.0)
+        car = _Actor(11, "vehicle.lincoln.mkz", "npc9", 105.0, 0.5)
+        # On the ground plane: the 500 m under the road do not keep it out.
+        near_ped = EntityFilter(
+            reference="Ped",
+            kind=RoadUserKind.VEHICLE,
+            min_ahead_m=0.0,
+            max_ahead_m=10.0,
+            min_left_m=-2.0,
+            max_left_m=2.0,
+        )
+        vehicle_near_ped = EntityCountCondition(near_ped, label="vehicle_near_ped")
+        # Not passing early, around the spot where it will appear.
+        assert vehicle_near_ped.check(_world(hidden_ped, car, EGO), 1.0) is None
+        assert vehicle_near_ped.matched == []
+        # "None near it" holds while it is hidden, as while it is missing.
+        none_near = EntityCountCondition(
+            near_ped, ComparisonRule.EQUAL_TO, 0, label="no_vehicle_near_ped"
+        )
+        missing = none_near.check(_world(car, EGO), 1.0)
+        hidden = none_near.check(_world(hidden_ped, car, EGO), 1.0)
+        assert missing is not None and hidden is not None
+        assert hidden.passed == missing.passed
+        assert hidden.message == missing.message
+        # Shown, it counts the vehicle beside it.
+        shown = vehicle_near_ped.check(_world(shown_ped, car, EGO), 2.0)
+        assert shown is not None and shown.passed
+        assert vehicle_near_ped.matched == ["npc9"]
+        assert none_near.check(_world(shown_ped, car, EGO), 2.0) is None
 
     def test_a_negative_count_is_refused(self) -> None:
         with pytest.raises(ValueError, match="count"):
