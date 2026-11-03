@@ -12,15 +12,17 @@ needs lives in the action's own directory, so it is meant to be referenced from
 other repositories:
 
 ```yaml
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@v23.1.24
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
 ```
 
 The ref is both the action version and the framework version that ends up in
 the image — the runner checks the whole repository out alongside the action,
 and the framework packages are built from that copy. Pin a release tag
-(`vX.Y.Z`, as above) for reproducible framework versions; `@master`, the
-default branch, follows the latest framework instead. Your own repository does not
-have to contain this framework, or even be checked out.
+(`vX.Y.Z`, one of the repository's
+[tags](https://github.com/autowarefoundation/autoware_carla_scenario/tags))
+for reproducible framework versions; `@master` follows the latest framework
+instead. Your own repository does not have to contain this framework, or even
+be checked out.
 
 ## What the image contains
 
