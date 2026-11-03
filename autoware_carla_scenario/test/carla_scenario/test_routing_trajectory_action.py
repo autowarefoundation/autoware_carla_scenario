@@ -476,6 +476,46 @@ class TestPositionWithoutTiming:
         _run(action, entity.actor, 6.0)
         assert not action.finished
 
+    @staticmethod
+    def _finishing_tick(entity: _Entity, length: float, speed: float) -> int:
+        """The tick (counted from 0) on which the action finishes, on a clock
+        summed 0.05 s at a time as the scenario's is."""
+        entity.actor.vx = entity.actor.speed = speed
+        action = _route("npc1", _line(length=length, duration=None, count=2))
+        world = _World()
+        elapsed = 0.0
+        for tick in range(10_000):
+            action.tick(world, elapsed)
+            if action.finished:
+                return tick
+            entity.actor.step(_DT, driven=False)
+            elapsed += _DT
+        raise AssertionError("the action never finished")
+
+    def test_a_whole_number_of_steps_finishes_on_the_last(
+        self, entity: _Entity
+    ) -> None:
+        # 10 m at 2 m/s is 5 s: 100 ticks of 0.05 s, not 101.
+        assert self._finishing_tick(entity, 10.0, 2.0) == 100
+
+    @pytest.mark.parametrize(
+        ("length", "speed"),
+        [(10.0, 2.0), (5.0, 1.0), (30.0, 3.0), (20.0, 4.0), (8.0, 2.0), (10.0, 1.0)],
+    )
+    def test_it_finishes_on_the_tick_it_reaches_the_end(
+        self, entity: _Entity, length: float, speed: float
+    ) -> None:
+        # The distance is a running sum of speed * dt, which can fall a hair
+        # short of the length on the tick that reaches it.
+        expected = round(length / speed / _DT)
+        assert self._finishing_tick(entity, length, speed) == expected
+
+    def test_a_length_between_steps_finishes_on_the_step_past_it(
+        self, entity: _Entity
+    ) -> None:
+        # 0.1 m a tick: 10.03 m is reached on tick 101, and not on tick 100.
+        assert self._finishing_tick(entity, 10.03, 2.0) == 101
+
 
 class TestLateEntity:
     def test_a_run_begins_on_the_first_tick_that_finds_the_entity(self) -> None:

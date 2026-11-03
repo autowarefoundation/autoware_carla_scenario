@@ -800,7 +800,10 @@ class TrajectoryRun(BaseAction):
                 yaw_rate=sample.yaw_rate / scale,
             )
         sample = resolved.at_distance(self._distance, self._speed)
-        if not resolved.closed and self._distance >= resolved.length:
+        # _distance is a running sum of speed * dt, so a path a whole number
+        # of steps long can fall a hair short of its length on the step that
+        # reaches it: the same tolerance as the timed branch above.
+        if not resolved.closed and self._distance >= resolved.length - 1e-9:
             self._finished = True
         self._distance += self._speed * _tick_seconds(world)
         return sample
