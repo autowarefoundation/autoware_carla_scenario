@@ -36,9 +36,12 @@ class BindingResult:
         value: The computed parameter value (e.g. ``spawn_s``).  A number for
             a scalar parameter, or a list for one that takes a sequence
             (``scenario.expected_route_lanelet_ids``, say).
-        lanelet_id_override: If set, the spawn lanelet should be changed
-            to this lanelet because the original lanelet did not have
-            enough distance to satisfy the offset.
+        lanelet_id_override: If set, the spawn whose ``s`` this binding
+            writes is on this lanelet, not the pick, because the pick did not
+            have enough distance to satisfy the offset.  The sweep moves that
+            spawn's own lanelet key (``ego.spawn_s`` ->
+            ``ego.spawn_lanelet_id``, ``<entity>.s`` -> ``<entity>.lanelet_id``),
+            not the sweep target's.
     """
 
     value: float | int | list[int]

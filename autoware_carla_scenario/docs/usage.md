@@ -275,6 +275,31 @@ parameter a case needs is derived from the matched lanelet by
 `sweep.bindings`. A `sweep.constraints` with a second key is refused with an
 error when the sweep is expanded, rather than searched together with the first.
 
+A `stop_line_offset` binding places a spawn `offset` metres before the pick's
+stop line. When that does not fit on the pick, it walks back through
+predecessor lanelets, and moves **its own spawn's** lanelet with it: the
+lanelet key beside the `s` it writes (`ego.spawn_s` moves
+`ego.spawn_lanelet_id`, `ego.goal_s` moves `ego.goal_lanelet_id`,
+`scenario.spawn_overrides.<entity>.s` moves
+`scenario.spawn_overrides.<entity>.lanelet_id`). So an NPC placed 300 m before
+the stop line walks back on its own while the ego stays on the pick. A
+walk-back of any other key has no lanelet to move and is refused. A
+`stop_line_approach` binding with the same offset names the same lanelet, and
+two bindings that set one key to different values on a pick (a
+`stop_line_approach` with another offset than its spawn's `stop_line_offset`,
+say) are refused with an error rather than one silently winning:
+
+```yaml
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: has_traffic_light_stop_line
+  bindings:
+    ego.spawn_s: {type: stop_line_offset, offset: 2}
+    scenario.spawn_overrides.npc1.s: {type: stop_line_offset, offset: 300}
+    scenario.spawn_overrides.npc1.lanelet_id: {type: stop_line_approach, offset: 300}
+```
+
 ```bash
 # Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`
 # satisfies the scenario's `sweep.constraints`.
