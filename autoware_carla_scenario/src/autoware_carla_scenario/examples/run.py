@@ -840,7 +840,9 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
 
-    0 (or ``null``, or no value) keeps every point of a sweep.
+    0 (or ``null``, or no value) keeps every point of a sweep.  An integral
+    float (``1e5`` in YAML) or a string of an integer (what ``${oc.env:...}``
+    gives) counts as that integer, as ``int()`` read them before (#1226).
 
     Raises:
         ValueError: It is not a non-negative integer (a bool is not one).
@@ -851,12 +853,24 @@ def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     value = rerun_cfg.get("lidar_max_points", 0)
     if value is None:
         return 0
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    points: int | None = None
+    if isinstance(value, bool):
+        points = None
+    elif isinstance(value, int):
+        points = value
+    elif isinstance(value, float) and value.is_integer():
+        points = int(value)
+    elif isinstance(value, str):
+        try:
+            points = int(value)
+        except ValueError:
+            points = None
+    if points is None or points < 0:
         raise ValueError(
             "rerun.lidar_max_points must be a non-negative integer "
             f"(0 keeps every point), got {value!r}"
         )
-    return value
+    return points
 
 
 def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:

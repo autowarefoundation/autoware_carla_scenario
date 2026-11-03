@@ -206,7 +206,7 @@ def test_rerun_lidar_is_read_from_the_config(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
-@pytest.mark.parametrize("bad", [-1, 1.5, True, "100"])
+@pytest.mark.parametrize("bad", [-1, -1.0, 1.5, True, "-1", "1.5", "lots"])
 def test_a_bad_rerun_lidar_max_points_is_refused_before_anything_runs(
     monkeypatch: pytest.MonkeyPatch, bad: Any
 ) -> None:
@@ -231,6 +231,27 @@ def test_a_bad_rerun_lidar_max_points_is_refused_before_anything_runs(
     # null keeps every point, as 0 does.
     build_rerun_converter(cfg(enabled=True, lidar=True, lidar_max_points=None))
     assert built == [{"strict": False}, {"strict": False, "lidar_max_points": 0}]
+
+
+@pytest.mark.parametrize(
+    ("given", "points"), [(100, 100), (1e5, 100000), ("100", 100), (0.0, 0)]
+)
+def test_an_integral_rerun_lidar_max_points_is_read_as_that_integer(
+    monkeypatch: pytest.MonkeyPatch, given: Any, points: int
+) -> None:
+    """``1e5`` in YAML is a float and ``${oc.env:...}`` a string (#1226)."""
+    built: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "autoware_carla_scenario.examples.run.RerunConverter",
+        lambda **kwargs: built.append(kwargs),
+    )
+    build_rerun_converter(
+        OmegaConf.create(
+            {"rerun": {"enabled": True, "lidar": True, "lidar_max_points": given}}
+        )
+    )
+    assert built == [{"strict": False, "lidar_max_points": points}]
+    assert type(built[0]["lidar_max_points"]) is int
 
 
 @pytest.fixture
