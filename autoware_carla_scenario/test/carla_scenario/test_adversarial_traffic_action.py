@@ -9,6 +9,7 @@ finishes after three ticks.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -147,6 +148,25 @@ def test_one_adversity_at_a_time_and_none_in_the_cooldown() -> None:
     assert action.weight == pytest.approx(0.01**2)
 
 
+def test_an_execution_done_is_closed_as_it_is_dropped() -> None:
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    _run(action, 2)
+    (run,) = made
+    assert not run.closed
+    _run(action, 1, start=3)  # its third tick: done, and dropped
+    assert action._executions == []
+    assert run.closed
+
+
+def test_reset_closes_the_executions_under_way() -> None:
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    _run(action, 1)
+    (run,) = made
+    action.reset()
+    assert run.closed
+    assert action._executions == []
+
+
 def test_only_a_registered_entity_is_driven() -> None:
     action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
     _run(action, 3, npc="background_7")
@@ -259,6 +279,55 @@ class TestControlDomains:
         assert action.state is ActionState.RUNNING
         assert action._executions == []
         assert len(action.choices) == 1
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_an_overridden_execution_is_closed_as_it_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        (run,) = action._executions
+        closed: list[str] = []
+        follow_close = run._follow.close
+
+        def close_follow() -> None:
+            closed.append("follow")
+            follow_close()
+
+        monkeypatch.setattr(run._follow, "close", close_follow)
+        _Command("brake", (LON,), entity="npc1", until=_Switch(), overrides=True).tick(
+            None, 0.15
+        )
+        assert closed == []
+        _run(action, 1, start=2)
+        assert action._executions == []
+        assert closed == ["follow"]
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_the_override_is_logged_as_the_road_user_taken_from_it(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        taking = _Command(
+            "brake", (LON,), entity="npc1", until=_Switch(), overrides=True
+        )
+        with caplog.at_level(logging.INFO):
+            taking.tick(None, 0.15)
+        messages = [record.getMessage() for record in caplog.records]
+        assert f"'npc1' taken from {NADE} by _Command 'brake'" in messages
+        assert not any("overridden by" in message for message in messages)
+        # Its hold is stopped, not NADE.
+        assert action.state is not ActionState.COMPLETE
+
+    @pytest.mark.usefixtures("real_executions")
+    def test_reset_alone_gives_the_movement_back(self) -> None:
+        action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+        _run(action, 1)
+        assert control_holder("npc1", LON, 5.0) == NADE
+        action.reset()  # without the runner forgetting the holds
+        for domain in MOVEMENT:
+            assert control_holder("npc1", domain, 5.0) is None
 
     @pytest.mark.usefixtures("real_executions")
     def test_the_movement_is_given_back_when_the_execution_ends(self) -> None:
