@@ -275,7 +275,10 @@ class AdversarialExecution:
         )
 
     def close(self) -> None:
-        """Close the follow action's conditions; what it carried out is over."""
+        """Close the follow action's conditions; what it carried out is over,
+        and the movement it held is given back.  The road user is not handed
+        back to its driver (:meth:`hand_back` does that): safe after it, and
+        twice."""
         self._end()
         self._release()
         self._follow.close()
@@ -322,6 +325,16 @@ class _MovementHold(BaseAction):
     def execute(self, world: "carla.World") -> None:
         """Nothing: the execution drives the road user."""
         return
+
+    def _stop_overridden(self, world: "carla.World", by: str) -> None:
+        """Taken over by the action *by*: as :meth:`BaseAction._stop_overridden`
+        does, but logged as the road user taken from the action it is held for,
+        which runs on (#1298)."""
+        logger.info(
+            "'%s' taken from %s by %s", self._execution.entity_name, self._holder, by
+        )
+        self._lifecycle = ActionState.COMPLETE
+        self._stopped(world)
 
     def _stopped(self, world: "carla.World") -> None:
         """Taken over: the road user is handed back, before the overriding
