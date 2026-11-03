@@ -4768,7 +4768,7 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-267 of the package's 392
+268 of the package's 392
 modules (68%; about 80,000 of
 138,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
@@ -4782,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 267 CHECKED modules</summary>
+<summary>The 268 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5688,6 +5688,10 @@ first paragraph of its docstring:</p>
 <td>Generated protobuf modules for the T4Scene exchange contract (tier4/e2e-devkit).</td>
 </tr>
 <tr>
+<td><code>t4_scene.exporter</code></td>
+<td>Each run's trajectory log as a T4Scene, as the run ends (<code>t4scene.enabled</code>).</td>
+</tr>
+<tr>
 <td><code>t4_scene.grid</code></td>
 <td>The pure pieces of a T4Scene's time grid: the step in ticks, the scene's stem, who the ego is, who is on the scene and the ego's turn indicator.</td>
 </tr>
@@ -6008,7 +6012,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 125 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 124 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6037,7 +6041,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 125 EXCLUDED modules, and why</summary>
+<summary>The 124 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.play_motion</code>: imports pedestrian.soma, which is neither checked nor modelled</li>
@@ -6120,7 +6124,7 @@ the first:</p>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>, under <code>TYPE_CHECKING</code>) and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold</li>
-<li><code>rerun</code>: imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
+<li><code>rerun</code>: imports concurrent.futures, errno, importlib, types and argparse, and more of os than its shim declares (<code>os.strerror()</code>), and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
 <li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; entity.carla_driver_entity (itself excluded) and rerun use it</li>
 <li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>)</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
@@ -6138,11 +6142,10 @@ the first:</p>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>ODD_CASE_KEY</code>, <code>encode_case()</code>, <code>search_from_config()</code> and <code>with_tire_friction()</code> from odd.sampler, which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm; its cases are forked, stopped and waited for by the checked sweeper.isolation</li>
 <li><code>t4</code>: hands the world and the sensors to the T4 writer, a Rust extension imported at run time with importlib and held as a module (<code>Any</code>), and keeps NumPy arrays, datetime and threading.Condition waits Codon has no model of; t4.codon models what scenario_runner and scenario_queue use of it</li>
-<li><code>t4_scene</code>: re-exports t4_scene.convert, t4_scene.exporter and t4_scene.map_resource, which are not checked; t4_scene.codon models what scenario_runner and scenario_queue use of it</li>
+<li><code>t4_scene</code>: re-exports t4_scene.convert and t4_scene.map_resource, which are not checked, and the checked t4_scene.exporter; t4_scene.codon models what scenario_runner, scenario_queue and t4_scene.exporter use of it</li>
 <li><code>t4_scene.__main__</code>: the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked</li>
 <li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
-<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); an offline converter no checked module imports</li>
-<li><code>t4_scene.exporter</code>: hands each log to t4_scene.convert, which is not checked; t4_scene.codon models the T4SceneExporter scenario_runner and scenario_queue hold</li>
+<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
 <li><code>t4_scene.live</code>: builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (<code>NDArray</code>); entity.carla_driver_entity (excluded) is all that uses it</li>
 <li><code>t4_scene.map_resource</code>: imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and builds protobuf messages (t4_scene._proto)</li>
 <li><code>t4_scene.route</code>: imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and lanelet2's routing graph; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
