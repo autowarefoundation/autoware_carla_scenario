@@ -588,15 +588,21 @@ def test_the_time_budget_predicts_the_step_it_is_about_to_allow(monkeypatch, sta
     assert solution.solve_seconds <= budget
 
 
-def test_a_budget_below_one_step_still_takes_the_first_step(monkeypatch):
-    """Before any step there is no measured cost to predict with.
+def test_a_budget_below_one_step_overruns_by_at_most_the_first_step(monkeypatch):
+    """A known limit of the bound, pinned so that it stays only this large.
 
-    So the first step runs whenever the budget is not already spent, and the
-    cutoff stops the loop before the second: the first step's measured cost
-    says the second cannot fit.
+    Before any step there is no measured cost to predict with, so the first
+    step runs whenever the budget is not already spent -- here it overruns a
+    budget of half a step by half a step (`OptimizerConfig.time_budget_s`
+    says so). What must hold is that the overrun stops there: the first
+    step's measured cost says the second cannot fit. A cutoff that learns to
+    predict the first step too (from the warm-up, say) should change this
+    test to expect no step at all.
     """
-    _, solution = _solve_on_a_fake_clock(monkeypatch, STEP_COST_S / 2)
+    budget = STEP_COST_S / 2
+    _, solution = _solve_on_a_fake_clock(monkeypatch, budget)
     assert solution.n_refine_steps == 1
+    assert solution.solve_seconds <= budget + STEP_COST_S
 
 
 def test_a_budget_spent_by_sampling_takes_no_refinement_step(monkeypatch):
