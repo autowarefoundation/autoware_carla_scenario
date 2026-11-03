@@ -306,7 +306,9 @@ everything arrives at its first-frame pose at its initial speed.
 - Every vehicle with an initial speed, the ego among them, is put back along its
   lane by its initial speed times `warmup_s`, keeping its offset from the lane
   centre and its heading relative to the lane, and driven onto its pose. One with
-  no initial speed stands on its pose.
+  no initial speed stands on its pose. One whose lane ends sooner than that
+  waits at the lane's end until it is due to leave; the ego reports a speed of
+  zero to the policy while it waits, and its initial speed once it moves.
 - Every pedestrian with an initial speed is moved in a straight line along its
   heading; one with none stands where it starts.
 - The traffic lights are frozen, so the run-up spends none of their phases, and
