@@ -109,7 +109,12 @@ handed back to its animation (`blend_pose(0.0)`).
     pedestrian would glide with frozen legs. The action therefore fires only
     while the pedestrian stands (no faster than `STANDING_SPEED_MS`, 0.1 m/s)
     *and* its trigger holds: stop it first (`WalkStraightAction` at speed 0).
-    A walking pedestrian's motion waits until it stands.
+    A walking pedestrian's motion waits until it stands. The speed is
+    measured from where the walker stood a tick before, because CARLA reports
+    a walker on its controller as standing even while it walks. So the motion
+    does not start on the first tick the pedestrian is read, or on the tick
+    it is brought in from under the map, when there is nothing to measure
+    from yet. It never starts while the pedestrian is parked under the map.
 
 ## Who controls the pedestrian
 

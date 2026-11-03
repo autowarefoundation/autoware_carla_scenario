@@ -29,6 +29,7 @@ from autoware_carla_scenario import (
     WalkStraightAction,
 )
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions.play_motion import _Standing
 from autoware_carla_scenario.actions.base import control_holder
 from autoware_carla_scenario.control_domain import ControlConflictError, ControlDomain
 from autoware_carla_scenario.pedestrian.skeleton import (
@@ -564,6 +565,16 @@ class _Scene:
             self.elapsed += DT
 
 
+def _start(
+    action: PlayMotionAction, scene: _Scene, at: float = 0.0
+) -> PlayMotionAction:
+    """Tick *action* at *at* and a tick later: the first read of a standing
+    pedestrian does not know its speed yet, the second measures it standing."""
+    action.tick(scene.world, at)
+    action.tick(scene.world, at + DT)
+    return action
+
+
 @pytest.fixture
 def scene() -> Iterator[_Scene]:
     built = _Scene()
@@ -585,7 +596,9 @@ class TestPlayMotionAction:
         self, scene: _Scene, wave: Path
     ) -> None:
         action = PlayMotionAction("walker1", wave)
-        scene.run(action, 0.05)
+        scene.run(action, DT)
+        assert not action.playing  # its speed is not known on the first tick
+        scene.run(action, DT)
         assert scene.walker.blend == 1.0
         assert scene.walker.from_animation == 1
         assert action.playing
@@ -603,7 +616,7 @@ class TestPlayMotionAction:
         self, scene: _Scene, wave: Path
     ) -> None:
         action = PlayMotionAction("walker1", wave, loop=True, duration_s=1.0)
-        scene.run(action, 0.95)
+        scene.run(action, 1.0)  # stands from the second tick
         assert action.playing
         assert len(scene.walker.poses) == 19
         scene.run(action, 0.2)
@@ -648,6 +661,30 @@ class TestPlayMotionAction:
         scene.run(action, 2 * DT)  # stands
         assert action.playing
 
+    def test_a_pedestrian_parked_under_the_map_does_not_stand(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        action = PlayMotionAction("walker1", wave)
+        scene.walker.z = -500.0  # spawned hidden, not brought in yet
+        scene.run(action, 4 * DT)
+        assert action.state is ActionState.STANDBY
+        assert not scene.walker.poses
+
+    def test_a_pedestrian_brought_in_walking_does_not_stand(
+        self, scene: _Scene, wave: Path
+    ) -> None:
+        # On CARLA's walker controller a walking walker reports velocity 0.
+        action = PlayMotionAction("walker1", wave)
+        scene.walker.z = -500.0
+        scene.run(action, DT)
+        scene.walker.z = 0.0
+        scene.walker.x = 10.0  # brought in, walking at 1.4 m/s
+        for _ in range(4):
+            scene.run(action, DT)
+            scene.walker.x += 1.4 * DT
+        assert action.state is ActionState.STANDBY
+        assert not scene.walker.poses
+
     def test_its_trigger_and_standing_must_both_hold(
         self, scene: _Scene, wave: Path
     ) -> None:
@@ -662,30 +699,28 @@ class TestPlayMotionAction:
     def test_the_upper_body_takes_the_animation_alone(
         self, scene: _Scene, wave: Path
     ) -> None:
-        PlayMotionAction("walker1", wave, loop=True).tick(scene.world, 0.0)
-        assert control_holder("walker1", ControlDomain.ANIMATION, 0.0) is not None
-        assert control_holder("walker1", ControlDomain.LONGITUDINAL, 0.0) is None
+        _start(PlayMotionAction("walker1", wave, loop=True), scene)
+        assert control_holder("walker1", ControlDomain.ANIMATION, DT) is not None
+        assert control_holder("walker1", ControlDomain.LONGITUDINAL, DT) is None
         # Another motion is refused; a walk is not.
         with pytest.raises(ControlConflictError):
-            PlayMotionAction("walker1", wave).tick(scene.world, DT)
+            _start(PlayMotionAction("walker1", wave), scene, 2 * DT)
 
     def test_the_whole_body_takes_the_movement_too(
         self, scene: _Scene, wave: Path
     ) -> None:
-        PlayMotionAction("walker1", wave, loop=True, upper_body_only=False).tick(
-            scene.world, 0.0
+        _start(
+            PlayMotionAction("walker1", wave, loop=True, upper_body_only=False), scene
         )
         walk = WalkStraightAction("walker1", speed_ms=1.0)
         with pytest.raises(ControlConflictError):
-            walk.tick(scene.world, DT)
+            walk.tick(scene.world, 2 * DT)
 
     def test_an_overriding_motion_stops_the_one_playing(
         self, scene: _Scene, wave: Path
     ) -> None:
-        first = PlayMotionAction("walker1", wave, loop=True)
-        first.tick(scene.world, 0.0)
-        second = PlayMotionAction("walker1", wave, overrides=True)
-        second.tick(scene.world, DT)
+        first = _start(PlayMotionAction("walker1", wave, loop=True), scene)
+        second = _start(PlayMotionAction("walker1", wave, overrides=True), scene, DT)
         assert first.state is ActionState.COMPLETE
         assert not first.playing
         assert second.playing
@@ -695,11 +730,12 @@ class TestPlayMotionAction:
         self, scene: _Scene, wave: Path
     ) -> None:
         scene.walker.apply_control = lambda control: None  # type: ignore[attr-defined]
-        motion = PlayMotionAction("walker1", wave, loop=True, upper_body_only=False)
-        motion.tick(scene.world, 0.0)
+        motion = _start(
+            PlayMotionAction("walker1", wave, loop=True, upper_body_only=False), scene
+        )
         assert scene.walker.blend == 1.0
         walk = WalkStraightAction("walker1", speed_ms=1.0, overrides=True)
-        walk.tick(scene.world, DT)
+        walk.tick(scene.world, 2 * DT)
         assert motion.state is ActionState.COMPLETE
         assert not motion.playing
         assert scene.walker.blend == 0.0
@@ -723,3 +759,50 @@ class TestPlayMotionAction:
             PlayMotionAction("walker1", wave, fps=0.0)
         with pytest.raises(ValueError, match="duration_s"):
             PlayMotionAction("walker1", wave, duration_s=-1.0)
+
+
+class TestStanding:
+    """The standing gate itself (``_Standing``)."""
+
+    def test_the_first_read_does_not_know_the_speed(self, scene: _Scene) -> None:
+        # The walker walks, but CARLA's controller reports it standing.
+        standing = _Standing("walker1", "wave")
+        assert standing.check(scene.world, 0.0) is None
+
+    def test_a_walker_measured_standing_over_two_ticks_stands(
+        self, scene: _Scene
+    ) -> None:
+        standing = _Standing("walker1", "wave")
+        assert standing.check(scene.world, 0.0) is None
+        result = standing.check(scene.world, DT)
+        assert result is not None and result.passed
+
+    def test_a_walker_under_the_map_does_not_stand(self, scene: _Scene) -> None:
+        standing = _Standing("walker1", "wave")
+        scene.walker.z = -500.0
+        for tick in range(3):
+            assert standing.check(scene.world, tick * DT) is None
+
+    def test_a_walker_brought_in_walking_does_not_stand(self, scene: _Scene) -> None:
+        standing = _Standing("walker1", "wave")
+        scene.walker.z = -500.0
+        assert standing.check(scene.world, 0.0) is None
+        scene.walker.z = 0.0
+        for tick in range(1, 5):
+            scene.walker.x = 10.0 + 1.4 * DT * tick  # walking, reported 0
+            assert standing.check(scene.world, tick * DT) is None
+
+    def test_a_walker_hidden_and_brought_back_is_measured_afresh(
+        self, scene: _Scene
+    ) -> None:
+        # Standing at x=0, hidden, then brought back to x=0 walking: the
+        # place before it was hidden is no place to measure from.
+        standing = _Standing("walker1", "wave")
+        standing.check(scene.world, 0.0)
+        assert standing.check(scene.world, DT) is not None
+        scene.walker.z = -500.0
+        assert standing.check(scene.world, 2 * DT) is None
+        scene.walker.z = 0.0
+        assert standing.check(scene.world, 3 * DT) is None
+        scene.walker.x = 1.4 * DT
+        assert standing.check(scene.world, 4 * DT) is None
