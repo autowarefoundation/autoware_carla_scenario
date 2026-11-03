@@ -869,6 +869,31 @@ def test_ng_for_exactly_max_ng_seconds_on_a_summed_clock_holds(
     assert condition.get_details()["ng_seconds"] > limit
 
 
+def test_ng_after_ng_for_exactly_the_limit_fails_no_earlier_than_its_frame() -> None:
+    # NG for exactly the limit sums to a hair over it (held, #1236); the
+    # next NG frame fails the run at its own time, not a hair before it,
+    # which would beat a live failure on that frame.
+    times: list[float] = []
+    t = 0.0
+    for _ in range(200):
+        times.append(t)
+        t += 0.05
+    values: list[Optional[float]] = [5.0] * len(times)
+    for k in range(7, 27):
+        values[k] = 0.5
+    values[150] = 0.5
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=1.0,
+        label="near",
+    )
+    result = condition.judge(times, values)
+    assert result is not None
+    assert result.elapsed_seconds == times[150]
+
+
 def test_nothing_read_is_not_ng() -> None:
     condition = MetricCondition(
         MIN_DISTANCE_TO_OBSTACLE_M, ComparisonRule.LESS_THAN, 1.0, label="near"

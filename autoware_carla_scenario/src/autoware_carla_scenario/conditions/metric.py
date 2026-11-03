@@ -175,8 +175,10 @@ class MetricCondition(BaseCondition):
                     # other time accumulators (ElapsedTimeCondition), compare
                     # with a 1e-9 s tolerance, or a run NG for exactly
                     # max_ng_seconds would fail though it was not NG for
-                    # "more than" it.
-                    failed_at = at + (self._max_ng_seconds - ng)
+                    # "more than" it.  Earlier frames may already have
+                    # summed to within that tolerance over the limit, so
+                    # clamp: the run fails no earlier than this frame went NG.
+                    failed_at = at + max(self._max_ng_seconds - ng, 0.0)
             ng += span
         self._judgement = {"ng_seconds": ng}
         if first is not None:
