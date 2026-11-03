@@ -599,6 +599,13 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             canvas = record.get("canvas_case")
             run.apply_canvas(*([] if canvas is None else [chosen[int(canvas)]]))
             _apply_metrics(run, configs, record.get("heavy_metrics"))
+        # The queue is on the batch's first case's map: a case of this task on
+        # another would run on it (#1241).  The submitting process refused
+        # such a batch; refused again for a manifest it did not check.
+        run.check_batch_map(
+            [first_cfg, *configs],
+            ["the batch's first case", *(str(case["label"]) for case in cases)],
+        )
         map_paths = run.resolve_map_paths(first_cfg.map)
         queue = run._batch_queue(
             first_cfg,
