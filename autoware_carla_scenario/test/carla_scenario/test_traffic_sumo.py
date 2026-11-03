@@ -4142,3 +4142,25 @@ def test_sumo_starts_again_after_the_steps_were_given_up_on(
     assert traci.starts == 3 and other._running
     other.close()
     assert _DeadTraci.active == set()
+
+
+@needs_sumo
+def test_what_a_vehicle_is_told_before_the_run_starts_waits_for_it(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Between prepare and start, SUMO is up but drives none of the run's
+    vehicles yet: their speed and route are held for when it does, and SUMO
+    is not asked about them (#1216 must not change that)."""
+    backend, _context = _dead_sumo_backend(
+        crossroads, tmp_path, _DeadTraci("traci"), monkeypatch
+    )
+    world = _FakeWorld([])
+    entity = _Entity(_FakeActor(_carla_transform(-60.0, 5.25, 0.0), "npc"), "npc")
+    try:
+        backend.adopt(entity)
+        backend.set_desired_speed(entity, world, 18.0)
+        backend.follow_route(entity, world, ["stop"])
+        assert backend._waiting_speeds[id(entity)] == pytest.approx(5.0)
+        assert backend._waiting_routes[id(entity)] == ["stop"]
+    finally:
+        backend.close()

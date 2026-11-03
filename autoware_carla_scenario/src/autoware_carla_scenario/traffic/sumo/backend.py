@@ -519,8 +519,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._running = False
         #: SUMO was started and its connection is still open.  Unlike
         #: ``_running``, it stays set when the steps are given up on, so that
-        #: ``close`` still closes the connection (#1216).
-        self._started = False
+        #: ``close`` still closes the connection (#1216).  Not ``_started``,
+        #: which says start() has put the run's vehicles into SUMO.
+        self._connected = False
         self._failures = 0
         #: With fcd_output: SUMO time, CARLA simulation time and frame per tick.
         self._clock_log: Any = None
@@ -929,7 +930,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._traci.start(cmd)
         except Exception as exc:
             raise TrafficBackendError(f"SUMO did not start: {exc}") from exc
-        self._started = True
+        self._connected = True
         self._running = True
         logger.info("SUMO started on %s", self._network.net_file)
         if self._tm_drives_scenario:
@@ -1218,7 +1219,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._clock_log = None
         # Also after tick gave up stepping it: an open connection would leave
         # SUMO orphaned and the next start refused ("already active").
-        if self._started and self._traci is not None:
+        if self._connected and self._traci is not None:
             try:
                 if self._traci.__name__ == "libsumo":
                     self._traci.close()
@@ -1228,7 +1229,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._traci.close(False)
             except Exception as exc:  # noqa: BLE001 - teardown must go on
                 logger.debug("SUMO close: %s", exc)
-        self._started = False
+        self._connected = False
         self._running = False
         if self._meso is not None and self._level_changes != [0, 0]:
             logger.info(
