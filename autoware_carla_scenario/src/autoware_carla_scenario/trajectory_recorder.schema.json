@@ -688,7 +688,7 @@
     },
     "ActionRecord": {
       "title": "ActionRecord",
-      "description": "A scenario action's lifecycle state on a tick, written when it changes (version 2): on the first tick of the loop, then whenever the action moves on -- `standbyState`, `startTransition` (the tick its trigger fired), `runningState`, `endTransition` (the tick it finished), `completeState`, or back to `standbyState` for a repeating action. The states are OpenSCENARIO's StoryboardElementState (`ActionState`). Init actions, run before the clock starts, are not written.",
+      "description": "A scenario action's lifecycle state on a tick, written when it changes (version 2): on the first tick of the loop, then whenever the action moves on -- `standbyState`, `startTransition` (the tick its trigger fired), `runningState`, `endTransition` (the tick it finished), `completeState`, or back to `standbyState` for a repeating action. An action with no `until` that does not reissue its command goes from `startTransition` straight to `completeState` (or `standbyState`), with no `runningState` or `endTransition`. The states are OpenSCENARIO's StoryboardElementState (`ActionState`). Init actions, run before the clock starts, are not written.",
       "type": "object",
       "properties": {
         "type": {

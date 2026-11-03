@@ -151,7 +151,10 @@ SHA-256, so a reader can load the very map the run was on.
   until the next one, and a `plan` line until the next `plan` line (markers
   that carry no plan clear the drawing, not the plan); a `condition` line until the next of the same `role` and
   `index`; an `action` line until the next of the same `phase` and `index`
-  (`startTransition` and `endTransition` hold for one tick).
+  (`startTransition` and `endTransition` hold for one tick; an action with no
+  `until` that does not reissue its command goes from `startTransition`
+  straight to `completeState`, or `standbyState` when it repeats, with no
+  `runningState` or `endTransition` line).
   The run stops checking conditions at the first that decides it, so the last
   tick may have no line for the ones after it.
 - **Episode ids are 64-bit.** `episode` is a random uint64, so it is often past

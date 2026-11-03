@@ -640,6 +640,26 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    further evaluation; `False` returns the action to standby to be triggered
    again.
 
+   **The exception: an instantaneous action.** `runningState` and
+   `endTransition` are only seen on an action that *runs on* -- one with an
+   `until`, or one that reissues its command. An action with neither is over
+   the moment it is commanded: on the tick after `startTransition` it goes
+   straight to `completeState` (`standbyState` with `once=False`, from which it
+   may fire again on that same tick), never showing `runningState` or
+   `endTransition`. Pausing on a transition it passed straight through would
+   only make every instantaneous action a tick slower to repeat.
+
+   | Action | `startTransition` | `runningState` | `endTransition` |
+   |---|---|---|---|
+   | No `until`, no reissue | one tick | never | never |
+   | No `until`, reissues | one tick | never (the run is one reissued tick) | one tick |
+   | `until` | one tick | every tick `until` has not yet held (none if it holds on the tick after firing) | one tick |
+
+   So a condition waiting on `runningState` or `endTransition` of an
+   instantaneous action never holds -- wait on `completeState` (or
+   `startTransition`) instead. An action fired in the init phase is settled
+   there at once and never holds `endTransition` either.
+
 `until`, `reissues_while_running` and `once` are all independent — `until` says
 when *this* run ends, `reissues_while_running` says whether the command repeats
 while it does, and `once` says whether another run may begin.
