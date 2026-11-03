@@ -60,9 +60,10 @@ def tick_multiple(seconds: float, key: str) -> int:
 # trajectory follower, the ego observation and the ROS 2 command arbiter keep.
 US_PER_S: int = 1_000_000
 
-# When a forced lane change counts as completed.
+# When a lane change counts as completed.
 #
-# ``force_lane_change`` returns as soon as the command is queued, so the action
+# The traffic backend's lane change returns as soon as the command is issued
+# (TrafficManager ``force_lane_change``, SUMO ``changeLane``), so the action
 # watches the vehicle afterwards: the manoeuvre is over once the vehicle is on a
 # different lane *and* has settled onto it.  Straddling the boundary is not
 # finishing, which is why a lane id change alone is not enough -- a reaction

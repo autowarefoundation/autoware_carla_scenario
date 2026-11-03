@@ -629,8 +629,10 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    over on the tick after the one it was commanded on.
 
    Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
-   hands work to the simulator and watches for it to land — `force_lane_change`
-   returns long before the vehicle is in the next lane, and must not be re-sent
+   hands work to the simulator and watches for it to land — the traffic
+   backend's lane change (TrafficManager `force_lane_change`, SUMO
+   `changeLane`) returns long before the vehicle is in the next lane, and must
+   not be re-sent
    — so it supplies a `LaneChangeSettledCondition` as its `until` and does not
    repeat. A rate-limited speed change says both.
 3. **End.** `endTransition` is held for one tick so a condition can watch for
