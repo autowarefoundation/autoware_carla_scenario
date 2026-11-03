@@ -78,8 +78,15 @@ from autoware_carla_scenario.maps.opendrive import (
     map_asset_env_var,
     map_asset_path,
 )
+from autoware_carla_scenario.scenario_config import EntityConfig
 
 logger = logging.getLogger(__name__)
+
+#: The runner's ground-projection search range, so a lanelet is flagged only
+#: where a run's own ray (``entity.ground_projection_ray_distance_*``) would
+#: miss too.  ``EntityConfig``'s defaults are the shipped ``entity`` values.
+DEFAULT_RAY_DISTANCE_UPPER: float = EntityConfig.ground_projection_ray_distance_upper
+DEFAULT_RAY_DISTANCE_LOWER: float = EntityConfig.ground_projection_ray_distance_lower
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +100,8 @@ def detect_no_3d_model_lanelets(
     mgrs_offset: tuple[float, float],
     z_offset: float,
     *,
-    ray_distance_upper: float = 5.0,
-    ray_distance_lower: float = 5.0,
+    ray_distance_upper: float = DEFAULT_RAY_DISTANCE_UPPER,
+    ray_distance_lower: float = DEFAULT_RAY_DISTANCE_LOWER,
 ) -> list[int]:
     """Return sorted list of lanelet IDs that have no ground geometry in CARLA.
 
@@ -602,8 +609,8 @@ def _fail(message: str) -> NoReturn:
     sys.exit(1)
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    """CLI entry point for detecting lanelets without a CARLA 3D model."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Return the ``detect-no-3d-model`` argument parser."""
     parser = argparse.ArgumentParser(
         prog="detect-no-3d-model",
         description=(
@@ -636,14 +643,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--ray-upper",
         type=float,
-        default=5.0,
-        help="Ray search range above z estimate in metres (default: 5.0)",
+        default=DEFAULT_RAY_DISTANCE_UPPER,
+        help=(
+            "Ray search range above z estimate in metres, as the runner's "
+            "entity.ground_projection_ray_distance_upper (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--ray-lower",
         type=float,
-        default=5.0,
-        help="Ray search range below z estimate in metres (default: 5.0)",
+        default=DEFAULT_RAY_DISTANCE_LOWER,
+        help=(
+            "Ray search range below z estimate in metres, as the runner's "
+            "entity.ground_projection_ray_distance_lower (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -657,7 +670,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         action="store_true",
         help="Enable verbose (DEBUG) logging",
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """CLI entry point for detecting lanelets without a CARLA 3D model."""
+    args = _build_parser().parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
