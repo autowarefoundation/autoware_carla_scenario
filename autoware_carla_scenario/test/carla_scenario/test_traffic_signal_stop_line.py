@@ -10,6 +10,7 @@ that they agree.  CARLA is faked.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator, List
 from unittest.mock import MagicMock, patch
@@ -29,7 +30,8 @@ from autoware_carla_scenario.utils.light_lanes import LightLanes
 _MODULE = "autoware_carla_scenario.coordinate.traffic_light"
 _PATCH_CONTROLLER_ID = f"{_MODULE}.lanelet2_traffic_light_id_to_opendrive_controller_id"
 _PATCH_SIGNAL_IDS = f"{_MODULE}.get_signal_ids_for_controller"
-_PATCH_LANES = "autoware_carla_scenario.utils.light_lanes._loaded_lanes"
+_PATCH_MAP = "autoware_carla_scenario.coordinate.traffic_light._loaded_map"
+_PATCH_LANES_OF = "autoware_carla_scenario.utils.light_lanes._lanes_of"
 
 _RED = carla.TrafficLightState.Red
 _GREEN = carla.TrafficLightState.Green
@@ -152,6 +154,17 @@ class _World:
         return snapshot
 
 
+@contextmanager
+def _on(road: object) -> Iterator[None]:
+    """The run's map is *road* (lanes, offset), or ``None`` for none: its
+    lanes are the ones given, not read of a Lanelet2 map."""
+    with (
+        patch(_PATCH_MAP, return_value=road),
+        patch(_PATCH_LANES_OF, side_effect=lambda lanes: lanes),
+    ):
+        yield
+
+
 @pytest.fixture
 def roadgen() -> Iterator[tuple[_World, _Light, _Light]]:
     """A roadgen map: light 77 has no controller, only its lanelets.
@@ -164,7 +177,7 @@ def roadgen() -> Iterator[tuple[_World, _Light, _Light]]:
     world = _World([own, beside])
     with (
         patch(_PATCH_CONTROLLER_ID, return_value=None),
-        patch(_PATCH_LANES, return_value=_ROAD),
+        _on(_ROAD),
     ):
         yield world, own, beside
 
@@ -189,7 +202,7 @@ class TestResolver:
         with (
             patch(_PATCH_CONTROLLER_ID, return_value=100),
             patch(_PATCH_SIGNAL_IDS, return_value=["sig_1"]),
-            patch(_PATCH_LANES, lanes),
+            patch(_PATCH_MAP, lanes),
         ):
             found = find_traffic_lights_for_lanelet2_id(_World([named, other]), 77)
         assert found == [named]
@@ -198,7 +211,7 @@ class TestResolver:
     def test_no_map_resolves_to_nothing(self) -> None:
         with (
             patch(_PATCH_CONTROLLER_ID, return_value=None),
-            patch(_PATCH_LANES, return_value=None),
+            _on(None),
         ):
             assert find_traffic_lights_for_lanelet2_id(_World([_Light(3.5)]), 77) == []
 
@@ -207,7 +220,7 @@ def _resolve(lights: List[_Light]) -> List[_Light]:
     """Light 77's lights among *lights*, on a map that names no controller."""
     with (
         patch(_PATCH_CONTROLLER_ID, return_value=None),
-        patch(_PATCH_LANES, return_value=_ROAD),
+        _on(_ROAD),
     ):
         return find_traffic_lights_for_lanelet2_id(_World(lights), 77)
 
@@ -243,7 +256,7 @@ class TestResolverByLanes:
         light = _Light(3.5, -40.0, 0.0, 1.0)
         with (
             patch(_PATCH_CONTROLLER_ID, return_value=None),
-            patch(_PATCH_LANES, return_value=(nearer, (0.0, 0.0))),
+            _on((nearer, (0.0, 0.0))),
         ):
             assert find_traffic_lights_for_lanelet2_id(_World([light]), 77) == []
             assert find_traffic_lights_for_lanelet2_id(_World([light]), 55) == [light]

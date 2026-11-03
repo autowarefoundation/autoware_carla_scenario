@@ -4,8 +4,11 @@
 # coordinate.traffic_light uses of it, with the signatures of the Python
 # module.
 
+import lanelet2
 import typesafe_carla.carla as carla
 
 
-def lights_of_element(world: carla.World, lanelet2_tl_id: int) -> List[carla.Actor]:
+def lights_of_element(world: carla.World, lanelet_map: lanelet2.core.LaneletMap,
+                      offset: Tuple[float, float], lanelet2_tl_id: int
+                      ) -> List[carla.Actor]:
     raise NotImplementedError()

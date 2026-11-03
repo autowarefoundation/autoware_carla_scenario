@@ -19,7 +19,7 @@ A lit lanelet in a scene is therefore the light a scenario sets.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -146,40 +146,32 @@ def elements_ahead(lanes: LightLanes, point: npt.NDArray[np.float64]) -> list[in
     return list(found)
 
 
-#: The lanes of the loaded Lanelet2 map, by the map they were read from
-#: (:func:`_loaded_lanes`).
+#: The lanes read of a Lanelet2 map, by the map they were read from
+#: (:func:`_lanes_of`): one map at a time, the run's.
 _LANES: dict[int, LightLanes] = {}
 
 
-def _loaded_lanes() -> Optional[tuple[LightLanes, tuple[float, float]]]:
-    """The lanes of the Lanelet2 map the run loaded, and its offset from
-    CARLA's frame; ``None`` when no map is loaded."""
-    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
-
-    try:
-        manager = MapManager.get_instance()
-        lanelet_map = manager.lanelet_map
-        offset = manager.mgrs_offset
-    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
-        return None
-    if lanelet_map is None:
-        return None
+def _lanes_of(lanelet_map: Any) -> LightLanes:
+    """:func:`light_lanes` of *lanelet_map*, read once."""
     key = id(lanelet_map)
     if key not in _LANES:
         _LANES.clear()
         _LANES[key] = light_lanes(lanelet_map)
-    return _LANES[key], (float(offset[0]), float(offset[1]))
+    return _LANES[key]
 
 
-def lights_of_element(world: carla.World, lanelet2_tl_id: int) -> list[carla.Actor]:
+def lights_of_element(
+    world: carla.World,
+    lanelet_map: Any,
+    offset: tuple[float, float],
+    lanelet2_tl_id: int,
+) -> list[carla.Actor]:
     """The CARLA lights of *world* that show the traffic light regulatory
-    element *lanelet2_tl_id* of the loaded Lanelet2 map: those with a stop
-    waypoint on a lanelet it governs, or on one before it
-    (:func:`elements_ahead`).  Empty when no map is loaded."""
-    loaded = _loaded_lanes()
-    if loaded is None:
-        return []
-    lanes, (offset_x, offset_y) = loaded
+    element *lanelet2_tl_id* of *lanelet_map*: those with a stop waypoint on a
+    lanelet it governs, or on one before it (:func:`elements_ahead`).
+    *offset* is the map's from CARLA's frame (the projector's)."""
+    lanes = _lanes_of(lanelet_map)
+    offset_x, offset_y = offset
     found: list[carla.Actor] = []
     for actor in world.get_actors().filter("traffic.traffic_light*"):
         for waypoint in actor.get_stop_waypoints():

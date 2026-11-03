@@ -14,7 +14,7 @@ from autoware_carla_scenario.actions.traffic_signal import (
 from autoware_carla_scenario.conditions.always_true import AlwaysTrueCondition
 from autoware_carla_scenario.conditions.elapsed_time import ElapsedTimeCondition
 
-from .test_traffic_signal_stop_line import _ROAD
+from .test_traffic_signal_stop_line import _ROAD, _on
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +343,6 @@ class TestTrafficSignalActionTick:
 # TrafficSignalAction -- a Lanelet2 light no controller is named after
 # ---------------------------------------------------------------------------
 
-_PATCH_LANES = "autoware_carla_scenario.utils.light_lanes._loaded_lanes"
-
 
 @dataclass
 class _FakeVector:
@@ -391,7 +389,7 @@ class TestTrafficSignalActionByLanes:
         state = MagicMock(name="Red")
         with (
             patch(_PATCH_CONTROLLER_ID, return_value=None),
-            patch(_PATCH_LANES, return_value=_ROAD),
+            _on(_ROAD),
         ):
             TrafficSignalAction(
                 state=state, lanelet2_traffic_light_ids=[77], label="lanes"
@@ -403,7 +401,7 @@ class TestTrafficSignalActionByLanes:
         light = _FakeStopLight(3.5, 0.5, 0.0, 1.0)
         with (
             patch(_PATCH_CONTROLLER_ID, return_value=None),
-            patch(_PATCH_LANES, return_value=None),
+            _on(None),
         ):
             TrafficSignalAction(
                 state=MagicMock(), lanelet2_traffic_light_ids=[77], label="none"

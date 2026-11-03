@@ -25,6 +25,7 @@ from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .transform import to_carla_location
 
 if TYPE_CHECKING:
+    import lanelet2
     import typesafe_carla.carla as carla
 
 
@@ -87,6 +88,22 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
     return _signal_ids_of(MapManager.get_instance().road_network, controller_id)
 
 
+def _loaded_map() -> "Optional[tuple[lanelet2.core.LaneletMap, tuple[float, float]]]":
+    """The Lanelet2 map the run loaded, and its offset from CARLA's frame;
+    ``None`` when none is loaded."""
+    if TYPE_CHECKING:
+        return None  # the Lanelet2 map's geometry is not compiled (docs/typecheck.md)
+    try:
+        manager = MapManager.get_instance()
+        lanelet_map = manager.lanelet_map
+        offset = manager.mgrs_offset
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return None
+    if lanelet_map is None:
+        return None
+    return lanelet_map, (float(offset[0]), float(offset[1]))
+
+
 def find_traffic_lights_for_lanelet2_id(
     world: "carla.World", lanelet2_tl_id: int
 ) -> "list[carla.Actor]":
@@ -111,7 +128,11 @@ def find_traffic_lights_for_lanelet2_id(
     """
     controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)
     if controller_id is None:
-        return lights_of_element(world, lanelet2_tl_id)
+        loaded = _loaded_map()
+        if loaded is None:
+            return []
+        lanelet_map, offset = loaded
+        return lights_of_element(world, lanelet_map, offset, lanelet2_tl_id)
     # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
     controller: int = controller_id
     signal_ids = set(get_signal_ids_for_controller(controller))
