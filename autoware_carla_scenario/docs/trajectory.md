@@ -366,7 +366,10 @@ approach), which the TrafficManager does not drive, brakes for a walker in its
 way within its stopping distance (`utils.clearance`). A walker that falls over all the same is taken out of the
 world once it has lain there 5 s (`npc_collisions.FALLEN_DESPAWN_S`, the
 monitor's `despawn_fallen_after_s`; never the ego), with a `despawn` record
-of reason `fallen`.
+of reason `fallen`. That is any walker, an entity's or not: one no entity
+stands for (a SUMO pedestrian's mirror, whose person leaves SUMO with it, or a
+walker with no `role_name`, recorded under its blueprint id) is destroyed by
+its actor, its AI controller first.
 
 A pedestrian's written-out waypoints a few metres apart (no more than 10 m
 from one to the next: a recorded walk) are walked as written, from where it

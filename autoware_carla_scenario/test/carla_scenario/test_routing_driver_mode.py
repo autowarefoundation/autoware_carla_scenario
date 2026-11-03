@@ -638,7 +638,6 @@ def _register_walker(monkeypatch: pytest.MonkeyPatch, role: str, actor_id: int) 
 
     entity = SimpleNamespace(actor=SimpleNamespace(id=actor_id))
     monkeypatch.setitem(registry._PEDESTRIANS, role, entity)  # noqa: SLF001
-    monkeypatch.setitem(registry._VEHICLES, role, entity)  # noqa: SLF001
 
 
 def test_a_fallen_walker_is_despawned_after_it_has_lain_there(
@@ -907,6 +906,26 @@ def test_sumo_lets_go_of_a_person_mirror_and_its_person() -> None:
     assert backend.remove_walker(None, mirror)
     assert backend._persons == {} and backend._physics == {}  # noqa: SLF001
     assert removed == ["p7"]
+
+
+def test_sumo_lets_go_of_a_mirror_whose_person_has_left_already() -> None:
+    """A person SUMO took out itself (arrived) cannot be removed again: the
+    mirror is let go of all the same."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    def remove(person: str) -> None:
+        raise RuntimeError(f"Person '{person}' is not known")
+
+    backend = object.__new__(SumoTrafficBackend)
+    mirror = _actor(5, "walker.pedestrian.0001", "sumo:p7")
+    backend._persons = {"p7": mirror}  # noqa: SLF001
+    backend._physics = {}  # noqa: SLF001
+    backend._constant_speed = {5: 1.2}  # noqa: SLF001
+    backend._box_offsets = {5: (0.0, 0.0)}  # noqa: SLF001
+    backend._traci = SimpleNamespace(person=SimpleNamespace(remove=remove))  # noqa: SLF001
+    assert backend.remove_walker(None, mirror)
+    assert backend._persons == {}  # noqa: SLF001
+    assert backend._constant_speed == {} and backend._box_offsets == {}  # noqa: SLF001
 
 
 class _SnapshotWorld:
