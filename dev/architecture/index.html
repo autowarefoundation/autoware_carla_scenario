@@ -3665,12 +3665,34 @@ through the OpenSCENARIO storyboard element states held in <code>ActionState</co
 <td>every tick <code>until</code> has not yet held (none if it holds on the tick after firing)</td>
 <td>one tick</td>
 </tr>
+<tr>
+<td>Stopped by an <code>overrides=True</code> action</td>
+<td>as above</td>
+<td>as above, until it is stopped</td>
+<td>never: straight to <code>completeState</code>, even with <code>once=False</code> (stopped later in the tick it fired, its <code>startTransition</code> is not recorded either)</td>
+</tr>
 </tbody>
 </table>
 <p>So a condition waiting on <code>runningState</code> or <code>endTransition</code> of an
    instantaneous action never holds -- wait on <code>completeState</code> (or
-   <code>startTransition</code>) instead. An action fired in the init phase is settled
-   there at once and never holds <code>endTransition</code> either.</p>
+   <code>startTransition</code>) instead. A repeating instantaneous action whose trigger
+   still holds fires again on the very tick it would have gone back to
+   <code>standbyState</code>, so it stays in <code>startTransition</code> tick after tick and
+   <code>standbyState</code> is not seen until its trigger stops holding. An action
+   fired in the init phase never holds <code>endTransition</code> either: it is settled
+   there at once (<code>_settle_start</code>) -- to <code>completeState</code> (<code>standbyState</code> with
+   <code>once=False</code>) if it does not reissue its command and either has no <code>until</code>
+   or its <code>until</code> already holds at <code>elapsed=0</code>. One that reissues, or whose
+   <code>until</code> does not yet hold, is left in <code>runningState</code>, and since the init
+   phase never ticks it again it stays there for good, unless it was put on
+   the tick loop instead: <code>register_init</code> does that for every action whose
+   <code>needs_tick_loop</code> is true. An action can opt out, as the background-traffic
+   source and sink (<code>TrafficSourceAction</code>, <code>TrafficSinkAction</code>) do (a
+   <code>ConstructionZoneAction</code> with a later start or an end time does not): one
+   registered for initialization reissues by default
+   (<code>REISSUES_BY_DEFAULT = True</code>), so it places its vehicles (or clears its
+   lanelets) once and holds <code>runningState</code> for the rest of the run, even with
+   an <code>until</code> that already holds.</p>
 <p><code>until</code>, <code>reissues_while_running</code> and <code>once</code> are all independent — <code>until</code> says
 when <em>this</em> run ends, <code>reissues_while_running</code> says whether the command repeats
 while it does, and <code>once</code> says whether another run may begin.</p>
@@ -4580,7 +4602,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 19:22:17 UTC"><span class="timeago" datetime="2026-11-03T19:22:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 19:22:17 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 19:47:07 UTC"><span class="timeago" datetime="2026-11-03T19:47:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 19:47:07 UTC">2026-11-03</span>
   </span>
 
     
