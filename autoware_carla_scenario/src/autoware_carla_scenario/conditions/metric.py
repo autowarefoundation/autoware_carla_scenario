@@ -37,8 +37,10 @@ class MetricCondition(BaseCondition):
     world's map (``docs/metrics.md``, "How metrics are computed").  A frame
     is **NG** when the metric satisfies the comparison.  Each NG frame counts
     for the time until the next frame evaluated; the run fails when those add
-    up to more than *max_ng_seconds* -- with ``0``, at its first NG frame --
-    at the time they do, unless something else failed it earlier.  A frame the
+    up to more than *max_ng_seconds* (by over ``1e-9`` s, so a clock summed
+    tick by tick does not fail a run NG for exactly that long) -- with ``0``,
+    at its first NG frame -- at the time they do, unless something else failed
+    it earlier.  A frame the
     metric reads nothing in (no ego, no road user to measure from) is not NG.
 
     Being judged after the run, it neither ends a run early nor composes:
@@ -166,8 +168,14 @@ class MetricCondition(BaseCondition):
             if failed_at is None:
                 if self._max_ng_seconds == 0.0:
                     failed_at = at
-                elif ng + span > self._max_ng_seconds:
+                elif ng + span > self._max_ng_seconds + 1e-9:
                     # When, within this frame, the NG time crossed the limit.
+                    # The times are running sums of the tick, so NG for
+                    # exactly the limit can add up a hair over it: like the
+                    # other time accumulators (ElapsedTimeCondition), compare
+                    # with a 1e-9 s tolerance, or a run NG for exactly
+                    # max_ng_seconds would fail though it was not NG for
+                    # "more than" it.
                     failed_at = at + (self._max_ng_seconds - ng)
             ng += span
         self._judgement = {"ng_seconds": ng}

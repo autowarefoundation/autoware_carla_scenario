@@ -266,7 +266,9 @@ metric satisfies the comparison; the rule defaults to `GREATER_THAN_OR_EQUAL`
 and the value to `1`, so an event metric on its own reads "it happens". The
 run fails when its NG frames add up to more than `max_ng_seconds` of
 simulated time -- with the default `0`, at its first NG frame -- at the time
-they do. Each NG frame counts until the next frame evaluated (the last, the
+they do. "More than" means by over `1e-9` s, the tolerance the other time
+conditions use: the clock is a running sum of ticks, so a metric NG for
+exactly `max_ng_seconds` can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated (the last, the
 run's end, counts nothing); a frame the metric reads nothing in is not NG.
 
 ```python
