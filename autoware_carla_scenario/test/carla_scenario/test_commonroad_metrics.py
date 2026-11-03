@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import os
+import platform
 import re
 import sys
 import textwrap
@@ -470,10 +471,17 @@ def test_crime_and_reach_through_the_real_worker(
 ) -> None:
     command = _real_worker()
     if command is None:
-        pytest.skip(
+        reason = (
             "the commonroad_metrics environment is not there "
             "(`uv sync` in commonroad_metrics/, or $" + cr_worker.WORKER_ENV + ")"
         )
+        # CI's slow-tests job installs the worker: this is the only end-to-end
+        # test of its protocol, which a workflow change must not drop by
+        # skipping it unnoticed. CommonRoad's wheels are for x86_64 only, so
+        # an aarch64 runner (test-arm64's slow tests) still skips.
+        if os.environ.get("CI") and platform.machine() == "x86_64":
+            pytest.fail(reason + " on CI, where the slow-tests job installs it")
+        pytest.skip(reason)
     cr_session.configure_commonroad_metrics(
         command=tuple(command), cache_dir=tmp_path / "maps", workers=2
     )

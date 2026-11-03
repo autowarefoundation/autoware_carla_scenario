@@ -185,6 +185,22 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
+    # The CommonRoad worker (commonroad_metrics/), for the slow test that runs
+    # the framework against the real one: the only end-to-end test of their
+    # protocol, which commonroad-metrics.yml (the worker's own tests) does not
+    # cover. It is a project of its own, excluded from the workspace, with a
+    # lock and an environment of its own (commonroad_metrics/.venv), so the
+    # root environment is untouched. CommonRoad-Reach builds for CPython 3.10
+    # and 3.11 only, and setup-env's UV_PYTHON (3.12) would not resolve:
+    # '--python' wins over it, and uv fetches 3.11 itself. Its wheels are for
+    # x86_64 only, which is why test-arm64 does not run it (the test skips
+    # there, and fails rather than skip on any other CI machine).
+    - name: Install the CommonRoad worker
+      working-directory: commonroad_metrics
+      run: |
+        uv sync --locked --python 3.11
+        echo "AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER=${PWD}/.venv/bin/commonroad-metrics-worker" >> "${GITHUB_ENV}"
+
     - name: Run the slow tests
       run: uv run pytest -v --tb=short -o addopts= -m slow
 
