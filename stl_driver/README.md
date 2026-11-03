@@ -42,11 +42,11 @@ EgoPolicy(rules=RuleSet(my_build_rules(config)))
 ```
 
 **It aims at the rules; it does not guarantee them.** The search maximises
-robustness under a 70 ms budget rather than solving a constraint system, some
-situations admit no satisfying plan, and the rules are checked against a
-*forecast* of the other traffic. What the design gives is that the shortfall
-is reported rather than hidden: over 500 steps with 30 vehicles every rule
-held on 65.8% of steps, and `spec_robustness` said so on the rest.
+robustness with a fixed amount of work rather than solving a constraint
+system, some situations admit no satisfying plan, and the rules are checked
+against a *forecast* of the other traffic. What the design gives is that the
+shortfall is reported rather than hidden: over 500 steps with 30 vehicles
+every rule held on 65.8% of steps, and `spec_robustness` said so on the rest.
 [`docs/RULES.md`](docs/RULES.md) has the breakdown.
 
 Built on:
@@ -84,18 +84,23 @@ already passes through an obstacle, its clearance barely depends on the speed
 profile — the plan goes through at any speed — so the gradient there is nearly
 flat and descent alone would never escape.
 
-**Then descend.** A handful of Adam steps on the best sample, against a
-smoothed robustness with a sharpening temperature. This is what turns "brake
-somewhat" into "brake exactly hard enough to stop at the line".
+**Then descend.** Four Adam steps from each of the eight most promising
+plans, in one batch, against a smoothed robustness with a sharpening
+temperature. This is what turns "brake somewhat" into "brake exactly hard
+enough to stop at the line".
 
 If no plan satisfies the rules marked `hard`, the policy emits an emergency
 stop instead of its best effort — driving a plan that violates a rule you said
 you would never violate is what makes `hard` meaningless.
 
-Median step: **73 ms** against the runtime's 100 ms budget, measured by
-`tests/test_latency.py`. The search is bounded by predicting whether the next
-refinement step fits, so a slow machine takes fewer steps rather than missing
-the deadline.
+Median step: **73 ms** against the runtime's 100 ms control period, measured
+by `tests/test_latency.py`. By default nothing cuts the search short: it does
+the same work every step, so the same input gives the same plan, and the step
+count is chosen to fit the period rather than enforced against it. A
+deployment that must hold a deadline sets `OptimizerConfig.time_budget_s`;
+only then is the search bounded, by predicting whether the next refinement
+step fits, so a slow machine takes fewer steps rather than missing the
+deadline.
 
 ## Why the behaviour is explainable
 
