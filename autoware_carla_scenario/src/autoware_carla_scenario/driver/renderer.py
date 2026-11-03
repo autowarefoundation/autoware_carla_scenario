@@ -27,10 +27,9 @@ too early.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-from numpy.typing import NDArray
 
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.walker_motion import WalkerVelocities, is_walker
@@ -122,7 +121,9 @@ class RendererDataBuilder:
         # The run's map: get_map() builds a whole new one on every call.
         self._map = run_carla_map(world)
         self._map_id = map_id
-        self._lights: Optional[List[Tuple[Any, str, List[Any]]]] = None
+        self._lights: Optional[
+            List[Tuple["carla.TrafficLight", str, List[carla_driver_pb2.StopPoint]]]
+        ] = None
         # The lane index and the stop points, cached there.
         self._stop_lines = StopLines(world, ego_actor, self._map, config)
         # Where each walker stood at the last build: CARLA reports 0 for one
@@ -205,7 +206,9 @@ class RendererDataBuilder:
     # Traffic lights
     # ------------------------------------------------------------------
 
-    def _governing_traffic_light(self, ego_pose: Pose) -> Optional[Any]:
+    def _governing_traffic_light(
+        self, ego_pose: Pose
+    ) -> Optional["carla.TrafficLight"]:
         """The light the ego must obey, found by looking down its own lane.
 
         The walk is :meth:`StopLines.governing_light
@@ -234,24 +237,32 @@ class RendererDataBuilder:
         and lane, which is how the policy finds them in its map file.
         """
         if self._lights is None:
-            self._lights = [
-                (
-                    light,
-                    str(light.get_opendrive_id()),
-                    [
-                        carla_driver_pb2.StopPoint(
-                            road_id=int(waypoint.road_id),
-                            section_id=int(waypoint.section_id),
-                            lane_id=int(waypoint.lane_id),
-                            position_local=_vec3(
-                                to_local_pose(waypoint.transform).position
-                            ),
-                        )
-                        for waypoint in stop_waypoints(light)
-                    ],
+            lights: List[
+                Tuple["carla.TrafficLight", str, List[carla_driver_pb2.StopPoint]]
+            ] = []
+            for actor in self._world.get_actors().filter("traffic.traffic_light*"):
+                if TYPE_CHECKING:
+                    light = actor.as_traffic_light()
+                else:
+                    light = actor
+                lights.append(
+                    (
+                        light,
+                        str(light.get_opendrive_id()),
+                        [
+                            carla_driver_pb2.StopPoint(
+                                road_id=int(waypoint.road_id),
+                                section_id=int(waypoint.section_id),
+                                lane_id=int(waypoint.lane_id),
+                                position_local=_vec3(
+                                    to_local_pose(waypoint.transform).position
+                                ),
+                            )
+                            for waypoint in stop_waypoints(light)
+                        ],
+                    )
                 )
-                for light in self._world.get_actors().filter("traffic.traffic_light*")
-            ]
+            self._lights = lights
         return [
             carla_driver_pb2.TrafficLight(
                 opendrive_id=opendrive_id,
@@ -262,7 +273,7 @@ class RendererDataBuilder:
         ]
 
     def _light_state(
-        self, light: Optional[Any]
+        self, light: Optional["carla.TrafficLight"]
     ) -> "carla_driver_pb2.TrafficLightState":
         """Map a CARLA light state onto the proto enum."""
         if light is None:
@@ -272,7 +283,9 @@ class RendererDataBuilder:
             carla_driver_pb2.TRAFFIC_LIGHT_STATE_UNKNOWN,
         )
 
-    def _light_distance(self, light: Optional[Any], ego_pose: Pose) -> float:
+    def _light_distance(
+        self, light: Optional["carla.TrafficLight"], ego_pose: Pose
+    ) -> float:
         """Distance the ego still has to travel before *light*'s stop line.
 
         Along the ego's heading, negative once the line is behind
@@ -419,6 +432,6 @@ class RendererDataBuilder:
         return states
 
 
-def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:
+def _vec3(values: np.ndarray[tuple[int], np.dtype[np.float64]]) -> common_pb2.Vec3:
     """Return *values* as a protobuf ``Vec3``."""
     return common_pb2.Vec3(x=values[0], y=values[1], z=values[2])
