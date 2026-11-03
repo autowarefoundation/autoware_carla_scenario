@@ -16,9 +16,9 @@ Nothing in this design proves the rules will hold.  Worth being plain about,
 because "specification" invites the opposite assumption:
 
 * The search **maximises** robustness over 64 sampled plans plus a few
-  gradient steps, inside a 70 ms budget.  It is not a constraint solver and
-  issues no feasibility certificate -- even where a satisfying plan exists, it
-  may not be found.
+  gradient steps, a fixed amount of work each step.  It is not a constraint
+  solver and issues no feasibility certificate -- even where a satisfying
+  plan exists, it may not be found.
 * Some situations admit no satisfying plan at all.  Another vehicle driving at
   a stationary ego violates `collision_free` whatever we do.
 * The rules are evaluated against a *forecast* of the other traffic.  Being

@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """How long a step actually takes.
 
-The runtime calls ``drive`` every 100 ms.  The search is budgeted at 60 ms of
-that and degrades into fewer refinement steps when it overruns, so this is not
-a correctness test -- but a policy that quietly stopped refining would look
+The runtime calls ``drive`` every 100 ms.  By default the search takes a fixed
+number of refinement steps and nothing cuts it short (``time_budget_s`` is
+``None``), so a slow step is late rather than shallower.  This is not a
+correctness test -- but a policy that quietly stopped refining would look
 fine everywhere else while driving noticeably worse, and that is worth
 noticing.
 
