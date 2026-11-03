@@ -133,6 +133,7 @@ def fake_slurm(
     monkeypatch.setattr(run, "ScenarioQueue", fake_world.FakeQueue)
     monkeypatch.setattr(run, "resolve_map_paths", fake_world.fake_map_paths)
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
+    monkeypatch.setattr(run, "use_canvas", fake_world.fake_use_canvas)
     monkeypatch.setattr(
         run,
         "_compose_config",
@@ -357,6 +358,8 @@ def _queues(env: SimpleNamespace) -> list[dict[str, Any]]:
     [
         ("t4scene", ["++t4scene.enabled=true", "++t4scene.step_s=0.2"]),
         ("rerun", ["++rerun.enabled=true", "++rerun.strict=true"]),
+        ("canvas", ["++canvas.config=/canvas.yaml"]),
+        ("heavy_metrics", ["metrics.heavy=false"]),
     ],
 )
 def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
@@ -366,11 +369,16 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
     second_case: list[str],
 ) -> None:
     """#1225: only the batch's second case sets *setting*.  A local batch
-    decides its queue (``t4scene``: the first case's) and its Rerun converter
-    (any case's) once, for every case; each SLURM task decides the same,
-    whether it runs both cases or one."""
+    decides its queue (``t4scene``: the first case's), its Rerun converter
+    (any case's), its canvas (the one any case names) and its heavy metrics
+    (the first case setting ``metrics.heavy``) once, for every case; each
+    SLURM task decides the same, whether it runs both cases or one."""
     if setting == "rerun":
         pytest.importorskip("autoware_carla_scenario_rerun")
+    # The heavy metrics on unless a case turns them off.
+    fake_slurm.monkeypatch.delenv(
+        "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS", raising=False
+    )
     fake_slurm.monkeypatch.setenv(
         "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: second_case})
     )
@@ -379,6 +387,10 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
     (decided,) = _queues(fake_slurm)
     if setting == "t4scene":
         assert decided["t4scene"] is None  # the first case's, which has none
+    elif setting == "canvas":
+        assert decided["canvas"] == "/canvas.yaml"
+    elif setting == "heavy_metrics":
+        assert decided["heavy_metrics"] is False
     else:
         assert decided["rerun"] == {
             "strict": True,
@@ -407,6 +419,35 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
         record = BatchLayout(batch).read_manifest()["batch_settings"]
         assert record["first_case"] == 0
         assert record["rerun_cases"] == ([0, 1] if setting == "rerun" else [])
+        assert record["canvas_case"] == (1 if setting == "canvas" else None)
+        assert record["heavy_metrics"] is (setting != "heavy_metrics")
+
+
+def test_a_task_of_a_batch_without_the_record_decides_from_its_own_cases(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """A manifest written before ``batch_settings`` (#1225): each task decides
+    the batch-level settings from its own cases, as tasks did then."""
+    fake_slurm.monkeypatch.setenv(
+        "FAKE_SCENARIO_OVERRIDES",
+        json.dumps({_SECOND: ["++t4scene.enabled=true", "++t4scene.step_s=0.2"]}),
+    )
+    fake_slurm.monkeypatch.setattr(
+        fake_slurm.run, "batch_settings_cases", lambda *_a, **_k: None
+    )
+    _status, batch = _two_case_batch(
+        fake_slurm,
+        "slurm-old",
+        [*_slurm(fake_slurm)[len(_SWEEP) :], "launcher.cases_per_task=1"],
+    )
+    assert "batch_settings" not in BatchLayout(batch).read_manifest()
+    queues = sorted(
+        _queues(fake_slurm), key=lambda settings: settings["t4scene"] is not None
+    )
+    assert [settings["t4scene"] for settings in queues] == [
+        None,
+        {"step_s": 0.2, "max_distance_m": 100.0},
+    ]
 
 
 def test_batch_settings_cases_name_a_case_for_each_setting(

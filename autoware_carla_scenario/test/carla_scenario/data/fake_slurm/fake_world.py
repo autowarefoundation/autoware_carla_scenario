@@ -2,7 +2,7 @@
 
 :func:`install` replaces what ``examples.run`` builds and runs a batch with
 (``build_scenario``, ``ScenarioQueue``, ``resolve_map_paths``,
-``build_traffic_backend``), in the test's process for a local batch and, through
+``build_traffic_backend``, ``use_canvas``), in the test's process for a local batch and, through
 the ``sitecustomize`` the tests put on ``PYTHONPATH``, in every SLURM task.
 
 A case's outcome depends only on its config, as a real one's should: the same
@@ -225,9 +225,23 @@ class FakeQueue:
         return results
 
 
+#: The ``canvas.config`` the process last applied (:func:`fake_use_canvas`).
+_CANVAS: str | None = None
+
+
+def fake_use_canvas(config: Any) -> Path | None:
+    """``canvas.use_canvas`` without carla_canvas: remembers *config*."""
+    global _CANVAS
+    _CANVAS = None if config is None or str(config) == "" else str(config)
+    return None if _CANVAS is None else Path(_CANVAS)
+
+
 def queue_settings(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """The batch-level settings a queue was built with (*kwargs*): what must
-    not depend on which task, or how many, ran the batch's cases."""
+    """The batch-level settings a queue was built with (*kwargs*), and the
+    process's canvas and heavy metrics as it was built: what must not depend
+    on which task, or how many, ran the batch's cases."""
+    from autoware_carla_scenario.commonroad.session import commonroad_settings
+
     rerun = kwargs.get("rerun")
     t4scene = kwargs.get("t4scene")
     return {
@@ -246,6 +260,8 @@ def queue_settings(kwargs: dict[str, Any]) -> dict[str, Any]:
         "max_tick_rate_hz": kwargs.get("max_tick_rate_hz"),
         "world_reset": kwargs.get("world_reset"),
         "reload_every": kwargs.get("reload_every"),
+        "canvas": _CANVAS,
+        "heavy_metrics": commonroad_settings().heavy_metrics,
     }
 
 
@@ -330,5 +346,6 @@ def install(run: Any = None) -> None:
     run.ScenarioQueue = FakeQueue
     run.resolve_map_paths = fake_map_paths
     run.build_traffic_backend = lambda _cfg: None
+    run.use_canvas = fake_use_canvas
     if not hasattr(run._compose_config, "__wrapped__"):
         run._compose_config = compose_with_scenario_overrides(run._compose_config)
