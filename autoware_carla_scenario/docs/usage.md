@@ -472,10 +472,14 @@ conf/
 │   └── default.yaml         # CARLA Traffic Manager settings
 ├── traffic/                 # Traffic backend: traffic_manager, sumo, none
 ├── launcher/                # Who runs a batch's cases: local, slurm
+├── hydra/sweeper/
+│   └── lanelet_constraint.yaml
 ├── map/
 │   ├── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
 │   └── town10hd_opt.yaml
 └── scenario/
+    ├── adversity/           # brake_check, cut_in, ignore_leader, jaywalking, nade, traffic_rule
+    ├── cut_in/              # left, right
     ├── intersection_passing/
     │   ├── straight.yaml
     │   ├── left_turn.yaml
@@ -488,6 +492,8 @@ conf/
     ├── lane_change_fail/
     │   ├── left.yaml
     │   └── right.yaml
+    ├── pedestrian_dart_out/
+    │   └── pedestrian_dart_out.yaml
     ├── temporary_stop/
     │   └── temporary_stop.yaml
     └── traffic_light_compliance/
@@ -721,7 +727,7 @@ xodr_path: ${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}
 In the parameter tables below, **Default** is the value a key takes when the
 scenario's YAML omits it (the dataclass default in `examples/configs.py`), and
 **Shipped** is the value the shipped config (`examples/conf/scenario/...`) sets,
-or — when it does not set the key, so the default applies.
+or — when it leaves the key unset, so the default applies.
 
 #### Intersection Passing
 
@@ -806,9 +812,9 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 |-----------|------|---------|---------|-------------|
 | `scenario.light_switch_delay_seconds` | float | `3.0` | `5.0` | Delay before switching red to green |
 | `scenario.timeout_seconds` | float | `5.0` | `8.0` | Maximum scenario duration; ignored when `timeout_after_green_seconds` is set |
-| `scenario.timeout_after_green_seconds` | float \| null | null | — | The timeout counted from the green instead: `light_switch_delay_seconds` plus this, in place of `timeout_seconds` (which, overrides included, then no longer caps the run). `null` uses `timeout_seconds` |
+| `scenario.timeout_after_green_seconds` | float \| null | null | — | The timeout counted from the green instead: `light_switch_delay_seconds` plus this, in place of `timeout_seconds`, overrides included. `null` uses `timeout_seconds` |
 | `scenario.stop_line_distance_m` | float \| null | null | — | Moves the ego along its lane so that its front bumper starts this many metres before the stop line ahead. `null` leaves the spawn pose as it is |
-| `scenario.stop_zone_min_m` | float | `0.0` | `0.0` | Near end of the stop zone: metres before the stop line (`stop_line_distance_m`) |
+| `scenario.stop_zone_min_m` | float | `0.0` | `0.0` | Near end of the stop zone: metres before the stop line, as the `stop_line_distance_m` measure reads it |
 | `scenario.stop_zone_max_m` | float | `3.0` | `3.0` | Far end of the stop zone; standing still farther back until the green fails the run |
 | `scenario.stop_line_tolerance_m` | float | `0.0` | `0.0` | How far the front bumper may pass the stop line on red before the run fails for running the red; that far past counts as at the line for the stop zone |
 | `scenario.standstill_seconds` | float | `0.5` | `0.5` | How long the ego has to stand still in the stop zone, before the green, for it to count as stopped there (latched once it has) |
