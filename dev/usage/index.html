@@ -4130,26 +4130,39 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>│   └── default.yaml         # Ego vehicle settings
 <a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>├── entity/
 <a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>│   └── default.yaml         # Entity spawn and ground projection settings
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>├── traffic_manager/
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>│   └── default.yaml         # CARLA Traffic Manager settings
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>├── map/
-<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
-<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>└── scenario/
-<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>    ├── intersection_passing/
-<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>    │   ├── straight.yaml
-<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>    │   ├── left_turn.yaml
-<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>    │   ├── right_turn.yaml
-<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>    │   └── straight_3npc.yaml
-<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>    ├── lane_change/
-<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>    │   ├── left.yaml
-<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>    │   └── right.yaml
-<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>    ├── lane_change_fail/
-<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    │   ├── left.yaml
-<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>    │   └── right.yaml
-<a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>    ├── temporary_stop/
-<a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>    │   └── temporary_stop.yaml
-<a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>    └── traffic_light_compliance/
-<a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>        └── traffic_light_compliance.yaml
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>├── driver/                  # External driver policy (ego.entity: carla_driver)
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>├── ros2/                    # Ego driven by ROS 2 nodes (ego.entity: ros2)
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>├── hils/                    # Ego driven by ECUs under test (ego.entity: hils)
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>├── traffic_manager/
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>│   └── default.yaml         # CARLA Traffic Manager settings
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>├── traffic/                 # Traffic backend: traffic_manager, sumo, none
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>├── launcher/                # Who runs a batch's cases: local, slurm
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>├── hydra/sweeper/
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>│   └── lanelet_constraint.yaml
+<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>├── map/
+<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>│   ├── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
+<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>│   └── town10hd_opt.yaml
+<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>└── scenario/
+<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>    ├── adversity/           # brake_check, cut_in, ignore_leader, jaywalking, nade, traffic_rule
+<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    ├── cut_in/              # left, right
+<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>    ├── intersection_passing/
+<a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>    │   ├── straight.yaml
+<a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>    │   ├── left_turn.yaml
+<a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>    │   ├── right_turn.yaml
+<a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>    │   ├── right_turn_sweep.yaml
+<a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a>    │   └── straight_3npc.yaml
+<a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>    ├── lane_change/
+<a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>    │   ├── left.yaml
+<a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a>    │   └── right.yaml
+<a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>    ├── lane_change_fail/
+<a id="__codelineno-13-34" name="__codelineno-13-34" href="#__codelineno-13-34"></a>    │   ├── left.yaml
+<a id="__codelineno-13-35" name="__codelineno-13-35" href="#__codelineno-13-35"></a>    │   └── right.yaml
+<a id="__codelineno-13-36" name="__codelineno-13-36" href="#__codelineno-13-36"></a>    ├── pedestrian_dart_out/
+<a id="__codelineno-13-37" name="__codelineno-13-37" href="#__codelineno-13-37"></a>    │   └── pedestrian_dart_out.yaml
+<a id="__codelineno-13-38" name="__codelineno-13-38" href="#__codelineno-13-38"></a>    ├── temporary_stop/
+<a id="__codelineno-13-39" name="__codelineno-13-39" href="#__codelineno-13-39"></a>    │   └── temporary_stop.yaml
+<a id="__codelineno-13-40" name="__codelineno-13-40" href="#__codelineno-13-40"></a>    └── traffic_light_compliance/
+<a id="__codelineno-13-41" name="__codelineno-13-41" href="#__codelineno-13-41"></a>        └── traffic_light_compliance.yaml
 </code></pre></div>
 <h4 id="root-configuration-configyaml">Root Configuration (<code>config.yaml</code>)<a class="headerlink" href="#root-configuration-configyaml" title="Permanent link">&para;</a></h4>
 <p>Defines the default config group composition:</p>
@@ -4178,9 +4191,29 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td>Entity spawn and ground projection</td>
 </tr>
 <tr>
+<td><code>driver</code></td>
+<td><code>default</code></td>
+<td>Driver policy, used when <code>ego.entity: carla_driver</code> (<a href="../driver_interface/">Driver Interface</a>)</td>
+</tr>
+<tr>
+<td><code>ros2</code></td>
+<td><code>default</code></td>
+<td>Ego driven by ROS 2 nodes, used when <code>ego.entity: ros2</code> (<a href="../ros2/">ROS 2</a>)</td>
+</tr>
+<tr>
+<td><code>hils</code></td>
+<td><code>default</code></td>
+<td>Ego driven by ECUs under test, used when <code>ego.entity: hils</code> (<a href="../hils/">HILS</a>)</td>
+</tr>
+<tr>
 <td><code>traffic_manager</code></td>
 <td><code>default</code></td>
 <td>CARLA Traffic Manager</td>
+</tr>
+<tr>
+<td><code>traffic</code></td>
+<td><code>traffic_manager</code></td>
+<td>Traffic backend: <code>traffic_manager</code>, <code>sumo</code> or <code>none</code> (<a href="../traffic_backends/">Traffic Backends</a>)</td>
 </tr>
 <tr>
 <td><code>scenario</code></td>
@@ -4191,6 +4224,11 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>map</code></td>
 <td><code>nishishinjuku</code></td>
 <td>Map to load</td>
+</tr>
+<tr>
+<td><code>launcher</code></td>
+<td><code>null</code></td>
+<td>Who runs a batch's cases: unset runs them here, one after another; <code>launcher=slurm</code> runs them as a SLURM array job (<a href="../slurm/">SLURM</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -4568,36 +4606,57 @@ one warns that it is ignored and says the above.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}</span>
 </code></pre></div>
 <h3 id="supported-scenarios">Supported Scenarios<a class="headerlink" href="#supported-scenarios" title="Permanent link">&para;</a></h3>
+<p>In the parameter tables below, <strong>Default</strong> is the value a key takes when the
+scenario's YAML omits it (the dataclass default in <code>examples/configs.py</code>), and
+<strong>Shipped</strong> is the value the shipped config (<code>examples/conf/scenario/...</code>) sets,
+or — when it leaves the key unset, so the default applies.</p>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
 <p>Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.</p>
 <table>
 <thead>
 <tr>
 <th>Config</th>
-<th>Turn Direction</th>
+<th><code>turn_direction</code></th>
+<th><code>timeout_seconds</code></th>
+<th><code>min_speed_kmh</code></th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>intersection_passing/straight</code></td>
-<td>none</td>
+<td><code>straight</code></td>
+<td><code>15.0</code></td>
+<td><code>3.0</code></td>
 <td>Drive straight through intersection</td>
 </tr>
 <tr>
 <td><code>intersection_passing/left_turn</code></td>
-<td>left</td>
+<td><code>left</code></td>
+<td><code>20.0</code></td>
+<td>—</td>
 <td>Left turn at intersection</td>
 </tr>
 <tr>
 <td><code>intersection_passing/right_turn</code></td>
-<td>right</td>
+<td><code>right</code></td>
+<td><code>20.0</code></td>
+<td>—</td>
 <td>Right turn at intersection</td>
 </tr>
 <tr>
+<td><code>intersection_passing/right_turn_sweep</code></td>
+<td><code>right</code></td>
+<td><code>60.0</code></td>
+<td>—</td>
+<td>Right turn from a standstill; its sweep takes right turns behind a traffic-light stop line</td>
+</tr>
+<tr>
 <td><code>intersection_passing/straight_3npc</code></td>
-<td>none</td>
-<td>Straight with 3 NPC vehicles</td>
+<td>— (<code>null</code>)</td>
+<td><code>10.0</code></td>
+<td><code>0.0</code></td>
+<td>Straight with 3 NPC vehicles, no <code>TurnAction</code></td>
 </tr>
 </tbody>
 </table>
@@ -4608,6 +4667,7 @@ one warns that it is ignored and says the above.</p>
 <th>Parameter</th>
 <th>Type</th>
 <th>Default</th>
+<th>Shipped</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -4615,61 +4675,71 @@ one warns that it is ignored and says the above.</p>
 <tr>
 <td><code>scenario.expected_route_lanelet_ids</code></td>
 <td>list[int]</td>
-<td>varies</td>
+<td><code>[460, 265]</code></td>
+<td>per config</td>
 <td>Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it</td>
 </tr>
 <tr>
 <td><code>scenario.timeout_seconds</code></td>
 <td>float</td>
 <td><code>5.0</code></td>
+<td>per config (above)</td>
 <td>Maximum scenario duration</td>
 </tr>
 <tr>
 <td><code>scenario.min_speed_kmh</code></td>
 <td>float | null</td>
 <td>null</td>
+<td>per config (above)</td>
 <td>Minimum ego speed (fail if below). <code>null</code> disables check</td>
 </tr>
 <tr>
 <td><code>scenario.speed_check_delay_seconds</code></td>
 <td>float</td>
 <td><code>0.3</code></td>
+<td><code>0.3</code> (<code>straight</code>, <code>straight_3npc</code>)</td>
 <td>Grace period before speed check starts</td>
 </tr>
 <tr>
 <td><code>scenario.turn_direction</code></td>
 <td>str | null</td>
 <td>null</td>
-<td><code>"left"</code>, <code>"right"</code>, or <code>null</code> for straight</td>
+<td>per config (above)</td>
+<td><code>"left"</code>, <code>"right"</code> or <code>"straight"</code> registers a <code>TurnAction</code> for that direction; <code>null</code> registers none</td>
 </tr>
 <tr>
 <td><code>scenario.turn_indicator_before_m</code></td>
 <td>float | null</td>
 <td>null</td>
+<td>—</td>
 <td>From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of <code>turn_direction</code> (<code>left</code> or <code>right</code>); it fails once it has not for <code>turn_indicator_grace_seconds</code>. <code>null</code> disables the check</td>
 </tr>
 <tr>
 <td><code>scenario.turn_indicator_grace_seconds</code></td>
 <td>float</td>
 <td><code>0.5</code></td>
+<td>—</td>
 <td>How long the indicator may be wrong before the run fails</td>
 </tr>
 <tr>
 <td><code>scenario.max_steering_reversals</code></td>
 <td>int | null</td>
 <td>null</td>
+<td>—</td>
 <td>Fail once the steering has turned back this many times since the start (the <code>steering_reversals</code> metric, <a href="../metrics/#weaving">metrics.md</a>). <code>null</code> disables the check</td>
 </tr>
 <tr>
 <td><code>scenario.max_turn_indicator_changes</code></td>
 <td>int | null</td>
 <td>null</td>
+<td>—</td>
 <td>Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the <code>turn_indicator_changes</code> metric). <code>null</code> disables the check</td>
 </tr>
 <tr>
 <td><code>scenario.npc_vehicles</code></td>
 <td>list</td>
 <td><code>[]</code></td>
+<td>3 vehicles (<code>straight_3npc</code>)</td>
 <td>NPC vehicle configurations (see below)</td>
 </tr>
 </tbody>
@@ -4683,7 +4753,7 @@ one warns that it is ignored and says the above.</p>
 </code></pre></div>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
-- Registers a TurnAction for left/right turns (applies steering via CARLA autopilot route)
+- Registers a TurnAction when <code>turn_direction</code> is set -- <code>left</code>, <code>right</code> or <code>straight</code> (sets the ego's path through the junction via the TrafficManager); none when it is <code>null</code>
 - Pass condition: ego traverses all expected OpenDRIVE road IDs (checked via StickyCondition + AndCondition)
 - Fail conditions: timeout, ego destroyed, speed below threshold</p>
 <h4 id="lane-change">Lane Change<a class="headerlink" href="#lane-change" title="Permanent link">&para;</a></h4>
@@ -4694,6 +4764,7 @@ one warns that it is ignored and says the above.</p>
 <th>Config</th>
 <th>Direction</th>
 <th>Expected Result</th>
+<th><code>timeout_seconds</code></th>
 </tr>
 </thead>
 <tbody>
@@ -4701,21 +4772,25 @@ one warns that it is ignored and says the above.</p>
 <td><code>lane_change/left</code></td>
 <td>left</td>
 <td>success</td>
+<td><code>10.0</code></td>
 </tr>
 <tr>
 <td><code>lane_change/right</code></td>
 <td>right</td>
 <td>success</td>
+<td><code>10.0</code></td>
 </tr>
 <tr>
 <td><code>lane_change_fail/left</code></td>
 <td>left</td>
 <td>fail (no adjacent lane)</td>
+<td><code>1.5</code></td>
 </tr>
 <tr>
 <td><code>lane_change_fail/right</code></td>
 <td>right</td>
 <td>fail (no adjacent lane)</td>
+<td><code>1.5</code></td>
 </tr>
 </tbody>
 </table>
@@ -4726,6 +4801,7 @@ one warns that it is ignored and says the above.</p>
 <th>Parameter</th>
 <th>Type</th>
 <th>Default</th>
+<th>Shipped</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -4734,18 +4810,21 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.direction</code></td>
 <td>str</td>
 <td><code>"left"</code></td>
+<td>per config (above)</td>
 <td>Lane change direction: <code>"left"</code> or <code>"right"</code></td>
 </tr>
 <tr>
 <td><code>scenario.expect</code></td>
 <td>str</td>
 <td><code>"success"</code></td>
+<td>per config (above)</td>
 <td>Expected outcome: <code>"success"</code> or <code>"fail"</code></td>
 </tr>
 <tr>
 <td><code>scenario.timeout_seconds</code></td>
 <td>float</td>
 <td><code>10.0</code></td>
+<td>per config (above)</td>
 <td>Maximum scenario duration</td>
 </tr>
 </tbody>
@@ -4777,6 +4856,7 @@ one warns that it is ignored and says the above.</p>
 <th>Parameter</th>
 <th>Type</th>
 <th>Default</th>
+<th>Shipped</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -4784,24 +4864,42 @@ one warns that it is ignored and says the above.</p>
 <tr>
 <td><code>scenario.light_switch_delay_seconds</code></td>
 <td>float</td>
+<td><code>3.0</code></td>
 <td><code>5.0</code></td>
 <td>Delay before switching red to green</td>
 </tr>
 <tr>
 <td><code>scenario.timeout_seconds</code></td>
 <td>float</td>
+<td><code>5.0</code></td>
 <td><code>8.0</code></td>
-<td>Maximum scenario duration</td>
+<td>Maximum scenario duration; ignored when <code>timeout_after_green_seconds</code> is set</td>
+</tr>
+<tr>
+<td><code>scenario.timeout_after_green_seconds</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>—</td>
+<td>The timeout counted from the green instead: <code>light_switch_delay_seconds</code> plus this, in place of <code>timeout_seconds</code>, overrides included. <code>null</code> uses <code>timeout_seconds</code></td>
+</tr>
+<tr>
+<td><code>scenario.stop_line_distance_m</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>—</td>
+<td>Moves the ego along its lane so that its front bumper starts this many metres before the stop line ahead. <code>null</code> leaves the spawn pose as it is</td>
 </tr>
 <tr>
 <td><code>scenario.stop_zone_min_m</code></td>
 <td>float</td>
 <td><code>0.0</code></td>
-<td>Near end of the stop zone: metres before the stop line (<code>stop_line_distance_m</code>)</td>
+<td><code>0.0</code></td>
+<td>Near end of the stop zone: metres before the stop line, as the <code>stop_line_distance_m</code> measure reads it</td>
 </tr>
 <tr>
 <td><code>scenario.stop_zone_max_m</code></td>
 <td>float</td>
+<td><code>3.0</code></td>
 <td><code>3.0</code></td>
 <td>Far end of the stop zone; standing still farther back until the green fails the run</td>
 </tr>
@@ -4809,11 +4907,13 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.stop_line_tolerance_m</code></td>
 <td>float</td>
 <td><code>0.0</code></td>
+<td><code>0.0</code></td>
 <td>How far the front bumper may pass the stop line on red before the run fails for running the red; that far past counts as at the line for the stop zone</td>
 </tr>
 <tr>
 <td><code>scenario.standstill_seconds</code></td>
 <td>float</td>
+<td><code>0.5</code></td>
 <td><code>0.5</code></td>
 <td>How long the ego has to stand still in the stop zone, before the green, for it to count as stopped there (latched once it has)</td>
 </tr>
@@ -4821,11 +4921,13 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.standstill_speed_mps</code></td>
 <td>float</td>
 <td><code>0.1</code></td>
+<td><code>0.1</code></td>
 <td>Speed (m/s) at or below which the ego stands still</td>
 </tr>
 <tr>
 <td><code>scenario.departure_speed_kmh</code></td>
-<td>float</td>
+<td>float | null</td>
+<td>null</td>
 <td><code>10.0</code></td>
 <td>Speed (km/h) the ego must reach after green to pass; <code>null</code> uses <code>moving_speed_kmh</code></td>
 </tr>
@@ -4833,12 +4935,14 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.moving_speed_kmh</code></td>
 <td>float</td>
 <td><code>1.0</code></td>
+<td>—</td>
 <td>The departure speed when <code>departure_speed_kmh</code> is <code>null</code>; no longer judges the red phase</td>
 </tr>
 <tr>
 <td><code>scenario.merging_time_seconds</code></td>
 <td>float</td>
 <td><code>0.5</code></td>
+<td>—</td>
 <td>Deprecated and unused; kept so configs that set it still load</td>
 </tr>
 </tbody>
@@ -4870,6 +4974,7 @@ one warns that it is ignored and says the above.</p>
 <th>Parameter</th>
 <th>Type</th>
 <th>Default</th>
+<th>Shipped</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -4878,17 +4983,20 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.s_margin</code></td>
 <td>float</td>
 <td><code>5.0</code></td>
+<td><code>5.0</code></td>
 <td>Arc-length margin around stop position (meters)</td>
 </tr>
 <tr>
 <td><code>scenario.speed_threshold</code></td>
 <td>float</td>
 <td><code>0.1</code></td>
+<td><code>0.1</code></td>
 <td>Max speed considered as "stopped" (m/s)</td>
 </tr>
 <tr>
 <td><code>scenario.stop_duration</code></td>
 <td>float</td>
+<td><code>1.0</code></td>
 <td><code>0.3</code></td>
 <td>Minimum consecutive seconds to remain stopped</td>
 </tr>
@@ -4896,12 +5004,14 @@ one warns that it is ignored and says the above.</p>
 <td><code>scenario.restart_speed_kmh</code></td>
 <td>float</td>
 <td><code>3.0</code></td>
+<td><code>3.0</code></td>
 <td>Speed threshold for restart detection (km/h)</td>
 </tr>
 <tr>
 <td><code>scenario.timeout_seconds</code></td>
 <td>float</td>
-<td><code>5.0</code></td>
+<td><code>30.0</code></td>
+<td><code>12.0</code></td>
 <td>Maximum scenario duration</td>
 </tr>
 </tbody>
@@ -5135,7 +5245,7 @@ exit 0 always means something ran and passed. The exceptions:</p>
 <li><code>launcher=slurm</code> with <code>--no-wait</code> exits 0 once the batch is submitted; its
   verdict is what <code>scenario-slurm wait</code> or <code>scenario-slurm collect</code> exit with.
   Interrupted while it waits, it cancels the array and exits with the verdict
-  of what it collects (<code>slurm.cancel_on_interrupt</code>, the default), or exits 130
+  of what it collects (<code>launcher.cancel_on_interrupt</code>, the default), or exits 130
   and leaves the array running.</li>
 </ul>
 <hr />
@@ -5895,7 +6005,7 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 03:53:31 UTC"><span class="timeago" datetime="2026-11-03T03:53:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 03:53:31 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 04:57:00 UTC"><span class="timeago" datetime="2026-11-03T04:57:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 04:57:00 UTC">2026-11-03</span>
   </span>
 
     
