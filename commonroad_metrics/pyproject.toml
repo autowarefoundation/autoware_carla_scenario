@@ -33,6 +33,8 @@ packages = ["src/commonroad_metrics"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A parametrize over an empty list is a test that never runs; make it an error.
+empty_parameter_set_mark = "fail_at_collect"
 
 [tool.ruff]
 line-length = 100

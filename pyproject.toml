@@ -123,6 +123,8 @@ testpaths = [
 # testmon is opt-in (`uv run pytest --testmon`): it never re-selects tests that
 # depend on the set of files or on docs text, which CI (no testmon) runs.
 addopts = "-n auto"
+# A parametrize over an empty list is a test that never runs; make it an error.
+empty_parameter_set_mark = "fail_at_collect"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring a running CARLA server",
