@@ -1776,7 +1776,7 @@ def test_a_bicycle_spawn_checks_the_place_of_its_recorded_size(
         return (0.0, 0.0, 0.0, 0.0)
 
     monkeypatch.setattr(spawn_module.SpawnAction, "_place", place)
-    monkeypatch.setattr(spawn_module, "_put", lambda *args: None)
+    monkeypatch.setattr(spawn_module, "_put", lambda *args: args[4])
     actor = SimpleNamespace(
         id=41,
         type_id="walker.pedestrian.0015",

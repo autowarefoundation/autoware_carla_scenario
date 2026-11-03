@@ -8,7 +8,9 @@ own, such a place faces along the lane it is placed on, not world 0 deg.
 
 An entity brought in on the very frame a place is written against it is
 not seen there yet (a client sees a new transform from the next tick on):
-such a place is placed against where it was put, on that frame only.
+such a place is placed against where it was put, on that frame only (a
+walker where it was stood on the ground, #1278), and not once it was hidden or
+despawned again on that frame.
 
 Placed on the synthetic crossroads of :mod:`._route_maps` (CARLA's frame is
 the map's with y flipped): the S road's northbound lane ``S_IN`` runs at map
@@ -27,10 +29,17 @@ from unittest.mock import MagicMock
 import pytest
 import typesafe_carla.carla as carla
 
-from autoware_carla_scenario import SpawnAction, entity_role
+from autoware_carla_scenario import (
+    DespawnAction,
+    SpawnAction,
+    StalledObjectAction,
+    entity_role,
+)
 from autoware_carla_scenario.actions import _trajectory_run
 from autoware_carla_scenario.actions import spawn as spawn_module
+from autoware_carla_scenario.coordinate import snap as snap_module
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pose
+from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 from autoware_carla_scenario.trajectory import resolve as resolve_module
 from autoware_carla_scenario.trajectory.model import RelativeLanePose, RouteLanePose
 
@@ -69,7 +78,9 @@ class _World:
         self.frame = 10
 
     def get_snapshot(self) -> Any:
-        return SimpleNamespace(frame=self.frame)
+        return SimpleNamespace(
+            frame=self.frame, timestamp=SimpleNamespace(delta_seconds=0.05)
+        )
 
     def get_blueprint_library(self) -> Any:
         return SimpleNamespace(filter=lambda name: [name])
@@ -158,7 +169,9 @@ def brought_in(monkeypatch: pytest.MonkeyPatch, unoccupied: None) -> MagicMock:
     npc1 = _on_s_in(z=-500.0)
     monkeypatch.setattr(_trajectory_run, "_entity_actor", lambda name: npc1)
     monkeypatch.setattr(_trajectory_run, "_is_walker", lambda found: False)
-    monkeypatch.setattr(spawn_module, "_put", lambda *a, **k: None)
+    monkeypatch.setattr(
+        spawn_module, "_put", lambda world, found, x, y, z, yaw, speed: z
+    )
     return npc1
 
 
@@ -204,11 +217,101 @@ class TestBroughtInOnTheSameFrame:
         assert not SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
         assert world.spawned == []
 
-    def test_the_runner_forgets_it_between_runs(self, brought_in: MagicMock) -> None:
+    def test_clearing_the_props_forgets_it(self, brought_in: MagicMock) -> None:
+        # The runner clears them before and after each run
+        # (test_scenario_rerun.py checks it does).
         world = _World(brought_in)
         assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
         spawn_module.clear_props()
         assert spawn_module._BROUGHT_IN == {}
+
+
+class TestAWalkerBroughtInOnTheSameFrame:
+    """A walker is stood on the ground under its place and raised by half its
+    height (:func:`~autoware_carla_scenario.actions.spawn._put`): it is
+    recorded where it was put, not at the place's z (#1278)."""
+
+    def test_it_is_recorded_at_the_z_it_was_put_at(
+        self, monkeypatch: pytest.MonkeyPatch, unoccupied: None
+    ) -> None:
+        walker = _on_s_in(z=-500.0)
+        walker.bounding_box = SimpleNamespace(
+            extent=SimpleNamespace(x=0.3, y=0.3, z=0.9)
+        )
+        monkeypatch.setattr(_trajectory_run, "_entity_actor", lambda name: walker)
+        monkeypatch.setattr(_trajectory_run, "_is_walker", lambda found: True)
+        monkeypatch.setattr(_trajectory_run, "_as_walker", lambda found: found)
+        # A raised kerb: the ground under the place is 0.2 m above the lane.
+        monkeypatch.setattr(
+            snap_module,
+            "refine_z_with_ground_projection",
+            lambda x, y, z, world: z + 0.2,
+        )
+        world = _World(walker)
+        spawn = SpawnAction("npc1", position=_ENTRY)
+        lane_z = spawn._place(world, 7, 0.3, 0.3)  # type: ignore[arg-type]
+        assert lane_z is not None
+        assert spawn.apply(world)  # type: ignore[arg-type]
+        (applied,) = [c.args[0] for c in walker.set_transform.call_args_list]
+        _frame, put = spawn_module._BROUGHT_IN[(_World.id, "npc1")]
+        assert put.z == pytest.approx(applied.location.z)
+        assert put.z == pytest.approx(lane_z[2] + 0.2 + 0.9)
+        assert (put.x, put.y) == pytest.approx((applied.location.x, applied.location.y))
+
+
+class TestHiddenAgainOnTheSameFrame:
+    """Brought in and then taken out again on one frame, it is not where it
+    was put: a place against it reads it as absent (#1278)."""
+
+    def test_a_despawn_forgets_where_it_was_put(self, brought_in: MagicMock) -> None:
+        world = _World(brought_in)
+        register_entity(
+            "npc1",
+            SimpleNamespace(
+                actor=brought_in,
+                release_from_traffic=lambda world: None,
+                destroy=lambda: None,
+            ),
+        )
+        try:
+            assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
+            DespawnAction("npc1").execute(world)  # type: ignore[arg-type]
+        finally:
+            unregister_entity("npc1")
+        assert spawn_module._BROUGHT_IN == {}
+        assert not SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
+        assert world.spawned == []
+
+    def test_a_hide_forgets_where_it_was_put(self, brought_in: MagicMock) -> None:
+        world = _World(brought_in)
+        register_entity(
+            "npc1",
+            SimpleNamespace(
+                actor=brought_in,
+                use_autopilot=True,
+                release_from_traffic=lambda world: None,
+                resume_traffic=lambda world: None,
+            ),
+        )
+        # Out of the world until 1 s: hidden when it ticks at 0 s.
+        stalled = StalledObjectAction(
+            "npc1", CarlaWorldPose(1.75, 75.0, 0.0, yaw=_NORTHBOUND), 1.0, 2.0
+        )
+        try:
+            assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
+            stalled.tick(world, 0.0)  # type: ignore[arg-type]
+        finally:
+            unregister_entity("npc1")
+        assert stalled._hidden
+        assert spawn_module._BROUGHT_IN == {}
+        assert not SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
+        assert world.spawned == []
+
+    def test_another_entity_s_despawn_leaves_it(self, brought_in: MagicMock) -> None:
+        world = _World(brought_in)
+        assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
+        spawn_module.forget_brought_in(world, "npc2")  # type: ignore[arg-type]
+        assert (_World.id, "npc1") in spawn_module._BROUGHT_IN
 
 
 class TestTheHeading:

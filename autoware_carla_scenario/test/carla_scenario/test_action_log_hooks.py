@@ -86,11 +86,14 @@ def _bring_in_with(
     put: list[tuple[Any, float, float, float]] = []
     monkeypatch.setattr(_trajectory_run, "_entity_actor", lambda name: actor)
     monkeypatch.setattr(_trajectory_run, "_is_walker", lambda found: False)
-    monkeypatch.setattr(
-        spawn_module,
-        "_put",
-        lambda world, found, x, y, z, yaw, speed: put.append((found, x, y, z)),
-    )
+
+    def record(
+        world: Any, found: Any, x: float, y: float, z: float, yaw: float, speed: float
+    ) -> float:
+        put.append((found, x, y, z))
+        return z
+
+    monkeypatch.setattr(spawn_module, "_put", record)
     return put
 
 
