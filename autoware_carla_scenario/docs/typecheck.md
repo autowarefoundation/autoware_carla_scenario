@@ -779,8 +779,7 @@ What `test_typecheck_model.py` compares, model by model:
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
-  `ui/models`, `_ros2`, `metrics`, `measures`, `utils/light_lanes` and
-  `utils/traffic_light`, each declaring exactly the names compared;
+  `ui/models`, `_ros2`, `metrics`, `measures` and `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
   has exports in Python (its `__all__`, or the public names it defines when

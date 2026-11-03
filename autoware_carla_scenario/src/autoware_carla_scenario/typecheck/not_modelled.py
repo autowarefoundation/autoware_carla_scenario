@@ -257,13 +257,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "scenario imports; the model declares no submodules of odd",
         ),
     },
-    f"{_PACKAGE}.utils.light_lanes": _each(
-        "JOIN_M LIGHT_SEARCH_M LightLanes elements_ahead light_lanes",
-        "the lanes a light is looked up on, and the lookup on them, which "
-        "lights_of_element() and t4_scene.convert read, not a scenario; the "
-        "model declares only what the checked coordinate.traffic_light uses "
-        "of the module",
-    ),
     f"{_PACKAGE}.pedestrian.soma": _each(
         "DEFAULT_FPS SOMA_JOINTS",
         "the frame rate a motion file that names none is read at, and the "

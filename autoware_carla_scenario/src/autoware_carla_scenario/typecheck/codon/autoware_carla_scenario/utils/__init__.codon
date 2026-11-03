@@ -1,2 +1,3 @@
 # autoware_carla_scenario.utils is checked from its source (typecheck/library.py);
-# this package holds models of the utils modules that are not.
+# this package holds the model of utils.traffic_light, kept as the one model of
+# a single module of a checked package (see that model).

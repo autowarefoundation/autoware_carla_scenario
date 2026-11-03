@@ -103,7 +103,6 @@ from autoware_carla_scenario.typecheck.not_modelled import (
     not_modelled_member,
 )
 from autoware_carla_scenario.ui import models as ui_models
-from autoware_carla_scenario.utils import light_lanes as utils_light_lanes
 from autoware_carla_scenario.utils import traffic_light as utils_traffic_light
 from carla_driver_interface import geometry as cdi_geometry
 
@@ -1020,9 +1019,6 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What the checked actions.play_motion reads of the unchecked
     # pedestrian.soma (numpy.load, numpy.typing).
     "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
-    # What the checked coordinate.traffic_light uses of the unchecked
-    # utils.light_lanes (numpy.typing).
-    "utils/light_lanes": (utils_light_lanes, ("lights_of_element",)),
     # The model of one module of the checked utils package, which the scenario
     # check resolves (typecheck/check.py).
     "utils/traffic_light": (
