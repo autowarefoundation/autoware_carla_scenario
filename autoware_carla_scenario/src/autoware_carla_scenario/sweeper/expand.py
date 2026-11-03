@@ -39,7 +39,8 @@ as it picks the settings.
 ``scenario-expand`` lists them.
 
 A config without a sweep is already concrete and expands to itself (one empty
-override list). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
+override list). Its ``controls`` are still checked, as a sweep's are
+(:func:`scenario_controls`). The Hydra sweeper (``hydra/sweeper=lanelet_constraint``) runs
 these in one process; ``scenario-expand`` hands them to a caller that runs them
 elsewhere -- e.g. a test suite fanning them out over a cluster.
 """
@@ -611,7 +612,15 @@ def expand_config(
 
     *drawn* is a batch's record of the cases drawn from the ODD so far
     (see :func:`expand_sweep`).
+
+    Raises:
+        ControlsError: When the config's ``controls`` are invalid, whether or
+            not it has a sweep -- as ``scenario-check`` refuses them
+            (:func:`scenario_controls`).
     """
+    # Checked before anything else, a concrete config's too: the check needs
+    # only the config, no map, ODD or CARLA.
+    controls = scenario_controls(cfg)
     sweep_cfg = OmegaConf.select(cfg, "sweep")
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
@@ -623,7 +632,6 @@ def expand_config(
 
     check_constraint_keys(sweep)
     odd = OmegaConf.select(cfg, "odd")
-    controls = scenario_controls(cfg)
     seed = _config_seed(cfg)
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.

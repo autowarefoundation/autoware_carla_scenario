@@ -282,6 +282,53 @@ class TestExpandConfig:
         assert expand_config(cfg) == [[]]
         assert expand_config(cfg, ["ego.spawn_s=3.0"]) == [["ego.spawn_s=3.0"]]
 
+    # A concrete config's `controls:` are checked as a sweep's are, and as
+    # `scenario-check` checks them (#1191): they used to be read only when
+    # the config had a sweep.
+    def test_a_concrete_scenario_with_invalid_controls_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.odd.controls import ControlsError
+
+        def _no_map(*_args, **_kwargs):
+            raise AssertionError("checking controls needs no map")
+
+        monkeypatch.setattr("autoware_carla_scenario.maps.resolve_map_paths", _no_map)
+        cfg = OmegaConf.create(
+            {
+                "scenario": {"name": "x", "npc_gap_m": 10.0},
+                "map": {"name": "Town10HD_Opt"},
+                "controls": {"vehicle_ahead_gap_m": {"key": "scenario.npc_gapm"}},
+            }
+        )
+        with pytest.raises(ControlsError) as caught:
+            expand_config(cfg)
+        assert [d.path for d in caught.value.diagnostics] == [
+            "controls.vehicle_ahead_gap_m.key"
+        ]
+
+    def test_a_concrete_scenario_with_valid_controls_expands_to_itself(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _no_map(*_args, **_kwargs):
+            raise AssertionError("a concrete scenario needs no map")
+
+        monkeypatch.setattr("autoware_carla_scenario.maps.resolve_map_paths", _no_map)
+        cfg = OmegaConf.create(
+            {
+                "scenario": {"name": "x", "npc_gap_m": 10.0},
+                "map": {"name": "Town10HD_Opt"},
+                "controls": {
+                    "vehicle_ahead_gap_m": {
+                        "key": "scenario.npc_gap_m",
+                        "range": [2, 30],
+                    }
+                },
+            }
+        )
+        assert expand_config(cfg) == [[]]
+        assert expand_config(cfg, ["ego.spawn_s=3.0"]) == [["ego.spawn_s=3.0"]]
+
     def test_a_second_constraint_key_is_refused_before_the_map_is_loaded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -411,6 +458,21 @@ def test_a_bad_scenario_in_a_glob_prints_no_listing(
     assert code == 1
     assert "cut_in/left: controls.vehicle_ahead_gap_m.range" in captured.err
     assert "cut_in/right: controls.vehicle_ahead_gap_m.range" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+# A scenario without a sweep has its `controls:` checked too (#1191).
+@pytest.mark.parametrize("override", ["+controls.x=5", "+controls.x.rnge=[1,2]"])
+def test_the_cli_refuses_a_concrete_scenario_with_invalid_controls(
+    capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(["scenario=intersection_passing/straight_3npc", override])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "intersection_passing/straight_3npc: controls.x" in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""
 

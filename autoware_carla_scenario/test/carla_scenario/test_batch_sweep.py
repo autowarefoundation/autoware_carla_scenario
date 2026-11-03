@@ -240,3 +240,19 @@ def test_each_run_of_one_scenario_class_keeps_files_of_its_own(tmp_path: Path) -
     (tmp_path / "CutInScenario-1_result.json").touch()
     assert _run_file_stem(tmp_path, "CutInScenario") == "CutInScenario-2"
     assert _run_file_stem(tmp_path, "LaneChangeScenario") == "LaneChangeScenario"
+
+
+# A batch refuses a scenario without a sweep whose `controls:` are invalid,
+# as `scenario-check` and `scenario-expand` do (#1191), before running a case.
+def test_a_batch_refuses_a_concrete_scenario_with_invalid_controls(
+    batch: _Batch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE], ["+controls.x=5"], expand=True)
+    assert exited.value.code == 1
+    assert f"{_CONCRETE}: controls.x: expected a key or a mapping" in (
+        capsys.readouterr().err
+    )
+    assert batch.configs == []
