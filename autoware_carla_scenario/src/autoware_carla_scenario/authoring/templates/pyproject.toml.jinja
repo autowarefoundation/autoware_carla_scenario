@@ -29,6 +29,10 @@ build-backend = "uv_build"
 # among them, which fails the run before a test is collected. Owning the
 # section makes this package its own rootdir wherever it is put.
 testpaths = ["tests"]
+# A parametrization whose cases are computed (a glob, say) and come out empty
+# fails at collection instead of being skipped, so a check cannot silently
+# stop running.
+empty_parameter_set_mark = "fail_at_collect"
 
 [tool.uv.build-backend]
 # The document and the Hydra config sit inside the module rather than beside

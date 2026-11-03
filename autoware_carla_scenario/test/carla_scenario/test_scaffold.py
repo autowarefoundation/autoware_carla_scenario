@@ -247,6 +247,53 @@ class TestCreateScenarioPackage:
         assert "typecheck_scenario" in test.read_text(encoding="utf-8")
         assert 'dev = ["pytest"]' in (root / "pyproject.toml").read_text()
 
+    @pytest.mark.parametrize("with_configs", [True, False])
+    def test_the_static_check_fails_without_a_config(
+        self, tmp_path: Path, with_configs: bool
+    ) -> None:
+        """An empty conf dir fails the package's tests rather than skip them (#1214).
+
+        Only the guard runs (``-k``): the compile test needs Codon and takes
+        minutes, and with no config it has no case to run anyway.
+        """
+        import os  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        root = create_scenario_package("guard_pkg", output_dir=tmp_path).root
+        if not with_configs:
+            for path in (root / "src" / "guard_pkg" / "conf").rglob("*.yaml"):
+                path.unlink()
+        env = {**os.environ, "PYTHONPATH": str(root / "src")}
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-o",
+                "addopts=",
+                "--rootdir",
+                str(root),
+                "-k",
+                "test_every_scenario_has_a_config",
+                "tests/test_typecheck.py",
+            ],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        if with_configs:
+            assert result.returncode == 0, output
+        else:
+            assert result.returncode == 1, output
+            assert "no *.yaml config under" in output
+
     def test_refuses_existing_without_force(self, tmp_path: Path) -> None:
         create_scenario_package("dup_pkg", output_dir=tmp_path)
         with pytest.raises(FileExistsError):
