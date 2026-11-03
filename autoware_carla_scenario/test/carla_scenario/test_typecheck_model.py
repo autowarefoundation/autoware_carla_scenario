@@ -944,8 +944,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     ),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
-    # What the checked scenario_runner and scenario_queue hold of it.
-    "t4_scene": (t4_scene_module, ("T4SceneExporter",)),
+    # What the checked scenario_runner and scenario_queue hold of it, and what
+    # the checked t4_scene.exporter writes each log with.
+    "t4_scene": (t4_scene_module, ("T4SceneExporter", "write_t4_scene")),
     # What the checked visibility and actions.environment read the weather
     # rules through.
     "weather_rules": (
