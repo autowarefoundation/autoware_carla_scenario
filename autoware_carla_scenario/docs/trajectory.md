@@ -133,7 +133,9 @@ self.register_pre_tick(
 
 A `RelativeLanePose` is also a place a condition can name:
 `PlaceClearCondition(RelativeLanePose(ds=20.0, entity_ref=EGO_ROLE_NAME), 5.0, 2.0, label=...)`
-holds while the spot 20 m ahead of the ego is clear, and
+holds while the spot 20 m ahead of the ego is clear (a 5 m by 2 m
+rectangle facing along the lane it is on, as a `yaw` of `None` there means),
+and
 `EntityPositionDistanceCondition` measures to such a spot. There it needs an
 `entity_ref` (no action moves an entity), and it follows that entity: it is
 placed afresh on every tick, and while the entity is not in the scene (not

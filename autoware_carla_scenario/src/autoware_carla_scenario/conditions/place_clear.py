@@ -37,12 +37,14 @@ class PlaceClearCondition(BaseCondition):
     looked at).  A place written against an entity -- a
     :class:`~..trajectory.model.RelativeLanePose`, against its
     ``entity_ref``; a route pose without an anchor, against the ego -- moves
-    with it, so it is placed afresh on every tick; while that entity is not
-    in the scene (not spawned yet, gone, or parked under the map) the place
-    is nowhere and the condition does not hold.  An actor parked under the map (spawned out of sight) does
-    not count; one put on the place this very tick, which the world's snapshot
-    does not show yet, does.  Typically an entity's appearance spot, so that it
-    is not brought in on top of another road user.  Other road users'
+    with it, so it is placed afresh on every tick, facing along the lane it
+    is placed on where it states no ``yaw``; while that entity is not in
+    the scene (not spawned yet, gone, or parked under the map) the place is
+    nowhere and the condition does not hold.  An actor parked under the map
+    (spawned out of sight) does not count; one put on the place this very
+    tick, which the world's snapshot does not show yet, does.  Typically an
+    entity's appearance spot, so that it is not brought in on top of another
+    road user.  Other road users'
     outlines are their bounding boxes where they stand, ahead of a car's
     origin; the rectangle itself is centred on *position*, no actor's box
     being known to it (a vehicle spawned on *position* puts its origin there,
@@ -190,13 +192,21 @@ class PlaceClearCondition(BaseCondition):
         is written against is not in the scene, or where it cannot be placed
         (said once; a fixed place is not tried again)."""
         from ..route.active import lane_place  # noqa: PLC0415
-        from ..trajectory.resolve import resolve_position  # noqa: PLC0415
+        from ..trajectory.resolve import (  # noqa: PLC0415
+            resolve_along_lane,
+            resolve_position,
+        )
         from .entity_existence import ReferenceAbsentError, ReferencePoses  # noqa: PLC0415
 
         reference = ReferencePoses(world, present_only=True)
         position = self._at.position
         try:
-            x0, y0, _z, yaw0 = resolve_position(position, reference.pose)
+            if self._follows:
+                # Without a heading of its own, along the lane it is placed
+                # on: no lane is looked up for it afterwards (lane_place).
+                x0, y0, _z, yaw0 = resolve_along_lane(position, reference.pose)
+            else:
+                x0, y0, _z, yaw0 = resolve_position(position, reference.pose)
         except ReferenceAbsentError:
             # Waited for, quietly: the place is nowhere until it is there.
             return None

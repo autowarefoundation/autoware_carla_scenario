@@ -40,6 +40,9 @@ from autoware_carla_scenario.trajectory.model import (
 )
 
 _AHEAD = RelativeLanePose(ds=20.0, entity_ref="Ego")
+#: The heading (deg) of the lane every faked place lies on: not the
+#: reference actor's (90).
+_LANE_YAW = 30.0
 
 
 def _actor(role: str, x: float, y: float = 0.0, z: float = 0.0) -> MagicMock:
@@ -61,7 +64,11 @@ def _world(*actors: MagicMock) -> MagicMock:
 def _fake_resolve(calls: list[Any]):
     """``resolve_position`` placing a relative pose ``ds`` metres along x
     from its reference, as the real one does through the reference it is
-    given; a fixed place at (100, 0)."""
+    given, on a lane heading :data:`_LANE_YAW`; with no ``yaw`` of its own
+    it has none, as the real one does.  A fixed place at (100, 0)."""
+
+    def lane_yaw(yaw: Optional[float]) -> Optional[float]:
+        return None if yaw is None else _LANE_YAW + yaw
 
     def resolve(
         position: Any, reference: Optional[Any] = None
@@ -71,12 +78,12 @@ def _fake_resolve(calls: list[Any]):
             if reference is None:
                 raise ValueError("no reference pose was given to resolve it with")
             ref = reference(position.entity_ref)
-            return (ref.x + position.ds, ref.y, ref.z, ref.yaw)
+            return (ref.x + position.ds, ref.y, ref.z, lane_yaw(position.yaw))
         if isinstance(position, RouteLanePose) and position.anchor is None:
             if reference is None:
                 raise ValueError("no reference pose was given to resolve it with")
             ego = reference("Ego")
-            return (ego.x + position.ds, ego.y, ego.z, None)
+            return (ego.x + position.ds, ego.y, ego.z, lane_yaw(position.yaw))
         return (100.0, 0.0, 0.0, 0.0)
 
     return resolve
@@ -132,6 +139,63 @@ class TestPlacedAgainstEntity:
         assert not placed_against_entity(position)
 
 
+class TestResolveAlongLane:
+    """``resolve_along_lane`` resolves a pose with no yaw as the same pose
+    facing along its lane (``yaw=0.0``); any other as it is."""
+
+    @staticmethod
+    def _passed(monkeypatch: pytest.MonkeyPatch, position: Any) -> Any:
+        passed: list[Any] = []
+        reference = object()
+
+        def resolve(given: Any, ref: Any = None) -> tuple[float, float, None, float]:
+            assert ref is reference
+            passed.append(given)
+            return (1.0, 2.0, None, 3.0)
+
+        monkeypatch.setattr(resolve_module, "resolve_position", resolve)
+        assert resolve_module.resolve_along_lane(position, reference) == (  # type: ignore[arg-type]
+            1.0,
+            2.0,
+            None,
+            3.0,
+        )
+        (given,) = passed
+        return given
+
+    @pytest.mark.parametrize(
+        "position",
+        [
+            RelativeLanePose(ds=5.0, offset=0.5, d_lane=1, entity_ref="npc1"),
+            RouteLanePose(ds=5.0, offset=0.5, d_lane=-1),
+            RouteOppositePose(ds=5.0, lane=2, offset=0.5, anchor="start"),
+            RouteRoadsidePose(ds=5.0, side="right", kerb_distance=1.0),
+        ],
+    )
+    def test_no_yaw_becomes_along_the_lane(
+        self, monkeypatch: pytest.MonkeyPatch, position: Any
+    ) -> None:
+        import dataclasses
+
+        given = self._passed(monkeypatch, position)
+        assert given == dataclasses.replace(position, yaw=0.0)
+
+    @pytest.mark.parametrize(
+        "position",
+        [
+            RelativeLanePose(ds=5.0, yaw=0.3, entity_ref="npc1"),
+            RouteLanePose(ds=5.0, yaw=-0.2),
+            MapPose(x=1.0, y=2.0),
+            Lanelet2Pose(3, 5.0),
+            RouteCrossingPose(approach="same", turn="right"),
+        ],
+    )
+    def test_any_other_is_resolved_as_it_is(
+        self, monkeypatch: pytest.MonkeyPatch, position: Any
+    ) -> None:
+        assert self._passed(monkeypatch, position) is position
+
+
 class TestReferencePoses:
     def test_it_reads_where_the_entity_stands(self) -> None:
         pose = ReferencePoses(_world(_actor("Ego", 3.0, 4.0))).pose("Ego")
@@ -161,7 +225,8 @@ class TestPlaceClear:
         for tick, x in enumerate((0.0, 10.0, 25.0)):
             result = condition.check(_world(_actor("Ego", x)), 0.1 * tick)
             assert result is not None and result.passed
-        assert looked == [(20.0, 0.0, 90.0), (30.0, 0.0, 90.0), (45.0, 0.0, 90.0)]
+        # Along the lane it is placed on, not the reference's heading.
+        assert looked == [(20.0, 0.0, 30.0), (30.0, 0.0, 30.0), (45.0, 0.0, 30.0)]
         assert len(resolved) == 3
         details = condition.get_details()
         assert (details["x"], details["y"]) == (45.0, 0.0)
@@ -172,7 +237,7 @@ class TestPlaceClear:
         condition = PlaceClearCondition(RouteLanePose(ds=8.0), 5.0, 2.0, label="p")
         condition.check(_world(_actor("Ego", 0.0)), 0.0)
         condition.check(_world(_actor("Ego", 4.0)), 0.1)
-        assert [spot[0] for spot in looked] == [8.0, 12.0]
+        assert looked == [(8.0, 0.0, 30.0), (12.0, 0.0, 30.0)]
 
     @pytest.mark.parametrize("ego", [None, -500.0], ids=["absent", "hidden"])
     def test_an_absent_or_hidden_reference_holds_nothing_quietly(
@@ -193,7 +258,17 @@ class TestPlaceClear:
         # Placed as soon as it is there.
         result = condition.check(_world(_actor("Ego", 5.0)), 0.2)
         assert result is not None and result.passed
-        assert looked == [(25.0, 0.0, 90.0)]
+        assert looked == [(25.0, 0.0, 30.0)]
+
+    def test_a_yaw_of_its_own_is_kept(
+        self, resolved: list[Any], looked: list[tuple[float, float, float]]
+    ) -> None:
+        pose = RelativeLanePose(ds=20.0, yaw=10.0, entity_ref="Ego")
+        PlaceClearCondition(pose, 5.0, 2.0, label="p").check(
+            _world(_actor("Ego", 0.0)), 0.0
+        )
+        assert looked == [(20.0, 0.0, 40.0)]
+        assert resolved == [pose]  # resolved as written
 
     def test_the_place_is_nowhere_again_once_its_reference_goes(
         self, resolved: list[Any], looked: list[tuple[float, float, float]]
@@ -274,7 +349,8 @@ class TestPlaceClear:
         assert condition.check(_world(), 0.0) is None
         assert condition.check(_world(_actor("Ego", 10.0)), 0.1) is not None
         assert condition.check(_world(_actor("Ego", 12.0)), 0.2) is not None
-        assert looked == [(30.0, 0.0, 0.0), (32.0, 0.0, 0.0)]
+        # Facing along the lane it is placed on (45 deg), with no yaw given.
+        assert looked == [(30.0, 0.0, 45.0), (32.0, 0.0, 45.0)]
 
 
 class TestEntityPositionDistance:

@@ -38,6 +38,7 @@ __all__ = [
     "ReferencePose",
     "map_pose_to_carla",
     "position_resolver",
+    "resolve_along_lane",
     "resolve_position",
     "resolve_trajectory",
 ]
@@ -332,6 +333,94 @@ def resolve_position(
         pose = to_carla_world(position)
         return _resolved(pose.x, pose.y, pose.z, pose.yaw)
     raise TypeError(f"unsupported trajectory position: {type(position).__name__}")
+
+
+def resolve_along_lane(
+    position: Union[
+        CarlaWorldPose,
+        Lanelet2Pose,
+        OpenDrivePose,
+        MapPose,
+        RelativeLanePose,
+        RouteLanePose,
+        RouteOppositePose,
+        RouteCrossingPose,
+        RouteCrosswalkPose,
+        RouteRoadsidePose,
+    ],
+    reference: Optional[
+        Callable[[Optional[Union[EntityRole, str]]], CarlaWorldPose]
+    ] = None,
+) -> Tuple[float, float, Optional[float], Optional[float]]:
+    """:func:`resolve_position`, a pose that states no heading facing along
+    the lane it is placed on.
+
+    A :class:`~.model.RelativeLanePose`, :class:`~.model.RouteLanePose`,
+    :class:`~.model.RouteOppositePose` or :class:`~.model.RouteRoadsidePose`
+    with ``yaw`` ``None`` resolves to no yaw (a trajectory takes its
+    direction from the path); here it is resolved as the same pose with
+    ``yaw=0.0`` -- along its target lane, or the route for a roadside pose --
+    at the same place.  What a place written against an entity faces: no lane
+    is looked up for it afterwards
+    (:func:`~autoware_carla_scenario.route.active.lane_place` places neither
+    a relative pose nor one counted from the ego).  Any other position is
+    resolved as it is.
+    """
+    # Each class on its own, named as the class: Codon reads no attribute of
+    # a union (docs/typecheck.md).
+    if isinstance(position, RelativeLanePose):
+        relative: RelativeLanePose = position
+        if relative.yaw is None:
+            return resolve_position(
+                RelativeLanePose(
+                    ds=relative.ds,
+                    offset=relative.offset,
+                    d_lane=relative.d_lane,
+                    yaw=0.0,
+                    entity_ref=relative.entity_ref,
+                ),
+                reference,
+            )
+    if isinstance(position, RouteLanePose):
+        on_lane: RouteLanePose = position
+        if on_lane.yaw is None:
+            return resolve_position(
+                RouteLanePose(
+                    ds=on_lane.ds,
+                    offset=on_lane.offset,
+                    d_lane=on_lane.d_lane,
+                    yaw=0.0,
+                    anchor=on_lane.anchor,
+                ),
+                reference,
+            )
+    if isinstance(position, RouteOppositePose):
+        opposite: RouteOppositePose = position
+        if opposite.yaw is None:
+            return resolve_position(
+                RouteOppositePose(
+                    ds=opposite.ds,
+                    lane=opposite.lane,
+                    offset=opposite.offset,
+                    yaw=0.0,
+                    anchor=opposite.anchor,
+                ),
+                reference,
+            )
+    if isinstance(position, RouteRoadsidePose):
+        roadside: RouteRoadsidePose = position
+        if roadside.yaw is None:
+            return resolve_position(
+                RouteRoadsidePose(
+                    ds=roadside.ds,
+                    side=roadside.side,
+                    kerb_distance=roadside.kerb_distance,
+                    yaw=0.0,
+                    anchor=roadside.anchor,
+                ),
+                reference,
+            )
+    return resolve_position(position, reference)
 
 
 def road_height(carla_map: carla.Map) -> Callable[[float, float], Optional[float]]:
