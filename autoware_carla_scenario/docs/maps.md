@@ -314,8 +314,8 @@ and fetch OpenDRIVE.
 Its **Map directory** field is `map.directory`. Setting one clears the Lanelet2
 and OpenDRIVE file fields unless they were edited in the same change, and takes
 the CARLA map name from the directory. The editor only serves a map from inside
-`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set), so a directory
-elsewhere has to be added there to be previewed.
+`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache, so a directory
+elsewhere has to be added to `SCENARIO_EDITOR_MAP_ROOTS` to be previewed.
 
 ## Troubleshooting
 

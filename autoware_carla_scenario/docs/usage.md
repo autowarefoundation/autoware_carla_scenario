@@ -465,15 +465,26 @@ conf/
 │   └── default.yaml         # Ego vehicle settings
 ├── entity/
 │   └── default.yaml         # Entity spawn and ground projection settings
+├── driver/                  # External driver policy (ego.entity: carla_driver)
+├── ros2/                    # Ego driven by ROS 2 nodes (ego.entity: ros2)
+├── hils/                    # Ego driven by ECUs under test (ego.entity: hils)
 ├── traffic_manager/
 │   └── default.yaml         # CARLA Traffic Manager settings
+├── traffic/                 # Traffic backend: traffic_manager, sumo, none
+├── launcher/                # Who runs a batch's cases: local, slurm
+├── hydra/sweeper/
+│   └── lanelet_constraint.yaml
 ├── map/
-│   └── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
+│   ├── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
+│   └── town10hd_opt.yaml
 └── scenario/
+    ├── adversity/           # brake_check, cut_in, ignore_leader, jaywalking, nade, traffic_rule
+    ├── cut_in/              # left, right
     ├── intersection_passing/
     │   ├── straight.yaml
     │   ├── left_turn.yaml
     │   ├── right_turn.yaml
+    │   ├── right_turn_sweep.yaml
     │   └── straight_3npc.yaml
     ├── lane_change/
     │   ├── left.yaml
@@ -481,6 +492,8 @@ conf/
     ├── lane_change_fail/
     │   ├── left.yaml
     │   └── right.yaml
+    ├── pedestrian_dart_out/
+    │   └── pedestrian_dart_out.yaml
     ├── temporary_stop/
     │   └── temporary_stop.yaml
     └── traffic_light_compliance/
@@ -496,9 +509,14 @@ Defines the default config group composition:
 | `server` | `localhost` | CARLA server connection |
 | `ego` | `default` | Ego vehicle configuration |
 | `entity` | `default` | Entity spawn and ground projection |
+| `driver` | `default` | Driver policy, used when `ego.entity: carla_driver` ([Driver Interface](driver_interface.md)) |
+| `ros2` | `default` | Ego driven by ROS 2 nodes, used when `ego.entity: ros2` ([ROS 2](ros2.md)) |
+| `hils` | `default` | Ego driven by ECUs under test, used when `ego.entity: hils` ([HILS](hils.md)) |
 | `traffic_manager` | `default` | CARLA Traffic Manager |
+| `traffic` | `traffic_manager` | Traffic backend: `traffic_manager`, `sumo` or `none` ([Traffic Backends](traffic_backends.md)) |
 | `scenario` | `intersection_passing/left_turn` | Scenario to run |
 | `map` | `nishishinjuku` | Map to load |
+| `launcher` | `null` | Who runs a batch's cases: unset runs them here, one after another; `launcher=slurm` runs them as a SLURM array job ([SLURM](slurm.md)) |
 
 #### Server Configuration
 
@@ -706,31 +724,37 @@ xodr_path: ${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}
 
 ### Supported Scenarios
 
+In the parameter tables below, **Default** is the value a key takes when the
+scenario's YAML omits it (the dataclass default in `examples/configs.py`), and
+**Shipped** is the value the shipped config (`examples/conf/scenario/...`) sets,
+or — when it leaves the key unset, so the default applies.
+
 #### Intersection Passing
 
 Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.
 
-| Config | Turn Direction | Description |
-|--------|---------------|-------------|
-| `intersection_passing/straight` | none | Drive straight through intersection |
-| `intersection_passing/left_turn` | left | Left turn at intersection |
-| `intersection_passing/right_turn` | right | Right turn at intersection |
-| `intersection_passing/straight_3npc` | none | Straight with 3 NPC vehicles |
+| Config | `turn_direction` | `timeout_seconds` | `min_speed_kmh` | Description |
+|--------|------------------|-------------------|-----------------|-------------|
+| `intersection_passing/straight` | `straight` | `15.0` | `3.0` | Drive straight through intersection |
+| `intersection_passing/left_turn` | `left` | `20.0` | — | Left turn at intersection |
+| `intersection_passing/right_turn` | `right` | `20.0` | — | Right turn at intersection |
+| `intersection_passing/right_turn_sweep` | `right` | `60.0` | — | Right turn from a standstill; its sweep takes right turns behind a traffic-light stop line |
+| `intersection_passing/straight_3npc` | — (`null`) | `10.0` | `0.0` | Straight with 3 NPC vehicles, no `TurnAction` |
 
 **Scenario-specific parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `scenario.expected_route_lanelet_ids` | list[int] | varies | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
-| `scenario.timeout_seconds` | float | `5.0` | Maximum scenario duration |
-| `scenario.min_speed_kmh` | float \| null | null | Minimum ego speed (fail if below). `null` disables check |
-| `scenario.speed_check_delay_seconds` | float | `0.3` | Grace period before speed check starts |
-| `scenario.turn_direction` | str \| null | null | `"left"`, `"right"`, or `null` for straight |
-| `scenario.turn_indicator_before_m` | float \| null | null | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
-| `scenario.turn_indicator_grace_seconds` | float | `0.5` | How long the indicator may be wrong before the run fails |
-| `scenario.max_steering_reversals` | int \| null | null | Fail once the steering has turned back this many times since the start (the `steering_reversals` metric, [metrics.md](metrics.md#weaving)). `null` disables the check |
-| `scenario.max_turn_indicator_changes` | int \| null | null | Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the `turn_indicator_changes` metric). `null` disables the check |
-| `scenario.npc_vehicles` | list | `[]` | NPC vehicle configurations (see below) |
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
+| `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
+| `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below). `null` disables check |
+| `scenario.speed_check_delay_seconds` | float | `0.3` | `0.3` (`straight`, `straight_3npc`) | Grace period before speed check starts |
+| `scenario.turn_direction` | str \| null | null | per config (above) | `"left"`, `"right"` or `"straight"` registers a `TurnAction` for that direction; `null` registers none |
+| `scenario.turn_indicator_before_m` | float \| null | null | — | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
+| `scenario.turn_indicator_grace_seconds` | float | `0.5` | — | How long the indicator may be wrong before the run fails |
+| `scenario.max_steering_reversals` | int \| null | null | — | Fail once the steering has turned back this many times since the start (the `steering_reversals` metric, [metrics.md](metrics.md#weaving)). `null` disables the check |
+| `scenario.max_turn_indicator_changes` | int \| null | null | — | Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the `turn_indicator_changes` metric). `null` disables the check |
+| `scenario.npc_vehicles` | list | `[]` | 3 vehicles (`straight_3npc`) | NPC vehicle configurations (see below) |
 
 **NPC vehicle configuration:**
 
@@ -744,7 +768,7 @@ npc_vehicles:
 
 **Behavior:**
 - Sets all traffic lights to GREEN
-- Registers a TurnAction for left/right turns (applies steering via CARLA autopilot route)
+- Registers a TurnAction when `turn_direction` is set -- `left`, `right` or `straight` (sets the ego's path through the junction via the TrafficManager); none when it is `null`
 - Pass condition: ego traverses all expected OpenDRIVE road IDs (checked via StickyCondition + AndCondition)
 - Fail conditions: timeout, ego destroyed, speed below threshold
 
@@ -752,20 +776,20 @@ npc_vehicles:
 
 Tests ego vehicle lane change maneuvers. Can test both successful lane changes and expected failures.
 
-| Config | Direction | Expected Result |
-|--------|-----------|-----------------|
-| `lane_change/left` | left | success |
-| `lane_change/right` | right | success |
-| `lane_change_fail/left` | left | fail (no adjacent lane) |
-| `lane_change_fail/right` | right | fail (no adjacent lane) |
+| Config | Direction | Expected Result | `timeout_seconds` |
+|--------|-----------|-----------------|-------------------|
+| `lane_change/left` | left | success | `10.0` |
+| `lane_change/right` | right | success | `10.0` |
+| `lane_change_fail/left` | left | fail (no adjacent lane) | `1.5` |
+| `lane_change_fail/right` | right | fail (no adjacent lane) | `1.5` |
 
 **Scenario-specific parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `scenario.direction` | str | `"left"` | Lane change direction: `"left"` or `"right"` |
-| `scenario.expect` | str | `"success"` | Expected outcome: `"success"` or `"fail"` |
-| `scenario.timeout_seconds` | float | `10.0` | Maximum scenario duration |
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.direction` | str | `"left"` | per config (above) | Lane change direction: `"left"` or `"right"` |
+| `scenario.expect` | str | `"success"` | per config (above) | Expected outcome: `"success"` or `"fail"` |
+| `scenario.timeout_seconds` | float | `10.0` | per config (above) | Maximum scenario duration |
 
 **Behavior:**
 - Sets all traffic lights to GREEN
@@ -784,18 +808,20 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 
 **Scenario-specific parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `scenario.light_switch_delay_seconds` | float | `5.0` | Delay before switching red to green |
-| `scenario.timeout_seconds` | float | `8.0` | Maximum scenario duration |
-| `scenario.stop_zone_min_m` | float | `0.0` | Near end of the stop zone: metres before the stop line (`stop_line_distance_m`) |
-| `scenario.stop_zone_max_m` | float | `3.0` | Far end of the stop zone; standing still farther back until the green fails the run |
-| `scenario.stop_line_tolerance_m` | float | `0.0` | How far the front bumper may pass the stop line on red before the run fails for running the red; that far past counts as at the line for the stop zone |
-| `scenario.standstill_seconds` | float | `0.5` | How long the ego has to stand still in the stop zone, before the green, for it to count as stopped there (latched once it has) |
-| `scenario.standstill_speed_mps` | float | `0.1` | Speed (m/s) at or below which the ego stands still |
-| `scenario.departure_speed_kmh` | float | `10.0` | Speed (km/h) the ego must reach after green to pass; `null` uses `moving_speed_kmh` |
-| `scenario.moving_speed_kmh` | float | `1.0` | The departure speed when `departure_speed_kmh` is `null`; no longer judges the red phase |
-| `scenario.merging_time_seconds` | float | `0.5` | Deprecated and unused; kept so configs that set it still load |
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.light_switch_delay_seconds` | float | `3.0` | `5.0` | Delay before switching red to green |
+| `scenario.timeout_seconds` | float | `5.0` | `8.0` | Maximum scenario duration; ignored when `timeout_after_green_seconds` is set |
+| `scenario.timeout_after_green_seconds` | float \| null | null | — | The timeout counted from the green instead: `light_switch_delay_seconds` plus this, in place of `timeout_seconds`, overrides included. `null` uses `timeout_seconds` |
+| `scenario.stop_line_distance_m` | float \| null | null | — | Moves the ego along its lane so that its front bumper starts this many metres before the stop line ahead. `null` leaves the spawn pose as it is |
+| `scenario.stop_zone_min_m` | float | `0.0` | `0.0` | Near end of the stop zone: metres before the stop line, as the `stop_line_distance_m` measure reads it |
+| `scenario.stop_zone_max_m` | float | `3.0` | `3.0` | Far end of the stop zone; standing still farther back until the green fails the run |
+| `scenario.stop_line_tolerance_m` | float | `0.0` | `0.0` | How far the front bumper may pass the stop line on red before the run fails for running the red; that far past counts as at the line for the stop zone |
+| `scenario.standstill_seconds` | float | `0.5` | `0.5` | How long the ego has to stand still in the stop zone, before the green, for it to count as stopped there (latched once it has) |
+| `scenario.standstill_speed_mps` | float | `0.1` | `0.1` | Speed (m/s) at or below which the ego stands still |
+| `scenario.departure_speed_kmh` | float \| null | null | `10.0` | Speed (km/h) the ego must reach after green to pass; `null` uses `moving_speed_kmh` |
+| `scenario.moving_speed_kmh` | float | `1.0` | — | The departure speed when `departure_speed_kmh` is `null`; no longer judges the red phase |
+| `scenario.merging_time_seconds` | float | `0.5` | — | Deprecated and unused; kept so configs that set it still load |
 
 **Behavior:**
 - Sets all traffic lights to RED initially
@@ -814,13 +840,13 @@ Tests that the ego vehicle stops at a designated stop line for a minimum duratio
 
 **Scenario-specific parameters:**
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `scenario.s_margin` | float | `5.0` | Arc-length margin around stop position (meters) |
-| `scenario.speed_threshold` | float | `0.1` | Max speed considered as "stopped" (m/s) |
-| `scenario.stop_duration` | float | `0.3` | Minimum consecutive seconds to remain stopped |
-| `scenario.restart_speed_kmh` | float | `3.0` | Speed threshold for restart detection (km/h) |
-| `scenario.timeout_seconds` | float | `5.0` | Maximum scenario duration |
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.s_margin` | float | `5.0` | `5.0` | Arc-length margin around stop position (meters) |
+| `scenario.speed_threshold` | float | `0.1` | `0.1` | Max speed considered as "stopped" (m/s) |
+| `scenario.stop_duration` | float | `1.0` | `0.3` | Minimum consecutive seconds to remain stopped |
+| `scenario.restart_speed_kmh` | float | `3.0` | `3.0` | Speed threshold for restart detection (km/h) |
+| `scenario.timeout_seconds` | float | `30.0` | `12.0` | Maximum scenario duration |
 
 **Behavior:**
 - Sets all traffic lights to GREEN
@@ -983,7 +1009,7 @@ exit 0 always means something ran and passed. The exceptions:
 - `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
   verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
   Interrupted while it waits, it cancels the array and exits with the verdict
-  of what it collects (`slurm.cancel_on_interrupt`, the default), or exits 130
+  of what it collects (`launcher.cancel_on_interrupt`, the default), or exits 130
   and leaves the array running.
 
 ---

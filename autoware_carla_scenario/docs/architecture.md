@@ -1336,7 +1336,7 @@ graph LR
 
 | Port | Default | Component | Protocol | Configured via | Description |
 |------|---------|-----------|----------|----------------|-------------|
-| **2000** | 2000 | CARLA RPC Server | TCP | `server.port` (Hydra), `--port` CLI arg | Main communication channel between `carla.Client` and the CARLA simulator. Used for world control, actor spawning, recording, etc. |
+| **2000** | 2000 | CARLA RPC Server | TCP | `server.port` (Hydra override, e.g. `scenario server.port=2001`; `scenario` takes no `--port`) | Main communication channel between `carla.Client` and the CARLA simulator. Used for world control, actor spawning, recording, etc. |
 | **8100** | 8100 | CARLA TrafficManager | TCP | `traffic_manager.port` (Hydra), `tm_port` constructor arg | RPC port for the TrafficManager, which controls NPC vehicle autopilot behavior. The CARLA default is 8000, but this project uses 8100 to avoid conflicts with other services (e.g., VS Code). |
 | **9000** | 9000 | Viewer Web Server | HTTP | `viewer --port`, `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
 
@@ -1364,7 +1364,7 @@ graph LR
 It is off by default: a map cooked for CARLA already ships the OpenDRIVE its assets
 were built from, and replacing that puts the road network and the meshes out of step.
 When it is on, the method derives the destination environment variable name from the
-CARLA map name using the `_map_name_to_env_var()` function:
+CARLA map name using `map_asset_env_var()` (`maps/opendrive.py`):
 
 | Map Name | Derived Variable |
 |----------|-----------------|
