@@ -314,7 +314,9 @@ class ConstructionZoneAction(_BackendAction):
                 Lanelet2Pose(lanelet_id, (s_from + s_to) / 2.0, 0.0)
             )
             handle = backend.close_lane(world, middle.to_carla_transform())
-            if handle is not None and handle not in self._closed:
+            # Each closure is reopened once, also two of one lane (the
+            # backend counts them, #1294).
+            if handle is not None:
                 self._closed.append(handle)
 
     # -- clearing away -------------------------------------------------------

@@ -1040,7 +1040,12 @@ class TrafficBackend:
     ) -> Optional[str]:
         """Keep this backend's traffic off the lane at *transform* until
         :meth:`reopen_lane`; a handle naming the closure, or ``None`` when
-        this backend cannot close a lane (the default, with a warning once)."""
+        this backend cannot close a lane (the default, with a warning once).
+
+        Each call that returns a handle needs its own :meth:`reopen_lane`,
+        even when it returns the handle of a lane closed already (two zones
+        on one lane): the lane opens again only once every closure of it is
+        reopened, so one owner clearing away cannot open it under another."""
         if not self._warned_lane_closure:
             self._warned_lane_closure = True
             logger.warning(
@@ -1052,7 +1057,9 @@ class TrafficBackend:
         return None
 
     def reopen_lane(self, world: Optional["carla.World"], handle: str) -> None:
-        """Open the lane :meth:`close_lane` closed as *handle* again."""
+        """Undo one :meth:`close_lane` that returned *handle*: the lane opens
+        again when no other closure of it is left.  Called for each
+        :meth:`close_lane`, once; a handle not closed is ignored."""
 
     # ------------------------------------------------------------------
     # Internals

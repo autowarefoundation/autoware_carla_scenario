@@ -902,11 +902,112 @@ def test_a_construction_zone_closes_and_reopens_the_lane(
         assert backend.close_lane(world, _carla_transform(-58.0, 5.25, 0.0)) == lane
         # The lane beside stays open: a closed lane is still matched as itself.
         assert "passenger" not in tc.lane.getDisallowed("0.fwd_1")
+        # Two closures, so two reopens (#1294): the first leaves it closed.
+        backend.reopen_lane(world, lane)
+        assert "passenger" in tc.lane.getDisallowed(lane)
         backend.reopen_lane(world, lane)
         assert "passenger" not in tc.lane.getDisallowed(lane)
-        backend.reopen_lane(world, lane)  # and saying it twice is harmless
+        backend.reopen_lane(world, lane)  # and saying it again is harmless
     finally:
         backend.close()
+
+
+class _LaneTraci:
+    """The TraCI calls close_lane / reopen_lane make, on one lane."""
+
+    def __init__(self) -> None:
+        self.allowed = {"0.fwd_0": ["passenger", "truck"]}
+        self.restored: list[list[str]] = []
+        self.simulation = SimpleNamespace(
+            convertRoad=lambda x, y, geo, vclass: ("0.fwd", 0.0, 0)
+        )
+        self.lane = self
+
+    def getAllowed(self, lane: str) -> list[str]:
+        return list(self.allowed[lane])
+
+    def setDisallowed(self, lane: str, classes: list[str]) -> None:
+        self.allowed[lane] = []
+
+    def setAllowed(self, lane: str, classes: list[str]) -> None:
+        self.allowed[lane] = list(classes)
+        self.restored.append(list(classes))
+
+
+def _lane_backend() -> tuple[Any, _LaneTraci]:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    traci = _LaneTraci()
+    backend._running = True
+    backend._traci = traci
+    backend._offset = (0.0, 0.0)
+    return backend, traci
+
+
+def _lane_transform(x: float) -> Any:
+    return SimpleNamespace(
+        location=SimpleNamespace(x=x, y=5.25, z=0.0),
+        rotation=SimpleNamespace(yaw=0.0),
+    )
+
+
+def test_a_lane_two_zones_close_stays_closed_until_both_reopen() -> None:
+    """Clearing the first of two zones on one lane must not open it under the
+    second (#1294)."""
+    backend, traci = _lane_backend()
+    first = backend.close_lane(None, _lane_transform(-60.0))
+    second = backend.close_lane(None, _lane_transform(-20.0))
+    assert first == second == "0.fwd_0"
+    assert traci.allowed["0.fwd_0"] == []
+    backend.reopen_lane(None, first)
+    assert traci.allowed["0.fwd_0"] == []
+    assert traci.restored == []
+    backend.reopen_lane(None, second)
+    # The permissions from before the first closure, restored once.
+    assert traci.allowed["0.fwd_0"] == ["passenger", "truck"]
+    assert traci.restored == [["passenger", "truck"]]
+    # A reopen of a lane no longer closed, or never closed, does nothing.
+    backend.reopen_lane(None, first)
+    backend.reopen_lane(None, "1.fwd_0")
+    assert traci.restored == [["passenger", "truck"]]
+
+
+def test_a_construction_zone_cleared_first_leaves_the_other_closed() -> None:
+    """Two ConstructionZoneActions on one SUMO lane: the one cleared first
+    does not reopen the lane under the one still standing (#1294)."""
+    from autoware_carla_scenario.actions.construction_zone import (
+        ConstructionZoneAction,
+    )
+
+    backend, traci = _lane_backend()
+    zones = [
+        ConstructionZoneAction(1, 0.0, 30.0, end_time=10.0, label="A"),
+        ConstructionZoneAction(1, 40.0, 80.0, label="B"),
+    ]
+    for zone, x in zip(zones, (-60.0, -20.0)):
+        zone._backend = backend
+        zone._closed.append(backend.close_lane(None, _lane_transform(x)))
+    zones[0]._reopen(None)
+    assert traci.allowed["0.fwd_0"] == []
+    zones[1]._reopen(None)
+    assert traci.allowed["0.fwd_0"] == ["passenger", "truck"]
+    assert traci.restored == [["passenger", "truck"]]
+
+
+def test_closing_the_backend_forgets_its_lane_closures() -> None:
+    backend, traci = _lane_backend()
+    backend.close_lane(None, _lane_transform(-60.0))
+    backend.close_lane(None, _lane_transform(-20.0))
+    backend.close()
+    assert backend._closed_lanes == {}
+    # The next run closes the lane afresh, and one reopen opens it.
+    backend._running = True
+    backend._traci = traci
+    traci.allowed["0.fwd_0"] = ["passenger"]
+    lane = backend.close_lane(None, _lane_transform(-60.0))
+    backend.reopen_lane(None, lane)
+    assert traci.allowed["0.fwd_0"] == ["passenger"]
 
 
 @needs_sumo
