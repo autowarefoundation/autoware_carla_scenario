@@ -406,14 +406,14 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
 | `ego_traffic_light` | State of the light governing the ego lane |
 | `ego_traffic_light_distance_m` | Distance to its stop line **along the ego's heading**; negative once crossed or when no line applies |
 | `speed_limit_mps` | Posted limit for the ego lane, 0 when unknown |
-| `actors[]` | Other vehicles: pose, bounding box, and velocity, all in the local frame |
+| `actors[]` | Other vehicles, pedestrians and props (`vehicle.*`, `walker.*`, `static.prop.*`, told apart by `type_id`): pose, bounding box, and velocity, all in the local frame |
 | `weather`, `map_name`, `frame_id` | Scene context |
 | `lidar[]` | One sweep per `driver.lidars` entry, packed `[N, 4]` float32 (x, y, z, intensity) in the rig frame |
 | `map_id`, `traffic_lights[]` | With `driver.map_dir`: which map file set describes the world, and every light with its state and stop points |
 
 !!! warning "Turning this off is not a no-op"
     A policy reads the payload defensively — a missing one means "no light applies" and
-    "no other vehicles" rather than an error. So `send_renderer_data: false` does not
+    "no other road users" rather than an error. So `send_renderer_data: false` does not
     fail loudly. It silently disables every rule that depends on the world outside the
     ego. For a specification-driven policy such as
     [stl_driver](https://github.com/hakuturu583/stl_driver), that is `stop_on_red`,
@@ -705,6 +705,10 @@ See `carla_driver_interface/proto/README.md` for the full provenance.
   horizon stays ahead of the vehicle, but it is not a global plan: the ego will not turn
   toward a goal. Scenarios needing a specific route should submit their own waypoints
   through the client.
-* Actor reporting covers vehicles only — pedestrians are not included.
+* Actor reporting covers vehicles, pedestrians and props (`vehicle.*`, `walker.*`,
+  `static.prop.*`) within `actor_horizon_m` of the ego, the ego itself excluded. Walker
+  AI controllers, sensors, the spectator, traffic lights and signs are not reported, and
+  neither is an actor parked under the map (hidden), which is far beyond the horizon. A
+  prop's velocity is zero unless its physics has it moving.
 * Actor `dynamic_state` carries linear velocity; angular velocity and acceleration are
   left zero, matching the reference runtime.

@@ -8,9 +8,10 @@ not fail loudly. These tests pin the behaviour that would otherwise rot quietly.
 
 from __future__ import annotations
 
+import fnmatch
 import math
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Any, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -81,12 +82,14 @@ def _vehicle(
     extent: tuple = (2.4, 1.0, 0.75),
     box_location: tuple = (0.0, 0.0, 0.0),
     yaw: float = 0.0,
+    z: float = 0.0,
+    type_id: str = "vehicle.tesla.model3",
 ) -> MagicMock:
     actor = MagicMock()
     actor.id = actor_id
-    actor.type_id = "vehicle.tesla.model3"
+    actor.type_id = type_id
     actor.get_transform.return_value = SimpleNamespace(
-        location=SimpleNamespace(x=x, y=y, z=0.0),
+        location=SimpleNamespace(x=x, y=y, z=z),
         rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=yaw),
     )
     actor.get_velocity.return_value = SimpleNamespace(x=vx, y=vy, z=0.0)
@@ -98,11 +101,10 @@ def _vehicle(
 
 
 class _Actors(list):
-    """Stands in for CARLA's ActorList, which filters by blueprint pattern."""
+    """Stands in for CARLA's ActorList, which filters type_ids by wildcard."""
 
     def filter(self, pattern: str) -> List[MagicMock]:
-        needle = pattern.strip("*")
-        return [a for a in self if needle in a.type_id]
+        return [a for a in self if fnmatch.fnmatchcase(a.type_id, pattern)]
 
 
 def _world(
@@ -397,6 +399,99 @@ def test_actor_ground_truth_can_be_switched_off() -> None:
 
 def test_traffic_lights_are_not_reported_as_vehicles() -> None:
     message = _build(_world(actors=[_light("Red"), _vehicle(2, x=10.0)]), _ego())
+    assert [a.track_id for a in message.actors] == ["2"]
+
+
+def _walker(actor_id: int, x: float, y: float = 0.0, **kwargs: Any) -> MagicMock:
+    """A pedestrian: a box half a metre square and 1.8 m tall."""
+    kwargs.setdefault("extent", (0.25, 0.25, 0.9))
+    return _vehicle(actor_id, x, y, type_id="walker.pedestrian.0015", **kwargs)
+
+
+def _other(actor_id: int, type_id: str, x: float = 10.0) -> MagicMock:
+    return _vehicle(actor_id, x, type_id=type_id)
+
+
+def test_pedestrians_are_reported_with_their_walking_velocity() -> None:
+    """#1244: a policy that never sees a walker plans straight through it."""
+    walker = _walker(2, x=10.0, y=1.0, vy=-1.4, yaw=-90.0, box_location=(0.0, 0.0, 0.9))
+    message = _build(_world(actors=[walker]), _ego())
+
+    assert [a.type_id for a in message.actors] == ["walker.pedestrian.0015"]
+    actor = message.actors[0]
+    assert actor.track_id == "2"
+    vec = actor.pose_local_to_aabb.vec
+    assert (vec.x, vec.y, vec.z) == pytest.approx((10.0, -1.0, 0.9))
+    assert (actor.aabb.size_x, actor.aabb.size_y, actor.aabb.size_z) == pytest.approx(
+        (0.5, 0.5, 1.8)
+    )
+    # CARLA y is South: walking North in CARLA is +y in the local frame.
+    assert actor.dynamic_state.linear_velocity.y == pytest.approx(1.4)
+
+
+def test_props_are_reported_standing_still() -> None:
+    cone = _vehicle(
+        3, x=15.0, extent=(0.2, 0.2, 0.4), type_id="static.prop.constructioncone"
+    )
+    message = _build(_world(actors=[cone]), _ego())
+    assert [a.type_id for a in message.actors] == ["static.prop.constructioncone"]
+    velocity = message.actors[0].dynamic_state.linear_velocity
+    assert (velocity.x, velocity.y, velocity.z) == pytest.approx((0.0, 0.0, 0.0))
+
+
+def test_vehicles_pedestrians_and_props_are_reported_together() -> None:
+    ego = _ego()
+    actors = [
+        ego,
+        _vehicle(2, x=20.0),
+        _walker(3, x=10.0),
+        _other(4, "static.prop.streetbarrier"),
+    ]
+    message = _build(_world(actors=actors), ego)
+    assert sorted(a.track_id for a in message.actors) == ["2", "3", "4"]
+
+
+@pytest.mark.parametrize(
+    "type_id",
+    [
+        "controller.ai.walker",
+        "sensor.camera.rgb",
+        "sensor.other.collision",
+        "spectator",
+        "traffic.traffic_light",
+        "traffic.stop",
+        "static.trigger.friction",
+    ],
+)
+def test_what_is_not_a_body_on_the_road_is_not_reported(type_id: str) -> None:
+    """A walker's AI controller stands where its walker does; it is not a second
+    pedestrian.  Sensors ride on actors, and the rest are not in the way."""
+    message = _build(_world(actors=[_other(5, type_id), _walker(6, x=10.0)]), _ego())
+    assert [a.track_id for a in message.actors] == ["6"]
+
+
+def test_the_ego_is_excluded_among_pedestrians_and_props() -> None:
+    ego = _ego()
+    message = _build(
+        _world(actors=[_walker(2, x=5.0), ego, _other(3, "static.prop.box01")]), ego
+    )
+    assert "1" not in [a.track_id for a in message.actors]
+
+
+def test_a_hidden_pedestrian_is_beyond_the_horizon() -> None:
+    """An entity spawned hidden is parked 500 m under the map."""
+    message = _build(
+        _world(actors=[_walker(2, x=0.0, z=-500.0), _walker(3, x=10.0)]), _ego()
+    )
+    assert [a.track_id for a in message.actors] == ["3"]
+
+
+def test_pedestrians_beyond_the_horizon_are_dropped() -> None:
+    message = _build(
+        _world(actors=[_walker(2, x=40.0), _walker(3, x=200.0)]),
+        _ego(),
+        actor_horizon_m=150.0,
+    )
     assert [a.track_id for a in message.actors] == ["2"]
 
 

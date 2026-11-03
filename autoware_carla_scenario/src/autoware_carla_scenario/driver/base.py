@@ -332,7 +332,11 @@ class DriverClientConfig:
     """
 
     send_actor_ground_truth: bool = True
-    """Whether the payload includes the other vehicles' poses and velocities."""
+    """Whether the payload includes the other road users' poses and velocities.
+
+    Vehicles, pedestrians and props (``vehicle.*``, ``walker.*``,
+    ``static.prop.*``), within :attr:`actor_horizon_m`.
+    """
 
     traffic_light_sight_distance_m: float = 60.0
     """How far down its own lane the ego looks for the light governing it.
@@ -343,7 +347,8 @@ class DriverClientConfig:
     """
 
     actor_horizon_m: float = 150.0
-    """Radius within which other vehicles are reported to the policy."""
+    """Radius within which other vehicles, pedestrians and props are reported to
+    the policy (``renderer_data.actors``), measured in 3D from the ego."""
 
     random_seed: Optional[int] = None
     """Seed handed to the policy in ``start_session``; ``None`` hands it the run's

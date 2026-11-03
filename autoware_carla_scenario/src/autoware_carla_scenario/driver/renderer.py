@@ -72,6 +72,14 @@ _WEATHER_FIELDS = (
     "wetness",
 )
 
+#: The road users and obstacles reported to the policy, as CARLA blueprint
+#: patterns: other vehicles, pedestrians and the props a scenario puts on the
+#: road (cones, barriers, boxes).  Nothing else in the world is something to
+#: drive around: a walker's AI controller (``controller.ai.walker``) is not a
+#: body, sensors ride on actors, and the spectator and traffic lights and signs
+#: are not in the way.
+_ACTOR_PATTERNS: Tuple[str, ...] = ("vehicle.*", "walker.*", "static.prop.*")
+
 
 class RendererDataBuilder:
     """Collects CARLA ground truth for one ego, once per policy step.
@@ -281,11 +289,18 @@ class RendererDataBuilder:
         )
 
     def _actor_states(self, ego_pose: Pose) -> List[carla_driver_pb2.CarlaActorState]:
-        """Every other vehicle within the horizon, in the local frame.
+        """Every other road user and prop within the horizon, in the local frame.
+
+        Vehicles (``vehicle.*``), pedestrians (``walker.*``) and the props a
+        scenario places (``static.prop.*``, :data:`_ACTOR_PATTERNS`), each told
+        apart by its ``type_id``.  Not the ego, not a walker's AI controller,
+        a sensor or the spectator; and not an actor parked under the map
+        (hidden), which the horizon cuts: it is measured in 3D, and hidden
+        actors are parked hundreds of metres down.
 
         Poses carry yaw only.  A policy reads this quaternion to orient the
         actor's bounding box in the ground plane, which roll and pitch do not
-        affect for a vehicle on a road.
+        affect for a road user on a road.
 
         The position is the centre of the bounding box, as the field's name
         says and a policy reads it (stl_driver's ``forecast_actors`` takes it
@@ -293,12 +308,21 @@ class RendererDataBuilder:
         is often well behind its box centre, and at ground level under it
         (#854).  The box's offset is rotated by the actor's yaw only, like
         the pose itself.
+
+        The velocity is CARLA's, which every actor reports: a walker's is its
+        walking velocity, a prop's zero unless its physics has it moving.
         """
         states: List[carla_driver_pb2.CarlaActorState] = []
         horizon = self._config.actor_horizon_m
         ego_position = ego_pose.position
-
-        for actor in self._world.get_actors().filter("*vehicle*"):
+        # One fetch from the server; CARLA's filter matches type_ids locally.
+        world_actors = self._world.get_actors()
+        actors = [
+            actor
+            for pattern in _ACTOR_PATTERNS
+            for actor in world_actors.filter(pattern)
+        ]
+        for actor in actors:
             if actor.id == self._ego.id:
                 continue
             box = actor.bounding_box

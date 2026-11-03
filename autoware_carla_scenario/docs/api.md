@@ -212,7 +212,7 @@ Connects the ego to a driving policy served over alpasim's
 | `ControlConfig`, `TrajectoryFollower`, `VehicleCommand` | Pure pursuit plus a port of Autoware's `autoware_pid_longitudinal_controller` (or the `time_indexed` tracker), turning a plan into `carla.VehicleControl`. |
 | `Pose`, `Trajectory` | Rigid-transform primitives with protobuf conversions (right-handed frame). |
 | `EgoObservation`, `DriveOutcome` | The state sent to the policy and the plan it returns. |
-| `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, speed limit) into the `renderer_data` extension payload. |
+| `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, pedestrians and props, speed limit) into the `renderer_data` extension payload. |
 | `driver.stop_lines.StopLines` | Which traffic light governs the ego (the lane graph walked ahead to the next junction) and the distance along its heading to where it stops for it (the stop waypoint walked to its junction's mouth); `RendererDataBuilder` reports both. |
 
 ## Traffic backends (`autoware_carla_scenario.traffic`)
