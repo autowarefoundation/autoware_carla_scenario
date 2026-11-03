@@ -18,7 +18,9 @@ first-frame pose at its initial speed:
   model, so it arrives in the gear and at the engine speed it would be in; carried
   on a released throttle it would arrive in neutral, the engine idling.  A
   vehicle with no initial speed stands on its pose, held on its brakes like
-  any vehicle in the init phase.
+  any vehicle in the init phase.  A vehicle whose lane ends short of its
+  run-up waits at the lane's end until it is due to leave, and the ego reports
+  standing still meanwhile: what it reports is the motion it is carried at.
 * **Pedestrians** are moved in a straight line, in world coordinates, along
   their heading at their initial speed, placed afresh each tick; one with no
   initial speed stands where it starts.
@@ -189,6 +191,23 @@ class _CarriedVehicle:
     def back_m(self, tick: int) -> float:
         """How far behind its first-frame pose the vehicle is at ``tick``."""
         return self.speed * (self._ticks - tick) * self._step_s
+
+    def path_speed(self, tick: int) -> float:
+        """The speed the path carries the vehicle at from ``tick`` to the next.
+
+        It is the path's own step that :meth:`place` aims the vehicle along, over
+        the tick: the initial speed while the path moves, zero while a lane too
+        short for the run-up holds the vehicle at its end, and the share of the
+        step left on the tick it sets off.  From arrival on, the initial speed it
+        is carried on at.
+        """
+        if tick >= self._ticks:
+            return self.speed
+        length_m = self.path.length_m
+        moved_m = min(self.back_m(tick), length_m) - min(
+            self.back_m(tick + 1), length_m
+        )
+        return max(moved_m, 0.0) / self._step_s
 
     def place(self, tick: int) -> None:
         """Move the vehicle towards where its path has it one tick after ``tick``.
@@ -365,10 +384,17 @@ class PolicyWarmup:
     # -- what the ego reports during the run-up ------------------------------
 
     def velocity(self) -> "carla.Vector3D":
+        """The velocity the ego's path carries it at, along its heading.
+
+        Its speed is the path's step over this tick, the one :meth:`place
+        <_CarriedVehicle.place>` aims the ego along and :meth:`angular_velocity`
+        turns it by: zero while the ego waits at the end of a lane too short for
+        its run-up, its initial speed once it moves.
+        """
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
         yaw = math.radians(self._ego.actor.get_transform().rotation.yaw)
-        speed = self._ego.speed
+        speed = self._ego.path_speed(self._tick)
         return carla.Vector3D(x=speed * math.cos(yaw), y=speed * math.sin(yaw), z=0.0)
 
     def angular_velocity(self) -> "carla.Vector3D":
