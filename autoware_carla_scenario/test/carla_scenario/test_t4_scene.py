@@ -1076,7 +1076,8 @@ def test_the_exporter_refuses_a_distance_that_is_not_positive_and_finite(
         T4SceneExporter(max_distance_m=distance)
 
 
-@pytest.mark.parametrize("override", _BAD_OVERRIDES)
+# Hydra reads ``true`` as a bool, which float() would take for 1 m.
+@pytest.mark.parametrize("override", (*_BAD_OVERRIDES, "true"))
 def test_a_distance_that_is_not_positive_and_finite_is_refused_before_anything_runs(
     override: str,
 ) -> None:

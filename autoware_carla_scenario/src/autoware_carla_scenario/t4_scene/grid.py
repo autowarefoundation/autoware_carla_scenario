@@ -46,7 +46,8 @@ def checked_max_distance(
 
     0, a negative distance or NaN would keep no road user and infinity is
     what ``None`` says, so each is refused before a scene is written rather
-    than leaving it silently empty.
+    than leaving it silently empty.  A bool is refused too: ``true`` is not
+    a distance, though ``float()`` would read it as 1 m.
 
     Args:
         max_distance_m: The distance, metres.
@@ -55,12 +56,12 @@ def checked_max_distance(
             (``null``, ``--all-objects``).
 
     Raises:
-        ValueError: If *max_distance_m* is not positive and finite.
+        ValueError: If *max_distance_m* is a bool, or not positive and finite.
     """
     if max_distance_m is None:
         return None
     value: float = float(max_distance_m)
-    if not (math.isfinite(value) and value > 0.0):
+    if isinstance(max_distance_m, bool) or not (math.isfinite(value) and value > 0.0):
         raise ValueError(
             f"{key} must be positive and finite ({unlimited} for no limit), "
             f"not {max_distance_m}"

@@ -6,6 +6,7 @@ checker."""
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -95,6 +96,26 @@ def test_settings_refuse_what_cannot_be_recorded(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         T4Settings.from_driver(_driver(**driver), config)
+
+
+@pytest.mark.parametrize(
+    "distance", [0.0, -1.0, math.nan, math.inf, -math.inf, True, False]
+)
+def test_settings_refuse_a_max_distance_that_is_not_positive_and_finite(
+    distance: float,
+) -> None:
+    # As t4scene.max_distance_m: NaN would annotate no road user, infinity is
+    # what null says and a bool is not a distance.
+    with pytest.raises(
+        ValueError,
+        match=r"t4.max_distance_m must be positive and finite \(null for no limit\)",
+    ):
+        T4Settings.from_driver(_driver(), {"max_distance_m": distance})
+
+
+def test_settings_take_a_positive_max_distance() -> None:
+    settings = T4Settings.from_driver(_driver(), {"max_distance_m": 30})
+    assert settings.max_distance_m == 30.0
 
 
 def test_a_camera_lens_comes_from_the_driver_config() -> None:

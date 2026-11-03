@@ -13,6 +13,7 @@ re-exports every name, and the library check compiles this module
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,13 @@ def camera_channel(logical_id: str) -> str:
     return logical_id.upper()
 
 
+def _bad_max_distance(value: float) -> str:
+    """Why ``t4.max_distance_m`` = *value* is refused: 0, a negative distance
+    or NaN would annotate no road user, infinity is what null says, and a
+    bool is not a distance (t4_scene.grid.checked_max_distance's rule)."""
+    return f"t4.max_distance_m must be positive and finite (null for no limit), not {value}"
+
+
 @dataclass(frozen=True)
 class T4Settings:
     """What a run's dataset holds, and how often: the driver policy's sensors
@@ -96,8 +104,9 @@ class T4Settings:
                 "t4: a dataset needs a sensor: set driver.lidars or driver.cameras"
             )
         self.interval_ticks  # noqa: B018 - validates timestep_s
-        if self.max_distance_m is not None and self.max_distance_m <= 0.0:
-            raise ValueError("t4.max_distance_m must be positive (or null)")
+        distance = self.max_distance_m
+        if distance is not None and not (math.isfinite(distance) and distance > 0.0):
+            raise ValueError(_bad_max_distance(distance))
         if not 1 <= self.jpeg_quality <= 100:
             raise ValueError("driver.image_quality must be 1-100")
         if self.workers < 1:
@@ -117,6 +126,8 @@ class T4Settings:
         values: dict[str, Any] = {}
         if "max_distance_m" in config:
             distance = config["max_distance_m"]
+            if isinstance(distance, bool):  # float() would read true as 1 m
+                raise ValueError(_bad_max_distance(distance))
             values["max_distance_m"] = None if distance is None else float(distance)
         if config.get("workers") is not None:
             values["workers"] = int(config["workers"])

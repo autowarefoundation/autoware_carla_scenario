@@ -233,6 +233,13 @@ def test_checked_max_distance_refuses_what_is_not_positive_and_finite(
         LiveT4Scene(1, max_distance_m=distance)
 
 
+@pytest.mark.parametrize("flag", [True, False])
+def test_checked_max_distance_refuses_a_bool(flag: bool) -> None:
+    # float(True) is 1.0: a bool would otherwise pass as a 1 m distance.
+    with pytest.raises(ValueError, match="max_distance_m must be positive"):
+        checked_max_distance(flag)
+
+
 def test_checked_max_distance_keeps_a_positive_distance_and_none() -> None:
     assert checked_max_distance(None) is None
     assert checked_max_distance(5) == 5.0
