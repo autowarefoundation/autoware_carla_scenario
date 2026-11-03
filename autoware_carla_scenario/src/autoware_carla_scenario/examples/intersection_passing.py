@@ -25,11 +25,11 @@ Typical usage
 -------------
 Straight-through::
 
-    uv run scenario scenario=intersection_passing
+    uv run scenario scenario=intersection_passing/straight
 
 Left turn::
 
-    uv run scenario scenario=left_turn
+    uv run scenario scenario=intersection_passing/left_turn
 
 With pytest — see ``test/carla_scenario/test_examples.py``.
 """
