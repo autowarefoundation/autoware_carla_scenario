@@ -2886,7 +2886,7 @@ and composite conditions reset their children.</p>
 </tr>
 <tr>
 <td><code>PlaceClearCondition(position, length, width, margin=0.3, *, label)</code></td>
-<td>Passes while no vehicle's or walker's bounding box comes within <code>margin</code> of a <code>length</code> x <code>width</code> rectangle at <code>position</code> (a <code>Lanelet2Pose</code>, facing along the lane turned by its <code>heading</code>; or any position a trajectory vertex takes -- a route pose is placed on the scenario's route when the place is first looked at). Actors parked under the map do not count; one put there on this tick does. The <code>place_clear</code> card; typically guards where an entity appears.</td>
+<td>Passes while no vehicle's or walker's bounding box comes within <code>margin</code> of a <code>length</code> x <code>width</code> rectangle at <code>position</code> (a <code>Lanelet2Pose</code>, facing along the lane turned by its <code>heading</code>; or any position a trajectory vertex takes -- a route pose is placed on the scenario's route when the place is first looked at). A place written against an entity -- a <code>RelativeLanePose</code> against its <code>entity_ref</code>, a route pose without an <code>anchor</code> against the ego -- moves with it and is placed afresh every tick, facing along the lane it is placed on where it has no <code>yaw</code>; while that entity is absent or parked under the map the condition does not hold. <code>EntityPositionDistanceCondition</code> places such a position the same way. Actors parked under the map do not count; one put there on this tick does. The <code>place_clear</code> card; typically guards where an entity appears.</td>
 </tr>
 <tr>
 <td><code>TrafficSignalCondition</code></td>
@@ -3746,7 +3746,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 17:18:14 UTC"><span class="timeago" datetime="2026-11-03T17:18:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 17:18:14 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 18:01:24 UTC"><span class="timeago" datetime="2026-11-03T18:01:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 18:01:24 UTC">2026-11-03</span>
   </span>
 
     
