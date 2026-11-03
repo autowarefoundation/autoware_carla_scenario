@@ -4036,3 +4036,131 @@ def test_the_default_walker_blueprints_are_ones_carla_0_10_has() -> None:
         f for f in dataclasses.fields(PedestrianEntityConfig) if f.name == "walker_type"
     ]
     assert walker_type.default == "walker.pedestrian.0015"
+
+
+class _DeadTraci:
+    """A traci (or libsumo) whose SUMO dies right after it starts.
+
+    It keeps traci's module-level registry of connections: ``start`` refuses
+    while "default" is open, as traci does, and ``close`` frees it.  Anything
+    else fails, as with a SUMO process that is gone.
+    """
+
+    active: set[str] = set()
+
+    def __init__(self, name: str) -> None:
+        self.__name__ = name
+        self.starts = 0
+        self.closes: list[tuple[Any, ...]] = []
+
+    def start(self, cmd: list[str]) -> None:
+        if "default" in _DeadTraci.active:
+            raise RuntimeError("Connection 'default' is already active.")
+        _DeadTraci.active.add("default")
+        self.starts += 1
+
+    def close(self, *args: Any) -> None:
+        self.closes.append(args)
+        if "default" not in _DeadTraci.active:
+            raise RuntimeError("Connection 'default' is not connected.")
+        _DeadTraci.active.discard("default")
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(f"connection closed by SUMO ({name})")
+
+
+def _dead_sumo_backend(
+    crossroads: Path, tmp_path: Path, traci: _DeadTraci, monkeypatch: Any
+) -> tuple[Any, TrafficContext]:
+    """A backend started on *traci*, with every step of it failing."""
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    monkeypatch.setattr(backend_module, "_load_traci", lambda use_libsumo: traci)
+    monkeypatch.setattr(_DeadTraci, "active", set())
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles="sumo",
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            cache_dir=str(tmp_path / "cache"),
+        )
+    )
+    context = TrafficContext(
+        xodr_path=crossroads,
+        fixed_delta_seconds=0.05,
+        random_seed=3,
+        output_dir=tmp_path / "out",
+    )
+    backend.prepare(context)
+    assert traci.starts == 1
+    return backend, context
+
+
+@needs_sumo
+@pytest.mark.parametrize("name", ["traci", "libsumo"])
+def test_close_closes_sumo_after_the_steps_were_given_up_on(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """After 20 failed steps traffic stops, but close still closes SUMO's
+    connection rather than leave it open and SUMO orphaned (#1216)."""
+    traci = _DeadTraci(name)
+    backend, _context = _dead_sumo_backend(crossroads, tmp_path, traci, monkeypatch)
+    world = _FakeWorld([])
+    for _ in range(20):
+        backend.tick(world, 0.0)
+    assert not backend._running  # given up on
+    backend.close()
+    assert traci.closes == [() if name == "libsumo" else (False,)]
+    assert _DeadTraci.active == set()
+    backend.close()  # closed once only
+    assert len(traci.closes) == 1
+
+
+@needs_sumo
+@pytest.mark.parametrize("name", ["traci", "libsumo"])
+def test_sumo_starts_again_after_the_steps_were_given_up_on(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """The next case starts SUMO cleanly after one whose steps were given up
+    on, on the same backend and on a new one (#1216)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    traci = _DeadTraci(name)
+    backend, context = _dead_sumo_backend(crossroads, tmp_path, traci, monkeypatch)
+    world = _FakeWorld([])
+    for _ in range(20):
+        backend.tick(world, 0.0)
+    backend.prepare(context)  # closes the given-up run first
+    assert traci.starts == 2 and backend._running
+
+    for _ in range(20):
+        backend.tick(world, 0.0)
+    backend.close()
+    other = SumoTrafficBackend(backend._config)
+    other.prepare(context)
+    assert traci.starts == 3 and other._running
+    other.close()
+    assert _DeadTraci.active == set()
+
+
+@needs_sumo
+def test_what_a_vehicle_is_told_before_the_run_starts_waits_for_it(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Between prepare and start, SUMO is up but drives none of the run's
+    vehicles yet: their speed and route are held for when it does, and SUMO
+    is not asked about them (#1216 must not change that)."""
+    backend, _context = _dead_sumo_backend(
+        crossroads, tmp_path, _DeadTraci("traci"), monkeypatch
+    )
+    world = _FakeWorld([])
+    entity = _Entity(_FakeActor(_carla_transform(-60.0, 5.25, 0.0), "npc"), "npc")
+    try:
+        backend.adopt(entity)
+        backend.set_desired_speed(entity, world, 18.0)
+        backend.follow_route(entity, world, ["stop"])
+        assert backend._waiting_speeds[id(entity)] == pytest.approx(5.0)
+        assert backend._waiting_routes[id(entity)] == ["stop"]
+    finally:
+        backend.close()
