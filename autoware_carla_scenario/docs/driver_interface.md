@@ -615,7 +615,8 @@ Two conversions sit between CARLA and the contract, both handled in
 !!! warning "Rear-axle offset on CARLA 0.9.x"
     CARLA 0.9.x reports wheel positions in world coordinates and centimetres, so the
     derived offset can land far outside a plausible range. When that happens the value
-    falls back to half the bounding-box length and a warning is logged. Set
+    falls back to half the bounding box's half-length (`-0.5 * extent.x`, a quarter
+    of the box's length) behind the origin and a warning is logged. Set
     `driver.rear_axle_offset_m` (e.g. `-1.4`) to pin it explicitly.
 
 Observations are submitted with the ego pose in the **local** frame and velocities in
