@@ -33,16 +33,20 @@ class GroundProjectionConfig:
     searches a total of ``ray_distance_upper + ray_distance_lower`` metres,
     i.e. from ``z_estimate + upper`` to ``z_estimate - lower``.
 
-    The defaults are those of :class:`~autoware_carla_scenario.EntityConfig`
-    (the runner's ``entity.ground_projection_ray_distance_*``), which the
-    runner builds this config from.
+    The scenario runner builds this config from its
+    ``entity.ground_projection_ray_distance_*`` values (5 m up, 10 m down as
+    shipped).  The defaults here search less deeply below the estimate: they
+    are used where no config is passed, such as the best-effort height lookups
+    of trajectory runs and walker placement, which keep the estimate on a miss
+    instead of dropping onto a surface further below (a road under a bridge
+    whose deck has no ground mesh).
     """
 
     #: Search range (m) above the estimated z.
     ray_distance_upper: float = 5.0
 
     #: Search range (m) below the estimated z.
-    ray_distance_lower: float = 10.0
+    ray_distance_lower: float = 5.0
 
     #: Minimum absolute z delta (m) to log an info message.
     z_log_threshold: float = 0.01

@@ -3,8 +3,9 @@
 The tool used to cast its ray 5 m below the z estimate while the runner's
 shipped ``entity.ground_projection_ray_distance_lower`` is 10 m, so it could
 flag lanelets a run would project onto -- and sweeps exclude what it flags.
-Its defaults, ``EntityConfig``'s and ``GroundProjectionConfig``'s must all be
-the runner's composed ``entity.*`` values.  None of this needs CARLA.
+Its defaults and ``EntityConfig``'s must be the runner's composed ``entity.*``
+values.  ``GroundProjectionConfig``'s API default is deliberately not: see
+its docstring.  None of this needs CARLA.
 """
 
 from __future__ import annotations
@@ -65,11 +66,15 @@ def test_entity_config_defaults_are_the_shipped_yaml(
     ) == runner_entity
 
 
-def test_ground_projection_config_defaults_are_the_runners(
+def test_ground_projection_config_default_stays_shallower(
     runner_entity: tuple[float, float],
 ) -> None:
+    # Callers that pass no config (trajectory runs, walker placement) keep
+    # their estimate on a miss; a deeper default could drop them onto a road
+    # under a bridge instead.
     config = GroundProjectionConfig()
-    assert (config.ray_distance_upper, config.ray_distance_lower) == runner_entity
+    assert config.ray_distance_upper == runner_entity[0]
+    assert config.ray_distance_lower == 5.0 < runner_entity[1]
 
 
 def test_explicit_ray_options_override_the_defaults() -> None:
