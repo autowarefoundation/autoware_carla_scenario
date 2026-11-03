@@ -1,7 +1,7 @@
 # {{ distribution_name }}
 
 A standalone **scenario package** for the
-[`autoware-carla-scenario`](https://github.com/hakuturu583/autoware_carla_scenario)
+[`autoware-carla-scenario`](https://github.com/autowarefoundation/autoware_carla_scenario)
 framework, generated with `scenario-new`. Its scenario and config dataclass
 live here, outside the framework.
 
@@ -62,15 +62,15 @@ the config does not have (the message suggests the closest key).
 its CARLA client (typesafe_carla, at the version the framework's lock pins):
 
 ```yaml
-- uses: hakuturu583/autoware_carla_scenario/.github/actions/pack-scenario-image@master
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
   with:
     scenario-package-path: {{ package_name }}
     image: ghcr.io/<owner>/{{ distribution_name }}
 ```
 
-Pin a release tag instead of `main` for a reproducible framework version. See
-the framework's *Container Image* documentation for the inputs and for building
-the same image by hand.
+Pin a release tag (`vX.Y.Z`) for a reproducible framework version; `@master`
+follows the latest framework instead. See the framework's *Container Image*
+documentation for the inputs and for building the same image by hand.
 
 ## How it plugs in
 

@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: 💬 Discussion
-    url: https://github.com/hakuturu583/autoware_carla_scenario/discussions
+    url: https://github.com/autowarefoundation/autoware_carla_scenario/discussions
     about: Ask questions or discuss ideas with the community
   - name: 📚 Documentation
-    url: https://github.com/hakuturu583/autoware_carla_scenario/blob/master/README.md
+    url: https://github.com/autowarefoundation/autoware_carla_scenario/blob/master/README.md
     about: Read the project documentation and guides
