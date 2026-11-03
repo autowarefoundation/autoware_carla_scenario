@@ -2,7 +2,9 @@
 
 The module writes them by hand (the library check cannot compile a mixed-value
 ``dict``), so these hold the bytes to what ``json.dumps(..., indent=2)`` wrote
-when they were dicts, and the reader to the files that wrote.
+when they were dicts, and the reader to the files that wrote.  Both are read
+without a lock while another thread or process rewrites them, so they are
+replaced whole, never truncated and written in place (#1261).
 """
 
 from __future__ import annotations
@@ -10,10 +12,11 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import stat
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 import pytest
 from autoware_carla_scenario.maps.cache import GitMapCache, _EntryMeta, _json_object
@@ -256,6 +259,113 @@ def test_a_tip_json_naming_no_commit_reads_as_no_commit(cache: GitMapCache) -> N
     assert cache.last_tip(_SOURCE) == ""
 
 
+# -- written whole: a reader never sees half a file (#1261) -------------------
+
+
+def _pause_halfway(
+    monkeypatch: pytest.MonkeyPatch, read: Callable[[], Any]
+) -> list[Any]:
+    """Make every ``Path.write_text`` stop halfway and *read*, as a reader
+    racing the write would; returns what each *read* saw."""
+    seen: list[Any] = []
+
+    def write_text(
+        self: Path,
+        data: str,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+        newline: Optional[str] = None,
+    ) -> int:
+        with self.open("w", encoding=encoding, errors=errors, newline=newline) as f:
+            f.write(data[: len(data) // 2])
+            f.flush()
+            seen.append(read())
+            f.write(data[len(data) // 2 :])
+        return len(data)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+    return seen
+
+
+def test_a_meta_json_being_rewritten_reads_as_the_old_one(
+    cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = _entry(cache)
+    GitMapCache._write_meta(entry, _SOURCE, _COMMIT)
+    before = GitMapCache._read_meta(entry)
+
+    seen = _pause_halfway(monkeypatch, lambda: GitMapCache._read_meta(entry))
+    GitMapCache._write_entry_meta(entry, replace(before, materialised=("a", "b")))
+
+    assert seen == [before]
+    assert seen[0].commit == _COMMIT
+    assert GitMapCache._read_meta(entry) == replace(before, materialised=("a", "b"))
+
+
+def test_a_tip_json_being_rewritten_reads_as_the_old_one(
+    cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    newer = "fedcba9876543210fedcba9876543210fedcba98"
+    cache.remember_tip(_SOURCE, _COMMIT)
+
+    seen = _pause_halfway(monkeypatch, lambda: cache.last_tip(_SOURCE))
+    cache.remember_tip(_SOURCE, newer)
+
+    assert seen == [_COMMIT]
+    assert cache.last_tip(_SOURCE) == newer
+
+
+def test_meta_and_tip_leave_no_scratch_file_behind(cache: GitMapCache) -> None:
+    entry = _entry(cache)
+    GitMapCache._write_meta(entry, _SOURCE, _COMMIT)
+    GitMapCache._write_entry_meta(
+        entry, replace(GitMapCache._read_meta(entry), materialised=("a",))
+    )
+    cache.remember_tip(_SOURCE, _COMMIT)
+    cache.remember_tip(_SOURCE, _COMMIT)
+
+    assert [p.name for p in entry.iterdir()] == ["meta.json"]
+    assert sorted(p.name for p in entry.parent.iterdir()) == sorted(
+        [entry.name, cache.tip_file(_SOURCE).name]
+    )
+    # Readable by others sharing the cache, as write_text left it, rather than
+    # the scratch file's 0o600.
+    for written in (entry / "meta.json", cache.tip_file(_SOURCE)):
+        assert stat.S_IMODE(written.stat().st_mode) == 0o644
+
+
+@pytest.mark.parametrize("failing", ["write_text", "replace"])
+def test_a_failed_write_keeps_the_old_file_and_no_scratch_file(
+    cache: GitMapCache, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    entry = _entry(cache)
+    GitMapCache._write_meta(entry, _SOURCE, _COMMIT)
+    cache.remember_tip(_SOURCE, _COMMIT)
+    meta_before = (entry / "meta.json").read_text(encoding="utf-8")
+    tip_before = cache.tip_file(_SOURCE).read_text(encoding="utf-8")
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("disk full")
+
+    if failing == "write_text":
+        monkeypatch.setattr(Path, "write_text", broken)
+    else:
+        monkeypatch.setattr(os, "replace", broken)
+
+    with pytest.raises(OSError, match="disk full"):
+        GitMapCache._write_meta(entry, _SOURCE, "f" * 40)
+    with pytest.raises(OSError, match="disk full"):
+        cache.remember_tip(_SOURCE, "f" * 40)
+    monkeypatch.undo()
+
+    assert (entry / "meta.json").read_text(encoding="utf-8") == meta_before
+    assert cache.tip_file(_SOURCE).read_text(encoding="utf-8") == tip_before
+    assert [p.name for p in entry.iterdir()] == ["meta.json"]
+    assert sorted(p.name for p in entry.parent.iterdir()) == sorted(
+        [entry.name, cache.tip_file(_SOURCE).name]
+    )
+
+
 # -- include: None and () mean the same ---------------------------------------
 
 
@@ -299,3 +409,6 @@ def test_no_include_pattern_checks_the_directory_out_without_lfs(
     peeked = cache.peek(source)
     assert peeked is not None
     assert peeked.materialised == ("map",)
+    # Nothing but the entry (no clone staging, no scratch meta.json) is left.
+    assert [p.name for p in peeked.root.parent.iterdir()] == [peeked.root.name]
+    assert sorted(p.name for p in peeked.root.iterdir()) == ["meta.json", "repo"]
