@@ -2977,7 +2977,7 @@ point, as a serialized <code>carla_driver.v0.CarlaRendererData</code>:</p>
 </tr>
 <tr>
 <td><code>actors[]</code></td>
-<td>Other vehicles: pose, bounding box, and velocity, all in the local frame</td>
+<td>Other vehicles, pedestrians and props (<code>vehicle.*</code>, <code>walker.*</code>, <code>static.prop.*</code>, told apart by <code>type_id</code>): pose, bounding box, and velocity, all in the local frame</td>
 </tr>
 <tr>
 <td><code>weather</code>, <code>map_name</code>, <code>frame_id</code></td>
@@ -2996,7 +2996,7 @@ point, as a serialized <code>carla_driver.v0.CarlaRendererData</code>:</p>
 <div class="admonition warning">
 <p class="admonition-title">Turning this off is not a no-op</p>
 <p>A policy reads the payload defensively — a missing one means "no light applies" and
-"no other vehicles" rather than an error. So <code>send_renderer_data: false</code> does not
+"no other road users" rather than an error. So <code>send_renderer_data: false</code> does not
 fail loudly. It silently disables every rule that depends on the world outside the
 ego. For a specification-driven policy such as
 <a href="https://github.com/hakuturu583/stl_driver">stl_driver</a>, that is <code>stop_on_red</code>,
@@ -3277,7 +3277,11 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
   horizon stays ahead of the vehicle, but it is not a global plan: the ego will not turn
   toward a goal. Scenarios needing a specific route should submit their own waypoints
   through the client.</li>
-<li>Actor reporting covers vehicles only — pedestrians are not included.</li>
+<li>Actor reporting covers vehicles, pedestrians and props (<code>vehicle.*</code>, <code>walker.*</code>,
+  <code>static.prop.*</code>) within <code>actor_horizon_m</code> of the ego, the ego itself excluded. Walker
+  AI controllers, sensors, the spectator, traffic lights and signs are not reported, and
+  neither is an actor parked under the map (hidden), which is far beyond the horizon. A
+  prop's velocity is zero unless its physics has it moving.</li>
 <li>Actor <code>dynamic_state</code> carries linear velocity; angular velocity and acceleration are
   left zero, matching the reference runtime.</li>
 </ul>
@@ -3303,7 +3307,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 05:42:21 UTC"><span class="timeago" datetime="2026-11-03T05:42:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 05:42:21 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 12:16:05 UTC"><span class="timeago" datetime="2026-11-03T12:16:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 12:16:05 UTC">2026-11-03</span>
   </span>
 
     
