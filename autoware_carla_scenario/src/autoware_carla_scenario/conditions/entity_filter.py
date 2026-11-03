@@ -10,8 +10,9 @@ instead, with an :class:`EntityFilter`:
   of their own, can be picked out as well as a scenario's named ones;
 * by kind: vehicles, pedestrians, or both;
 * relative to a reference entity (the ego by default): the distance between
-  their centres, and the offset ahead (negative: behind) and to the left
-  (negative: to the right) in the reference's frame, on the ground plane;
+  their origins (in 3D), and the offset ahead (negative: behind) and to the
+  left (negative: to the right) in the reference's frame, on the ground
+  plane;
 * by place: on any of a set of Lanelet2 lanelets.
 
 Every bound is optional; a filter with none takes every named vehicle and
@@ -19,7 +20,7 @@ pedestrian in the world but the reference.  :meth:`EntityFilter.select`
 answers which match, now, with each one's distance and offsets.  Actors
 parked under the map (spawned out of sight, see
 :data:`~.entity_existence.HIDDEN_BELOW_M`) and actors without a role name are
-never taken.
+never taken, and a reference parked under the map counts as absent.
 """
 
 from __future__ import annotations
@@ -59,8 +60,8 @@ class SelectedEntity:
     Attributes:
         name: Its role name.
         actor_id: Its CARLA actor id.
-        distance: From the reference's centre to its (m); ``nan`` without a
-            reference in the world.
+        distance: From the reference's origin to its, in 3D (m); ``nan``
+            without a reference in the scene.
         ahead: Its offset along the reference's heading (m, negative behind).
         left: Its offset to the reference's left (m, negative to the right).
     """
@@ -82,7 +83,8 @@ class EntityFilter:
             run of characters, ``?``: any one); empty takes every name.
         kind: Vehicles, pedestrians, or both.
         reference: The entity the relative bounds are measured from.
-        min_distance_m / max_distance_m: The distance between the centres.
+        min_distance_m / max_distance_m: The distance between the actors'
+            origins (``get_transform().location``), in 3D.
         min_ahead_m / max_ahead_m: The offset along the reference's heading
             (negative: behind it).
         min_left_m / max_left_m: The offset to the reference's left
@@ -93,8 +95,11 @@ class EntityFilter:
         include_reference: Take the reference itself, when it otherwise
             matches (its distance and offsets are 0).
 
-    A relative bound needs the reference in the world: without it, a filter
-    with one takes nothing.
+    A relative bound needs the reference in the world: without it -- not
+    spawned, destroyed, or parked under the map
+    (:data:`~.entity_existence.HIDDEN_BELOW_M`) -- a filter with one takes
+    nothing.  So "a vehicle near the pedestrian" never holds around the spot
+    where a hidden pedestrian will later appear.
     """
 
     names: tuple[str, ...] = ()
@@ -169,13 +174,29 @@ class EntityFilter:
 
     def select(self, world: "carla.World") -> list[SelectedEntity]:
         """The road users in *world* that pass the filter now, in the
-        world's actor order."""
+        world's actor order.
+
+        The reference is the first actor whose role name is
+        :attr:`reference`; one parked under the map (below
+        :data:`~.entity_existence.HIDDEN_BELOW_M`) counts as absent, as
+        :func:`~.entity_existence.find_present_actor_by_role_name` reads a
+        second entity.  Without a reference, a filter with a relative bound
+        takes nothing, and one without takes its road users with ``nan``
+        distance and offsets.
+        """
         actors = list(world.get_actors())
         reference: Optional["carla.Actor"] = None
         for actor in actors:
             if _role_name(actor) == self.reference:
                 reference = actor
                 break
+        # A reference parked under the map is not in the scene: the same
+        # answer as entity_existence.find_present_actor_by_role_name, read
+        # from the actors already fetched rather than with a second lookup.
+        if reference is not None:
+            parked: "carla.Actor" = reference
+            if float(parked.get_transform().location.z) < HIDDEN_BELOW_M:
+                reference = None
         if reference is None and self.relative:
             return []
         origin = (0.0, 0.0, 0.0)
