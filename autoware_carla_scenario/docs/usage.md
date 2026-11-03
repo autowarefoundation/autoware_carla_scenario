@@ -572,7 +572,7 @@ beside the log, and open that in the Rerun viewer. The conversion is the
 # The converter (rerun), and the Rerun viewer its recordings are made for (viewer):
 pip install 'autoware-carla-scenario[rerun,viewer]'
 # A recording of every run, made as each run ends:
-uv run scenario scenario=cut_in/cut_in rerun.enabled=true
+uv run scenario scenario=cut_in/left rerun.enabled=true
 uv run scenario 'scenario=cut_in/*' --multirun rerun.enabled=true
 rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 ```
@@ -657,7 +657,7 @@ that file is removed. It needs the Rerun SDK of the converter's version:
 
 ```bash
 pip install 'autoware-carla-scenario[rerun-lidar]'
-uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true \
+uv run scenario scenario=cut_in/left driver=... rerun.enabled=true \
     rerun.lidar=true rerun.cameras=true
 ```
 
@@ -1067,7 +1067,7 @@ measurements they read are the same:
 
 ```bash
 pip install 'carla-canvas[client]>=0.2'
-uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
+uv run scenario scenario=cut_in/left ego.entity=carla_driver \
     canvas.config=path/to/lidarverse.yaml
 ```
 

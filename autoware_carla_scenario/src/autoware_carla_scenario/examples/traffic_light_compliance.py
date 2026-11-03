@@ -35,7 +35,7 @@ Typical usage
 -------------
 Standalone (no pytest)::
 
-    uv run scenario scenario=traffic_light_compliance
+    uv run scenario scenario=traffic_light_compliance/traffic_light_compliance
 
 With pytest — see ``test/carla_scenario/test_examples.py``.
 """

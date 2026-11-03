@@ -15,7 +15,7 @@ after it closes the run's trajectory log, beside it in the run's output
 directory -- a batch's cases and a SLURM task's alike:
 
 ```bash
-uv run scenario scenario=cut_in/cut_in t4scene.enabled=true
+uv run scenario scenario=cut_in/left t4scene.enabled=true
 ```
 
 | Parameter | Type | Default | Description |
@@ -39,7 +39,7 @@ carries the run so far as a T4Scene, in `CarlaRendererData.t4_scene`
 (`t4_e2e_devkit.driver.AbstractT4Driver`):
 
 ```bash
-uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
+uv run scenario scenario=cut_in/left ego.entity=carla_driver \
     driver.map_dir=/tmp/maps driver.t4_scene=true
 ```
 

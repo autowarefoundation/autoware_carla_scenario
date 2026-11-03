@@ -238,7 +238,7 @@ ensure_xodr(resolve_map(uri), host="localhost", port=2000)
 ### Selecting a published map
 
 ```bash
-uv run scenario scenario=cut_in/default map=town10hd_opt
+uv run scenario scenario=cut_in/left map=town10hd_opt
 ```
 
 `conf/map/town10hd_opt.yaml` is a normal map group whose `map.source` names the

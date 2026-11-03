@@ -12,7 +12,7 @@ exactly.
 
 ```bash
 pip install 'autoware-carla-scenario[t4]'
-uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver t4.enabled=true \
+uv run scenario scenario=cut_in/left ego.entity=carla_driver t4.enabled=true \
   'driver.lidars=[{logical_id: lidar_top, position_z: 2.2}]'
 ```
 
