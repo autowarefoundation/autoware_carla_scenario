@@ -36,7 +36,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 from ..utils.opendrive import sanitize_opendrive
 
@@ -145,21 +145,20 @@ def export_map(
         return map_id
 
     # The id names the content, not the formats, so a set grows by the formats
-    # a run asks for and never loses one an earlier run wrote -- nor one a run
-    # killed while replacing the set left aside in its scratch directory (only
-    # read: it may be a live run's). Every run of one id gives the same files
-    # (they are in the id): whatever the set holds that this run does not give
-    # was converted, and is converted again, so that every format's trace
-    # leads into the same IR. A format this version cannot write (a newer
-    # version's, or one the installed roadgen lacks an exporter for) is
-    # dropped, with a warning.
-    for leftover in sorted(root.glob(f".{map_id}.*/old")):
-        present = {**present, **_formats_in(leftover)}
+    # a run asks for and never loses one an earlier run wrote -- nor one an
+    # old set kept aside holds (``.<map_id>.*/old``: below, or a run killed
+    # while replacing the set; only read, as it may be a live run's). Every
+    # run of one id gives the same files (they are in the id): whatever the
+    # set holds that this run does not give was converted, and is converted
+    # again, so that every format's trace leads into the same IR. A format
+    # this version cannot write (a newer version's, or one the installed
+    # roadgen lacks an exporter for) is dropped, with a warning.
     dropped: Set[str] = set()
-    present = _known(present, dropped, map_id)
+    present = _known(_held(root, target), dropped, map_id)
     root.mkdir(parents=True, exist_ok=True)
     last_error: Optional[OSError] = None
     requested = set(formats)
+    kept: List[Path] = []
     for _ in range(len(MAP_FORMATS) + 2):
         formats = tuple(dict.fromkeys((*formats, *present)))
         with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
@@ -177,41 +176,77 @@ def export_map(
             present = _known(_formats_in(target), dropped, map_id)
             if set(formats) <= set(present):
                 logger.info("map %s written to %s meanwhile", map_id, target)
+                _discard(kept, formats)
                 return map_id
             if set(present) <= set(formats):
                 # Each rename moves a complete set: a reader never sees one half
                 # written (only, between the two, none).
+                replaced = False
                 try:
                     if target.exists():
                         target.rename(aside)
                     if set(_known(_formats_in(aside), dropped, map_id)) <= set(formats):
                         out.rename(target)
-                        logger.info(
-                            "wrote map %s (%s) to %s",
-                            map_id,
-                            ", ".join(formats),
-                            target,
-                        )
-                        return map_id
-                    aside.rename(target)  # grown meanwhile: put it back
+                        replaced = True
+                    else:
+                        aside.rename(target)  # grown meanwhile: put it back
                 except OSError as error:
-                    if aside.exists() and not target.exists():
-                        try:
-                            aside.rename(target)  # never lose the old set
-                        except OSError:
-                            pass
                     # Only another run taking or filling the set's place is
                     # retried; anything else (permissions, a read-only file
                     # system) would fail again.
                     if error.errno not in _RACES:
                         raise
                     last_error = error
-            present = _known(
-                {**_formats_in(target), **_formats_in(aside)}, dropped, map_id
-            )
+                finally:
+                    # However this ends, an old set moved aside is put back or
+                    # kept outside the scratch directory, never removed with it.
+                    if not replaced and aside.exists():
+                        kept.extend(_put_back(aside, target, map_id))
+                if replaced:
+                    logger.info(
+                        "wrote map %s (%s) to %s", map_id, ", ".join(formats), target
+                    )
+                    _discard(kept, formats)
+                    return map_id
+            present = _known(_held(root, target), dropped, map_id)
     raise RuntimeError(
         f"map {map_id} kept changing in {target} while written"
     ) from last_error
+
+
+def _held(root: Path, target: Path) -> Dict[str, Any]:
+    """The formats of the set at ``target`` and of every old set kept aside."""
+    held = _formats_in(target)
+    for leftover in sorted(root.glob(f".{target.name}.*/old")):
+        held = {**held, **_formats_in(leftover)}
+    return held
+
+
+def _put_back(aside: Path, target: Path, map_id: str) -> List[Path]:
+    """Return the old set at ``aside`` to ``target``, or keep it beside it.
+
+    Kept, it is ``<map_dir>/.<map_id>.<random>/old``, where every later run
+    finds its formats; returns the directory kept, to remove once a set holding
+    them is in place.
+    """
+    try:
+        aside.rename(target)
+        return []
+    except OSError:
+        keep = Path(tempfile.mkdtemp(dir=target.parent, prefix=f".{map_id}."))
+        aside.rename(keep / "old")
+        logger.warning("map %s: kept the set it replaced in %s", map_id, keep)
+        return [keep]
+
+
+def _discard(kept: List[Path], formats: Tuple[str, ...]) -> None:
+    """Remove the old sets this run kept aside whose formats ``formats`` holds.
+
+    Only this run's: another run's leftover may be a live run's scratch.
+    """
+    for keep in kept:
+        if set(_formats_in(keep / "old")) <= set(formats):
+            shutil.rmtree(keep, ignore_errors=True)
 
 
 #: What a rename fails with when another run moved the set or put one in place.

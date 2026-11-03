@@ -13,7 +13,7 @@ import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -290,6 +290,79 @@ def test_a_set_left_aside_by_a_killed_run_is_kept(
     assert (scratch / "old" / MANIFEST_FILE).is_file(), "only read, never moved"
 
 
+def test_a_set_replaced_meanwhile_is_kept_on_disk_until_a_set_holds_it(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Between this run's two renames another run puts a smaller set in place,
+    and this run dies rebuilding: the old set's formats survive on disk."""
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    theirs = tmp_path / "theirs"
+    map_id = export_map(opendrive, "Town", theirs, formats=("commonroad",))
+    maps = tmp_path / "maps"
+    export_map(opendrive, "Town", maps, formats=("osm",))
+    target = maps / map_id
+    rename = Path.rename
+    injected: List[bool] = []
+
+    def racing_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set" and not injected:
+            injected.append(True)
+            rename(theirs / map_id, target)  # the other run's set goes in first
+        return rename(self, destination)
+
+    build = hdmap_export._build  # noqa: SLF001
+    builds: List[Any] = []
+
+    def dying_build(*args: Any) -> Tuple[str, ...]:
+        builds.append(args)
+        if len(builds) == 2:
+            raise KeyboardInterrupt("killed while rebuilding")
+        return build(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", racing_rename)
+        patch.setattr(hdmap_export, "_build", dying_build)
+        with pytest.raises(KeyboardInterrupt):
+            export_map(opendrive, "Town", maps, formats=("lanelet2",))
+
+    assert set(_manifest(target)["formats"]) == {"commonroad"}
+    [kept] = maps.glob(f".{map_id}.*/old")
+    assert set(_manifest(kept)["formats"]) == {"osm"}, "the old set was lost"
+    assert (kept / "openstreetmap.osm").is_file()
+
+    # A later run picks it up; the leftover is only read, as a live run's may be.
+    export_map(opendrive, "Town", maps, formats=("lanelet2",))
+    assert set(_manifest(target)["formats"]) == {"osm", "commonroad", "lanelet2"}
+    assert kept.is_dir()
+
+
+def test_a_set_this_run_kept_aside_is_removed_once_in_place(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another run's smaller set goes in between this run's renames; this run
+    keeps the old set aside, builds again with every format, and then removes
+    what it kept."""
+    theirs = tmp_path / "theirs"
+    map_id = export_map(opendrive, "Town", theirs, formats=("commonroad",))
+    maps = tmp_path / "maps"
+    export_map(opendrive, "Town", maps, formats=("osm",))
+    target = maps / map_id
+    rename = Path.rename
+    injected: List[bool] = []
+
+    def racing_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set" and not injected:
+            injected.append(True)
+            rename(theirs / map_id, target)
+        return rename(self, destination)
+
+    monkeypatch.setattr(Path, "rename", racing_rename)
+    export_map(opendrive, "Town", maps, formats=("lanelet2",))
+    assert set(_manifest(target)["formats"]) == {"osm", "commonroad", "lanelet2"}
+    assert [p.name for p in maps.iterdir()] == [map_id], "left scratch behind"
+
+
 def test_a_failing_replace_is_raised_at_once_keeping_the_old_set(
     opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,7 +370,7 @@ def test_a_failing_replace_is_raised_at_once_keeping_the_old_set(
 
     map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
     target = tmp_path / map_id
-    builds = []
+    builds: List[Any] = []
     build = hdmap_export._build  # noqa: SLF001
 
     def counted_build(*args: Any) -> Tuple[str, ...]:
