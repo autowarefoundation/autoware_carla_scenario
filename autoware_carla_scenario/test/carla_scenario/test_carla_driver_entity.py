@@ -285,6 +285,28 @@ def test_ground_truth_reaches_the_policy() -> None:
     assert payload.map_name == "Town10HD_Opt"
 
 
+def test_the_end_of_a_run_forgets_where_walkers_stood() -> None:
+    """#1252: walkers' velocities are measured between policy steps; none is
+    measured across runs."""
+    entity, client = _entity(send_renderer_data=True, policy_timestep_s=0.05)
+    world = _world_with_route()
+    world.get_actors.return_value = _EmptyActors()
+    world.get_snapshot.return_value.frame = 1
+    world.get_weather.return_value = SimpleNamespace(cloudiness=0.0)
+    entity.on_scenario_start(world)
+    renderer = entity._renderer
+    assert renderer is not None
+    entity.on_tick(world, 0.0)
+    assert renderer._walkers._placed == {} and renderer._walker_ids == set()
+    renderer._walkers._placed[9] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, False)
+    renderer._walker_ids.add(9)
+
+    entity.on_scenario_end(world)
+
+    assert entity._renderer is None
+    assert renderer._walkers._placed == {} and renderer._walker_ids == set()
+
+
 def test_ground_truth_can_be_switched_off() -> None:
     """Off is indistinguishable from 'nothing to report' on the policy side."""
     entity, client = _entity(send_renderer_data=False, policy_timestep_s=0.05)
@@ -1571,6 +1593,9 @@ class _FakeRenderer:
         data = carla_driver_pb2.CarlaRendererData(snapshot_timestamp_us=timestamp_us)
         data.t4_scene = t4_scene
         return data.SerializeToString()
+
+    def reset(self) -> None:
+        pass
 
 
 def test_every_drive_carries_the_run_so_far_as_a_t4_scene(

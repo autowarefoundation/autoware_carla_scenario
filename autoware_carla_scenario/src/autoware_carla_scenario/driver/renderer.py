@@ -33,6 +33,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..coordinate.map_manager import run_carla_map
+from ..kinematics.walker_motion import WalkerVelocities, is_walker
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
@@ -52,6 +53,10 @@ __all__ = ["RendererDataBuilder"]
 
 #: CARLA reports posted speed limits in km/h.
 _KMH_TO_MPS: float = 1.0 / 3.6
+
+#: Microseconds in a second: :meth:`RendererDataBuilder.build`'s timestamp is
+#: in microseconds, :class:`WalkerVelocities` measures in seconds.
+_US_PER_S: float = 1e6
 
 #: Proto states by :func:`traffic_light_state_name`.
 _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
@@ -88,6 +93,11 @@ class RendererDataBuilder:
     Traffic-light geometry is cached: lights and junctions do not move, and the
     lane-graph walks behind them are not cheap enough to repeat at policy rate.
 
+    Walkers' velocities are measured from one build to the next
+    (:class:`~autoware_carla_scenario.kinematics.walker_motion.WalkerVelocities`),
+    so the builder keeps where each walker stood; :meth:`reset` forgets it.  A
+    builder serves one driver session.
+
     Args:
         world: The CARLA world.
         ego_actor: The ego vehicle actor.
@@ -115,10 +125,20 @@ class RendererDataBuilder:
         self._lights: Optional[List[Tuple[Any, str, List[Any]]]] = None
         # The lane index and the stop points, cached there.
         self._stop_lines = StopLines(world, ego_actor, self._map, config)
+        # Where each walker stood at the last build: CARLA reports 0 for one
+        # walking on its controller, so its velocity is measured (#1252).
+        self._walkers = WalkerVelocities()
+        self._walker_ids: set[int] = set()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def reset(self) -> None:
+        """Forget where every walker stood (the session ended), so no
+        velocity is measured across runs."""
+        self._walkers.clear()
+        self._walker_ids.clear()
 
     def build(
         self,
@@ -173,7 +193,7 @@ class RendererDataBuilder:
             ego_traffic_light_distance_m=self._light_distance(light, ego_pose),
             speed_limit_mps=self._speed_limit_mps(),
             actors=(
-                self._actor_states(ego_pose)
+                self._actor_states(timestamp_us, ego_pose)
                 if self._config.send_actor_ground_truth
                 else []
             ),
@@ -289,7 +309,9 @@ class RendererDataBuilder:
             }
         )
 
-    def _actor_states(self, ego_pose: Pose) -> List[carla_driver_pb2.CarlaActorState]:
+    def _actor_states(
+        self, timestamp_us: int, ego_pose: Pose
+    ) -> List[carla_driver_pb2.CarlaActorState]:
         """Every other road user and prop within the horizon, in the local frame.
 
         Vehicles (``vehicle.*``), pedestrians (``walker.*``) and the props a
@@ -312,8 +334,20 @@ class RendererDataBuilder:
         (#854).  The box's offset is rotated by the actor's yaw only, like
         the pose itself.
 
-        The velocity is CARLA's, which every actor reports: a walker's is its
-        walking velocity, a prop's zero unless its physics has it moving.
+        A vehicle's and a prop's velocity is the one CARLA reports, a prop's
+        zero unless its physics has it moving.  A walker's is measured
+        (:class:`~autoware_carla_scenario.kinematics.walker_motion.WalkerVelocities`,
+        as the trajectory log, the T4 dataset, the metrics and the conditions
+        measure it): CARLA reports 0 for a walker walking on its controller,
+        which places it rather than driving it (#1252).  It is measured from
+        where the walker stood at the previous build to where it stands now,
+        over the simulated time between them (*timestamp_us*), so it is the
+        walker's average velocity over the policy step.  At the first build,
+        and once a walker has been teleported -- brought in from under the
+        map, put where its walk starts -- there is nothing to measure from and
+        it is the one CARLA reports.  Hidden walkers are read too, though not
+        reported, so the one brought in is no walk.  Every velocity is
+        resolved in the local frame.
         """
         states: List[carla_driver_pb2.CarlaActorState] = []
         horizon = self._config.actor_horizon_m
@@ -325,10 +359,21 @@ class RendererDataBuilder:
             for pattern in _ACTOR_PATTERNS
             for actor in world_actors.filter(pattern)
         ]
+        elapsed = timestamp_us / _US_PER_S
+        walker_ids: set[int] = set()
         for actor in actors:
             if actor.id == self._ego.id:
                 continue
             transform = actor.get_transform()
+            walker_velocity = None
+            if is_walker(actor):
+                # Measured before any skip -- hidden, beyond the horizon -- so
+                # that where it stood is always the last build's: a walker
+                # brought in from under the map is then a teleport, no walk.
+                walker_ids.add(int(actor.id))
+                walker_velocity = self._walkers.walker(
+                    actor, elapsed, transform.location
+                )
             # Parked under the map until brought in: not on the road (#1248).
             # Compared in CARLA's world frame, as every other consumer does.
             if float(transform.location.z) < _HIDDEN_BELOW_M:
@@ -343,7 +388,9 @@ class RendererDataBuilder:
             if float(np.linalg.norm(pose.position - ego_position)) > horizon:
                 continue
 
-            velocity = actor.get_velocity()
+            velocity = (
+                walker_velocity if walker_velocity is not None else actor.get_velocity()
+            )
             extent = box.extent
             states.append(
                 carla_driver_pb2.CarlaActorState(
@@ -365,6 +412,10 @@ class RendererDataBuilder:
                     ),
                 )
             )
+        # Walkers gone from the world: nothing more to measure.
+        for gone in self._walker_ids - walker_ids:
+            self._walkers.forget(gone)
+        self._walker_ids = walker_ids
         return states
 
 

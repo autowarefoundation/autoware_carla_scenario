@@ -710,6 +710,12 @@ See `carla_driver_interface/proto/README.md` for the full provenance.
   AI controllers, sensors, the spectator, traffic lights and signs are not reported, and
   neither is an actor parked under the map (hidden): one whose CARLA `z` is below the
   hidden threshold every other consumer of the world shares is excluded explicitly,
-  whatever `actor_horizon_m` is. A prop's velocity is zero unless its physics has it moving.
+  whatever `actor_horizon_m` is. A vehicle's and a prop's velocity is the one CARLA
+  reports, a prop's zero unless its physics has it moving. A walker's is measured from
+  where it stood at the previous policy step, over the simulated time since (its average
+  velocity over the step), as the [trajectory log](trajectory_log.md#frames-units-and-time)
+  measures it: CARLA reports 0 for a walker walking on its controller. At the first step,
+  and right after a walker is teleported (brought in from under the map, put where its
+  walk starts), there is nothing to measure from and it is the one CARLA reports.
 * Actor `dynamic_state` carries linear velocity; angular velocity and acceleration are
   left zero, matching the reference runtime.
