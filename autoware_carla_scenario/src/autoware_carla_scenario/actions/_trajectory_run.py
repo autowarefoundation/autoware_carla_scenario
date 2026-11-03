@@ -576,7 +576,18 @@ class TrajectoryRun(BaseAction):
                 self._hide(world, actor, sample)
                 return
             self._show(actor)
-            _place(actor, sample, walker)
+            put_z = _place(actor, sample, walker)
+            # Teleported: a place written against it on this frame reads it
+            # here, not where the world still shows it (or a SpawnAction put
+            # it earlier on the frame).  FOLLOW mode moves it by control, so
+            # it stays where it was this frame and nothing changes.
+            from .spawn import note_brought_in  # noqa: PLC0415
+
+            note_brought_in(
+                world,
+                str(self._entity_name),
+                CarlaWorldPose(sample.x, sample.y, put_z, yaw=sample.yaw),
+            )
         elif walker:
             self._walk(world, actor)
         else:
@@ -1649,8 +1660,9 @@ def _walker_speed(speed_mps: float) -> float:
     return walker_control_speed(speed_mps)
 
 
-def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> None:
-    """Put *actor* at *sample*, moving with the sample's velocity.
+def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> float:
+    """Put *actor* at *sample*, moving with the sample's velocity; the z its
+    origin was put at.
 
     The velocity goes with the pose so that what reads the actor's speed -- a
     speed condition, the recorder, a TrafficManager car behind it -- sees the
@@ -1661,9 +1673,10 @@ def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> None
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     lift = float(actor.bounding_box.extent.z) if walker else 0.0
+    put_z = sample.z + lift
     actor.set_transform(
         carla.Transform(
-            carla.Location(x=sample.x, y=sample.y, z=sample.z + lift),
+            carla.Location(x=sample.x, y=sample.y, z=put_z),
             carla.Rotation(yaw=sample.yaw),
         )
     )
@@ -1677,9 +1690,10 @@ def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> None
         _as_walker(actor).apply_control(
             carla.WalkerControl(direction=direction, speed=_walker_speed(speed))
         )
-        return
+        return put_z
     actor.set_target_velocity(carla.Vector3D(sample.vx, sample.vy, 0.0))
     actor.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, sample.yaw_rate))
+    return put_z
 
 
 def _stop(actor: "carla.Actor", walker: bool) -> None:

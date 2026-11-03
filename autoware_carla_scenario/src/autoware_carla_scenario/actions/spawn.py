@@ -99,8 +99,9 @@ _PARKED_DEPTH_M: float = 500.0
 #: the CARLA pose it was put at.  A client sees an actor's new transform only
 #: from the next tick on, so a place written against it on the same frame
 #: (another spawn of the same phase) is placed against this
-#: (:class:`_BroughtInReferences`).  Hidden or despawned again on that frame,
-#: it is forgotten (:func:`forget_brought_in`).
+#: (:class:`_BroughtInReferences`).  Put again on that frame (a ``POSITION``
+#: trajectory), it is replaced (:func:`note_brought_in`); hidden or despawned
+#: again, it is forgotten (:func:`forget_brought_in`).
 _BROUGHT_IN: dict[tuple[int, str], tuple[int, CarlaWorldPose]] = {}
 
 #: The props standing now, by name.
@@ -131,6 +132,18 @@ def clear_props() -> None:
     for name in list(_STANDING.keys()):
         remove_prop(name)
     _BROUGHT_IN.clear()
+
+
+def note_brought_in(world: "carla.World", role: str, pose: CarlaWorldPose) -> None:
+    """Record that *role* was put at the CARLA *pose* on this frame: a place
+    written against it on the same frame reads it there
+    (:class:`_BroughtInReferences`), the world showing the new pose only from
+    the next tick on.  Called by every path that teleports an entity into the
+    scene (a SpawnAction, a ``POSITION``-mode trajectory); nothing is
+    recorded where the frame cannot be read."""
+    frame = _frame(world)
+    if frame >= 0:
+        _BROUGHT_IN[(_world_id(world), role)] = (frame, pose)
 
 
 def forget_brought_in(world: "carla.World", role: str) -> None:
@@ -433,12 +446,9 @@ class SpawnAction(BaseAction):
         frame = _frame(world)
         if frame >= 0:
             _ENTERED[int(found.id)] = (frame, self._speed)
-            # Read by a place written against it on this frame: the world
-            # shows where it is put only from the next tick on.
-            _BROUGHT_IN[(_world_id(world), self._entity_name)] = (
-                frame,
-                CarlaWorldPose(x, y, put_z, yaw=yaw),
-            )
+        # Read by a place written against it on this frame: the world shows
+        # where it is put only from the next tick on.
+        note_brought_in(world, self._entity_name, CarlaWorldPose(x, y, put_z, yaw=yaw))
         self._spawned.append((self._entity_name, int(found.id)))
         logger.info(
             "%s: '%s' spawned at (%.1f, %.1f) at %.1f m/s",
