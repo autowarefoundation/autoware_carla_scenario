@@ -1194,6 +1194,31 @@ class TestTheDefaultTimeout:
         cfg = OmegaConf.create({"scenario": {"timeout_seconds": 15}})
         assert run_timeout_seconds(cfg) == 15.0
 
+    def test_a_null_command_line_timeout_falls_back_to_the_default(self):
+        """#1188: ``scenario.timeout_seconds=null`` sets none, as an absent key."""
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.run_timeout import (
+            DEFAULT_RUN_TIMEOUT_SECONDS,
+            run_timeout_seconds,
+        )
+
+        cfg = OmegaConf.create({"scenario": {"timeout_seconds": None}})
+        assert run_timeout_seconds(cfg) == DEFAULT_RUN_TIMEOUT_SECONDS
+        assert run_timeout_seconds({"scenario": {"timeout_seconds": None}}) == 60.0
+        assert run_timeout_seconds(OmegaConf.create({})) == 60.0
+
+    @pytest.mark.parametrize("timeout", ["fast", "15", True, False, [15], {"s": 1}])
+    def test_the_command_line_refuses_a_timeout_that_is_not_a_number(self, timeout):
+        """#1188: a ValueError naming the key, not a bare TypeError."""
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
+
+        cfg = OmegaConf.create({"scenario": {"timeout_seconds": timeout}})
+        with pytest.raises(ValueError, match="scenario.timeout_seconds"):
+            run_timeout_seconds(cfg)
+
     def test_the_registered_conditions_fire_at_the_scenarios_own_limit(self):
         """What is left registered fails at 20.4 s, and not at 12 s."""
         from autoware_carla_scenario import TimeoutCondition
