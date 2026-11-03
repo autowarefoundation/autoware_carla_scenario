@@ -838,11 +838,39 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
 
 
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
-    """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise."""
+    """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
+
+    0 (or ``null``, or no value) keeps every point of a sweep.  An integral
+    float (``1e5`` in YAML) or a string of an integer (what ``${oc.env:...}``
+    gives) counts as that integer, as ``int()`` read them before (#1226).
+
+    Raises:
+        ValueError: It is not a non-negative integer (a bool is not one).
+    """
     rerun_cfg = cfg.get("rerun") or {}
     if not rerun_cfg.get("lidar", False):
         return None
-    return int(rerun_cfg.get("lidar_max_points", 0) or 0)
+    value = rerun_cfg.get("lidar_max_points", 0)
+    if value is None:
+        return 0
+    points: int | None = None
+    if isinstance(value, bool):
+        points = None
+    elif isinstance(value, int):
+        points = value
+    elif isinstance(value, float) and value.is_integer():
+        points = int(value)
+    elif isinstance(value, str):
+        try:
+            points = int(value)
+        except ValueError:
+            points = None
+    if points is None or points < 0:
+        raise ValueError(
+            "rerun.lidar_max_points must be a non-negative integer "
+            f"(0 keeps every point), got {value!r}"
+        )
+    return points
 
 
 def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
@@ -853,9 +881,12 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     those asking, 0 being all), and with ``rerun.cameras`` its camera frames.
 
     Called before anything runs, so a run asking for recordings without the
-    ``rerun`` extra installed is refused at once.
+    ``rerun`` extra installed, or with a ``rerun.lidar_max_points`` that is not
+    a non-negative integer in any of its cases, is refused at once.
 
     Raises:
+        ValueError: A case asking for LiDAR sweeps sets a
+            ``rerun.lidar_max_points`` that is not a non-negative integer.
         RerunUnavailableError: The extra is not installed.
         LidarRerunUnavailableError: ``rerun.lidar`` is set and the Rerun SDK
             is not installed.
