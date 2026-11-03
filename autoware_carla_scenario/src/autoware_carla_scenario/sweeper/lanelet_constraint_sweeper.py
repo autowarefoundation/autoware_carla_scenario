@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from hydra.core.plugins import Plugins
-from hydra.core.utils import JobReturn, JobStatus
+from hydra.core.utils import JobReturn, JobStatus, configure_log
 from hydra.errors import CompactHydraException
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import HydraContext
@@ -153,6 +153,51 @@ def _get_job_output_dir(ret: JobReturn) -> str | None:
     return getattr(ret, "working_dir", None)
 
 
+def _log_job_exception(ret: JobReturn) -> None:
+    """Log, with its traceback, the exception the case's task function raised.
+
+    Hydra's ``run_job`` catches it and stores it in the ``JobReturn``
+    (``_return_value``; the ``return_value`` property re-raises it) without
+    logging it, so without this a case that raised shows only ``Job FAILED
+    (exit code 1)`` (#1232).  It is logged where the task's own log records
+    went: with the job's logging (``hydra.job_logging``: the terminal and the
+    job's ``<job name>.log`` in its output directory) put back for it, then
+    Hydra's own (``hydra.hydra_logging``) again, as Hydra's launcher leaves
+    it after a job.  Without the job's Hydra config, the sweeper's logging as
+    it stands.
+    """
+    exc = ret._return_value
+    if not isinstance(exc, BaseException):
+        return
+    hydra_cfg = getattr(ret, "hydra_cfg", None)
+    job_logging = None
+    verbose: Any = False
+    if hydra_cfg is not None:
+        try:
+            job_logging = OmegaConf.select(hydra_cfg, "hydra.job_logging")
+            verbose = OmegaConf.select(hydra_cfg, "hydra.verbose", default=False)
+            if job_logging is not None:
+                configure_log(job_logging, verbose)
+        except Exception:  # noqa: BLE001 - log it anyway, as things stand
+            job_logging = None
+    try:
+        logger.error(
+            "Case %s raised %s: %s",
+            " ".join(ret.overrides or ()),
+            type(exc).__name__,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    finally:
+        if job_logging is not None and hydra_cfg is not None:
+            try:
+                hydra_logging = OmegaConf.select(hydra_cfg, "hydra.hydra_logging")
+                if hydra_logging is not None:
+                    configure_log(hydra_logging, verbose)
+            except Exception:  # noqa: BLE001, S110 - the record is out
+                pass
+
+
 def _job_exit_code(job_returns: Any) -> int:
     """The exit status of a forked case, from what ``launcher.launch`` returned.
 
@@ -161,7 +206,9 @@ def _job_exit_code(job_returns: Any) -> int:
     Hydra catches what the task function raises and stores it in the
     ``JobReturn`` with ``status=FAILED``.  So:
 
-    * 1 -- the task raised, or completed without a readable result JSON;
+    * 1 -- the task raised (logged here, with its traceback:
+      :func:`_log_job_exception`), or completed without a readable result
+      JSON;
     * :data:`_FAILED_VERDICT_EXIT_CODE` -- the scenario ran and failed;
     * 0 -- it passed (or there is no output directory to read a verdict from).
     """
@@ -169,6 +216,8 @@ def _job_exit_code(job_returns: Any) -> int:
         return 0
     ret = job_returns[0]
     if ret.status != JobStatus.COMPLETED:
+        if ret.status == JobStatus.FAILED:
+            _log_job_exception(ret)
         return 1
     # hydra_cfg.hydra.runtime.output_dir -- NOT working_dir, which equals the
     # cwd when hydra.job.chdir=False (the default since Hydra 1.2).

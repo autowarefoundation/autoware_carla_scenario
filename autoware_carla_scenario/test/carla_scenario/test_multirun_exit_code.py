@@ -23,7 +23,8 @@ import pytest
 #: the result JSON a scenario writes; as ``examples/run.py:_hydra_main`` does in
 #: ``--multirun``, it neither raises nor ``sys.exit``s for a failed scenario.
 #: With ``+raise_once=true`` each case raises the first time it runs, as a run
-#: whose CARLA went away does.
+#: whose CARLA went away does.  With ``+raise_value=true`` every case raises a
+#: ``ValueError``.
 _SWEEPER_APP = """
 import json
 import os
@@ -55,6 +56,8 @@ def task(cfg: DictConfig) -> None:
     if cfg.get("raise_once", False) and not raised.exists():
         raised.write_text("yes")
         raise RuntimeError("CARLA went away")
+    if cfg.get("raise_value", False):
+        raise ValueError("some distinctive text")
     if cfg.get("refuse", False):
         # What examples/run.py:_hydra_main does for a refused scenario.
         raise SystemExit(2)
@@ -209,6 +212,31 @@ def test_lanelet_sweeper_that_raised_on_every_attempt_fails(tmp_path: Path) -> N
     output = proc.stdout + proc.stderr
     assert proc.returncode == 1, output
     assert "0/2 succeeded, 2 failed" in output, output
+
+
+def test_lanelet_sweeper_logs_why_a_case_raised(tmp_path: Path) -> None:
+    """Hydra stores what a case raised without logging it; the sweeper logs it (#1232).
+
+    With its traceback, on the terminal and in the job's log file.
+    """
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+raise_value=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert "0/2 succeeded, 2 failed" in output, output
+    assert "ValueError: some distinctive text" in output, output
+    # Once per case, not again by the child's own exception handler.
+    assert output.count("Traceback (most recent call last)") == 2, output
+    assert "Job raised an exception in child process" not in output, output
+    for job in ("0", "1"):
+        job_log = (tmp_path / "multirun" / job / "app.log").read_text(encoding="utf-8")
+        assert "ValueError: some distinctive text" in job_log, job_log
+        assert "Traceback (most recent call last)" in job_log, job_log
 
 
 @pytest.mark.parametrize(
