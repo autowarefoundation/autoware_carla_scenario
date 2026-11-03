@@ -664,13 +664,16 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    `standbyState` is not seen until its trigger stops holding. An action
    fired in the init phase never holds `endTransition` either: it is settled
    there at once (`_settle_start`) -- to `completeState` (`standbyState` with
-   `once=False`) if it is instantaneous or its `until` already holds at
-   `elapsed=0`. One that runs on is left in `runningState`, and since the
-   init phase never ticks it again it stays there for good unless it is moved
-   to the tick loop (`needs_tick_loop`, as `register_init` does for every
-   action that keeps acting). A background-traffic source registered for
-   initialization (its `until` defaults to never) is one: it places its
-   vehicles once and holds `runningState` for the rest of the run.
+   `once=False`) if it does not reissue its command and either has no `until`
+   or its `until` already holds at `elapsed=0`. One that reissues, or whose
+   `until` does not yet hold, is left in `runningState`, and since the init
+   phase never ticks it again it stays there for good, unless it was put on
+   the tick loop instead: `register_init` does that for every action whose
+   `needs_tick_loop` is true. An action can opt out, as the traffic-backend
+   actions (`_BackendAction`) do: a background-traffic source registered for
+   initialization reissues by default (`REISSUES_BY_DEFAULT = True`), so it
+   places its vehicles once and holds `runningState` for the rest of the run,
+   even with an `until` that already holds.
 
 `until`, `reissues_while_running` and `once` are all independent — `until` says
 when *this* run ends, `reissues_while_running` says whether the command repeats

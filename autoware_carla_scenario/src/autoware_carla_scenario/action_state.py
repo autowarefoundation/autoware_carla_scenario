@@ -58,14 +58,18 @@ class ActionState(enum.Enum):
 
     An action fired in the init phase never holds ``END_TRANSITION`` either:
     it is settled there at once (:meth:`BaseAction._settle_start`), to
-    ``COMPLETE`` (``STANDBY`` when ``once=False``) if it is instantaneous or
-    its ``until`` already holds at ``elapsed=0``.  One that runs on is left in
-    ``RUNNING``, and as the init phase never ticks it again it stays there for
-    good -- unless it is moved to the tick loop
-    (:attr:`BaseAction.needs_tick_loop`), as
+    ``COMPLETE`` (``STANDBY`` when ``once=False``) if it does not reissue its
+    command and either has no ``until`` or its ``until`` already holds at
+    ``elapsed=0``.  One that reissues, or whose ``until`` does not yet hold,
+    is left in ``RUNNING``, and as the init phase never ticks it again it
+    stays there for good -- unless it was put on the tick loop instead:
     :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`
-    does for every action that keeps acting.  A background-traffic source
-    registered for initialization, whose ``until`` defaults to never, is one.
+    does that for every action whose :attr:`BaseAction.needs_tick_loop` is
+    true.  An action can opt out, as the traffic-backend actions do: a
+    background-traffic source registered for initialization reissues by
+    default (``REISSUES_BY_DEFAULT = True``) with ``needs_tick_loop`` false,
+    so it holds ``RUNNING`` for the rest of the run, even with an ``until``
+    that already holds.
 
     There is deliberately no failure state: OpenSCENARIO has none either.  An
     action whose completion criteria are never met stays ``RUNNING``, and it is
