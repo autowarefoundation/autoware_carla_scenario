@@ -1333,6 +1333,70 @@ def test_resubmit_runs_a_case_named_twice_once(
     assert submitted == [[0, 2]]
 
 
+def test_batches_started_in_the_same_second_get_directories_of_their_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1223: two batches in one second shared ``outputs/<date>/<time>``."""
+    import datetime as datetime_module
+
+    from autoware_carla_scenario.examples import run
+
+    class _Frozen(datetime_module.datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> _Frozen:  # type: ignore[override]
+            return cls(2026, 3, 13, 12, 0, 0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(datetime_module, "datetime", _Frozen)
+    made = [run._make_batch_output_dir() for _ in range(3)]
+    day = tmp_path / "outputs" / "2026-03-13"
+    # The first keeps the name it always had; the others are numbered.
+    assert made == [day / "12-00-00", day / "12-00-00-1", day / "12-00-00-2"]
+    assert all(path.is_dir() for path in made)
+    # A directory left from an earlier batch is never reused either.
+    (made[0] / "batch_results.json").write_text("[]")
+    assert run._make_batch_output_dir() == day / "12-00-00-3"
+
+
+def test_a_new_batch_is_refused_a_directory_that_holds_a_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1223: the second batch overwrote the first's manifest, whose tasks
+    then ran the second's cases and deleted each other's outputs."""
+    from autoware_carla_scenario.slurm import cli, submit
+
+    layout = _batch_on_disk(tmp_path)
+    before = layout.manifest.read_bytes()
+    sbatch: list[list[str]] = []
+
+    def run_sbatch(command: list[str]) -> str:
+        sbatch.append(command)
+        return "1"
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    with pytest.raises(FileExistsError, match="already holds a SLURM batch"):
+        submit.submit_batch(
+            scenario_names=["s"],
+            cases=[("s", [])],
+            labels=["s#1"],
+            case_overrides=[[]],
+            configs=[],
+            scenario_classes=["Scenario"],
+            overrides=[],
+            expand=False,
+            output_dir=layout.batch_dir,
+        )
+    assert layout.manifest.read_bytes() == before
+    assert sbatch == []
+    assert layout.submissions() == [0]
+    # A resubmit adds a submission to that same manifest, as before.
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
+    assert "Resubmitting 3 case(s)" in capsys.readouterr().out
+
+
 def test_port_locks_go_to_a_node_wide_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port_base: int
 ) -> None:

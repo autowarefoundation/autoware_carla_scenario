@@ -120,6 +120,17 @@ def submit_batch(
     """
     from omegaconf import OmegaConf  # noqa: PLC0415
 
+    layout = BatchLayout(output_dir)
+    if layout.manifest.exists():
+        # A fresh batch only: a resubmit adds a submission to the existing
+        # manifest (submit_cases), and never comes here.  Writing over another
+        # batch's manifest would hand its tasks this batch's cases (#1223).
+        raise FileExistsError(
+            f"{output_dir} already holds a SLURM batch ({layout.manifest}); "
+            "a new batch needs a directory of its own (to run some of that "
+            f"batch's cases again: scenario-slurm resubmit {output_dir})"
+        )
+
     launchers = [
         OmegaConf.to_container(cfg.launcher, resolve=True) if "launcher" in cfg else {}
         for cfg in configs
@@ -136,7 +147,6 @@ def submit_batch(
     if wait is not None:
         settings = settings.replace(wait=wait)
 
-    layout = BatchLayout(output_dir)
     stems = sequential_stems(scenario_classes)
     resolved = [_resolved(cfg) for cfg in configs]
     digests: dict[str, str] = {}
