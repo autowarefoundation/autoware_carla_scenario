@@ -854,6 +854,9 @@ def _write_atomically(path: Path, text: str) -> None:
     (the cache may be shared) writes; it starts with a dot and ends in
     ``.tmp``, and is removed when the write fails, so nothing that looks for
     entries or notes finds one.
+
+    :mod:`~autoware_carla_scenario.maps.opendrive` writes the ``.xodr`` files
+    of the ``derived`` directory through it too, for the same reason.
     """
     fd, name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)

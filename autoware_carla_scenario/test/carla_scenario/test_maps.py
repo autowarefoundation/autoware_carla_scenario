@@ -2049,3 +2049,95 @@ def test_a_captured_opendrive_takes_a_scratch_name_of_its_own(tmp_path: Path) ->
     # Nothing half written is left, and the old file stands.
     assert destination.read_text(encoding="utf-8") == "<OpenDRIVE/>"
     assert len(list(tmp_path.iterdir())) == 2
+
+
+# -- ensure_xodr replaces the file whole (#1264) ------------------------------
+
+
+def _xodr_source(
+    source: str,
+    origin_repo: Path,
+    cache: GitMapCache,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
+    """Resolve TownA and make *source* ("server" or "installed") hand
+    ``ensure_xodr`` a new OpenDRIVE."""
+    import autoware_carla_scenario.maps.opendrive as opendrive
+
+    new = "<OpenDRIVE>" + "<road/>" * 64 + "</OpenDRIVE>"
+    if source == "server":
+        monkeypatch.delenv(map_asset_env_var("TownA"), raising=False)
+        monkeypatch.setattr(opendrive, "_from_server", lambda *_a, **_k: new)
+    else:
+        asset = tmp_path / "TownA.xodr"
+        asset.write_text(new, encoding="utf-8")
+        monkeypatch.setenv(map_asset_env_var("TownA"), str(asset))
+    resolved = resolve_map(_uri(origin_repo), cache=cache)
+    resolved.derived.mkdir(parents=True, exist_ok=True)
+    return resolved, new
+
+
+@pytest.mark.parametrize("source", ["server", "installed"])
+@pytest.mark.parametrize("old", ["<OpenDRIVE town='old'/>", None])
+def test_an_xodr_being_written_reads_as_the_old_one_or_none(
+    origin_repo: Path,
+    cache: GitMapCache,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    old: Any,
+) -> None:
+    """Two processes resolving one map: neither reads a partial OpenDRIVE."""
+    from .test_map_cache_files import _pause_halfway
+
+    resolved, new = _xodr_source(source, origin_repo, cache, tmp_path, monkeypatch)
+    destination = resolved.derived_xodr()
+    if old is not None:
+        destination.write_text(old, encoding="utf-8")
+
+    seen = _pause_halfway(
+        monkeypatch,
+        lambda: destination.read_text(encoding="utf-8")
+        if destination.exists()
+        else None,
+    )
+    assert ensure_xodr(resolved, refresh=True) == destination
+
+    assert seen == [old]
+    assert destination.read_text(encoding="utf-8") == new
+    assert [p.name for p in resolved.derived.iterdir()] == [destination.name]
+
+
+@pytest.mark.parametrize("source", ["server", "installed"])
+@pytest.mark.parametrize("failing", ["write_text", "replace"])
+def test_a_failed_xodr_write_leaves_no_partial_file_and_no_scratch_file(
+    origin_repo: Path,
+    cache: GitMapCache,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    failing: str,
+) -> None:
+    resolved, _new = _xodr_source(source, origin_repo, cache, tmp_path, monkeypatch)
+
+    def half_written(self: Path, data: str, *_args: Any, **_kwargs: Any) -> int:
+        # Fail partway through, as a full disk does.
+        with self.open("w", encoding="utf-8") as f:
+            f.write(data[: len(data) // 2])
+        raise OSError("disk full")
+
+    def no_rename(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    if failing == "write_text":
+        monkeypatch.setattr(Path, "write_text", half_written)
+    else:
+        monkeypatch.setattr(os, "replace", no_rename)
+
+    with pytest.raises(OSError, match="disk full"):
+        ensure_xodr(resolved, refresh=True)
+    monkeypatch.undo()
+
+    assert list(resolved.derived.iterdir()) == []
+    assert resolve_map(_uri(origin_repo), cache=cache).xodr_path is None
