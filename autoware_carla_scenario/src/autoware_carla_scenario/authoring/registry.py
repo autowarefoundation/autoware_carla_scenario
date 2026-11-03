@@ -1498,8 +1498,9 @@ register_action_spec(
                 required=False,
                 unit="s",
                 help=(
-                    "Stop after this long.  Empty: at the last waypoint, or, "
-                    "without waypoints, at the scenario's end."
+                    "Stop after this long.  Empty: at the last waypoint or "
+                    "keyframe, whichever is later, or, with neither, at the "
+                    "scenario's end."
                 ),
             ),
             FieldSpec(

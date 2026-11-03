@@ -208,8 +208,9 @@ CARLA runs synchronously, so the simulation waits for each answer, and the same
 
 The action takes the pedestrian's **movement and animation**
 [control domains](architecture.md) for as long as it moves the walker. It runs
-for `duration_s`. Without that, it runs until its last waypoint's time, and
-without waypoints, until the scenario ends.
+for `duration_s`. Without that, it runs until its last waypoint's or
+keyframe's time, whichever is later (both counted from when the action starts),
+and with neither, until the scenario ends.
 
 The generator and the action talk over
 `proto/pedestrian_motion/v0/pedestrian_motion.proto`, which uses a right-handed,
@@ -250,7 +251,7 @@ A keyframes file lists full-body poses:
 | `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes |
 | `speed_ms` | `1.3` | Walking speed along the waypoints, m/s |
 | `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
-| `duration_s` | `None` | Stop after this long |
+| `duration_s` | `None` | Stop after this long; `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
 | `seed` | `0` | The generator's draws |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
 
