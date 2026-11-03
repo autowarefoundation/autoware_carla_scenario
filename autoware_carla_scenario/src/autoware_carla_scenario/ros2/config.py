@@ -286,7 +286,7 @@ class Ros2EgoConfig:
         turn_indicators_report_topic: ``autoware_vehicle_msgs/msg/TurnIndicatorsReport``
             of the indicators the ego shows, as a vehicle interface reports them.
         rear_axle_offset_m: Offset from the actor origin back to ``base_link``;
-            ``None`` derives it from the wheel physics.
+            ``None`` derives it from the wheels, else the box.
         on_stale: One of :data:`ON_STALE_ACTIONS`.
         sources: The command sources, see :class:`CommandSourceConfig`.
         cameras: Cameras whose frames the entity publishes, for a CARLA server

@@ -482,7 +482,7 @@ class DriverConfig:
     route_resolution_m: float = 2.0
 
     #: Offset from the CARLA actor origin back to the rig origin, in metres.
-    #: ``null`` derives it from the vehicle's wheel physics.
+    #: ``null`` derives it from the vehicle's wheels, else its box.
     rear_axle_offset_m: float | None = None
 
     #: Whether to also submit the route as the reference ("recorded")

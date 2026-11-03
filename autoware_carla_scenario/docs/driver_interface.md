@@ -147,7 +147,7 @@ driver:
   warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
-  rear_axle_offset_m: null   # null derives it from the wheel physics
+  rear_axle_offset_m: null   # null: from the wheels, else the box
   send_ground_truth: false
   send_renderer_data: true       # CARLA ground truth: lights, traffic, speed limit
   send_actor_ground_truth: true
@@ -608,8 +608,8 @@ Two conversions sit between CARLA and the contract, both handled in
   negated, and angular velocity — a pseudovector — picks up an extra sign flip.
 * **Rig origin.** alpasim puts the rig origin at the rear-axle centre projected to the
   ground, while a CARLA actor's origin is at the vehicle centre. The offset is derived
-  from the vehicle's wheel physics and logged at session start. Sensor mounts
-  (`driver.cameras`, `driver.lidars`) are relative to the actor origin; the cameras'
+  from the vehicle's wheels, else its bounding box, and logged at session start.
+  Sensor mounts (`driver.cameras`, `driver.lidars`) are relative to the actor origin; the cameras'
   `rig_to_camera` and the LiDAR sweeps are moved by the offset into the rig.
 
 !!! warning "Rear-axle offset on CARLA 0.9.x"

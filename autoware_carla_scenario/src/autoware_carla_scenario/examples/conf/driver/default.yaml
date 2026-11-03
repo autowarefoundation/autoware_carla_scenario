@@ -24,7 +24,7 @@ driver:
   warmup_s: 0.0
   route_horizon_m: 80.0
   route_resolution_m: 2.0
-  # null derives the rig origin offset from the vehicle's wheel physics.
+  # null derives the rig origin offset from the vehicle's wheels, else its box.
   rear_axle_offset_m: null
   send_ground_truth: false
   # CARLA ground truth for the policy (traffic light, other vehicles, speed limit).

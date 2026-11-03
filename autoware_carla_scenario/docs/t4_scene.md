@@ -152,7 +152,7 @@ What the log does not hold is left out, never made up:
 - The ego's `base_link` is its **rear axle**, as in T4 data: where the run
   took it to be, which the log's `rear_axle` record says (where the ego put
   it: the driver policy's rig origin, the ROS 2 ego's odometry or the
-  Autoware ego's `base_link`; else from the wheels), or `--rear-axle-offset` metres along its
+  Autoware ego's `base_link`; else from the wheels, else the box), or `--rear-axle-offset` metres along its
   x axis; in a log without that record, half its box's half-length
   (`-0.5 * extent.x`, a quarter of its length) behind its origin, where
   the run takes it on CARLA UE5 (no wheel positions).
