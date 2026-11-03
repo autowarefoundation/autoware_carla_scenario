@@ -266,7 +266,7 @@ saturate as soon as the plan was inside the corridor.
 
 ### `comfort` — soft, weight 1, margin 0.5
 ```
-□ (|accel| within [-4, 2] ∧ |jerk| < 4 ∧ |lateral_accel| < 2.5)
+□ (-4 < accel < 2 ∧ |jerk| < 4 ∧ |lateral_accel| < 2.5)
 ```
 All in SI units.  Only the emergency fallback exceeds these.
 
