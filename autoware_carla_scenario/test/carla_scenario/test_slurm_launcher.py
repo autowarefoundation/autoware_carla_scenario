@@ -839,6 +839,74 @@ def test_slurm_checks_the_launcher_of_an_autoware_case_after_an_autopilot_one(
         run.check_batch_configs([first, second])
 
 
+#: One ``map`` setting a batch's second case sets differently: each decides
+#: the map its run is on (#1241).
+_MAP_SETTINGS = [
+    pytest.param("name", "map.name=OtherTown", id="name"),
+    pytest.param("source", "++map.source='git+https://x.invalid/m.git'", id="source"),
+    pytest.param("directory", "++map.directory=/elsewhere/map", id="directory"),
+    pytest.param("lanelet2_path", "++map.lanelet2_path=/other.osm", id="lanelet2"),
+    pytest.param("xodr_path", "++map.xodr_path=/other.xodr", id="xodr"),
+    pytest.param("projector_type", "++map.projector_type=utm", id="projector"),
+    pytest.param("overwrite_xodr", "++map.overwrite_xodr=false", id="overwrite"),
+]
+
+
+@pytest.mark.parametrize(("key", "override"), _MAP_SETTINGS)
+def test_the_check_refuses_cases_on_different_maps(
+    fake_slurm: SimpleNamespace, key: str, override: str
+) -> None:
+    """#1241: the batch's queue is built on its first case's map, so a case
+    resolving to another -- the same ``map.name`` with another source or file
+    included -- is refused, naming the key and the cases."""
+    run = fake_slurm.run
+    first = run._compose_config(_CONCRETE, [])
+    second = run._compose_config(_SECOND, [override])
+    run.check_batch_configs([first, first])
+    with pytest.raises(run.RunConfigError, match=rf"map\.{key} differs") as refused:
+        run.check_batch_configs([first, second], ["one", "two"])
+    assert "in one" in str(refused.value)
+    assert "in two" in str(refused.value)
+
+
+def test_the_check_passes_cases_with_the_same_map_set_alike(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """The same settings, however each case came by them, are one map; what a
+    sweep reads per case (``no_3d_model_lanelet_ids``) is not compared."""
+    run = fake_slurm.run
+    same = ["++map.lanelet2_path=/m.osm", "++map.projector_type=utm"]
+    first = run._compose_config(_CONCRETE, [*same, "++map.directory="])
+    second = run._compose_config(
+        _SECOND, [*same, "++map.no_3d_model_lanelet_ids=[1,2]"]
+    )
+    run.check_batch_configs([first, second])
+
+
+@pytest.mark.parametrize(("key", "override"), _MAP_SETTINGS)
+@pytest.mark.parametrize("launcher", ["local", "slurm"])
+def test_a_batch_on_two_maps_is_refused_before_anything_runs(
+    fake_slurm: SimpleNamespace,
+    capsys: pytest.CaptureFixture[str],
+    key: str,
+    override: str,
+    launcher: str,
+) -> None:
+    """#1241: a batch, local or SLURM, whose second case is on another map is
+    refused before its queue is built or anything is submitted."""
+    fake_slurm.monkeypatch.setenv(
+        "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: [override]})
+    )
+    overrides = [] if launcher == "local" else _slurm(fake_slurm)[len(_SWEEP) :]
+    status, _batch = _two_case_batch(fake_slurm, launcher, overrides)
+    assert status == 1
+    out = capsys.readouterr().out
+    assert f"map.{key} differs" in out
+    assert _SECOND in out
+    assert _queues(fake_slurm) == []
+    assert not (fake_slurm.state / "sbatch.log").exists()
+
+
 def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
