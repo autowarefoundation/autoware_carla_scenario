@@ -19,6 +19,7 @@ from autoware_carla_scenario.t4_scene.convert import (
     trajectory_log_to_t4_scene,
 )
 from autoware_carla_scenario.t4_scene.grid import (
+    checked_max_distance,
     indicator_at,
     is_ego,
     on_scene,
@@ -220,3 +221,28 @@ def test_live_and_convert_refuse_a_step_alike(tmp_path: Path) -> None:
 def test_live_checks_history_rows_before_the_step() -> None:
     with pytest.raises(ValueError, match="history_rows"):
         LiveT4Scene(0, step_s=0.07)
+
+
+@pytest.mark.parametrize("distance", [0.0, -1.0, math.nan, math.inf, -math.inf])
+def test_checked_max_distance_refuses_what_is_not_positive_and_finite(
+    distance: float,
+) -> None:
+    with pytest.raises(ValueError, match="t4scene.max_distance_m must be positive"):
+        checked_max_distance(distance, "t4scene.max_distance_m", "null")
+    with pytest.raises(ValueError, match="max_distance_m must be positive"):
+        LiveT4Scene(1, max_distance_m=distance)
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_checked_max_distance_refuses_a_bool(flag: bool) -> None:
+    # float(True) is 1.0: a bool would otherwise pass as a 1 m distance.
+    with pytest.raises(ValueError, match="max_distance_m must be positive"):
+        checked_max_distance(flag)
+
+
+def test_checked_max_distance_keeps_a_positive_distance_and_none() -> None:
+    assert checked_max_distance(None) is None
+    assert checked_max_distance(5) == 5.0
+    assert isinstance(checked_max_distance(5), float)
+    assert LiveT4Scene(1, max_distance_m=None).max_distance_m is None
+    assert LiveT4Scene(1, max_distance_m=30.0).max_distance_m == 30.0

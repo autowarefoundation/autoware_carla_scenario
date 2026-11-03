@@ -56,7 +56,7 @@ from .convert import (
     log_to_scene,
     map_of,
 )
-from .grid import step_frames
+from .grid import checked_max_distance, step_frames
 from .route import RouteGraph
 
 __all__ = ["EgoExtras", "LiveT4Scene"]
@@ -154,7 +154,7 @@ class LiveT4Scene:
             raise ValueError(f"history_rows must be at least 1, not {history_rows}")
         self._step_frames = step_frames(step_s)
         self.history_rows = history_rows
-        self.max_distance_m = max_distance_m
+        self.max_distance_m = checked_max_distance(max_distance_m)
         self.rear_axle_offset_m = rear_axle_offset_m
         self.wheel_base_m = wheel_base_m
         # Every tick is a row the log keeps: the scene's rows are counted back

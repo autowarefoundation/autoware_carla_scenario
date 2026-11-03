@@ -44,7 +44,14 @@ from ..constants import FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ._proto import t4_scene_pb2 as pb
-from .grid import indicator_at, is_ego, on_scene, scene_stem, step_frames
+from .grid import (
+    checked_max_distance,
+    indicator_at,
+    is_ego,
+    on_scene,
+    scene_stem,
+    step_frames,
+)
 from .map_resource import map_resource
 from .route import RouteGraph
 
@@ -886,9 +893,11 @@ def trajectory_log_to_t4_scene(
             the scene's route, the same on every row (:func:`driven_route`).
 
     Raises:
-        ValueError: If the log has no tick or no ego, or *step_s* or
-            *current_index* does not fit it.
+        ValueError: If the log has no tick or no ego, *step_s* or
+            *current_index* does not fit it, or *max_distance_m* is not
+            positive and finite.
     """
+    max_distance_m = checked_max_distance(max_distance_m)
     path = Path(log_path)
     step = step_frames(step_s)
     log = _read_log(path, step)

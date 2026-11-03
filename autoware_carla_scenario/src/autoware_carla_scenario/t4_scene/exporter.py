@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from .convert import write_t4_scene
+from .grid import checked_max_distance
 
 __all__ = ["T4SceneExporter"]
 
@@ -31,13 +32,18 @@ class T4SceneExporter:
         max_distance_m: The road users within this distance of the ego are a
             scene's objects; ``None`` takes all of them
             (``t4scene.max_distance_m``).
+
+    Raises:
+        ValueError: If *max_distance_m* is not positive and finite.
     """
 
     def __init__(
         self, *, step_s: float = 0.1, max_distance_m: Optional[float] = 100.0
     ) -> None:
         self.step_s = step_s
-        self.max_distance_m = max_distance_m
+        self.max_distance_m = checked_max_distance(
+            max_distance_m, "t4scene.max_distance_m", "null"
+        )
 
     def export(self, trajectory: Path) -> Optional[Path]:
         """Write *trajectory* as a T4Scene beside it; return the scene's path,

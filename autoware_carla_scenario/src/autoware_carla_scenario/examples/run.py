@@ -963,7 +963,8 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
     ``step_s`` and ``max_distance_m``; ``None`` otherwise.
 
     Raises:
-        ValueError: ``t4scene.step_s`` is not a positive multiple of the tick.
+        ValueError: ``t4scene.step_s`` is not a positive multiple of the tick,
+            or ``t4scene.max_distance_m`` is not positive and finite.
     """
     for cfg in cfgs:
         t4scene_cfg = cfg.get("t4scene") or {}
@@ -971,10 +972,11 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
             continue
         step_s = float(t4scene_cfg.get("step_s", 0.1))
         tick_multiple(step_s, "t4scene.step_s")
-        max_distance = t4scene_cfg.get("max_distance_m", 100.0)
+        # Handed over as read: the exporter refuses a bool, which float()
+        # would turn into 1 m.
         return T4SceneExporter(
             step_s=step_s,
-            max_distance_m=None if max_distance is None else float(max_distance),
+            max_distance_m=t4scene_cfg.get("max_distance_m", 100.0),
         )
     return None
 
