@@ -54,9 +54,10 @@ from ..trajectory.model import (
     RouteOppositePose,
     RouteRoadsidePose,
     TrajectoryVertex,
+    placed_against_entity,
 )
 from ..route.active import lane_place
-from ..trajectory.resolve import resolve_position, road_height
+from ..trajectory.resolve import resolve_along_lane, resolve_position, road_height
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -136,8 +137,16 @@ class SpawnAction(BaseAction):
         label: Human-readable identifier.
         once: Whether it fires at most once (the default).
         position: Its place, in any frame a trajectory vertex takes; its
-            heading is the position's (0 where it has none; a Lanelet2 pose's
-            is along its lane turned by its ``heading``).  An entity's
+            heading is the position's (a Lanelet2 pose's is along its lane
+            turned by its ``heading``; one with none faces along the lane it
+            is on -- a :class:`~..trajectory.model.RelativeLanePose` or a
+            route pose -- and 0 where it is on none).  A place written
+            against an entity (a ``RelativeLanePose``'s ``entity_ref``; the
+            ego, for a route pose without an ``anchor``) is placed against
+            where that entity stands when the action fires; while it is not
+            in the scene (not spawned yet, gone, or spawned hidden and parked
+            under the map) the place cannot be resolved (said): an entity is
+            brought in where it was declared, a prop is not added.  An entity's
             ``None`` (or a Lanelet2 pose on lanelet 0 or less, what a card
             leaves empty): where it was declared to spawn, which it waits
             under.  A prop needs one.
@@ -433,7 +442,12 @@ class SpawnAction(BaseAction):
         """CARLA ``(x, y, z, yaw)`` to put the thing at: its place, or the
         nearest clear one on along its lane within *shift_max* if that is
         taken (said either way); ``None`` with no place of its own (an
-        entity's declared spawn) or one that cannot be resolved (said)."""
+        entity's declared spawn) or one that cannot be resolved (said) --
+        among them one written against an entity that is not in the scene
+        (not spawned yet, gone, or spawned hidden and parked under the map).
+        A place written against an entity
+        (:func:`~..trajectory.model.placed_against_entity`) with no ``yaw``
+        faces along the lane it is placed on."""
         vertex = self._at
         if vertex is None:
             return None
@@ -445,9 +459,17 @@ class SpawnAction(BaseAction):
             given: Lanelet2Pose = position
             if int(given.lanelet_id) <= 0:
                 return None  # an entity's declared spawn
-        reference = ReferencePoses(world)
+        # An entity parked under the map (spawned hidden, not brought in yet)
+        # is not in the scene: nothing is placed against it, as against one
+        # not in the world.
+        reference = ReferencePoses(world, present_only=True)
         try:
-            x0, y0, z0, yaw0 = resolve_position(position, reference.pose)
+            if placed_against_entity(position):
+                # Without a heading of its own, along the lane it is placed
+                # on: no lane is looked up for it afterwards (lane_place).
+                x0, y0, z0, yaw0 = resolve_along_lane(position, reference.pose)
+            else:
+                x0, y0, z0, yaw0 = resolve_position(position, reference.pose)
         except ValueError as exc:
             logger.warning("%s: no place to spawn at: %s", self.label, exc)
             return None
