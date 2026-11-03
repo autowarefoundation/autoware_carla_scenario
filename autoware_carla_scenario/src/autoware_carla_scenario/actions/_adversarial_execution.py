@@ -15,6 +15,12 @@ A traffic backend's background vehicle has no entity (#417): its actor is
 driven directly (:class:`_ActorFollow`), taken from the backend with
 :meth:`~..traffic.base.TrafficBackend.release_actor` and handed back with
 :meth:`~..traffic.base.TrafficBackend.resume_actor`.
+
+An adversarial action holds its entity's movement itself (its
+``_control_claims``).  NADE picks its road users as it runs, so an execution
+it starts holds the movement for it (:meth:`AdversarialExecution.hold_movement`,
+#1295): until the road user is handed back, or until an action that overrides
+takes it, which hands it back at once.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from ..adversity.geometry import PredictedState
 from ..adversity.observation import Scene
 from ..conditions.base import BaseCondition
 from ..conditions.trajectory_time import TrajectoryTimeCondition
+from ..control_domain import MOVEMENT, ControlDomain, movement_of
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..traffic.base import TrafficBackend
 from ..trajectory.model import (
@@ -40,13 +47,19 @@ from ..trajectory.model import (
     TrajectoryTiming,
     TrajectoryVertex,
 )
-from .base import TickTiming
+from .base import BaseAction, TickTiming, control_holder
 from ._trajectory_run import TrajectoryRun
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["AdversarialExecution", "drivable", "path_trajectory", "start_execution"]
+__all__ = [
+    "AdversarialExecution",
+    "drivable",
+    "movement_held",
+    "path_trajectory",
+    "start_execution",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +160,9 @@ class AdversarialExecution:
     _kind: str
     _responding_to: str
     _begun: bool
+    # A _MovementHold, which is defined below and so cannot be named in the
+    # class body under Codon (docs/typecheck.md).
+    _hold: Optional[BaseAction]
 
     def __init__(
         self,
@@ -193,6 +209,22 @@ class AdversarialExecution:
         self._kind = kind
         self._responding_to = responding_to
         self._begun = False
+        self._hold = None
+
+    def hold_movement(self, world: "carla.World", at: float, holder: str) -> None:
+        """Take the road user's movement for the run of the action *holder*
+        names (as :class:`~.base.BaseAction` names one), at scenario time
+        *at*, until it is handed back: NADE's, which picks its road users as
+        it runs rather than claim them as it fires.  Another action that
+        then fires to command it conflicts with *holder*; one that overrides
+        takes it, and the road user is handed back at once (:meth:`hand_back`).
+
+        Raises:
+            ControlConflictError: If another action holds its movement.
+        """
+        hold: BaseAction = _MovementHold(self, holder)
+        hold._take_control(world, at)
+        self._hold = hold
 
     @property
     def done(self) -> bool:
@@ -226,6 +258,7 @@ class AdversarialExecution:
             return
         self._handed_back = True
         self._end()
+        self._release()
         actor = self._actor
         backend = self._backend
         if actor is not None and backend is not None:
@@ -244,12 +277,62 @@ class AdversarialExecution:
     def close(self) -> None:
         """Close the follow action's conditions; what it carried out is over."""
         self._end()
+        self._release()
         self._follow.close()
+
+    def _release(self) -> None:
+        """Give back the movement :meth:`hold_movement` took, if it did."""
+        if self._hold is not None:
+            hold: BaseAction = self._hold
+            hold._release_control()
+            self._hold = None
 
     def _end(self) -> None:
         if self._begun:
             self._begun = False
             end_adversity(self.entity_name)
+
+
+class _MovementHold(BaseAction):
+    """The movement of the road user an :class:`AdversarialExecution`
+    drives, held for the action *holder* names: never ticked, it only stands
+    for the execution in the control slots, and hands the road user back
+    when an overriding action takes it (:meth:`BaseAction._stop_overridden`)."""
+
+    # It runs on: its domains are held until it is released.
+    REISSUES_BY_DEFAULT = True
+
+    _execution: AdversarialExecution
+    _holder: str
+
+    def __init__(self, execution: AdversarialExecution, holder: str) -> None:
+        super().__init__(label=execution.entity_name)
+        self._execution = execution
+        self._holder = holder
+
+    @property
+    def _control_name(self) -> str:
+        """The action the execution drives for, as a conflict names it."""
+        return self._holder
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        """Both domains of the road user's movement."""
+        return movement_of(self._execution.entity_name)
+
+    def execute(self, world: "carla.World") -> None:
+        """Nothing: the execution drives the road user."""
+        return
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Taken over: the road user is handed back, before the overriding
+        action commands it."""
+        self._execution.hand_back(world)
+
+
+def movement_held(name: str, at: float) -> bool:
+    """Whether an action holds either domain of *name*'s movement at
+    scenario time *at*: an adversity driven on it would command it too."""
+    return any(control_holder(name, domain, at) is not None for domain in MOVEMENT)
 
 
 def drivable(name: str) -> bool:

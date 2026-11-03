@@ -15,6 +15,14 @@ for one, so its actor is driven directly, taken from the backend
 (:meth:`~..traffic.base.TrafficBackend.release_actor`) and handed back to it
 when its path is done.  The ego is never
 driven; its turn indicators say whether it is predicted to change lane.
+
+It takes no control domain as it fires: it holds the movement of each road
+user it drives, from the tick it starts driving it until it hands it back
+(#1295).  So a road user whose movement another action holds is not picked,
+another action that fires to command one it drives raises
+:class:`~autoware_carla_scenario.control_domain.ControlConflictError`, and one
+that overrides takes it: that road user is handed back at once, and NADE runs
+on.
 """
 
 from __future__ import annotations
@@ -40,7 +48,12 @@ from ..seed import resolve_seed
 from ..traffic.base import TrafficBackend
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
-from ._adversarial_execution import AdversarialExecution, drivable, start_execution
+from ._adversarial_execution import (
+    AdversarialExecution,
+    drivable,
+    movement_held,
+    start_execution,
+)
 from .background_traffic import _Never
 from .base import BaseAction, TickTiming
 from ..adversity_event import AdversityEvent
@@ -218,7 +231,8 @@ class AdversarialTrafficAction(BaseAction):
             {
                 name
                 for name in scene.agents
-                if drivable(name) or name in self._background
+                if (drivable(name) or name in self._background)
+                and not movement_held(name, self._elapsed)
             },
             self._adversities,
             self._elapsed,
@@ -286,6 +300,8 @@ class AdversarialTrafficAction(BaseAction):
         if started is None:
             return
         execution: AdversarialExecution = started
+        # Held until it is handed back; an overriding action takes it back.
+        execution.hold_movement(world, self._elapsed, self._control_name)
         self._executions.append(execution)
         execution.tick(world, self._elapsed)
 

@@ -708,6 +708,7 @@ lateral together are its movement (`MOVEMENT`).
 | `RoutingAction`, `follow` / `position` | longitudinal, lateral |
 | `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |
 | The adversarial actions | longitudinal, lateral |
+| `AdversarialTrafficAction` (NADE) | longitudinal, lateral of each road user it drives, from when its path starts until it is handed back |
 | `PlayMotionAction` | animation; longitudinal and lateral too with `upper_body_only=False` |
 | `SmartPedestrianControllerAction` | longitudinal, lateral and animation |
 
@@ -729,7 +730,8 @@ OpenSCENARIO's stop transition -- and gives back every domain it held, and any
 entity it took from its driver: a `follow` or `position` `RoutingAction`
 brakes its vehicle (or stands its walker still) and hands the vehicle back to
 its traffic backend, an adversity hands its road user back, a routed walk is
-stopped. A `follow` or `position` run that its `until` condition ends before
+stopped. NADE is stopped only on the road user taken: that one is handed
+back and NADE runs on; it never picks a road user another action holds. A `follow` or `position` run that its `until` condition ends before
 the end of its trajectory gives its entity back the same way. The default is `False`: actions fighting over an
 entity say two things at once, and which one CARLA would end up doing is an
 accident of the tick order.
