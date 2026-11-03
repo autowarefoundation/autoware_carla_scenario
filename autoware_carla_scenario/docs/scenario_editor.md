@@ -753,7 +753,8 @@ the length with `≥` and `≤` instead.
 typed by whoever is using the editor -- which may bind `0.0.0.0` (`--host`). Handed
 straight to a `FileResponse` it was an arbitrary local file read for anyone who
 could reach the port. A path is accepted only when it resolves **inside**
-`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) and names a
+`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache
+(`map_root()`, always added) and names a
 `.osm`, so what the route can serve is bounded by where the editor was started
 rather than by what the process can read.
 
@@ -913,7 +914,7 @@ guess.
 | --- | --- | --- | --- |
 | `--drafts` | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
 | `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
-| — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated |
+| — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated; the map cache (`map_root()`: `$AUTOWARE_DATA_DIR/maps`, `~/autoware_data/maps` by default, or `AUTOWARE_CARLA_SCENARIO_MAP_CACHE`) is always added, set or not |
 | `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
 | `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
 | — | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
