@@ -38,6 +38,7 @@ from ..hils.protocol import (
     LineReader,
     command_value,
     encode,
+    format_address,
 )
 from ..entity_role import EntityRole
 from .externally_driven import ExternallyDrivenEgo
@@ -67,7 +68,8 @@ class HilsEgoConfig:
     """Where the bridge is, and how long to wait for it (the ``hils`` group).
 
     Attributes:
-        host, port: The bridge's ``runner.listen`` address.
+        host, port: The bridge's ``runner.listen`` address; an IPv6 host is
+            written with or without brackets (``::1`` or ``[::1]``).
         connect_timeout_s: For the connection and the bridge's greeting.
         ready_timeout_s: For the ``scenario_start`` steps (wall clock).
         end_timeout_s: For the ``scenario_end`` steps (wall clock).
@@ -85,6 +87,23 @@ class HilsEgoConfig:
     on_stale: str = "brake"
 
     def __post_init__(self) -> None:
+        host = self.host
+        if host.startswith("[") and host.endswith("]") and len(host) > 2:
+            # socket.create_connection takes an IPv6 host without brackets.
+            object.__setattr__(self, "host", host[1:-1])
+        elif "[" in host or "]" in host:
+            raise ValueError(
+                f"hils.host must be a host name or address, got {host!r}; give "
+                "the port as hils.port"
+            )
+        if (
+            isinstance(self.port, bool)
+            or not isinstance(self.port, int)
+            or not 1 <= self.port <= 65535
+        ):
+            raise ValueError(
+                f"hils.port must be a whole number within 1-65535, got {self.port!r}"
+            )
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"hils.on_stale must be one of {', '.join(ON_STALE_ACTIONS)}, "
@@ -208,7 +227,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
             )
         except OSError as exc:
             self._terminate(
-                f"The HILS bridge at {cfg.host}:{cfg.port} cannot be reached ({exc}); "
+                f"The HILS bridge at {format_address(cfg.host, cfg.port)} cannot be "
+                f"reached ({exc}); "
                 "is scenario-hils running?"
             )
             return
@@ -221,7 +241,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
             return
         if not hello or hello[0].get("type") != "hello":
             self._fail(
-                f"The HILS bridge at {cfg.host}:{cfg.port} did not greet within "
+                f"The HILS bridge at {format_address(cfg.host, cfg.port)} did not "
+                f"greet within "
                 f"{cfg.connect_timeout_s:.0f} s (another run connected?)"
             )
             return
@@ -239,9 +260,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
             return
         self._start_sent = time.monotonic()
         logger.info(
-            "Waiting for the HILS bridge at %s:%d to initialize the ECUs",
-            cfg.host,
-            cfg.port,
+            "Waiting for the HILS bridge at %s to initialize the ECUs",
+            format_address(cfg.host, cfg.port),
         )
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:

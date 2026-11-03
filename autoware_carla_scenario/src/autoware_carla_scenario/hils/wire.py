@@ -19,6 +19,7 @@ __all__ = [
     "PROTOCOL_VERSION",
     "RUNNER_MESSAGES",
     "encode",
+    "format_address",
     "parse_address",
 ]
 
@@ -69,9 +70,76 @@ def encode(message: Mapping[str, Any]) -> bytes:
     return (json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def _parse_port(text: str, address: str) -> int:
+    """The port *text* of *address*: a whole number in 0..65535 (0 picks one)."""
+    if not text:
+        raise ValueError(f"address {address!r}: the port after ':' is empty")
+    for c in text:
+        if c < "0" or c > "9":
+            raise ValueError(
+                f"address {address!r}: the port {text!r} is not a whole number"
+            )
+    port = int(text)
+    if port > 65535:
+        raise ValueError(f"address {address!r}: the port {port} is not within 0-65535")
+    return port
+
+
 def parse_address(address: str, default_port: int = DEFAULT_PORT) -> Tuple[str, int]:
-    """``host:port`` (or ``host``) as ``(host, port)``."""
-    host, sep, port = address.rpartition(":")
-    if not sep:
+    """*address* as ``(host, port)``.
+
+    The forms taken:
+
+    * ``host:port`` and ``host`` (*default_port*); an empty host
+      (``:7700``) is ``0.0.0.0``.
+    * ``[host]:port`` and ``[host]``, for an IPv6 address: ``[::1]:7700``.
+    * An IPv6 address without brackets (more than one ``:``), such as ``::1``,
+      is a host alone, on *default_port*: ``fe80::1:7700`` is that whole
+      address, not port 7700 of ``fe80::1``. Give a port with brackets.
+
+    The host comes back without brackets, as :func:`socket.create_server` and
+    :func:`socket.create_connection` take it.
+
+    Raises:
+        ValueError: The port is not a whole number in 0..65535, or the
+            brackets are unbalanced or empty.
+    """
+    if address.startswith("["):
+        end = address.find("]")
+        if end < 0:
+            raise ValueError(f"address {address!r}: '[' is never closed by ']'")
+        host = address[1:end]
+        if not host:
+            raise ValueError(f"address {address!r}: no host between '[' and ']'")
+        if "[" in host:
+            raise ValueError(f"address {address!r}: a '[' inside the brackets")
+        rest = address[end + 1 :]
+        if not rest:
+            return host, default_port
+        if not rest.startswith(":"):
+            raise ValueError(
+                f"address {address!r}: expected ':port' after ']', got {rest!r}"
+            )
+        return host, _parse_port(rest[1:], address)
+    if "[" in address or "]" in address:
+        raise ValueError(
+            f"address {address!r}: brackets go around the host only: [host]:port"
+        )
+    colons = address.count(":")
+    if colons == 0:
         return address, default_port
-    return host or "0.0.0.0", int(port)
+    if colons > 1:
+        # An IPv6 address without brackets: all of it is the host.
+        return address, default_port
+    host, _, port = address.partition(":")
+    return host or "0.0.0.0", _parse_port(port, address)
+
+
+def format_address(host: str, port: int) -> str:
+    """``host:port``, with an IPv6 *host* in brackets (``[::1]:7700``).
+
+    The inverse of :func:`parse_address`.
+    """
+    if ":" in host:
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"

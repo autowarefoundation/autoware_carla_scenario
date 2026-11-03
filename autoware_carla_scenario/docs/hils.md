@@ -93,7 +93,7 @@ uv run scenario ego.entity=hils hils.host=hils-pc
 
 | `hils.` setting | Default | |
 | --- | --- | --- |
-| `host`, `port` | `localhost`, `7700` | the bridge's `runner.listen` |
+| `host`, `port` | `localhost`, `7700` | the bridge's `runner.listen`; an IPv6 host with or without brackets (`hils.host=::1`); the port is a whole number from 1 to 65535 |
 | `connect_timeout_s` | `10.0` | reaching the bridge |
 | `ready_timeout_s` | `60.0` | its `scenario_start` steps (wall clock) |
 | `end_timeout_s` | `30.0` | its `scenario_end` steps (wall clock) |
@@ -150,7 +150,7 @@ devices:
 | `ego.wait` | `120.0` | seconds (not negative) without an ego before a warning (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
-| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge; `null`: no run link |
+| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link |
 | `commands.mode` | `control` | how the ECUs' command drives the ego: see [ECU to simulation](#ecu-to-simulation) |
 | `devices` | | one entry per device, by name |
 | `lifecycle` | none | steps around the bridge and each scenario: see [Lifecycle](#lifecycle) |
