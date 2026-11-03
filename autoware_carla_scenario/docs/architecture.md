@@ -654,11 +654,28 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    | No `until`, no reissue | one tick | never | never |
    | No `until`, reissues | one tick | never (the run is one reissued tick) | one tick |
    | `until` | one tick | every tick `until` has not yet held (none if it holds on the tick after firing) | one tick |
+   | Stopped by an `overrides=True` action | as above | as above, until it is stopped | never: straight to `completeState`, even with `once=False` (stopped later in the tick it fired, its `startTransition` is not recorded either) |
 
    So a condition waiting on `runningState` or `endTransition` of an
    instantaneous action never holds -- wait on `completeState` (or
-   `startTransition`) instead. An action fired in the init phase is settled
-   there at once and never holds `endTransition` either.
+   `startTransition`) instead. A repeating instantaneous action whose trigger
+   still holds fires again on the very tick it would have gone back to
+   `standbyState`, so it stays in `startTransition` tick after tick and
+   `standbyState` is not seen until its trigger stops holding. An action
+   fired in the init phase never holds `endTransition` either: it is settled
+   there at once (`_settle_start`) -- to `completeState` (`standbyState` with
+   `once=False`) if it does not reissue its command and either has no `until`
+   or its `until` already holds at `elapsed=0`. One that reissues, or whose
+   `until` does not yet hold, is left in `runningState`, and since the init
+   phase never ticks it again it stays there for good, unless it was put on
+   the tick loop instead: `register_init` does that for every action whose
+   `needs_tick_loop` is true. An action can opt out, as the background-traffic
+   source and sink (`TrafficSourceAction`, `TrafficSinkAction`) do (a
+   `ConstructionZoneAction` with a later start or an end time does not): one
+   registered for initialization reissues by default
+   (`REISSUES_BY_DEFAULT = True`), so it places its vehicles (or clears its
+   lanelets) once and holds `runningState` for the rest of the run, even with
+   an `until` that already holds.
 
 `until`, `reissues_while_running` and `once` are all independent — `until` says
 when *this* run ends, `reissues_while_running` says whether the command repeats

@@ -36,8 +36,11 @@ class ActionStateCondition(BaseCondition):
     fired.  ``runningState`` and ``endTransition`` are the exception for an
     action that is over the moment it is commanded -- no ``until`` and no
     reissued command: it goes from ``startTransition`` straight to
-    ``completeState`` (``standbyState`` when ``once=False``), so a condition
-    waiting on either of them for such an action never holds
+    ``completeState`` (``standbyState`` when ``once=False``, or
+    ``startTransition`` again if its trigger still holds), so a condition
+    waiting on either of them for such an action never holds.  Neither does
+    one on ``endTransition`` of the run an ``overrides=True`` action stops,
+    or of an init-phase action
     (:class:`~autoware_carla_scenario.action_state.ActionState`).
 
     Args:
