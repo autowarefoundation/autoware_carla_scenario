@@ -37,9 +37,9 @@ def optimizer() -> RobustnessOptimizer:
     search = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
     # Pay torch's lazy initialisation before any test measures anything, which
     # takes more than one solve: the first in a process runs at a third of the
-    # steady-state rate, so it exhausts its time budget after a single
-    # refinement step and plans visibly worse. That is why `EgoPolicy` warms up
-    # in `on_session_start` rather than on the first step the runtime waits for.
+    # steady-state rate, which would blow the 100 ms control period. That is
+    # why `EgoPolicy` warms up in `on_session_start` rather than on the first
+    # step the runtime waits for.
     for _ in range(3):
         search.solve(make_inputs(CONFIG, speed0_mps=5.0))
     return search

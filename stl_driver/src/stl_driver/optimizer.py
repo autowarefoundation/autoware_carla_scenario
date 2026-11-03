@@ -124,8 +124,8 @@ class RobustnessOptimizer:
         settings = self.config.optimizer
         if not settings.compile_search or self._compile_attempted:
             # Still worth one solve: the first in a process runs at a third of
-            # the steady-state rate, and would otherwise spend its whole
-            # budget on torch's lazy initialisation.
+            # the steady-state rate, and would otherwise make the session's
+            # first step pay for torch's lazy initialisation.
             self.solve(example)
             return
 
@@ -574,7 +574,7 @@ class RobustnessOptimizer:
         At a batch of one there is nothing to batch, and ``vmap`` is then pure
         dispatch overhead: measured, 15.06 ms through it against 10.64 ms
         calling the same arithmetic directly, and 3.41 against 1.93 for the
-        exact scoring. Since the refinement runs a single seed by default, that
+        exact scoring. When the refinement ran a single seed by default, that
         overhead was most of what a tuning run spent its time on -- the policy
         is two thirds of a closed-loop run's wall clock, and the refinement is
         most of the policy.
