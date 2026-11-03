@@ -404,7 +404,8 @@ def test_the_zone_appears_at_its_start_and_is_cleared_away_at_its_end() -> None:
     assert backend.reopened == []
     _run(action, world, [2.0, 3.0, 3.1])
     assert all(p.destroyed for p in world.spawned) and action.prop_count == 0
-    assert backend.reopened == ["lane"]
+    # Each closure reopened once, though both are of one lane (#1294).
+    assert backend.reopened == ["lane", "lane"]
     assert action.cleared
     _run(action, world, [3.2, 3.3])
     assert action.state is ActionState.COMPLETE
