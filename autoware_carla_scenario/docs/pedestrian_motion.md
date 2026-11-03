@@ -26,13 +26,17 @@ from autoware_carla_scenario import (
 
 # Stop the pedestrian at the kerb, then wave at the ego for three seconds.
 scenario.register_pre_tick(
-    WalkStraightAction("walker1", speed_ms=0.0, condition=ElapsedTimeCondition(4.0))
+    WalkStraightAction(
+        "walker1",
+        speed_ms=0.0,
+        condition=ElapsedTimeCondition(4.0, label="after_4s"),
+    )
 )
 scenario.register_pre_tick(
     PlayMotionAction(
         "walker1",
         "motions/wave.npz",
-        condition=ElapsedTimeCondition(5.0),
+        condition=ElapsedTimeCondition(5.0, label="after_5s"),
         loop=True,
         duration_s=3.0,
     )
@@ -162,7 +166,7 @@ scenario.register_pre_tick(
     SmartPedestrianControllerAction(
         "walker1",
         "a man walks to the kerb and looks left and right",
-        condition=ElapsedTimeCondition(2.0),
+        condition=ElapsedTimeCondition(2.0, label="after_2s"),
         prompts=[TimedPrompt(4.0, "he crosses the road in a hurry")],
         waypoints=[WalkWaypoint(104.0, -12.5), WalkWaypoint(104.0, -4.0)],
         speed_ms=1.4,
