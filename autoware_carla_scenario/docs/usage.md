@@ -732,6 +732,8 @@ one warns that it is ignored and says the above.
 | `map.directory` | str \| null | `null` | Local map directory, read in place. Wins over `map.source` |
 | `map.xodr_path` | str \| null | `null` | Path to custom OpenDRIVE file. If `null`, loads built-in CARLA map by name |
 | `map.lanelet2_path` | str \| null | `null` | Path to Lanelet2 .osm file (required for lanelet-based spawn) |
+| `map.projector_type` | str \| null | `null` | Projection the Lanelet2 map is read with (`mgrs`, `utm`, `local_xy`, `local_cartesian` or `transverse_mercator`). If `null`, taken from the map's `map_projector_info.yaml` |
+| `map.overwrite_xodr` | bool | `false` | Install `map.xodr_path` into the CARLA asset named by `<MAP_NAME>_PATH` before loading the map, replacing CARLA's own road network (`map=nishishinjuku` turns it on) |
 | `map.no_3d_model_lanelet_ids` | list[int] | `[]` | Lanelet IDs to exclude from sweeps (no ground geometry) |
 
 Map paths can use environment variables with Hydra's OmegaConf resolver:

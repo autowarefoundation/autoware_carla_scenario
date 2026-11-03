@@ -3,7 +3,8 @@
 # Dataclasses are written as Codon classes with defaulted fields, which give
 # them the same generated __init__. A field Hydra marks as mandatory (MISSING,
 # "???") has a placeholder default here: Hydra itself refuses to run without
-# it. SweepConfig's free-form mappings (dict[str, Any]) have no Codon type and
+# it. SweepConfig's free-form mappings (dict[str, Any]) and DriverConfig.bridge
+# (a mapping of AutowareBridgeConfig's fields, or None) have no Codon type and
 # are left out of it.
 
 
@@ -25,6 +26,8 @@ class MapConfig:
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     projector_type: Optional[str] = None
+    overwrite_xodr: bool = False
+    no_3d_model_lanelet_ids: List[int] = List[int]()
 
 
 class EntityConfig:
@@ -206,6 +209,11 @@ class DriverConfig:
     map_dir: Optional[str] = None
     map_formats: List[str] = ["lanelet2"]
     lanelet2_path: Optional[str] = None
+    t4_scene: bool = False
+    t4_scene_history_s: float = 3.0
+    t4_scene_wheel_base_m: Optional[float] = None
+    t4_scene_goal: str = "scenario"
+    t4_scene_map: str = "run"
     control: DriverControlSpec = DriverControlSpec()
 
 
