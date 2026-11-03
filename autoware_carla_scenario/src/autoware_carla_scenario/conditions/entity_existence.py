@@ -67,9 +67,9 @@ class ReferencePoses:
         world: The CARLA world the entities are looked up in.
         present_only: Count an actor parked under the map (spawned hidden, not
             yet brought in) as absent, as a condition reads a second entity
-            (:func:`find_present_actor_by_role_name`).  Off, the actor is
-            read wherever it is, as :class:`~autoware_carla_scenario.actions.SpawnAction`
-            reads it.
+            (:func:`find_present_actor_by_role_name`), and as
+            :class:`~autoware_carla_scenario.actions.SpawnAction` places
+            against one.  Off, the actor is read wherever it is.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -96,6 +96,9 @@ class ReferencePoses:
         else:
             actor = find_actor_by_role_name(self._world, name)
         if actor is None:
+            if self._present_only:
+                # Perhaps in the world, but parked under the map.
+                raise ReferenceAbsentError(f"'{entity_ref}' is not in the scene")
             raise ReferenceAbsentError(f"'{entity_ref}' is not in the world")
         found: "carla.Actor" = actor
         return CarlaWorldPose.from_carla_transform(found.get_transform())
