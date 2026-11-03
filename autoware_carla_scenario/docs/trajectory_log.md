@@ -40,8 +40,8 @@ it does not know reads any later file.
 
 ## Records
 
-Each line is one of twenty records, told apart by `type`. A file starts with one
-`world` line and one `map` line, then one `traffic_light` line per light and one
+Each line is one record, told apart by `type`; the table below lists every
+type the schema has. A file starts with one `world` line and one `map` line, then one `traffic_light` line per light and one
 `warmup` line. After that come the ticks: each `tick` line is preceded by an
 `actor` line for every vehicle or walker appearing in it for the first time
 (an ego's followed by a `rear_axle` line) and
