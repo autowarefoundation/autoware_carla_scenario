@@ -111,6 +111,7 @@ from autoware_carla_scenario.registry import (
     register_scenario,
 )
 from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
+from autoware_carla_scenario.scenario_runner import _run_file_stem
 
 from .argv import (
     BatchCase,
@@ -710,6 +711,7 @@ def run_scenario_with_queue(
     reload_every: int = 0,
     t4scene: T4SceneExporter | None = None,
     backends: BackendPool | None = None,
+    file_stem: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -724,6 +726,10 @@ def run_scenario_with_queue(
     *world_reset* and *reload_every* are how the queue resets the world
     (:func:`world_reset_settings`).  *t4scene* writes the run's trajectory log
     as a T4Scene once it is closed (:func:`build_t4scene_exporter`).
+    *file_stem* is the stem the run's files are named by
+    (``{file_stem}_result.json`` ...); ``None`` names them by the scenario's
+    class, numbered past the runs already in *output_dir*
+    (:meth:`ScenarioQueue.add`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -762,7 +768,7 @@ def run_scenario_with_queue(
         t4scene=t4scene,
         backends=backends,
     )
-    queue.add(scenario, case=case)
+    queue.add(scenario, case=case, file_stem=file_stem)
     with queue:
         results = queue.run_all()
     return results[0]
@@ -1939,6 +1945,11 @@ def _run_scenario(
     # Retrieve the Hydra output directory (works regardless of
     # ``hydra.job.chdir`` which defaults to False since Hydra 1.2).
     output_dir = Path(HydraConfig.get().runtime.output_dir)
+    # The stem the run's files are named by, settled here and handed to the
+    # runner, so that the path printed below is the one it wrote: past the
+    # class name once an earlier run in this directory has taken it (a
+    # sweeper's retry in the same job directory, a reused run directory).
+    file_stem = _run_file_stem(output_dir, type(scenario).__name__)
 
     result = run_scenario_with_queue(
         scenario,
@@ -1970,14 +1981,22 @@ def _run_scenario(
         reload_every=reload_every,
         t4scene=build_t4scene_exporter(cfg),
         backends=build_backend_pool(cfg),
+        file_stem=file_stem,
     )
 
     status = "PASSED" if result.passed else "FAILED"
     print(f"{status}: {result.message} ({result.elapsed_seconds:.2f}s)")  # noqa: T201
-    scenario_name = type(scenario).__name__
-    json_path = (output_dir / f"{scenario_name}_result.json").resolve()
-    print(f"Result JSON: {json_path}")  # noqa: T201
+    print(_result_json_line(output_dir, file_stem))  # noqa: T201
     return result
+
+
+def _result_json_line(output_dir: Path, file_stem: str) -> str:
+    """The line naming the result a run named *file_stem* wrote in
+    *output_dir*, or saying it wrote none (writing it failed)."""
+    json_path = (output_dir / f"{file_stem}_result.json").resolve()
+    if json_path.is_file():
+        return f"Result JSON: {json_path}"
+    return f"Result JSON: not written ({json_path})"
 
 
 #: The cases of a ``--multirun`` run in this process (Hydra's basic sweeper)
