@@ -221,11 +221,11 @@ def test_a_set_written_meanwhile_keeps_its_formats(
     build = hdmap_export._build  # noqa: SLF001
     calls = []
 
-    def racing_build(*args: object, **kwargs: object) -> None:
+    def racing_build(*args: Any) -> Tuple[str, ...]:
         calls.append(args)
         if len(calls) == 1:
             export_map(opendrive, "Town", tmp_path, formats=theirs)
-        build(*args, **kwargs)  # type: ignore[arg-type]
+        return build(*args)
 
     monkeypatch.setattr(hdmap_export, "_build", racing_build)
     map_id = export_map(opendrive, "Town", tmp_path, formats=("lanelet2", "osm"))
@@ -235,6 +235,110 @@ def test_a_set_written_meanwhile_keeps_its_formats(
     for entry in formats.values():
         assert (directory / entry["path"]).exists()
     assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
+
+
+def test_a_format_this_version_cannot_write_is_dropped_with_a_warning(
+    opendrive: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A newer version shares the map directory and wrote a format this one lacks."""
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    manifest_path = tmp_path / map_id / MANIFEST_FILE
+    manifest = _manifest(tmp_path / map_id)
+    manifest["formats"]["future"] = {"path": "future.bin", "trace": "f.json"}
+    manifest_path.write_text(json.dumps(manifest))
+
+    with caplog.at_level("WARNING"):
+        assert export_map(opendrive, "Town", tmp_path, formats=("lanelet2",)) == map_id
+    assert "'future'" in caplog.text
+    assert set(_manifest(tmp_path / map_id)["formats"]) == {"osm", "lanelet2"}
+    # And the set is not stuck: later runs grow it as usual.
+    export_map(opendrive, "Town", tmp_path, formats=("commonroad",))
+    assert set(_manifest(tmp_path / map_id)["formats"]) == {
+        "osm",
+        "lanelet2",
+        "commonroad",
+    }
+
+
+def test_a_held_format_roadgen_cannot_write_is_dropped_with_a_warning(
+    opendrive: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    monkeypatch.setattr(hdmap_export, "_can_export", lambda _, name: name != "osm")
+    with caplog.at_level("WARNING"):
+        export_map(opendrive, "Town", tmp_path, formats=("lanelet2",))
+    assert "'osm'" in caplog.text
+    assert set(_manifest(tmp_path / map_id)["formats"]) == {"lanelet2"}
+
+
+def test_a_set_left_aside_by_a_killed_run_is_kept(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """A run killed between its two renames left the old set in its scratch."""
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    scratch = tmp_path / f".{map_id}.killed"
+    scratch.mkdir()
+    (tmp_path / map_id).rename(scratch / "old")
+
+    export_map(opendrive, "Town", tmp_path, formats=("lanelet2",))
+    assert set(_manifest(tmp_path / map_id)["formats"]) == {"osm", "lanelet2"}
+    assert (scratch / "old" / MANIFEST_FILE).is_file(), "only read, never moved"
+
+
+def test_a_failing_replace_is_raised_at_once_keeping_the_old_set(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    target = tmp_path / map_id
+    builds = []
+    build = hdmap_export._build  # noqa: SLF001
+
+    def counted_build(*args: Any) -> Tuple[str, ...]:
+        builds.append(args)
+        return build(*args)
+
+    monkeypatch.setattr(hdmap_export, "_build", counted_build)
+    rename = Path.rename
+
+    def denied_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set":
+            raise PermissionError(13, "Permission denied", str(destination))
+        return rename(self, destination)
+
+    monkeypatch.setattr(Path, "rename", denied_rename)
+    with pytest.raises(PermissionError):
+        export_map(opendrive, "Town", tmp_path, formats=("lanelet2",))
+    assert len(builds) == 1, "retried an error no other run caused"
+    assert set(_manifest(target)["formats"]) == {"osm"}, "lost the old set"
+    assert [p.name for p in tmp_path.iterdir()] == [map_id], "left scratch behind"
+
+
+def test_a_replace_that_keeps_racing_gives_up_with_the_cause(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import errno  # noqa: PLC0415
+
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("osm",))
+    target = tmp_path / map_id
+    rename = Path.rename
+
+    def raced_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set":
+            raise OSError(errno.ENOTEMPTY, "Directory not empty", str(destination))
+        return rename(self, destination)
+
+    monkeypatch.setattr(Path, "rename", raced_rename)
+    with pytest.raises(RuntimeError, match="kept changing") as raised:
+        export_map(opendrive, "Town", tmp_path, formats=("lanelet2",))
+    assert isinstance(raised.value.__cause__, OSError)
+    assert set(_manifest(target)["formats"]) == {"osm"}, "lost the old set"
 
 
 def test_a_changed_map_gets_a_new_id() -> None:
