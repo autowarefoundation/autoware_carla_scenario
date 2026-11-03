@@ -165,8 +165,20 @@ def _log_job_exception(ret: JobReturn) -> None:
     Hydra's own (``hydra.hydra_logging``) again, as Hydra's launcher leaves
     it after a job.  Without the job's Hydra config, the sweeper's logging as
     it stands.
+
+    Never raises: the case's exit status is 1 whatever happens here.
+    ``_return_value`` is private to Hydra (the public ``return_value``
+    re-raises it and writes to stderr), so it is read with ``getattr``.
     """
-    exc = ret._return_value
+    try:
+        _log_job_exception_unguarded(ret)
+    except Exception:  # noqa: BLE001, S110 - logging must not change the exit status
+        pass
+
+
+def _log_job_exception_unguarded(ret: JobReturn) -> None:
+    """:func:`_log_job_exception`, which may raise."""
+    exc = getattr(ret, "_return_value", None)
     if not isinstance(exc, BaseException):
         return
     hydra_cfg = getattr(ret, "hydra_cfg", None)

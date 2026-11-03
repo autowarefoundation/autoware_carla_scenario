@@ -240,6 +240,40 @@ def test_lanelet_sweeper_logs_why_a_case_raised(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("return_value", "hydra_cfg", "configure_log_raises"),
+    [
+        (ValueError("boom"), None, False),  # no Hydra config: logged as is
+        ("not an exception", None, False),
+        (ValueError("boom"), {"hydra": {"job_logging": {}}}, True),
+    ],
+)
+def test_logging_what_a_case_raised_never_changes_its_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    return_value: Any,
+    hydra_cfg: Any,
+    configure_log_raises: bool,
+) -> None:
+    """Whatever logging the exception does, a FAILED case exits 1."""
+    from hydra.core.utils import JobReturn, JobStatus
+    from omegaconf import OmegaConf
+
+    import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
+
+    def _raise(*_: Any) -> None:
+        raise RuntimeError("configure_log failed")
+
+    if configure_log_raises:
+        monkeypatch.setattr(lcs, "configure_log", _raise)
+    ret = JobReturn(
+        overrides=["+case=1"],
+        hydra_cfg=None if hydra_cfg is None else OmegaConf.create(hydra_cfg),
+        status=JobStatus.FAILED,
+    )
+    ret.return_value = return_value
+    assert lcs._job_exit_code([ret]) == 1
+
+
+@pytest.mark.parametrize(
     ("args", "resume_from", "message"),
     [
         (("+sweep.none=true",), None, "expands to no case"),
