@@ -55,7 +55,14 @@ Each task, on its node:
 3. builds them (not checked again: the submitting process did), starts a
    CARLA on its ports and runs its cases one after another through the same
    queue a local batch uses, writing their files into the batch's directory
-   under the names a local batch gives them;
+   under the names a local batch gives them. What a local batch decides once
+   for all its cases, every task decides the same, however the cases are
+   split into tasks (`cases_per_task`): the queue's settings (server, traffic,
+   `t4`, `t4scene`, world reset, backends) are the batch's first case's,
+   Rerun recordings are made when any case sets `rerun.enabled` (strict when
+   any sets `rerun.strict`), and the canvas and the heavy metrics are the
+   batch's. The manifest records which cases decide them
+   (`batch_settings`), and a task composes those beside its own;
 4. records each case's outcome as soon as it has run
    (`slurm/results/<case>.json`), and its own progress in
    `slurm/tasks/<submission>-<task>.json` (host, ports, state, peak resident

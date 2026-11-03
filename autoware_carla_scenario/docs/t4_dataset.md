@@ -57,7 +57,8 @@ the dataset stops, it never fails the scenario.
 
 A dataset needs at least one LiDAR or camera; without a LiDAR the first
 camera's frames are the key frames. A batch takes the first case's settings,
-as it does its traffic backend and its ODD.
+as it does its traffic backend and its ODD -- a SLURM batch too, whichever
+task runs a case ([SLURM](slurm.md)).
 
 ## Performance
 

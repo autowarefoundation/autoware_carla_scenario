@@ -110,13 +110,17 @@ def submit_batch(
     output_dir: Path,
     build_scenario_fn: Callable[..., Any] | None = None,
     wait: bool | None = None,
+    batch_settings: dict[str, Any] | None = None,
 ) -> int:
     """Submit a built and checked batch as a SLURM array; the exit status.
 
     *cases*, *labels*, *case_overrides* and *configs* are what ``run_batch``
     made of the command line, one per case, and *scenario_classes* the class
     of the scenario each built.  The outputs go to *output_dir* as a local
-    batch's would.  *wait* overrides ``launcher.wait``.
+    batch's would.  *wait* overrides ``launcher.wait``.  *batch_settings* is
+    which cases decide the batch-level settings
+    (``examples.run.batch_settings_cases``): every task decides them from
+    those, as a local batch does, whichever cases it runs.
     """
     from omegaconf import OmegaConf  # noqa: PLC0415
 
@@ -166,6 +170,10 @@ def submit_batch(
         "env": snapshot_environment(
             settings.env_passthrough, explicit=settings.env.keys()
         ),
+        # Which cases decide the batch's queue, Rerun converter, canvas and
+        # metrics (examples.run.batch_settings_cases).  An older worker
+        # ignores it, and decides them from its own cases as it always did.
+        **({} if batch_settings is None else {"batch_settings": batch_settings}),
         "cases": [
             {
                 "index": index,
