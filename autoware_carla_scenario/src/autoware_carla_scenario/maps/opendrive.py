@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from .cache import _write_atomically
+from .cache import _copy_atomically, _write_atomically
 from .resolver import ResolvedMap
 
 if TYPE_CHECKING:
@@ -221,7 +221,9 @@ def ensure_xodr(
     if installed is not None:
         # Copied whole, as the fetch below writes: another process resolving
         # the same map reads the old file or the new one, never a part.
-        _write_atomically(destination, installed.read_text(encoding="utf-8"))
+        # Byte for byte, mode and mtime as well: load_map_by_overwriting_xodr
+        # may copy this file back over the installation's.
+        _copy_atomically(installed, destination)
         logger.info("Took OpenDRIVE for %s from %s", name, installed)
         return destination
 

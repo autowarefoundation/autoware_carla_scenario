@@ -14,7 +14,7 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import pytest
 
@@ -2078,6 +2078,41 @@ def _xodr_source(
     return resolved, new
 
 
+def _hook_xodr_write(
+    source: str,
+    monkeypatch: pytest.MonkeyPatch,
+    halfway: Callable[[], None],
+) -> None:
+    """Make the call that writes *source*'s file stop halfway into it and run
+    *halfway*: ``Path.write_text`` for a fetched text, ``shutil.copy2`` for an
+    installed file."""
+    import shutil
+
+    if source == "server":
+
+        def write_text(self: Path, data: str, *_args: Any, **_kwargs: Any) -> int:
+            with self.open("w", encoding="utf-8") as f:
+                f.write(data[: len(data) // 2])
+                f.flush()
+                halfway()
+                f.write(data[len(data) // 2 :])
+            return len(data)
+
+        monkeypatch.setattr(Path, "write_text", write_text)
+    else:
+
+        def copy2(src: Any, dst: Any, *_args: Any, **_kwargs: Any) -> Any:
+            data = Path(src).read_bytes()
+            with open(dst, "wb") as f:
+                f.write(data[: len(data) // 2])
+                f.flush()
+                halfway()
+                f.write(data[len(data) // 2 :])
+            return dst
+
+        monkeypatch.setattr(shutil, "copy2", copy2)
+
+
 @pytest.mark.parametrize("source", ["server", "installed"])
 @pytest.mark.parametrize("old", ["<OpenDRIVE town='old'/>", None])
 def test_an_xodr_being_written_reads_as_the_old_one_or_none(
@@ -2089,28 +2124,28 @@ def test_an_xodr_being_written_reads_as_the_old_one_or_none(
     old: Any,
 ) -> None:
     """Two processes resolving one map: neither reads a partial OpenDRIVE."""
-    from .test_map_cache_files import _pause_halfway
-
     resolved, new = _xodr_source(source, origin_repo, cache, tmp_path, monkeypatch)
     destination = resolved.derived_xodr()
     if old is not None:
         destination.write_text(old, encoding="utf-8")
 
-    seen = _pause_halfway(
+    seen: list[Any] = []
+    _hook_xodr_write(
+        source,
         monkeypatch,
-        lambda: destination.read_text(encoding="utf-8")
-        if destination.exists()
-        else None,
+        lambda: seen.append(
+            destination.read_text(encoding="utf-8") if destination.exists() else None
+        ),
     )
     assert ensure_xodr(resolved, refresh=True) == destination
 
-    assert seen == [old]
+    assert seen == [old]  # the reader ran, once, and saw no part of the new file
     assert destination.read_text(encoding="utf-8") == new
     assert [p.name for p in resolved.derived.iterdir()] == [destination.name]
 
 
 @pytest.mark.parametrize("source", ["server", "installed"])
-@pytest.mark.parametrize("failing", ["write_text", "replace"])
+@pytest.mark.parametrize("failing", ["write", "replace"])
 def test_a_failed_xodr_write_leaves_no_partial_file_and_no_scratch_file(
     origin_repo: Path,
     cache: GitMapCache,
@@ -2121,19 +2156,14 @@ def test_a_failed_xodr_write_leaves_no_partial_file_and_no_scratch_file(
 ) -> None:
     resolved, _new = _xodr_source(source, origin_repo, cache, tmp_path, monkeypatch)
 
-    def half_written(self: Path, data: str, *_args: Any, **_kwargs: Any) -> int:
+    def disk_full(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    if failing == "write":
         # Fail partway through, as a full disk does.
-        with self.open("w", encoding="utf-8") as f:
-            f.write(data[: len(data) // 2])
-        raise OSError("disk full")
-
-    def no_rename(*_args: Any, **_kwargs: Any) -> None:
-        raise OSError("disk full")
-
-    if failing == "write_text":
-        monkeypatch.setattr(Path, "write_text", half_written)
+        _hook_xodr_write(source, monkeypatch, disk_full)
     else:
-        monkeypatch.setattr(os, "replace", no_rename)
+        monkeypatch.setattr(os, "replace", disk_full)
 
     with pytest.raises(OSError, match="disk full"):
         ensure_xodr(resolved, refresh=True)
@@ -2141,3 +2171,31 @@ def test_a_failed_xodr_write_leaves_no_partial_file_and_no_scratch_file(
 
     assert list(resolved.derived.iterdir()) == []
     assert resolve_map(_uri(origin_repo), cache=cache).xodr_path is None
+
+
+def test_an_installed_xodr_is_copied_byte_for_byte(
+    origin_repo: Path,
+    cache: GitMapCache,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whatever its encoding and line endings, with its mode and mtime:
+    ``load_map_by_overwriting_xodr`` may copy it back over the installation."""
+    import stat
+
+    asset = tmp_path / "TownA.xodr"
+    data = (
+        b"<?xml version='1.0' encoding='ISO-8859-1'?>\r\n"
+        b"<OpenDRIVE><header name='Stra\xdfe'/></OpenDRIVE>\r\n"
+    )
+    asset.write_bytes(data)
+    asset.chmod(0o640)
+    os.utime(asset, ns=(1_000_000_000_123_456_789, 1_000_000_000_123_456_789))
+    monkeypatch.setenv(map_asset_env_var("TownA"), str(asset))
+
+    written = ensure_xodr(resolve_map(_uri(origin_repo), cache=cache), refresh=True)
+
+    assert written.read_bytes() == data
+    assert written.stat().st_mtime_ns == asset.stat().st_mtime_ns
+    assert stat.S_IMODE(written.stat().st_mode) == 0o640
+    assert [p.name for p in written.parent.iterdir()] == [written.name]
