@@ -14,6 +14,10 @@ Once every case has run, a sweep with a failed (or timed-out) case raises
 A refused case (one exiting 2, as ``examples/run.py`` does for a scenario that
 does not type-check or an extra that is not installed) ends the sweep at once
 with exit status 2: every case after it would be refused for the same reason.
+A sweep whose config sets a value its runs refuse (``t4scene.step_s`` that is
+not a multiple of the tick, a negative ``server.cooldown_max_retries``, ...),
+or asks for an extra that is not installed, exits 2 before any case is forked
+(:func:`_refuse_before_forking`).
 A sweep with no case to run (nothing expanded, or ``--resume-from`` past the
 last case) raises :class:`SweepFailedError` too, before anything runs.
 
@@ -59,7 +63,7 @@ from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
-from ..rerun import RerunUnavailableError, require_converter
+from ..rerun import RerunUnavailableError
 from ..ui.case_paths import last_result_path
 from .expand import (
     _config_seed,
@@ -270,6 +274,45 @@ def _launch_job_isolated(
     return _launch_isolated(run_case, timeout)
 
 
+def _refuse_before_forking(cfg: DictConfig) -> None:
+    """Exit :data:`_REFUSED_EXIT_CODE`, saying why, when every case of the
+    sweep of *cfg* would be refused before it starts: for a config value its
+    run refuses (:func:`examples.run.check_run_config`: the queue's server,
+    traffic and Autoware launcher settings, the run timeout, ``odd_case``,
+    ``rerun.lidar_max_points``, the ``t4`` and ``driver`` settings and the
+    ``t4scene`` settings), or for an extra it asks for that is not installed
+    (:func:`examples.run.check_run_extras`).  Builds nothing that starts, and
+    needs no map.
+
+    *cfg* is the sweep's base config, with the command line's overrides: what
+    a case adds to it -- the ego's spawn and goal and the values its bindings
+    derive, a route's ``scenario.route.*``, the ODD's environment knobs and
+    the scenario's controls, and its own ``odd_case``, which the sweep encodes
+    -- are not what these checks read, so a value refused here is refused in
+    every case.  One only a case's overrides set is refused by that case,
+    which exits :data:`_REFUSED_EXIT_CODE` too (``examples/run.py``'s
+    ``_hydra_main``), and the sweep stops there.
+    """
+    # The run's own checks; imported here, as examples.run imports this
+    # package's modules inside its functions.
+    from ..examples.run import (  # noqa: PLC0415
+        RunConfigError,
+        check_run_config,
+        check_run_extras,
+    )
+    from ..t4 import T4UnavailableError  # noqa: PLC0415
+
+    try:
+        check_run_config(cfg)
+        check_run_extras(cfg)
+    except RunConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+        sys.exit(_REFUSED_EXIT_CODE)
+    except (RerunUnavailableError, T4UnavailableError) as exc:
+        print(exc, file=sys.stderr)  # noqa: T201
+        sys.exit(_REFUSED_EXIT_CODE)
+
+
 class LaneletConstraintSweeper(Sweeper):
     """Sweep over lanelets that satisfy declarative constraints."""
 
@@ -317,8 +360,9 @@ class LaneletConstraintSweeper(Sweeper):
                 them failed or timed out; or at once, when the sweep has no
                 case to run (none expanded, or ``--resume-from`` past the
                 last).
-            SystemExit: With status 2, at once, when the sweep asks for
-                Rerun recordings without the extra or a case is refused;
+            SystemExit: With status 2, at once, when the sweep sets a config
+                value its runs refuse or asks for Rerun recordings or T4
+                datasets without the extra, or when a case is refused;
                 with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
                 sweep is interrupted.
         """
@@ -353,15 +397,12 @@ class LaneletConstraintSweeper(Sweeper):
 
         cfg = self.config
 
-        # -- 0. Refuse at once a sweep asking for Rerun recordings without
-        # the extra, rather than fail every case it forks.  Each case
-        # converts its own log (examples/run.py).
-        if OmegaConf.select(cfg, "rerun.enabled", default=False):
-            try:
-                require_converter()
-            except RerunUnavailableError as exc:
-                print(exc, file=sys.stderr)  # noqa: T201
-                sys.exit(_REFUSED_EXIT_CODE)
+        # -- 0. Refuse at once a sweep every case of which would be refused
+        # before it starts, rather than fork each to fail (and be retried):
+        # a config value a run refuses (#1233), or Rerun recordings or T4
+        # datasets asked for without the extra.  Each case converts its own
+        # log and writes its own dataset (examples/run.py).
+        _refuse_before_forking(cfg)
 
         # -- 1. Read the sweep section, before any map is fetched --------
         sweep_cfg = OmegaConf.select(cfg, "sweep")
@@ -424,6 +465,8 @@ class LaneletConstraintSweeper(Sweeper):
         max_retries: int = int(
             OmegaConf.select(cfg, "server.cooldown_max_retries", default=0)
         )
+        # Refused at step 0 already (check_run_config); kept for a caller
+        # that reaches here without it.
         if max_retries < 0:
             raise ValueError(
                 "LaneletConstraintSweeper: server.cooldown_max_retries must be "

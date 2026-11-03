@@ -142,7 +142,11 @@ def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
     resolve.assert_not_called()
 
 
-def test_the_sweeper_refuses_a_negative_cooldown_max_retries() -> None:
+def test_the_sweeper_refuses_a_negative_cooldown_max_retries(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Refused before any map is fetched or case forked, as a run refuses it
+    (#1233)."""
     from omegaconf import OmegaConf
 
     from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
@@ -153,12 +157,16 @@ def test_the_sweeper_refuses_a_negative_cooldown_max_retries() -> None:
     )
     sweeper.launcher = MagicMock()
     with (
-        patch.object(mod, "resolve_map_paths"),
+        patch.object(mod, "resolve_map_paths") as resolve,
         patch.object(mod, "load_map"),
         patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
-        pytest.raises(ValueError, match="cooldown_max_retries must be >= 0"),
+        pytest.raises(SystemExit) as exited,
     ):
         sweeper.sweep([])
+    assert exited.value.code == 2
+    assert "cooldown_max_retries must be >= 0" in capsys.readouterr().err
+    resolve.assert_not_called()
+    sweeper.launcher.launch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

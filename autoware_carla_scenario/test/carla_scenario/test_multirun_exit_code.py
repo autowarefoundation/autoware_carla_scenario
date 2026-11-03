@@ -347,6 +347,85 @@ def test_lanelet_sweeper_stops_with_2_on_a_refused_case(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ("+t4scene.enabled=true", "+t4scene.step_s=0.07"),
+            "t4scene.step_s",
+        ),
+        (("+server.world_reset=bogus",), "server.world_reset"),
+        (("+scenario.timeout_seconds=-1",), "scenario.timeout_seconds"),
+        (("+server.cooldown_max_retries=-1",), "server.cooldown_max_retries"),
+    ],
+)
+def test_lanelet_sweeper_refuses_a_bad_config_value_before_any_case(
+    tmp_path: Path, args: tuple[str, ...], message: str
+) -> None:
+    """#1233: a value every case's run would refuse is refused once, with 2,
+    before any case is forked -- not by every case in turn, each retried."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        *args,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 2, output
+    assert f"Error: {message}" in output, output
+    assert "case 1" not in output, output
+    assert "Launching" not in output, output
+    assert output.count(message) == 1, output
+
+
+def test_lanelet_sweeper_runs_a_sweep_whose_config_values_are_valid(
+    tmp_path: Path,
+) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+t4scene.enabled=true",
+        "+t4scene.step_s=0.1",
+        "+scenario.timeout_seconds=30",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert "2/2 succeeded, 0 failed" in output, output
+
+
+@pytest.mark.parametrize("forked", [False, True])
+def test_a_case_refused_for_a_config_value_exits_2_only_in_a_sweeper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], forked: bool
+) -> None:
+    """The safety net: a value only a case's overrides set ends the sweep at
+    that case (2), and is an ordinary config error (1) anywhere else."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper.isolation import SWEEPER_OWNS_RETRIES_ENV
+
+    from .test_video_removed import _shipped
+
+    if forked:
+        monkeypatch.setenv(SWEEPER_OWNS_RETRIES_ENV, "1")
+    else:
+        monkeypatch.delenv(SWEEPER_OWNS_RETRIES_ENV, raising=False)
+    cfg = _shipped(["t4scene.enabled=true", "t4scene.step_s=0.07"])
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built the scenario")
+    )
+    hydra_main = run._hydra_main.__wrapped__  # type: ignore[attr-defined]
+    if forked:
+        with pytest.raises(SystemExit) as exited:
+            hydra_main(cfg)
+        assert exited.value.code == 2
+        assert "Error: t4scene.step_s" in capsys.readouterr().err
+    else:
+        with pytest.raises(run.RunConfigError, match="t4scene.step_s"):
+            hydra_main(cfg)
+
+
+@pytest.mark.parametrize(
     ("verdicts", "returncode"),
     [("pass,fail,pass", 1), ("pass,pass", 0)],
 )
