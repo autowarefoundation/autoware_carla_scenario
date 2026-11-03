@@ -3059,11 +3059,11 @@ single action:</p>
 </tr>
 <tr>
 <td><code>runningState</code></td>
-<td>The work is under way</td>
+<td>The work is under way -- only for an action that runs on (below)</td>
 </tr>
 <tr>
 <td><code>endTransition</code></td>
-<td>The completion criteria were met -- held for one tick</td>
+<td>The completion criteria were met -- held for one tick, only for an action that runs on (below)</td>
 </tr>
 <tr>
 <td><code>completeState</code></td>
@@ -3084,6 +3084,13 @@ OpenSCENARIO has neither. A manoeuvre that never happens stays in
 that did not occur; ending such a run is the scenario timeout's job, which is
 already a FAIL condition. The two transition states are each held for exactly
 one tick, so a condition watching <code>startTransition</code> sees it.</p>
+<p><code>runningState</code> and <code>endTransition</code> are only reached by an action that <em>runs
+on</em>: one with an <code>until</code> condition, or one that re-sends its command every
+tick. An action with neither -- a traffic light set, say -- is over the moment
+it is commanded: on the tick after <code>startTransition</code> it goes straight to
+<code>completeState</code> (back to <code>standbyState</code> when it repeats), so waiting on
+<em>Running</em> or <em>End</em> for it never holds. Wait on <em>Complete</em> instead
+(<a href="../architecture/">architecture</a>, "Action lifecycle").</p>
 <p>Which is also why a card can be moved into an <strong>empty</strong> step rather than only
 swapped with its neighbour: a reaction has to be placeable to the right of the
 cause on another track, and its own track is usually empty in between.</p>
@@ -3821,7 +3828,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 06:52:20 UTC"><span class="timeago" datetime="2026-11-03T06:52:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 06:52:20 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 19:22:17 UTC"><span class="timeago" datetime="2026-11-03T19:22:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 19:22:17 UTC">2026-11-03</span>
   </span>
 
     
