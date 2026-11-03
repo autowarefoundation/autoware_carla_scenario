@@ -13,6 +13,7 @@ disturbs exactly one column, so a failure names its own cause.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 import torch
@@ -499,3 +500,13 @@ def test_the_reported_robustness_is_still_the_conjunction(rules):
         assert float(rules.spec_robustness(signal)) == pytest.approx(
             float(rules.spec.robustness(signal, approx_method="true")), abs=1e-3
         )
+
+
+def test_readme_states_the_comfort_bounds() -> None:
+    """The README's comfort line names the strict bounds the rule applies."""
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    line = next(row for row in readme.splitlines() if row.startswith("comfort "))
+    bounds = f"-{LIMITS.max_decel_mps2:g} < accel < {LIMITS.max_accel_mps2:g}"
+    assert bounds in line
+    assert f"|jerk| < {LIMITS.max_jerk_mps3:g}" in line
+    assert f"|lat_accel| < {LIMITS.max_lat_accel_mps2:g}" in line

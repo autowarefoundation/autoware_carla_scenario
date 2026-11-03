@@ -33,14 +33,14 @@ The numbers are TeraSim's defaults; each can be overridden in
 
 | Kind | Action | TeraSim | Fires when | Does |
 |---|---|---|---|---|
-| `BRAKE_CHECK` | `AdversarialBrakeAction` | Follower | A follower is close behind, and neither is stopped. The agent is not speeding up, and the follower is not slowing. | Brakes at the emergency deceleration (9 m/s²) for 2 s. |
-| `IGNORE_LEADER` | `IgnoreLeaderAction` | Leader | Its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s. | Accelerates at the free-flow rate for 2 s. |
+| `BRAKE_CHECK` | `AdversarialBrakeAction` | Follower | A vehicle follows it in its lane within 40 m, and they are not both stopped (under 0.5 m/s). The agent is not speeding up, and the follower is not slowing. | Brakes at the emergency deceleration (9 m/s²) for 2 s. |
+| `IGNORE_LEADER` | `IgnoreLeaderAction` | Leader | It is moving (at least 0.5 m/s), its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s. | Accelerates at the free-flow rate for 2 s. |
 | `CUT_IN` | `AdversarialCutInAction` | LaneChange | A lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap). | Changes into that lane in 1 s. |
-| `LANE_CHANGE_ABORT` | `LaneChangeAbortAction` | LanechangeAbort | Blocked as for `CUT_IN`. The agent is moving, and its lanelet lasts at least 1 s more at its speed. | Drifts half a lane toward that side and back in 1 s. |
+| `LANE_CHANGE_ABORT` | `LaneChangeAbortAction` | LanechangeAbort | Blocked as for `CUT_IN`. The agent is moving, and its lanelet lasts more than 1 s more at its speed. | Drifts half a lane toward that side and back in 1 s. |
 | `HEAD_ON` | `HeadOnAction` | Headon | As for `IGNORE_LEADER`, but the agent's lanelet and its leader's start more than 120° apart. | Uses `IGNORE_LEADER`'s command. |
-| `TRAFFIC_RULE` | `RunTrafficRuleAction` | TrafficRule | It is stopping for a red or yellow light rather than for its leader. | Drives on through at the free-flow rate for 2 s. |
-| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane). | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s², for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway. |
-| `JAYWALKING` | `JaywalkAction` | Jaywalking | A pedestrian is off any crosswalk, with a road within 10 m. | Walks straight across at its speed (1.4 m/s if it stands) × U(0.5, 2.0), for up to 5 s. |
+| `TRAFFIC_RULE` | `RunTrafficRuleAction` | TrafficRule | A red or yellow light is within 40 m ahead, and it is held back by the light rather than by its leader (car following beats its acceleration by more than 1.5 m/s²). Free flow beats its acceleration by more than 1 m/s², or it is braking while free flow is above 0.2 m/s². | Drives on through at the free-flow rate for 2 s. |
+| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane). | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway. |
+| `JAYWALKING` | `JaywalkAction` | Jaywalking | A pedestrian is off any crosswalk, with a road within 10 m. | Walks straight across at its speed (1.4 m/s if under 1 m/s) × U(0.5, 2.0), for 5 s. |
 | `RUNNING_RED_LIGHT` | `PedestrianRunRedLightAction` | RunningRedLight | A pedestrian is waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red. | Crosses it end to end at 2.8 m/s. |
 | `STOP_CROSSING` | `StopCrossingAction` | StopCrossing | A pedestrian is on a crosswalk. | Stands still for N(2 s, 0.5 s), then walks a crosswalk's length on along its heading at 2.8 m/s. |
 

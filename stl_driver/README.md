@@ -24,8 +24,8 @@ collision_free   □ (clearance > 0)
 safe_headway     □ (headway_slack > 0)
 stay_on_route    □ (route_slack > 0)
 lane_keeping     □[0.5s,4s] (|lateral_offset| < 1.2)
-comfort          □ (|accel| ≤ 2 ∧ |jerk| < 4 ∧ |lat_accel| < 2.5)
-makes_progress   □ (clear ⇒ ◇[0,4s] (progress_slack > 0))
+comfort          □ (-4 < accel < 2 ∧ |jerk| < 4 ∧ |lat_accel| < 2.5)
+makes_progress   (□ clear) ⇒ ◇[0,4s] (progress_slack > 0)
 ```
 
 `uv run stl-driver explain` prints the live specification with its bounds.
