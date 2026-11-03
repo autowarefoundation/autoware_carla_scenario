@@ -3,10 +3,11 @@
 
 The runtime calls ``drive`` every 100 ms.  By default the search takes a fixed
 number of refinement steps and nothing cuts it short (``time_budget_s`` is
-``None``), so a slow step is late rather than shallower.  This is not a
-correctness test -- but a policy that quietly stopped refining would look
-fine everywhere else while driving noticeably worse, and that is worth
-noticing.
+``None``), so a slow step is late rather than shallower; a deployment that
+opts into a budget gets fewer steps instead, and must still get some.  This
+is not a correctness test -- but a policy that quietly stopped refining
+would look fine everywhere else while driving noticeably worse, and that is
+worth noticing.
 
 Measured, not estimated.  The thresholds are loose enough to survive a busy
 machine and tight enough to catch a real regression.
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import statistics
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -24,12 +26,15 @@ from carla_driver_interface.driver import DriveContext, SessionState
 from carla_driver_interface.geometry import Pose, Trajectory
 from carla_driver_interface.protocol import DynamicState, Vec3
 
+from stl_driver.config import STLDriverConfig
 from stl_driver.policy import EgoPolicy
 from tests.conftest import curved_route
 
 pytestmark = [pytest.mark.slow, pytest.mark.latency]
 
 N_MEASUREMENTS = 40
+#: The budget a deployment holding the 100 ms step would opt into.
+OPT_IN_BUDGET_S = 0.060
 
 
 def make_context(route: np.ndarray, speed_mps: float, time_now_us: int) -> DriveContext:
@@ -90,21 +95,35 @@ def test_the_search_fits_inside_the_policy_step(warm_policy):
     assert result.debug_scalars["stl_solve_seconds"] < 0.100
 
 
-def test_refinement_actually_runs_within_the_budget(warm_policy):
-    """A budget so tight that no refinement happens would be a silent downgrade."""
+def test_refinement_still_runs_under_an_opt_in_budget():
+    """A deployment's budget must leave room to refine, not just to sample.
+
+    `time_budget_s` is off by default, so this sets the 60 ms a deployment
+    holding the 100 ms step would choose. A search whose sampling stage alone
+    grew to fill it would still meet the deadline -- by refining nothing,
+    a silent downgrade nothing else would notice.
+    """
+    base = STLDriverConfig()
+    config = replace(base, optimizer=replace(base.optimizer, time_budget_s=OPT_IN_BUDGET_S))
+    policy = EgoPolicy(config=config)
+    policy.on_session_start(SessionState(uuid="budget", seed=0, scene_id="budget", cameras={}))
+
     ctx = make_context(curved_route(radius_m=60.0), speed_mps=7.0, time_now_us=0)
-    result = warm_policy.drive(ctx)
+    result = policy.drive(ctx)
+    assert policy.config.optimizer.time_budget_s == OPT_IN_BUDGET_S
     assert result.debug_scalars["stl_refine_steps"] >= 2.0
 
 
-def test_the_first_step_after_a_session_starts_is_within_budget():
+def test_the_first_step_after_a_session_starts_is_a_full_search_in_time():
     """The warm-up exists so that torch's start-up cost is already paid.
 
     Its effect cannot be observed by timing a second policy in the same
     process -- torch initialises once per process, so by the time any test
     runs it is long since warm. What *is* observable, and is what actually
-    matters, is that the first real step of a session lands inside the
-    budget rather than spending it all on start-up.
+    matters, is that the first real step of a session takes every refinement
+    step and still lands inside the 100 ms step rather than spending it on
+    start-up. (Under an opt-in budget the warm-up must also reach every
+    refinement step; `test_optimizer` checks that without a clock.)
     """
     policy = EgoPolicy()
     policy.on_session_start(SessionState(uuid="w", seed=0, scene_id="w", cameras={}))
@@ -115,8 +134,10 @@ def test_the_first_step_after_a_session_starts_is_within_budget():
 
     print(f"\n  first step after session start: {first_ms:.1f} ms")
     assert first_ms < 100.0
-    # And it was a real search, not a step that spent its budget starting up.
-    assert result.debug_scalars["stl_refine_steps"] >= 2.0
+    # And it was the whole search: with no budget nothing may cut it short,
+    # so a step that fits only by refining less is a regression too.
+    assert policy.config.optimizer.time_budget_s is None
+    assert result.debug_scalars["stl_refine_steps"] == policy.config.optimizer.n_refine_steps
 
 
 def test_the_batched_path_is_live(warm_policy):
