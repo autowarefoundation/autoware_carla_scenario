@@ -46,3 +46,9 @@ def test_the_scenario_compiles(
     values = yaml.safe_load(path.read_text())["scenario"]
     result = typecheck_scenario(scenario_cls, config_cls, values)
     assert result.ok, result.format()
+
+
+def test_every_scenario_has_a_config() -> None:
+    """An empty glob must fail: pytest would skip the check above with no cases."""
+    missing = [scenario_cls.__name__ for scenario_cls, _, paths in CASES if not paths]
+    assert not missing, f"no *.yaml config under {CONF} for {missing}"

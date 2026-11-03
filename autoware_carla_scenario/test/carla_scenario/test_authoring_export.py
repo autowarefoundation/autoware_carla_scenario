@@ -339,6 +339,12 @@ class TestGeneratedPackage:
         data = tomllib.loads((package / "pyproject.toml").read_text())
         assert data["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
 
+    def test_an_empty_parametrization_fails(self, package: Path) -> None:
+        """Computed cases that come out empty fail, not skip (#1214)."""
+        data = tomllib.loads((package / "pyproject.toml").read_text())
+        ini = data["tool"]["pytest"]["ini_options"]
+        assert ini["empty_parameter_set_mark"] == "fail_at_collect"
+
     def test_pyproject_pins_uv_when_its_version_is_known(self, package: Path) -> None:
         import shutil
 
