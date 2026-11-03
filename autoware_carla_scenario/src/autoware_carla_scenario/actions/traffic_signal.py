@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, Sequence, Union
 from ..conditions.base import BaseCondition
 from ..coordinate.traffic_light import (
     STOP_LINE_MATCH_M,
+    STOP_LINE_SEARCH_M,
     find_traffic_lights_for_lanelet2_id,
     lights_on_stop_line,
     stop_line_in_carla,
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 #: fallback now lives so the condition and the signal controllers share it.
 __all__ = [
     "STOP_LINE_MATCH_M",
+    "STOP_LINE_SEARCH_M",
     "TrafficLightTarget",
     "TrafficSignalAction",
     "lights_on_stop_line",

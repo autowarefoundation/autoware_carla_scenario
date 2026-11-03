@@ -167,6 +167,48 @@ class TestResolver:
         stop_line.assert_not_called()
 
 
+def _resolve(lights: List[_Light]) -> List[_Light]:
+    """Light 77's lights among *lights*, on a map that names no controller."""
+    with (
+        patch(_PATCH_CONTROLLER_ID, return_value=None),
+        patch(_PATCH_STOP_LINE, return_value=_LINE),
+    ):
+        return find_traffic_lights_for_lanelet2_id(_World(lights), 77)
+
+
+class TestResolverAwayFromTheLine:
+    """A town whose stop waypoints stand apart from its map's stop lines:
+    on Town10HD_Opt, 0.7 m to 6.7 m before them."""
+
+    def test_finds_the_light_whose_stop_stands_before_the_line(self) -> None:
+        own = _Light(3.5, -5.2, 0.0, 1.0)
+        next_junction = _Light(3.5, -60.0, 0.0, 1.0)
+        assert _resolve([own, next_junction]) == [own]
+
+    def test_finds_one_past_the_line_too(self) -> None:
+        own = _Light(3.5, 3.6, 0.0, 1.0)
+        assert _resolve([own]) == [own]
+
+    def test_the_nearest_of_two_on_the_lanes(self) -> None:
+        own = _Light(3.5, -4.0, 0.0, 1.0)
+        further = _Light(3.5, -7.5, 0.0, 1.0)
+        assert _resolve([further, own]) == [own]
+
+    def test_a_light_on_the_line_wins(self) -> None:
+        on_line = _Light(3.5, 0.5, 0.0, 1.0)
+        before = _Light(3.5, -4.0, 0.0, 1.0)
+        assert _resolve([before, on_line]) == [on_line]
+
+    def test_not_beyond_the_search(self) -> None:
+        assert _resolve([_Light(3.5, -9.0, 0.0, 1.0)]) == []
+
+    def test_not_a_lane_beside_the_line(self) -> None:
+        assert _resolve([_Light(9.5, -4.0, 0.0, 1.0)]) == []
+
+    def test_not_a_lane_running_along_the_line(self) -> None:
+        assert _resolve([_Light(3.5, -4.0, 1.0, 0.0)]) == []
+
+
 class TestConditionByStopLine:
     def test_fires_on_the_light_the_action_set(
         self, roadgen: tuple[_World, _Light, _Light]

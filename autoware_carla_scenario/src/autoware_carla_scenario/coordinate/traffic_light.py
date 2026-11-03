@@ -91,6 +91,12 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
 #: after when one of its stop waypoints lies this near (m) to that light's stop
 #: line, facing across it (:func:`lights_on_stop_line`).
 STOP_LINE_MATCH_M = 2.0
+#: Failing that, the light whose stop waypoint lies nearest the line, on the
+#: line's lanes and facing across it, within this (m) before or past it.  A
+#: CARLA town's stop waypoints need not stand on the line its Autoware map
+#: draws: on Town10HD_Opt they stand 0.7 m to 6.7 m before it, and the next
+#: light's are 50 m away or more.
+STOP_LINE_SEARCH_M = 8.0
 
 
 def stop_line_in_carla(
@@ -127,25 +133,44 @@ def lights_on_stop_line(
 ) -> "list[carla.Actor]":
     """The CARLA lights with a stop waypoint on *line* (CARLA ``(x, y)``):
     within :data:`STOP_LINE_MATCH_M` of it, its lane crossing it -- not a
-    light of the road beside, whose lanes run along it."""
+    light of the road beside, whose lanes run along it.
+
+    When no light has, the light (or lights, as near) whose stop waypoint on
+    the line's lanes -- across its span, facing across it -- is nearest it,
+    within :data:`STOP_LINE_SEARCH_M`: a town whose stop waypoints stand
+    apart from its map's stop lines."""
     (ax, ay), (bx, by) = line
     span = math.hypot(bx - ax, by - ay)
     if span <= 0.0:
         return []
     ux, uy = (bx - ax) / span, (by - ay) / span
     found: "list[carla.Actor]" = []
+    #: ``(distance from the line, light)`` of the lights on its lanes.
+    near: "list[tuple[float, carla.Actor]]" = []
     for actor in world.get_actors().filter("traffic.traffic_light*"):
+        nearest: Optional[float] = None
         for waypoint in actor.get_stop_waypoints():
             location = waypoint.transform.location
             forward = waypoint.transform.get_forward_vector()
-            along = min(max((location.x - ax) * ux + (location.y - ay) * uy, 0.0), span)
+            if abs(forward.x * ux + forward.y * uy) >= 0.5:
+                continue  # its lane runs along the line
+            along = (location.x - ax) * ux + (location.y - ay) * uy
+            clamped = min(max(along, 0.0), span)
             gap = math.hypot(
-                location.x - (ax + ux * along), location.y - (ay + uy * along)
+                location.x - (ax + ux * clamped), location.y - (ay + uy * clamped)
             )
-            if gap <= STOP_LINE_MATCH_M and abs(forward.x * ux + forward.y * uy) < 0.5:
+            if gap <= STOP_LINE_MATCH_M:
                 found.append(actor)
+                nearest = None
                 break
-    return found
+            if 0.0 <= along <= span and gap <= STOP_LINE_SEARCH_M:
+                nearest = gap if nearest is None else min(nearest, gap)
+        if nearest is not None:
+            near.append((nearest, actor))
+    if found or not near:
+        return found
+    closest = min(gap for gap, _ in near)
+    return [actor for gap, actor in near if gap <= closest + STOP_LINE_MATCH_M]
 
 
 def find_traffic_lights_for_lanelet2_id(
