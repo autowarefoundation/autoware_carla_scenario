@@ -80,6 +80,7 @@ from autoware_carla_scenario.odd import model as odd_model
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd import route as odd_route
+from autoware_carla_scenario.pedestrian import soma as pedestrian_soma
 from autoware_carla_scenario.route import active as route_active
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.route import model as route_model
@@ -1016,6 +1017,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "measures": (measures, tuple(measures.__all__)),
     # The model of one module of the checked utils package, which the scenario
     # check resolves (typecheck/check.py).
+    # What the checked actions.play_motion reads of the unchecked
+    # pedestrian.soma (numpy.load, numpy.typing).
+    "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
     "utils/traffic_light": (
         utils_traffic_light,
         (
@@ -2481,6 +2485,7 @@ _UNCOMPARED_MODEL_FILES: dict[str, str] = {
             "autoware_stack",
             "driver",
             "maps",
+            "pedestrian",
             "ros2",
             "ui",
             "utils",

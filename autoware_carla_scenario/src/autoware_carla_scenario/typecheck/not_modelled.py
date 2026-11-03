@@ -257,6 +257,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "scenario imports; the model declares no submodules of odd",
         ),
     },
+    f"{_PACKAGE}.pedestrian.soma": _each(
+        "DEFAULT_FPS SOMA_JOINTS",
+        "the frame rate a motion file that names none is read at, and the "
+        "SOMA rig's joints; load_soma_motion() reads them, not a scenario, "
+        "which plays a motion with PlayMotionAction; the model declares only "
+        "what the checked actions.play_motion uses of the module",
+    ),
     f"{_PACKAGE}.ros2.cyclone": _each(
         "control_from_message odometry_message ros_time trajectory_from_message",
         _CYCLONE,
@@ -476,6 +483,13 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "the adversities its last check found, as adversity_activity "
             "ActiveAdversity records, for a run's report; a scenario reads the "
             "condition's verdict, not them"
+        ),
+    },
+    "SomaMotion": {
+        "directions": (
+            "each frame's bone directions, a numpy array typed with "
+            "numpy.typing (`NDArray`), which Codon's numpy lacks; frame() "
+            "reads one frame of them, as play_motion does"
         ),
     },
     "PedestrianEntity": {
