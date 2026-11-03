@@ -23,7 +23,16 @@ def sanitize_opendrive(text: str) -> str:
     ``<cornerRoad>``) without a ``height``.
     """
     text = re.sub(r"<userData\b[^>]*/>|<userData\b.*?</userData>", "", text, flags=re.S)
-    text = re.sub(r'(<object [^>]*?)type="-1"', r'\1type="none"', text)
-    text = re.sub(r"<roadMark (?![^>]*color=)", '<roadMark color="standard" ', text)
-    text = re.sub(r"<cornerLocal (?![^>]*height=)", '<cornerLocal height="0" ', text)
-    return re.sub(r"<cornerRoad (?![^>]*height=)", '<cornerRoad height="0" ', text)
+    # Tag and attribute names are anchored: ``<object\b`` is not
+    # ``<objects>``, and ``\stype=`` is not ``subtype=`` (#1300).  ``[^>]``
+    # spans newlines, so a tag split across lines matches too.
+    text = re.sub(r'(<object\b[^>]*?\s)type="-1"', r'\1type="none"', text)
+    text = re.sub(
+        r"<roadMark(?=\s)(?![^>]*\scolor=)", '<roadMark color="standard"', text
+    )
+    text = re.sub(
+        r"<cornerLocal(?=\s)(?![^>]*\sheight=)", '<cornerLocal height="0"', text
+    )
+    return re.sub(
+        r"<cornerRoad(?=\s)(?![^>]*\sheight=)", '<cornerRoad height="0"', text
+    )
