@@ -172,14 +172,18 @@ class MapConfig:
 class EntityConfig:
     """Shared entity parameters for ground projection and spawn retry.
 
-    These settings apply to all vehicle entities (ego and NPC).
+    These settings apply to all vehicle entities (ego and NPC).  The
+    defaults are the runner's shipped ``entity`` values
+    (``examples/conf/entity/default.yaml``), which ``detect-no-3d-model``
+    searches with too, so the lanelets it flags are the ones a run cannot
+    project onto.
     """
 
     #: Search range (m) above the estimated z for the ground projection ray.
     ground_projection_ray_distance_upper: float = 5.0
 
     #: Search range (m) below the estimated z for the ground projection ray.
-    ground_projection_ray_distance_lower: float = 5.0
+    ground_projection_ray_distance_lower: float = 10.0
 
     #: Maximum number of upward-shift retries when the initial spawn fails.
     #: 0 disables retries.

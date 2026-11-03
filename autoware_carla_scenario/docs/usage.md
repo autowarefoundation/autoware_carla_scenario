@@ -1110,8 +1110,8 @@ uv run detect-no-3d-model $CONF/town10hd_opt.yaml
 # Connect to a remote CARLA server
 uv run detect-no-3d-model $CONF/nishishinjuku.yaml --host 192.168.1.100 --port 3000
 
-# Increase ray search range for hilly terrain
-uv run detect-no-3d-model $CONF/nishishinjuku.yaml --ray-upper 10.0 --ray-lower 10.0
+# Match a run that overrides entity.ground_projection_ray_distance_* (hilly terrain)
+uv run detect-no-3d-model $CONF/nishishinjuku.yaml --ray-upper 10.0 --ray-lower 20.0
 
 # Longer timeout for slow connections
 uv run detect-no-3d-model $CONF/nishishinjuku.yaml --timeout 30.0
@@ -1127,10 +1127,16 @@ uv run detect-no-3d-model $CONF/nishishinjuku.yaml -v
 | `yaml_path` | - | Yes | - | Path to map configuration YAML (map settings at the top level or under `map:`; see below) |
 | `--host` | - | No | `localhost` | CARLA server hostname |
 | `--port` | - | No | `2000` | CARLA server port |
-| `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters) |
-| `--ray-lower` | - | No | `5.0` | Ray search range below z estimate (meters) |
+| `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters); the runner's `entity.ground_projection_ray_distance_upper` |
+| `--ray-lower` | - | No | `10.0` | Ray search range below z estimate (meters); the runner's `entity.ground_projection_ray_distance_lower` |
 | `--timeout` | - | No | `10.0` | CARLA client timeout (seconds) |
 | `--verbose` | `-v` | No | false | Enable DEBUG logging |
+
+The ray defaults are the runner's shipped `entity.*` values, so the tool flags
+only lanelets a run's own ground projection would miss. If your runs override
+`entity.ground_projection_ray_distance_upper`/`_lower`, pass the same values
+here, or the tool may flag lanelets those runs project onto (or miss ones they
+cannot).
 
 ### Input YAML Requirements
 
@@ -1496,6 +1502,7 @@ uv run scenario scenario='intersection_passing/*' --resume-from 4
 - Run `detect-no-3d-model` to identify problematic lanelets
 - Add them to `no_3d_model_lanelet_ids` in the map config
 - Increase `entity.ground_projection_ray_distance_lower` for deeper ray casting
+  (and pass the same `--ray-lower` to `detect-no-3d-model`)
 - Increase `entity.spawn_retry_max_count` for more spawn attempts
 
 ### Scenario times out unexpectedly

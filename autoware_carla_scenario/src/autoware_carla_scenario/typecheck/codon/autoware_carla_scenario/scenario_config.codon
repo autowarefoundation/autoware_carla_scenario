@@ -29,7 +29,7 @@ class MapConfig:
 
 class EntityConfig:
     ground_projection_ray_distance_upper: float = 5.0
-    ground_projection_ray_distance_lower: float = 5.0
+    ground_projection_ray_distance_lower: float = 10.0
     spawn_retry_max_count: int = 10
     spawn_retry_t_step: float = 0.1
     spawn_retry_z_step: float = 0.5

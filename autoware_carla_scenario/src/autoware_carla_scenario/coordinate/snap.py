@@ -32,13 +32,17 @@ class GroundProjectionConfig:
     The ray is cast downward from ``z_estimate + ray_distance_upper`` and
     searches a total of ``ray_distance_upper + ray_distance_lower`` metres,
     i.e. from ``z_estimate + upper`` to ``z_estimate - lower``.
+
+    The defaults are those of :class:`~autoware_carla_scenario.EntityConfig`
+    (the runner's ``entity.ground_projection_ray_distance_*``), which the
+    runner builds this config from.
     """
 
     #: Search range (m) above the estimated z.
     ray_distance_upper: float = 5.0
 
     #: Search range (m) below the estimated z.
-    ray_distance_lower: float = 5.0
+    ray_distance_lower: float = 10.0
 
     #: Minimum absolute z delta (m) to log an info message.
     z_log_threshold: float = 0.01
