@@ -2369,7 +2369,12 @@ drive hold the animation frame the motion began on, so a walking
 pedestrian would glide with frozen legs. The action therefore fires only
 while the pedestrian stands (no faster than <code>STANDING_SPEED_MS</code>, 0.1 m/s)
 <em>and</em> its trigger holds: stop it first (<code>WalkStraightAction</code> at speed 0).
-A walking pedestrian's motion waits until it stands.</p>
+A walking pedestrian's motion waits until it stands. The speed is
+measured from where the walker stood a tick before, because CARLA reports
+a walker on its controller as standing even while it walks. So the motion
+does not start on the first tick the pedestrian is read, or on the tick
+it is brought in from under the map, when there is nothing to measure
+from yet. It never starts while the pedestrian is parked under the map.</p>
 </div>
 <h2 id="who-controls-the-pedestrian">Who controls the pedestrian<a class="headerlink" href="#who-controls-the-pedestrian" title="Permanent link">&para;</a></h2>
 <p>The motion takes the pedestrian's <strong>animation</strong>
@@ -2605,7 +2610,7 @@ cache, are <code>backends.ardy</code> of the config (<a href="../backends/">Back
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 12:04:43 UTC"><span class="timeago" datetime="2026-11-03T12:04:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 12:04:43 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 19:29:24 UTC"><span class="timeago" datetime="2026-11-03T19:29:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 19:29:24 UTC">2026-11-03</span>
   </span>
 
     
