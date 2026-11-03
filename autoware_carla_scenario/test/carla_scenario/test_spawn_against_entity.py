@@ -10,7 +10,8 @@ An entity brought in on the very frame a place is written against it is
 not seen there yet (a client sees a new transform from the next tick on):
 such a place is placed against where it was put, on that frame only (a
 walker where it was stood on the ground, #1278), and not once it was hidden or
-despawned again on that frame.
+despawned again on that frame.  A ``POSITION``-mode trajectory that puts it on
+that frame, after a spawn or on its own, records where it put it (#1282).
 
 Placed on the synthetic crossroads of :mod:`._route_maps` (CARLA's frame is
 the map's with y flipped): the S road's northbound lane ``S_IN`` runs at map
@@ -312,6 +313,81 @@ class TestHiddenAgainOnTheSameFrame:
         assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
         spawn_module.forget_brought_in(world, "npc2")  # type: ignore[arg-type]
         assert (_World.id, "npc1") in spawn_module._BROUGHT_IN
+
+
+def _registered(actor: MagicMock) -> Any:
+    """``npc1`` as a registered entity a trajectory can drive."""
+    return SimpleNamespace(
+        actor=actor,
+        use_autopilot=True,
+        release_from_traffic=lambda world: None,
+        resume_traffic=lambda world: None,
+    )
+
+
+def _stalled_at(y: float) -> StalledObjectAction:
+    """``npc1`` stood at CARLA ``(1.75, y)`` on ``S_IN`` from 0 s to 2 s."""
+    return StalledObjectAction(
+        "npc1", CarlaWorldPose(1.75, y, 0.0, yaw=_NORTHBOUND), 0.0, 2.0
+    )
+
+
+class TestPlacedByATrajectoryOnTheSameFrame:
+    """A ``POSITION``-mode trajectory teleports its entity: a place written
+    against it on the same frame reads it where the trajectory put it, not
+    where a SpawnAction put it before on that frame nor where the world still
+    shows it (#1282)."""
+
+    def test_it_replaces_where_a_spawn_put_it(self, brought_in: MagicMock) -> None:
+        world = _World(brought_in)
+        register_entity("npc1", _registered(brought_in))
+        try:
+            # Brought in at y = 80, then stood at y = 70 on the same frame.
+            assert SpawnAction("npc1", position=_ENTRY).apply(world)  # type: ignore[arg-type]
+            _stalled_at(70.0).tick(world, 0.0)  # type: ignore[arg-type]
+        finally:
+            unregister_entity("npc1")
+        assert SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
+        location = world.spawned[0].transform.location
+        assert (location.x, location.y) == pytest.approx((1.75, 65.0), abs=0.05)
+
+    def test_a_hidden_entity_it_brings_in_is_placed_against(
+        self, brought_in: MagicMock
+    ) -> None:
+        # No SpawnAction: the trajectory alone brings npc1 up from under the map.
+        world = _World(brought_in)
+        register_entity("npc1", _registered(brought_in))
+        try:
+            _stalled_at(70.0).tick(world, 0.0)  # type: ignore[arg-type]
+        finally:
+            unregister_entity("npc1")
+        applied = brought_in.set_transform.call_args_list[-1].args[0]
+        _frame, put = spawn_module._BROUGHT_IN[(_World.id, "npc1")]
+        assert (put.x, put.y, put.z) == pytest.approx(
+            (applied.location.x, applied.location.y, applied.location.z)
+        )
+        assert put.yaw == pytest.approx(applied.rotation.yaw)
+        assert SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
+        location = world.spawned[0].transform.location
+        assert (location.x, location.y) == pytest.approx((1.75, 65.0), abs=0.05)
+
+    def test_on_a_later_frame_it_is_read_where_it_stands(
+        self, brought_in: MagicMock
+    ) -> None:
+        world = _World(brought_in)
+        register_entity("npc1", _registered(brought_in))
+        try:
+            _stalled_at(70.0).tick(world, 0.0)  # type: ignore[arg-type]
+        finally:
+            unregister_entity("npc1")
+        world.frame += 1
+        brought_in.get_location.return_value = carla.Location(1.75, 60.0, 0.0)
+        brought_in.get_transform.return_value = carla.Transform(
+            carla.Location(1.75, 60.0, 0.0), carla.Rotation(yaw=_NORTHBOUND)
+        )
+        assert SpawnAction(name="cone", position=_AHEAD).apply(world)  # type: ignore[arg-type]
+        location = world.spawned[0].transform.location
+        assert (location.x, location.y) == pytest.approx((1.75, 55.0), abs=0.05)
 
 
 class TestTheHeading:
