@@ -7,12 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
-from ..coordinate.traffic_light import (
-    STOP_LINE_MATCH_M,
-    find_traffic_lights_for_lanelet2_id,
-    lights_on_stop_line,
-    stop_line_in_carla,
-)
+from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -20,14 +15,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Re-exported from :mod:`..coordinate.traffic_light`, where the stop-line
-#: fallback now lives so the condition and the signal controllers share it.
 __all__ = [
-    "STOP_LINE_MATCH_M",
     "TrafficLightTarget",
     "TrafficSignalAction",
-    "lights_on_stop_line",
-    "stop_line_in_carla",
 ]
 
 

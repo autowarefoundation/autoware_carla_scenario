@@ -13,18 +13,19 @@ The rest supply the road network a run happens to have loaded, because
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 from ..utils.traffic_light import (
     get_signal_ids_for_controller as _signal_ids_of,
     lanelet2_traffic_light_id_to_opendrive_controller_id as _controller_id_of,
 )
+from ..utils.light_lanes import lights_of_element
 from .map_manager import MapManager
 from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .transform import to_carla_location
 
 if TYPE_CHECKING:
+    import lanelet2
     import typesafe_carla.carla as carla
 
 
@@ -87,65 +88,20 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
     return _signal_ids_of(MapManager.get_instance().road_network, controller_id)
 
 
-#: A CARLA light stands for a Lanelet2 light no OpenDRIVE controller is named
-#: after when one of its stop waypoints lies this near (m) to that light's stop
-#: line, facing across it (:func:`lights_on_stop_line`).
-STOP_LINE_MATCH_M = 2.0
-
-
-def stop_line_in_carla(
-    lanelet2_tl_id: int,
-) -> Optional[tuple[tuple[float, float], tuple[float, float]]]:
-    """The ends of Lanelet2 light *lanelet2_tl_id*'s stop line, in CARLA world
-    ``(x, y)``, or ``None`` when the loaded map has no such light or line."""
+def _loaded_map() -> "Optional[tuple[lanelet2.core.LaneletMap, tuple[float, float]]]":
+    """The Lanelet2 map the run loaded, and its offset from CARLA's frame;
+    ``None`` when none is loaded."""
     if TYPE_CHECKING:
         return None  # the Lanelet2 map's geometry is not compiled (docs/typecheck.md)
-    from ..trajectory.model import MapPose  # noqa: PLC0415
-    from ..trajectory.resolve import map_pose_to_carla  # noqa: PLC0415
-
     try:
         manager = MapManager.get_instance()
-        element = manager.lanelet_map.regulatoryElementLayer[int(lanelet2_tl_id)]
-        line = element.stopLine
-        offset, z_offset = manager.mgrs_offset, manager.z_offset
+        lanelet_map = manager.lanelet_map
+        offset = manager.mgrs_offset
     except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
         return None
-    if line is None or len(line) < 2:
+    if lanelet_map is None:
         return None
-    ends = []
-    for point in (line[0], line[len(line) - 1]):
-        x, y, _z, _yaw = map_pose_to_carla(
-            MapPose(x=float(point.x), y=float(point.y)), offset, z_offset
-        )
-        ends.append((x, y))
-    return ends[0], ends[1]
-
-
-def lights_on_stop_line(
-    world: "carla.World",
-    line: tuple[tuple[float, float], tuple[float, float]],
-) -> "list[carla.Actor]":
-    """The CARLA lights with a stop waypoint on *line* (CARLA ``(x, y)``):
-    within :data:`STOP_LINE_MATCH_M` of it, its lane crossing it -- not a
-    light of the road beside, whose lanes run along it."""
-    (ax, ay), (bx, by) = line
-    span = math.hypot(bx - ax, by - ay)
-    if span <= 0.0:
-        return []
-    ux, uy = (bx - ax) / span, (by - ay) / span
-    found: "list[carla.Actor]" = []
-    for actor in world.get_actors().filter("traffic.traffic_light*"):
-        for waypoint in actor.get_stop_waypoints():
-            location = waypoint.transform.location
-            forward = waypoint.transform.get_forward_vector()
-            along = min(max((location.x - ax) * ux + (location.y - ay) * uy, 0.0), span)
-            gap = math.hypot(
-                location.x - (ax + ux * along), location.y - (ay + uy * along)
-            )
-            if gap <= STOP_LINE_MATCH_M and abs(forward.x * ux + forward.y * uy) < 0.5:
-                found.append(actor)
-                break
-    return found
+    return lanelet_map, (float(offset[0]), float(offset[1]))
 
 
 def find_traffic_lights_for_lanelet2_id(
@@ -155,8 +111,9 @@ def find_traffic_lights_for_lanelet2_id(
 
     The Lanelet2 id resolves to an OpenDRIVE controller and thence to the
     signal ids the controller drives.  A light no controller is named after
-    (a roadgen map, #659 and #901) is found by its stop line instead
-    (:func:`lights_on_stop_line`).  This is the one resolution
+    (a roadgen map, #659 and #901; a carla-ue5-maps map) is found by its
+    lanes instead (:func:`~..utils.light_lanes.lights_of_element`), as a
+    run's T4Scene finds it.  This is the one resolution
     :class:`~autoware_carla_scenario.actions.TrafficSignalAction`,
     :class:`~autoware_carla_scenario.conditions.TrafficSignalCondition` and
     the signal controllers all make, so that a light one of them sets is the
@@ -171,10 +128,11 @@ def find_traffic_lights_for_lanelet2_id(
     """
     controller_id = lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)
     if controller_id is None:
-        line = stop_line_in_carla(lanelet2_tl_id)
-        if line is None:
+        loaded = _loaded_map()
+        if loaded is None:
             return []
-        return lights_on_stop_line(world, line)
+        lanelet_map, offset = loaded
+        return lights_of_element(world, lanelet_map, offset, lanelet2_tl_id)
     # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
     controller: int = controller_id
     signal_ids = set(get_signal_ids_for_controller(controller))
