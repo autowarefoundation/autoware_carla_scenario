@@ -22,6 +22,11 @@ This guide will help you install the `autoware-carla-scenario` package.
   `requires-python = ">=3.10,<3.15"`: the interpreters CI tests. No
   dependency caps it any more; it is raised together with CI's interpreter
   matrix. Check your version with `python --version`.
+- **`scenario-setup` needs Python 3.10.12, 3.11.4 or 3.12+** — it unpacks
+  CARLA with `tarfile`'s extraction filters, which earlier patch releases
+  (Ubuntu 22.04's stock 3.10.6, for one) lack; there it stops with a message
+  rather than unpacking without them. Upgrade Python, or install CARLA
+  another way and set `CARLA_EXECUTABLE`.
 - **Hydra on Python 3.14** — Hydra 1.3 gives `--shell-completion` a help
   object that Python 3.14's argparse refuses ("badly formed help string"),
   so a `@hydra.main` command would fail before it parses anything (#692).
