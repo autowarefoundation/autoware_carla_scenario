@@ -452,6 +452,12 @@ class OptimizerConfig:
     #: checks whether it has already been exceeded lets a step starting at
     #: 59 ms of a 60 ms budget run to 70 -- and overrunning degrades into fewer
     #: refinement steps rather than into a missed deadline.
+    #:
+    #: It is not a hard cap. The sampling stage always runs, however long it
+    #: takes, and so does the first refinement step unless sampling has already
+    #: spent the budget: before it there is no measured step cost to predict
+    #: with. A budget that leaves less than one step after sampling is overrun
+    #: by up to that step; every later step is predicted.
     time_budget_s: float | None = None
     #: Fixed for reproducibility -- the runtime's rollouts are seeded, and a
     #: policy that re-randomised would make them irreproducible.

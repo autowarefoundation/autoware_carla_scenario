@@ -521,17 +521,94 @@ def test_the_search_is_a_fixed_amount_of_work_by_default(optimizer):
     assert solution.n_refine_steps == CONFIG.optimizer.n_refine_steps
 
 
-def test_the_time_budget_is_honoured_when_one_is_set(optimizer):
-    """Deployments that must hold a deadline can still ask for one."""
-    from dataclasses import replace
+# A refinement step's cost on the fake clock below. A power of two, so every
+# sum of steps is exact and "a budget of exactly k steps" means exactly that.
+STEP_COST_S = 1.0 / 64.0
 
-    budget = 0.070
-    config = replace(CONFIG, optimizer=replace(CONFIG.optimizer, time_budget_s=budget))
-    bounded = RobustnessOptimizer(RuleSet(build_rules(config)), config)
-    bounded.solve(make_inputs(config, speed0_mps=6.0))  # pay torch's start-up
-    solution = bounded.solve(make_inputs(config, speed0_mps=6.0))
-    # Generous: this asserts the cutoff works, not that the machine is fast.
-    assert solution.solve_seconds < budget * 4.0
+
+def _solve_on_a_fake_clock(monkeypatch, budget_s: float, sampling_cost_s: float = 0.0):
+    """Solve under ``budget_s`` with a clock that only the search moves.
+
+    Wall-clock timing cannot test the cutoff: the unbudgeted search fits
+    inside any budget generous enough to be reliable, so the cutoff never
+    fires. Here `time.perf_counter` in `stl_driver.optimizer` reads a counter
+    that advances by `STEP_COST_S` per refinement forward pass (and by
+    ``sampling_cost_s`` for the sampling stage) and by nothing else, so how
+    many steps fit is a matter of arithmetic, not of how busy the machine is.
+
+    Nothing is compiled: `solve` never compiles (only `prepare` does), and the
+    forward pass handed to the loop is the eager one wrapped to tick the clock.
+    """
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import stl_driver.optimizer as optimizer_module
+
+    config = replace(CONFIG, optimizer=replace(CONFIG.optimizer, time_budget_s=budget_s))
+    search = RobustnessOptimizer(RuleSet(build_rules(config)), config)
+    now = [0.0]
+    monkeypatch.setattr(optimizer_module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+
+    score_batch = search._score_batch
+
+    def timed_score_batch(*args, **kwargs):
+        now[0] += sampling_cost_s
+        return score_batch(*args, **kwargs)
+
+    def timed_refine(params, inputs, temperature):
+        now[0] += STEP_COST_S
+        return search._refine_losses(params, inputs, temperature)
+
+    search._score_batch = timed_score_batch  # type: ignore[method-assign]
+    search._compiled_refine = timed_refine
+    return config, search.solve(make_inputs(config, speed0_mps=6.0))
+
+
+@pytest.mark.parametrize("fits", [1, 2, 3])
+def test_the_time_budget_stops_after_exactly_the_steps_that_fit(monkeypatch, fits):
+    """A budget of exactly k steps takes k steps: not fewer, not all of them."""
+    config, solution = _solve_on_a_fake_clock(monkeypatch, fits * STEP_COST_S)
+    assert 0 < fits < config.optimizer.n_refine_steps
+    assert solution.n_refine_steps == fits
+    assert solution.solve_seconds == fits * STEP_COST_S
+
+
+@pytest.mark.parametrize("started", [2, 3])
+def test_the_time_budget_predicts_the_step_it_is_about_to_allow(monkeypatch, started):
+    """A step that would overrun is not started, even though time remains.
+
+    Half a step short of ``started`` steps, the budget has not yet been spent
+    when step ``started`` would begin -- only a cutoff that adds the cost of
+    the step it is about to allow sees that it will not fit. One that checks
+    the time already spent lets it run and misses the deadline by half a step.
+    """
+    budget = (started - 0.5) * STEP_COST_S
+    _, solution = _solve_on_a_fake_clock(monkeypatch, budget)
+    assert solution.n_refine_steps == started - 1
+    assert solution.solve_seconds <= budget
+
+
+def test_a_budget_below_one_step_overruns_by_at_most_the_first_step(monkeypatch):
+    """A known limit of the bound, pinned so that it stays only this large.
+
+    Before any step there is no measured cost to predict with, so the first
+    step runs whenever the budget is not already spent -- here it overruns a
+    budget of half a step by half a step (`OptimizerConfig.time_budget_s`
+    says so). What must hold is that the overrun stops there: the first
+    step's measured cost says the second cannot fit. A cutoff that learns to
+    predict the first step too (from the warm-up, say) should change this
+    test to expect no step at all.
+    """
+    budget = STEP_COST_S / 2
+    _, solution = _solve_on_a_fake_clock(monkeypatch, budget)
+    assert solution.n_refine_steps == 1
+    assert solution.solve_seconds <= budget + STEP_COST_S
+
+
+def test_a_budget_spent_by_sampling_takes_no_refinement_step(monkeypatch):
+    """Time already gone before refinement starts leaves room for no step."""
+    _, solution = _solve_on_a_fake_clock(monkeypatch, STEP_COST_S / 2, sampling_cost_s=STEP_COST_S)
+    assert solution.n_refine_steps == 0
 
 
 def test_a_tiny_budget_degrades_to_fewer_steps_rather_than_failing():
