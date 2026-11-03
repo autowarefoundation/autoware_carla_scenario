@@ -1,12 +1,21 @@
 # Model of autoware_carla_scenario.t4_scene (docs/typecheck.md), which reads
 # trajectory logs with orjson and writes Protobuf messages: what the checked
-# scenario_runner and scenario_queue use of it, with the signatures of the
-# Python class.
+# scenario_runner, scenario_queue and t4_scene.exporter use of it, with the
+# signatures of the Python class and function.
 
 from pathlib import Path
 from typing import Optional
 
 from ._tc import _keyword_only as _acs_keyword_only
+
+
+# write_t4_scene(log_path, output_dir=None, **options): the scene's path and
+# the map resource's (None without a map), which the checked
+# t4_scene.exporter writes each log with. A path is a str or a pathlib.Path;
+# the options are trajectory_log_to_t4_scene()'s keywords.
+def write_t4_scene(log_path, output_dir = None, **options) -> Tuple[Path, Optional[Path]]:
+    Path(log_path)
+    raise NotImplementedError()
 
 
 class T4SceneExporter:

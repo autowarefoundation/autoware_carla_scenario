@@ -314,11 +314,12 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     ),
     f"{_PACKAGE}.t4_scene": _each(
         "LOG_SUFFIX MAP_SUFFIX SCENE_SUFFIX T4SceneExport map_resource "
-        "trajectory_log_to_t4_scene write_t4_scene",
+        "trajectory_log_to_t4_scene",
         "writes a run's trajectory log as a T4Scene, which the runner does "
         "after a run (t4scene.enabled) and scenario-t4scene does from the "
         "shell, not a scenario; the model declares only the T4SceneExporter "
-        "the checked runner hands each log to",
+        "the checked runner hands each log to and the write_t4_scene() the "
+        "checked t4_scene.exporter writes it with",
     ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
