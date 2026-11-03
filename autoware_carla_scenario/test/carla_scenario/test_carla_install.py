@@ -226,6 +226,39 @@ def test_the_cli_reports_failures(home: Path, tmp_path: Path) -> None:
     assert installed_executable() is not None
 
 
+@pytest.fixture
+def no_extraction_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``tarfile`` as Python 3.10.0-3.10.11 and 3.11.0-3.11.3 have it."""
+    monkeypatch.delattr(tarfile, "data_filter")
+    monkeypatch.setattr(carla_install.platform, "python_version", lambda: "3.10.4")
+
+
+@pytest.mark.usefixtures("no_extraction_filters")
+def test_a_python_without_extraction_filters_is_reported_on_one_line(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert carla_install.main(["--url", _carla(tmp_path / "carla.tar.gz")]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "scenario-setup: scenario-setup needs tarfile's extraction filters, which "
+        "Python 3.10.4 lacks: upgrade Python to 3.10.12, 3.11.4, 3.12 or later\n"
+    )
+    assert "Downloading" not in captured.out  # refused before anything is fetched
+    assert installed_executable() is None
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+@pytest.mark.usefixtures("no_extraction_filters")
+def test_unpacking_without_extraction_filters_extracts_nothing(
+    tmp_path: Path,
+) -> None:
+    _carla(tmp_path / "carla.tar.gz")
+    data = (tmp_path / "carla.tar.gz").read_bytes()
+    with pytest.raises(RuntimeError, match=r"upgrade Python to 3\.10\.12"):
+        carla_install._unpack(io.BytesIO(data), tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
 def test_a_missing_local_path_is_reported_on_one_line(
     home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -109,11 +109,12 @@ def install(
         RuntimeError: There is not room for the package, it has no launcher, or
             *target* holds something other than a CARLA this function installed.
             A previous install is left as it was, and so is anything else.
+            Also raised, before any download, on a Python whose ``tarfile``
+            lacks extraction filters (before 3.10.12 / 3.11.4).
         FileNotFoundError: *url* is a local path or ``file://`` URL naming no file.
         ValueError: *url* has a scheme urllib cannot open.
     """
-    if not hasattr(tarfile, "data_filter"):  # added in 3.10.12 / 3.11.4
-        raise RuntimeError("scenario-setup needs Python 3.10.12, 3.11.4 or later")
+    _require_extraction_filters()  # before anything is downloaded
     # The runner imports this module for install_dir() alone; these it does not need.
     import urllib.error  # noqa: PLC0415
     import urllib.parse  # noqa: PLC0415
@@ -370,6 +371,26 @@ def _check_room(directory: Path, packed: int) -> None:
         )
 
 
+def _require_extraction_filters() -> None:
+    """Refuse a Python whose ``tarfile`` has no extraction filters.
+
+    ``extractall(filter=...)`` and ``tarfile.data_filter``, which keep the
+    archive from writing outside the destination, came in Python 3.12 and in
+    the 3.10.12 and 3.11.4 security releases; ``requires-python`` still admits
+    the patch releases before those (Ubuntu 22.04 released with 3.10.4), where
+    the extraction would otherwise fail with a ``TypeError`` traceback.
+
+    Raises:
+        RuntimeError: The running Python is one of those older patch releases.
+    """
+    if not hasattr(tarfile, "data_filter"):
+        raise RuntimeError(
+            f"scenario-setup needs tarfile's extraction filters, which Python "
+            f"{platform.python_version()} lacks: upgrade Python to 3.10.12, "
+            f"3.11.4, 3.12 or later"
+        )
+
+
 def _strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
     """A tar extraction filter: drop *member*'s top directory, then the data filter.
 
@@ -403,6 +424,7 @@ def _strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
 
 def _unpack(stream: IO[bytes], destination: Path) -> None:
     """Unpack a gzipped tar *stream* into *destination*, dropping its top directory."""
+    _require_extraction_filters()
     destination.mkdir(parents=True)
     # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
     with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
