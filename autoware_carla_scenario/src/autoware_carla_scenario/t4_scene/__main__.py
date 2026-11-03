@@ -65,7 +65,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--rear-axle-offset",
         type=float,
-        help="the ego's rear axle from its origin, metres along x (default: half its box back)",
+        help=(
+            "the ego's rear axle from its origin, metres along x (default: the"
+            " log's rear_axle record, else a quarter of its box length back,"
+            " -0.5 * extent.x)"
+        ),
     )
     parser.add_argument(
         "--no-map", action="store_true", help="write the scene without a map"

@@ -872,8 +872,10 @@ def trajectory_log_to_t4_scene(
             the scene's objects; ``None`` takes all of them.
         rear_axle_offset_m: Where the ego's ``base_link``, the rear axle, is
             from its actor origin along its x axis (negative: behind).  By
-            default half its box behind, as the run itself takes it on CARLA
-            UE5 (``driver.rear_axle_offset_m``).
+            default as the run took it (the log's ``rear_axle`` record), else
+            half its box's half-length behind (``-0.5 * extent.x``, a quarter
+            of its length), as the run itself takes it on CARLA UE5
+            (``driver.rear_axle_offset_m``).
         with_map: Write the run's Lanelet2 map as the scene's map.
         lanelet2_path: The Lanelet2 map to use instead of the one the log
             names (a map moved since the run).
@@ -1004,7 +1006,8 @@ def log_to_scene(
     _register_in_map_frame(scene)
 
     frame = _MapFrame.of(log.map)
-    # Given, else as the run took it, else half the box behind the origin:
+    # Given, else as the run took it, else half the box's half-length (a
+    # quarter of its length) behind the origin:
     # where the run takes it on CARLA UE5 without wheel positions.
     rear_axle = rear_axle_offset_m
     if rear_axle is None:
