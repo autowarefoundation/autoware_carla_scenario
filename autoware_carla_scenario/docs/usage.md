@@ -95,6 +95,8 @@ Python version, and the viewer's Run form reads it the same way.
 
 - All scenarios in a batch **must share the same map** (CARLA loads one map per session)
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
+  (a batch started in the same second as another gets `HH-MM-SS-1`,
+  then `HH-MM-SS-2`, ...: every batch has a directory of its own)
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --

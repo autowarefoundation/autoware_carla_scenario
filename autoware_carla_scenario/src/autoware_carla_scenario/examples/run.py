@@ -1272,6 +1272,11 @@ def _log_batch_plan(
 def _make_batch_output_dir() -> Path:
     """Create a Hydra-style timestamped output directory for batch runs.
 
+    The directory is this batch's alone: it is created with ``mkdir``, which
+    fails when it exists, so two batches started in the same second never
+    share one (#1223).  The first gets ``HH-MM-SS``, the next ``HH-MM-SS-1``,
+    then ``HH-MM-SS-2``, and so on.
+
     Returns:
         Absolute path to the created directory
         (e.g. ``outputs/2026-03-13/12-00-00/``).
@@ -1279,9 +1284,18 @@ def _make_batch_output_dir() -> Path:
     from datetime import datetime  # noqa: PLC0415
 
     now = datetime.now()  # noqa: DTZ005
-    output_dir = Path("outputs") / now.strftime("%Y-%m-%d") / now.strftime("%H-%M-%S")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir.resolve()
+    day = Path("outputs") / now.strftime("%Y-%m-%d")
+    day.mkdir(parents=True, exist_ok=True)
+    name = now.strftime("%H-%M-%S")
+    suffix = 0
+    while True:
+        output_dir = day / (name if suffix == 0 else f"{name}-{suffix}")
+        try:
+            output_dir.mkdir()
+        except FileExistsError:
+            suffix += 1
+            continue
+        return output_dir.resolve()
 
 
 def _batch_queue(
