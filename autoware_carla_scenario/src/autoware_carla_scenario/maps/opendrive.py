@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from .cache import _copy_atomically, _write_atomically
 from .resolver import ResolvedMap
 
 if TYPE_CHECKING:
@@ -104,27 +104,10 @@ def capture_opendrive(world: carla.World, destination: Path) -> Path:
     lives beside the other three so a run fills the same cache file the editor's
     Fetch button does.  Written atomically: runs in other processes (the tasks
     of a SLURM batch, docs/slurm.md) may capture the same map meanwhile, and
-    none of them may read half a file.
+    none of them may read half a file (``maps.cache._write_atomically``).
     """
-    import os  # noqa: PLC0415
-    import tempfile  # noqa: PLC0415
-
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # Unique in the directory, whichever host (the cache may be shared) and pid.
-    fd, name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
-    )
-    os.close(fd)
-    try:
-        Path(name).write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
-        # 0o644 (Codon has no octal literal): a cache file others read, not
-        # mkstemp's 0o600.
-        os.chmod(name, 420)
-        # A rename within the directory: another process sees the old file or
-        # the new one, never a part.
-        shutil.move(name, str(destination))
-    finally:
-        Path(name).unlink(missing_ok=True)  # gone already once moved
+    _write_atomically(destination, str(world.get_map().to_opendrive()))
     return destination
 
 
@@ -236,7 +219,11 @@ def ensure_xodr(
 
     installed = installed_xodr(name)
     if installed is not None:
-        shutil.copy2(installed, destination)
+        # Copied whole, as the fetch below writes: another process resolving
+        # the same map reads the old file or the new one, never a part.
+        # Byte for byte, mode and mtime as well: load_map_by_overwriting_xodr
+        # may copy this file back over the installation's.
+        _copy_atomically(installed, destination)
         logger.info("Took OpenDRIVE for %s from %s", name, installed)
         return destination
 
@@ -248,6 +235,8 @@ def ensure_xodr(
         )
 
     text = _from_server(name, host=host, port=port, timeout=timeout, load=load)
-    destination.write_text(text, encoding="utf-8")
+    # Atomically (#1264): another process resolving the same map -- a task of
+    # the same SLURM batch, the editor -- may read the file meanwhile.
+    _write_atomically(destination, text)
     logger.info("Fetched OpenDRIVE for %s from %s:%s", name, host, port)
     return destination
