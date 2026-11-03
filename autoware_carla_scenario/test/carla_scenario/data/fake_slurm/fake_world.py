@@ -2,7 +2,7 @@
 
 :func:`install` replaces what ``examples.run`` builds and runs a batch with
 (``build_scenario``, ``ScenarioQueue``, ``resolve_map_paths``,
-``build_traffic_backend``), in the test's process for a local batch and, through
+``build_traffic_backend``, ``use_canvas``), in the test's process for a local batch and, through
 the ``sitecustomize`` the tests put on ``PYTHONPATH``, in every SLURM task.
 
 A case's outcome depends only on its config, as a real one's should: the same
@@ -13,10 +13,14 @@ its command line, in a session of its own, as ``CarlaServerManager`` starts
 CARLA -- which it stops on exit.
 
 Environment knobs: ``FAKE_CASE_SECONDS`` (each case takes this long),
+``FAKE_SCENARIO_OVERRIDES`` (a JSON object: the overrides a scenario, by name,
+is composed with besides its own, as if its YAML set them -- one case of a
+batch set differently from another),
 ``FAKE_CRASH_DIGESTS`` (comma-separated prefixes of case digests: the process
 dies, ``os._exit``, on such a case once -- a file in ``FAKE_RECORD_DIR``
 remembers it did), ``FAKE_RECORD_DIR`` (where each process writes the ports
-and stems it ran with).
+and stems it ran with, and the batch-level settings each queue was built
+with, ``queues.jsonl``).
 
 A case whose digest is a multiple of 5 raises on every attempt (``ERROR``)
 after its trajectory log was opened, as a real run that raises once it has
@@ -86,6 +90,7 @@ class FakeQueue:
         self._pending: list[tuple[FakeScenario, Any, str | None]] = []
         self._errored: list[int] = []
         self._carla: subprocess.Popen[bytes] | None = None
+        _record_queue(kwargs)
 
     def add(
         self,
@@ -220,6 +225,75 @@ class FakeQueue:
         return results
 
 
+#: The ``canvas.config`` the process last applied (:func:`fake_use_canvas`).
+_CANVAS: str | None = None
+
+
+def fake_use_canvas(config: Any) -> Path | None:
+    """``canvas.use_canvas`` without carla_canvas: remembers *config*."""
+    global _CANVAS
+    _CANVAS = None if config is None or str(config) == "" else str(config)
+    return None if _CANVAS is None else Path(_CANVAS)
+
+
+def queue_settings(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The batch-level settings a queue was built with (*kwargs*), and the
+    process's canvas and heavy metrics as it was built: what must not depend
+    on which task, or how many, ran the batch's cases."""
+    from autoware_carla_scenario.commonroad.session import commonroad_settings
+
+    rerun = kwargs.get("rerun")
+    t4scene = kwargs.get("t4scene")
+    return {
+        "rerun": None
+        if rerun is None
+        else {
+            "strict": rerun._strict,
+            "lidar_max_points": rerun._lidar_max_points,
+            "cameras": rerun._cameras,
+        },
+        "t4": kwargs.get("t4") is not None,
+        "t4scene": None
+        if t4scene is None
+        else {"step_s": t4scene.step_s, "max_distance_m": t4scene.max_distance_m},
+        "cooldown_seconds": kwargs.get("cooldown_seconds"),
+        "max_tick_rate_hz": kwargs.get("max_tick_rate_hz"),
+        "world_reset": kwargs.get("world_reset"),
+        "reload_every": kwargs.get("reload_every"),
+        "canvas": _CANVAS,
+        "heavy_metrics": commonroad_settings().heavy_metrics,
+    }
+
+
+def _record_queue(kwargs: dict[str, Any]) -> None:
+    record = os.environ.get("FAKE_RECORD_DIR")
+    if not record:
+        return
+    with open(Path(record) / "queues.jsonl", "a") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "task": os.environ.get("SLURM_ARRAY_TASK_ID"),
+                    "settings": queue_settings(kwargs),
+                }
+            )
+            + "\n"
+        )
+
+
+def compose_with_scenario_overrides(compose: Any) -> Any:
+    """*compose* (``examples.run._compose_config``), adding to a scenario's
+    overrides those ``FAKE_SCENARIO_OVERRIDES`` names for it."""
+
+    def composed(name: str, overrides: list[str]) -> Any:
+        extra = json.loads(os.environ.get("FAKE_SCENARIO_OVERRIDES") or "{}")
+        return compose(name, [*overrides, *extra.get(name, [])])
+
+    composed.__wrapped__ = compose  # type: ignore[attr-defined]
+    return composed
+
+
 def _record_stem(stem: str, scenario: FakeScenario) -> None:
     record = os.environ.get("FAKE_RECORD_DIR")
     if not record:
@@ -272,3 +346,6 @@ def install(run: Any = None) -> None:
     run.ScenarioQueue = FakeQueue
     run.resolve_map_paths = fake_map_paths
     run.build_traffic_backend = lambda _cfg: None
+    run.use_canvas = fake_use_canvas
+    if not hasattr(run._compose_config, "__wrapped__"):
+        run._compose_config = compose_with_scenario_overrides(run._compose_config)

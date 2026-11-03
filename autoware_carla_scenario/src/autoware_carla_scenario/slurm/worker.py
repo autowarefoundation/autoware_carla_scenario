@@ -412,16 +412,17 @@ class _Task:
         write_json(self.layout.task(self.submission, self.task), self.status)
 
 
-def _apply_metrics(run: Any, configs: list[Any]) -> bool:
+def _apply_metrics(run: Any, configs: list[Any], heavy: Any = None) -> bool:
     """Turn the heavy CommonRoad metrics on or off for this task's cases as
     the submitting ``scenario`` command decided for the whole batch; whether
     they are on.
 
-    Its decision comes in ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED``
+    Its decision is *heavy*, the manifest's ``batch_settings.heavy_metrics``;
+    for a manifest without it, ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED``
     (the manifest's environment snapshot, ``launcher.env_passthrough``): a
     task's cases are only some of the batch's, whose first ``metrics.heavy``
     may be in another task's, so the task does not decide again from its own.
-    Without it (a batch whose snapshot left it out), as
+    Without either (an older batch whose snapshot left it out), as
     :func:`~autoware_carla_scenario.examples.run.apply_metrics` decides from
     *configs*.
     """
@@ -431,12 +432,48 @@ def _apply_metrics(run: Any, configs: list[Any]) -> bool:
         configure_commonroad_metrics,
     )
 
-    decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
-    if not decided:
-        return bool(run.apply_metrics(*configs))
-    heavy = _heavy_metrics_on(decided)
+    if heavy is None:
+        decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
+        if not decided:
+            return bool(run.apply_metrics(*configs))
+        heavy = _heavy_metrics_on(decided)
+    heavy = bool(heavy)
+    # Carried to the runs' own processes, as apply_metrics carries it.
+    os.environ[HEAVY_METRICS_DECIDED_ENV] = "1" if heavy else "0"
     configure_commonroad_metrics(heavy_metrics=heavy)
     return heavy
+
+
+def _batch_configs(
+    run: Any,
+    manifest: dict[str, Any],
+    record: dict[str, Any],
+    chunk: list[int],
+    configs: list[Any],
+    slot: PortSlot,
+) -> dict[int, Any]:
+    """The configs of the cases *record* (the manifest's ``batch_settings``)
+    names, by index: this task's own from *configs* (its cases, *chunk*), the
+    others composed here as the task's own are, at this node's paths and on
+    this task's ports."""
+    wanted = {
+        int(record.get("first_case", 0)),
+        *map(int, record.get("rerun_cases", [])),
+    }
+    if record.get("canvas_case") is not None:
+        wanted.add(int(record["canvas_case"]))
+    own = dict(zip(chunk, configs))
+    found: dict[int, Any] = {}
+    for index in sorted(wanted):
+        if index in own:
+            found[index] = own[index]
+            continue
+        case = manifest["cases"][index]
+        cfg = run._compose_config(case["scenario"], list(case["overrides"]))
+        _check_same_config(case, cfg, manifest.get("cwd"))
+        worker_overrides(cfg, slot)
+        found[index] = cfg
+    return found
 
 
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:
@@ -543,12 +580,26 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                     f"not the {case['scenario_class']} it was submitted as"
                 )
 
-        first_cfg = configs[0]
+        # The batch-level settings, decided as a local batch decides them
+        # from all its cases, whichever of them this task runs (#1225).  The
+        # submitting process already refused a batch without the extras.
+        record = manifest.get("batch_settings")
+        if record is None:
+            # A manifest that predates the record: from this task's cases.
+            first_cfg = configs[0]
+            rerun = run.build_rerun_converter(*configs)
+            run.apply_canvas(*configs)
+            _apply_metrics(run, configs)
+        else:
+            chosen = _batch_configs(run, manifest, record, chunk, configs, slot)
+            first_cfg = chosen[int(record.get("first_case", 0))]
+            rerun = run.build_rerun_converter(
+                *(chosen[int(i)] for i in record.get("rerun_cases", []))
+            )
+            canvas = record.get("canvas_case")
+            run.apply_canvas(*([] if canvas is None else [chosen[int(canvas)]]))
+            _apply_metrics(run, configs, record.get("heavy_metrics"))
         map_paths = run.resolve_map_paths(first_cfg.map)
-        # The submitting process already refused a batch without the extra.
-        rerun = run.build_rerun_converter(*configs)
-        run.apply_canvas(*configs)
-        _apply_metrics(run, configs)
         queue = run._batch_queue(
             first_cfg,
             map_paths,

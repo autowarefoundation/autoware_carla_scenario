@@ -4,7 +4,8 @@ A batch submitted with ``launcher=slurm`` writes its cases' outputs where a
 local batch does (``outputs/<date>/<time>/``), under the same names, and keeps
 what the launcher itself needs in ``slurm/`` beside them::
 
-    slurm/manifest.json         every case: its config, overrides, file stem
+    slurm/manifest.json         every case: its config, overrides, file stem;
+                                which cases decide the batch-level settings
     slurm/submissions/<k>.json  submission k: its job, which cases each task runs
     slurm/jobs/<k>.sh           the job script submission k runs
     slurm/tasks/<k>-<t>.json    task t of submission k: host, ports, progress
@@ -49,6 +50,11 @@ __all__ = [
 #: the batch at ``batch_dir_relative`` under their working directory, not at
 #: ``batch_dir`` (the submit host's path), which an older framework would use.
 #: A batch without ``remote_cwd`` is still written as version 1.
+#:
+#: ``batch_settings`` (which cases decide the batch's queue, Rerun converter,
+#: canvas and metrics, #1225) needs no new version: a worker that predates it
+#: ignores it, and one reading a manifest without it decides from the cases of
+#: its own task, as workers did before.
 MANIFEST_VERSION = 2
 
 #: The versions this framework reads.

@@ -1038,6 +1038,59 @@ def apply_metrics(*cfgs: DictConfig) -> bool:
     return heavy
 
 
+def _block_key(cfg: DictConfig, name: str) -> str:
+    """*cfg*'s ``name`` block as a string two equal blocks share."""
+    value = cfg.get(name)
+    if isinstance(value, DictConfig):
+        value = _to_dict(value)
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def batch_settings_cases(
+    configs: list[DictConfig], *, heavy_metrics: bool
+) -> dict[str, Any]:
+    """Which of a batch's *configs* decide its batch-level settings, by index:
+    what a SLURM batch's manifest records (``batch_settings``), so that every
+    task decides them as a local batch does from all its cases, whichever of
+    them the task runs (slurm/worker.py).
+
+    - ``first_case``: the case whose config the queue is built from
+      (:func:`_batch_queue`: the server, traffic, ``t4``, ``t4scene``, world
+      reset and backend settings), the batch's first;
+    - ``rerun_cases``: a case for each distinct ``rerun`` block, none when no
+      case sets ``rerun.enabled``: :func:`build_rerun_converter` of these is
+      that of every case;
+    - ``canvas_case``: the first case naming a ``canvas.config``, or ``None``
+      (:func:`canvas_config`);
+    - ``heavy_metrics``: what :func:`apply_metrics` decided for the batch.
+
+    A few cases' configs, not every one's: a task composes these and applies
+    the same builders to them, at its node's paths.
+    """
+    rerun_cases: list[int] = []
+    if any(_rerun_settings(cfg)[0] for cfg in configs):
+        seen: set[str] = set()
+        for index, cfg in enumerate(configs):
+            key = _block_key(cfg, "rerun")
+            if key not in seen:
+                seen.add(key)
+                rerun_cases.append(index)
+    canvas_case = next(
+        (
+            index
+            for index, cfg in enumerate(configs)
+            if (cfg.get("canvas") or {}).get("config")
+        ),
+        None,
+    )
+    return {
+        "first_case": 0,
+        "rerun_cases": rerun_cases,
+        "canvas_case": canvas_case,
+        "heavy_metrics": bool(heavy_metrics),
+    }
+
+
 def rerun_errors(
     results: list[ScenarioResult], conversions: list[RerunConversion]
 ) -> dict[int, str]:
@@ -1412,9 +1465,11 @@ def _check_slurm_cases(configs: list[DictConfig]) -> None:
     A local batch reads each case's ``scenario.timeout_seconds`` and
     ``odd_case``, and builds its queue from its first config, in this process.
     Under SLURM each task does that on its node (slurm/worker.py), after the
-    batch was submitted, and from the first case of its own chunk: so every
-    case is checked here, and the whole batch is refused before anything is
-    submitted, naming the key.
+    batch was submitted (its queue from the batch's first case, as recorded
+    by :func:`batch_settings_cases`; from the first of its own cases for a
+    batch whose manifest predates that record): so every case is checked
+    here, and the whole batch is refused before anything is submitted, naming
+    the key.
 
     Raises:
         ValueError: naming the key of the first value refused.
@@ -1574,8 +1629,8 @@ def run_batch(
 
     # Before anything is built: a batch asking for Rerun recordings without
     # the extra installed is refused at once (RerunUnavailableError).  Under
-    # SLURM each task converts its own cases (slurm/worker.py), so this only
-    # checks.
+    # SLURM each task converts its own cases (slurm/worker.py), with what
+    # this decides for the batch (batch_settings_cases), so this only checks.
     rerun = build_rerun_converter(*configs)
     # Likewise a batch asking for T4 datasets without the `t4` extra, and
     # T4Scenes at a step that does not fit the tick.
@@ -1589,7 +1644,7 @@ def run_batch(
         canvas_config(*configs)
     else:
         apply_canvas(*configs)
-    apply_metrics(*configs)
+    heavy_metrics = apply_metrics(*configs)
 
     # Log detailed execution plan before building anything.
     _log_batch_plan(
@@ -1647,6 +1702,9 @@ def run_batch(
                 output_dir=output_dir,
                 build_scenario_fn=build_scenario_fn,
                 wait=wait,
+                batch_settings=batch_settings_cases(
+                    configs, heavy_metrics=heavy_metrics
+                ),
             )
         )
 

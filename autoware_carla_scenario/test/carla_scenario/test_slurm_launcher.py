@@ -124,6 +124,7 @@ def fake_slurm(
     monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
     monkeypatch.delenv("FAKE_CASE_SECONDS", raising=False)
     monkeypatch.delenv("FAKE_CRASH_DIGESTS", raising=False)
+    monkeypatch.delenv("FAKE_SCENARIO_OVERRIDES", raising=False)
 
     monkeypatch.syspath_prepend(str(_DATA))
     import fake_world  # type: ignore[import-not-found]
@@ -132,6 +133,12 @@ def fake_slurm(
     monkeypatch.setattr(run, "ScenarioQueue", fake_world.FakeQueue)
     monkeypatch.setattr(run, "resolve_map_paths", fake_world.fake_map_paths)
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
+    monkeypatch.setattr(run, "use_canvas", fake_world.fake_use_canvas)
+    monkeypatch.setattr(
+        run,
+        "_compose_config",
+        fake_world.compose_with_scenario_overrides(run._compose_config),
+    )
 
     dirs: list[Path] = []
 
@@ -317,6 +324,169 @@ def test_each_slurm_task_makes_the_recordings_a_local_batch_makes(
     assert (batch / "batch_results.json").read_text().replace(str(batch), "<b>") == (
         local / "batch_results.json"
     ).read_text().replace(str(local), "<b>")
+
+
+#: A second concrete scenario on the same map, for a batch whose two cases
+#: are set differently (``FAKE_SCENARIO_OVERRIDES``).
+_SECOND = "adversity/brake_check"
+
+
+def _two_case_batch(
+    env: SimpleNamespace, name: str, overrides: list[str]
+) -> tuple[int, Path]:
+    """``run_batch`` of :data:`_CONCRETE` then :data:`_SECOND`; (exit status,
+    directory)."""
+    output = env.batch_dir(name)
+    env.monkeypatch.setattr(env.run, "_make_batch_output_dir", lambda: output)
+    with pytest.raises(SystemExit) as exited:
+        env.run.run_batch([_CONCRETE, _SECOND], overrides)
+    return int(exited.value.code or 0), output
+
+
+def _queues(env: SimpleNamespace) -> list[dict[str, Any]]:
+    """The settings of each queue built since the last call, in order."""
+    path = env.record / "queues.jsonl"
+    if not path.exists():
+        return []
+    entries = [json.loads(line) for line in path.open()]
+    path.unlink()
+    return [entry["settings"] for entry in entries]
+
+
+@pytest.mark.parametrize(
+    ("setting", "second_case"),
+    [
+        ("t4scene", ["++t4scene.enabled=true", "++t4scene.step_s=0.2"]),
+        ("rerun", ["++rerun.enabled=true", "++rerun.strict=true"]),
+        ("canvas", ["++canvas.config=/canvas.yaml"]),
+        ("heavy_metrics", ["metrics.heavy=false"]),
+    ],
+)
+def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
+    fake_slurm: SimpleNamespace,
+    capsys: pytest.CaptureFixture[str],
+    setting: str,
+    second_case: list[str],
+) -> None:
+    """#1225: only the batch's second case sets *setting*.  A local batch
+    decides its queue (``t4scene``: the first case's), its Rerun converter
+    (any case's), its canvas (the one any case names) and its heavy metrics
+    (the first case setting ``metrics.heavy``) once, for every case; each
+    SLURM task decides the same, whether it runs both cases or one."""
+    if setting == "rerun":
+        pytest.importorskip("autoware_carla_scenario_rerun")
+    # The heavy metrics on unless a case turns them off.
+    fake_slurm.monkeypatch.delenv(
+        "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS", raising=False
+    )
+    fake_slurm.monkeypatch.setenv(
+        "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: second_case})
+    )
+    local_status, local = _two_case_batch(fake_slurm, "local", [])
+    local_out = capsys.readouterr().out
+    (decided,) = _queues(fake_slurm)
+    if setting == "t4scene":
+        assert decided["t4scene"] is None  # the first case's, which has none
+    elif setting == "canvas":
+        assert decided["canvas"] == "/canvas.yaml"
+    elif setting == "heavy_metrics":
+        assert decided["heavy_metrics"] is False
+    else:
+        assert decided["rerun"] == {
+            "strict": True,
+            "lidar_max_points": None,
+            "cameras": False,
+        }
+
+    for per_task, tasks in ((1, 2), (2, 1)):
+        name = f"slurm-{per_task}"
+        status, batch = _two_case_batch(
+            fake_slurm,
+            name,
+            [*_slurm(fake_slurm)[len(_SWEEP) :], f"launcher.cases_per_task={per_task}"],
+        )
+        out = capsys.readouterr().out
+        assert BatchLayout(batch).read_submission(0)["chunks"] == (
+            [[0], [1]] if per_task == 1 else [[0, 1]]
+        )
+        assert _queues(fake_slurm) == [decided] * tasks, name
+        assert status == local_status, name
+        assert sorted(_outputs(batch)) == sorted(_outputs(local)), name
+        assert (batch / "batch_results.json").read_text().replace(
+            str(batch), "<b>"
+        ) == (local / "batch_results.json").read_text().replace(str(local), "<b>")
+        assert _summary(out, batch) == _summary(local_out, local), name
+        record = BatchLayout(batch).read_manifest()["batch_settings"]
+        assert record["first_case"] == 0
+        assert record["rerun_cases"] == ([0, 1] if setting == "rerun" else [])
+        assert record["canvas_case"] == (1 if setting == "canvas" else None)
+        assert record["heavy_metrics"] is (setting != "heavy_metrics")
+
+
+def test_a_task_of_a_batch_without_the_record_decides_from_its_own_cases(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """A manifest written before ``batch_settings`` (#1225): each task decides
+    the batch-level settings from its own cases, as tasks did then."""
+    fake_slurm.monkeypatch.setenv(
+        "FAKE_SCENARIO_OVERRIDES",
+        json.dumps({_SECOND: ["++t4scene.enabled=true", "++t4scene.step_s=0.2"]}),
+    )
+    fake_slurm.monkeypatch.setattr(
+        fake_slurm.run, "batch_settings_cases", lambda *_a, **_k: None
+    )
+    _status, batch = _two_case_batch(
+        fake_slurm,
+        "slurm-old",
+        [*_slurm(fake_slurm)[len(_SWEEP) :], "launcher.cases_per_task=1"],
+    )
+    assert "batch_settings" not in BatchLayout(batch).read_manifest()
+    queues = sorted(
+        _queues(fake_slurm), key=lambda settings: settings["t4scene"] is not None
+    )
+    assert [settings["t4scene"] for settings in queues] == [
+        None,
+        {"step_s": 0.2, "max_distance_m": 100.0},
+    ]
+
+
+def test_batch_settings_cases_name_a_case_for_each_setting(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """The cases recorded decide what every case decides: one per distinct
+    ``rerun`` block, the first naming a canvas."""
+    pytest.importorskip("autoware_carla_scenario_rerun")
+    run = fake_slurm.run
+    lidar = ["rerun.enabled=true", "rerun.lidar=true", "rerun.lidar_max_points=7"]
+    canvas = ["++canvas.config=/canvas.yaml"]
+    off = run._compose_config(_CONCRETE, [])
+    configs = [
+        off,
+        run._compose_config(_CONCRETE, lidar),
+        off,
+        run._compose_config(_CONCRETE, ["rerun.strict=true", *canvas]),
+        run._compose_config(_CONCRETE, [*lidar, *canvas]),
+    ]
+    record = run.batch_settings_cases(configs, heavy_metrics=False)
+    assert record == {
+        "first_case": 0,
+        "rerun_cases": [0, 1, 3],
+        "canvas_case": 3,
+        "heavy_metrics": False,
+    }
+    chosen = run.build_rerun_converter(*(configs[i] for i in record["rerun_cases"]))
+    every = run.build_rerun_converter(*configs)
+    assert (chosen._strict, chosen._lidar_max_points, chosen._cameras) == (
+        every._strict,
+        every._lidar_max_points,
+        every._cameras,
+    )
+    assert run.batch_settings_cases([off, off], heavy_metrics=True) == {
+        "first_case": 0,
+        "rerun_cases": [],
+        "canvas_case": None,
+        "heavy_metrics": True,
+    }
 
 
 def test_the_manifest_rebuilds_each_case_exactly(

@@ -24,7 +24,8 @@ uv run scenario scenario=cut_in/left t4scene.enabled=true
 | `t4scene.step_s` | float | `0.1` | The scenes' time step, a multiple of the 0.05 s tick (`--step`); another value is refused before anything runs |
 | `t4scene.max_distance_m` | float or null | `100.0` | The road users within this distance of the ego are a scene's objects; `null` takes all of them (`--max-distance`, `--all-objects`) |
 
-A batch takes the first case's settings, as it does `t4`'s. The conversion
+A batch takes the first case's settings, as it does `t4`'s -- a SLURM batch
+too, whichever task runs a case ([SLURM](slurm.md)). The conversion
 runs on the runner's thread once CARLA is done with the case (the map is read
 once however many cases ran on it). Like the log itself it is best effort: a
 log that cannot be converted is logged as a warning and the run's verdict
