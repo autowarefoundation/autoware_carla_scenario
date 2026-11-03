@@ -126,7 +126,7 @@ class RobustnessOptimizer:
             # Still worth one solve: the first in a process runs at a third of
             # the steady-state rate, and would otherwise make the session's
             # first step pay for torch's lazy initialisation.
-            self.solve(example)
+            self.solve(example, honour_budget=False)
             return
 
         self._compile_attempted = True
@@ -134,7 +134,7 @@ class RobustnessOptimizer:
             self._compiled_batch = torch.compile(self._score_batch_eager, dynamic=True)
             self._compiled_refine = torch.compile(self._refine_losses, dynamic=True)
             self._compiled_scores = torch.compile(self._batched_scores_eager, dynamic=True)
-            self.solve(example)
+            self.solve(example, honour_budget=False)
         except Exception:  # noqa: BLE001 - any compile failure falls back
             logger.warning("torch.compile failed; continuing eagerly", exc_info=True)
             self._compiled_batch = None
@@ -249,8 +249,18 @@ class RobustnessOptimizer:
         self,
         inputs: RolloutInputs,
         warm_start: torch.Tensor | None = None,
+        *,
+        honour_budget: bool = True,
     ) -> PlanSolution:
-        """Search for the plan that best satisfies the specification."""
+        """Search for the plan that best satisfies the specification.
+
+        ``honour_budget=False`` takes every refinement step whatever
+        `OptimizerConfig.time_budget_s` says. `prepare` needs it: its solve is
+        where compilation happens, which makes the first refinement step look
+        so expensive that a budget would stop there -- leaving the later steps'
+        path uncompiled until the first real step of the session, which then
+        pays seconds for it.
+        """
         started = time.perf_counter()
         optimizer = self.config.optimizer
 
@@ -308,7 +318,7 @@ class RobustnessOptimizer:
                 seeds = torch.cat([best_params.unsqueeze(0), seeds[:-1]], dim=0)
 
         refined_params, refined_signal, refined_merit, refined_ok, n_steps = self._refine(
-            seeds, inputs, started
+            seeds, inputs, started, optimizer.time_budget_s if honour_budget else None
         )
         # Refinement has to clear the same bar: it starts from the carried plan
         # when that was preferred, so accepting any improvement at all would
@@ -428,6 +438,7 @@ class RobustnessOptimizer:
         seeds: torch.Tensor,
         inputs: RolloutInputs,
         started: float,
+        budget: float | None,
     ) -> tuple[torch.Tensor, torch.Tensor, float, bool, int]:
         """Gradient-ascend the smoothed objective from several seeds at once.
 
@@ -478,7 +489,6 @@ class RobustnessOptimizer:
         # a bound at all.
         step_cost = 0.0
         for step in range(settings.n_refine_steps):
-            budget = settings.time_budget_s
             if budget is not None and (time.perf_counter() - started) + step_cost > budget:
                 # Degrade by taking fewer steps rather than by missing the
                 # policy deadline. The seeds are already usable plans.

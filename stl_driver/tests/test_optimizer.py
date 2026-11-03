@@ -545,6 +545,34 @@ def test_a_tiny_budget_degrades_to_fewer_steps_rather_than_failing():
     assert solution.signal is not None  # still a usable plan
 
 
+def test_the_warm_up_takes_every_refinement_step_even_under_a_budget():
+    """Otherwise the first step of a budgeted session compiles the rest.
+
+    The warm-up solve is where compilation happens, so its first refinement
+    step looks expensive enough for a budget to stop there. The later steps'
+    path then compiled inside the session's first real step: about 6 s,
+    measured, against a 60 ms budget.
+    """
+    from dataclasses import replace
+
+    config = replace(CONFIG, optimizer=replace(CONFIG.optimizer, time_budget_s=1e-9))
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(config)), config)
+    taken: list[int] = []
+    refine = optimizer._refine
+
+    def counting_refine(*args, **kwargs):
+        result = refine(*args, **kwargs)
+        taken.append(result[-1])
+        return result
+
+    optimizer._refine = counting_refine  # type: ignore[method-assign]
+    optimizer.prepare(make_inputs(config, speed0_mps=5.0))
+    optimizer.prepare(make_inputs(config, speed0_mps=5.0))  # the per-session path
+    assert taken == [config.optimizer.n_refine_steps] * 2
+    # The budget itself is untouched: a real step still honours it.
+    assert optimizer.solve(make_inputs(config, speed0_mps=5.0)).n_refine_steps == 0
+
+
 def test_the_batched_path_is_the_one_in_use(optimizer):
     """If this ever flips, the loop fallback is live and latency will show it."""
     solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
