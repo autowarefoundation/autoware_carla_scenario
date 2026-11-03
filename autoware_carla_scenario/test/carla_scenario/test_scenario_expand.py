@@ -77,6 +77,143 @@ class TestExpandSweep:
 
         assert cases == [["ego.spawn_lanelet_id=50", "ego.spawn_s=1.5"]]
 
+    @staticmethod
+    def _walk(value, override):
+        return lambda lid, m, g: SimpleNamespace(
+            value=value, lanelet_id_override=override
+        )
+
+    def test_another_slots_walk_back_moves_its_own_lanelet_not_the_ego(
+        self, _matching
+    ) -> None:
+        # #1184: the ego fits 2 m before the stop line on the pick (29); the
+        # NPC, 300 m before it, walks back to 54.  Only the NPC moves.
+        _matching(
+            [29],
+            {
+                "ego.spawn_s": self._walk(8.9, None),
+                "scenario.spawn_overrides.npc1.s": self._walk(21.7, 54),
+                "scenario.spawn_overrides.npc1.lanelet_id": self._walk(54, None),
+            },
+        )
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.spawn_lanelet_id": [{}]},
+                "bindings": {
+                    "ego.spawn_s": {"type": "stop_line_offset", "offset": 2},
+                    "scenario.spawn_overrides.npc1.s": {
+                        "type": "stop_line_offset",
+                        "offset": 300,
+                    },
+                    "scenario.spawn_overrides.npc1.lanelet_id": {
+                        "type": "stop_line_approach",
+                        "offset": 300,
+                    },
+                },
+            },
+            lanelet_map=object(),
+        )
+
+        assert cases == [
+            [
+                "ego.spawn_lanelet_id=29",
+                "ego.spawn_s=8.9",
+                "scenario.spawn_overrides.npc1.s=21.7",
+                "scenario.spawn_overrides.npc1.lanelet_id=54",
+            ]
+        ]
+
+    def test_a_walk_back_writes_its_spawns_lanelet_when_nothing_else_does(
+        self, _matching
+    ) -> None:
+        _matching(
+            [29],
+            {
+                "ego.spawn_s": self._walk(3.0, 40),
+                "scenario.spawn_overrides.npc1.s": self._walk(21.7, 54),
+            },
+        )
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.spawn_lanelet_id": [{}]},
+                "bindings": {
+                    "ego.spawn_s": {},
+                    "scenario.spawn_overrides.npc1.s": {},
+                },
+            },
+            lanelet_map=object(),
+        )
+
+        # The ego's own walk-back still moves the sweep target.
+        assert cases == [
+            [
+                "ego.spawn_lanelet_id=40",
+                "ego.spawn_s=3.0",
+                "scenario.spawn_overrides.npc1.s=21.7",
+                "scenario.spawn_overrides.npc1.lanelet_id=54",
+            ]
+        ]
+
+    def test_the_ego_walk_back_moves_its_lanelet_when_another_slot_is_swept(
+        self, _matching
+    ) -> None:
+        _matching([7], {"ego.spawn_s": self._walk(3.0, 40)})
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.goal_lanelet_id": [{}]},
+                "bindings": {"ego.spawn_s": {}},
+            },
+            lanelet_map=object(),
+        )
+
+        assert cases == [
+            ["ego.goal_lanelet_id=7", "ego.spawn_s=3.0", "ego.spawn_lanelet_id=40"]
+        ]
+
+    def test_bindings_that_disagree_about_a_lanelet_are_refused(
+        self, _matching
+    ) -> None:
+        # The approach is worked out for a shorter offset than the spawn's s:
+        # it stays on the pick while the s walks back to 54.
+        _matching(
+            [29],
+            {
+                "scenario.spawn_overrides.npc1.s": self._walk(21.7, 54),
+                "scenario.spawn_overrides.npc1.lanelet_id": self._walk(29, None),
+            },
+        )
+
+        with pytest.raises(ValueError, match="disagree") as error:
+            expand_sweep(
+                {
+                    "constraints": {"ego.spawn_lanelet_id": [{}]},
+                    "bindings": {
+                        "scenario.spawn_overrides.npc1.s": {},
+                        "scenario.spawn_overrides.npc1.lanelet_id": {},
+                    },
+                },
+                lanelet_map=object(),
+            )
+        assert "scenario.spawn_overrides.npc1.lanelet_id" in str(error.value)
+        assert "54" in str(error.value) and "29" in str(error.value)
+
+    def test_a_walk_back_of_a_key_that_is_no_spawns_s_is_refused(
+        self, _matching
+    ) -> None:
+        _matching([29], {"scenario.param_overrides.p.gap": self._walk(1.0, 54)})
+
+        with pytest.raises(ValueError, match="no lanelet key"):
+            expand_sweep(
+                {
+                    "constraints": {"ego.spawn_lanelet_id": [{}]},
+                    "bindings": {"scenario.param_overrides.p.gap": {}},
+                },
+                lanelet_map=object(),
+            )
+
     def test_no_constraints_is_an_error(self) -> None:
         with pytest.raises(ValueError, match="empty"):
             expand_sweep({"constraints": {}}, lanelet_map=object())

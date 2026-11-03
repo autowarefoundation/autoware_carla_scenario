@@ -418,6 +418,64 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
         )
 
 
+def _walk_back_lanelet_key(s_key: str, lanelet_id: int) -> str:
+    """The lanelet key of the spawn whose ``s`` a walk-back moved, by *s_key*.
+
+    A ``stop_line_offset`` binding that walks back off the pick puts its spawn
+    on a predecessor: that spawn's lanelet key has to say so, and no other.
+    The spawn keys come in pairs, so the lanelet key is the ``s`` key's
+    sibling: ``<prefix>.s`` -> ``<prefix>.lanelet_id`` (an entity's
+    ``scenario.spawn_overrides.<entity>``), ``<prefix>.spawn_s`` ->
+    ``<prefix>.spawn_lanelet_id`` and ``<prefix>.goal_s`` ->
+    ``<prefix>.goal_lanelet_id`` (the ego's).
+
+    Raises:
+        ValueError: If *s_key* is none of those, so there is no lanelet key
+            to move to *lanelet_id*.
+    """
+    prefix, _, leaf = s_key.rpartition(".")
+    sibling = {
+        "s": "lanelet_id",
+        "spawn_s": "spawn_lanelet_id",
+        "goal_s": "goal_lanelet_id",
+    }.get(leaf)
+    if sibling is None:
+        raise ValueError(
+            f"sweep.bindings: {s_key} walks back to lanelet {lanelet_id}, but "
+            "is not a spawn's s (<prefix>.s, <prefix>.spawn_s or "
+            "<prefix>.goal_s), so there is no lanelet key to move with it. "
+            "Bind stop_line_offset to a spawn's s, or use an offset that fits "
+            "on the pick."
+        )
+    return f"{prefix}.{sibling}" if prefix else sibling
+
+
+def _write_override(
+    values: dict[str, tuple[str, str | None]],
+    key: str,
+    value: str,
+    writer: str,
+    lanelet_id: int,
+) -> None:
+    """Set *key* to *value* in *values*, refusing a write that disagrees.
+
+    A key without a writer holds the pick, which any write replaces.
+
+    Raises:
+        ValueError: If *key* was already written by another writer with a
+            different value.
+    """
+    previous = values.get(key)
+    if previous is not None and previous[1] is not None and previous[0] != value:
+        raise ValueError(
+            f"sweep.bindings disagree about {key} on lanelet {lanelet_id}: "
+            f"{previous[1]} sets it to {previous[0]}, {writer} to {value}. "
+            "Give a stop_line_approach binding the offset of its spawn's "
+            "stop_line_offset, or drop one of the two."
+        )
+    values[key] = (value, writer)
+
+
 def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[str]]:
     """One override list per lanelet the constraints match, bindings applied."""
     constraints_cfg = sweep.get("constraints") or {}
@@ -446,7 +504,11 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
     ]
     cases: list[list[str]] = []
     for lid in matched_ids:
-        overrides = [f"{target_key}={lid}"]
+        # Key -> (value, who wrote it).  The pick is only the target key's
+        # default: a walk-back of the target's own spawn moves it.  Every other
+        # write -- a binding's value, or a walk-back moving its spawn's
+        # lanelet -- must agree with any other write to the same key.
+        values: dict[str, tuple[str, str | None]] = {target_key: (str(lid), None)}
         for binding in bindings:
             try:
                 result = binding.resolve(lid, lanelet_map, routing_graph)
@@ -458,11 +520,25 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
                     exc_info=True,
                 )
                 break
-            overrides.append(f"{binding.target_key}={_override_value(result.value)}")
+            _write_override(
+                values,
+                binding.target_key,
+                _override_value(result.value),
+                f"binding {binding.target_key}",
+                lid,
+            )
             if result.lanelet_id_override is not None:
-                overrides[0] = f"{target_key}={result.lanelet_id_override}"
+                _write_override(
+                    values,
+                    _walk_back_lanelet_key(
+                        binding.target_key, result.lanelet_id_override
+                    ),
+                    str(result.lanelet_id_override),
+                    f"the walk-back of binding {binding.target_key}",
+                    lid,
+                )
         else:
-            cases.append(overrides)
+            cases.append([f"{key}={value}" for key, (value, _) in values.items()])
     if not cases:
         logger.warning("All lanelets were skipped due to binding failures.")
     return cases
