@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, List
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from autoware_carla_scenario.actions.traffic_signal import (
     TrafficLightTarget,
@@ -407,3 +409,40 @@ class TestTrafficSignalActionByLanes:
                 state=MagicMock(), lanelet2_traffic_light_ids=[77], label="none"
             ).execute(_FakeWorld([light]))
         assert light._state is None
+
+
+class TestTrafficSignalActionRouteJunction:
+    @pytest.mark.parametrize(
+        "junction", [0.5, 1.9, True, False, math.nan, math.inf, "2"]
+    )
+    def test_a_junction_that_is_not_a_whole_number_is_refused(
+        self, junction: Any
+    ) -> None:
+        # int() would take junction 0.5 as 0 and True as 1 (#1474).
+        with pytest.raises(ValueError, match="route_junction"):
+            TrafficSignalAction(
+                state=MagicMock(),
+                lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE,
+                label="x",
+                route_junction=junction,
+            )
+
+    def test_a_negative_junction_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="route_junction counts from 0"):
+            TrafficSignalAction(
+                state=MagicMock(),
+                lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE,
+                label="x",
+                route_junction=-1,
+            )
+
+    def test_a_whole_float_junction_is_read_as_an_int(self) -> None:
+        whole: Any = 2.0
+        action = TrafficSignalAction(
+            state=MagicMock(),
+            lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE,
+            label="x",
+            route_junction=whole,
+        )
+        assert action._route_junction == 2
+        assert type(action._route_junction) is int

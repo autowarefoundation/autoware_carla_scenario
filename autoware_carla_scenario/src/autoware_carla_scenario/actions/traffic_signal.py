@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
@@ -61,10 +62,13 @@ class TrafficSignalAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
         freeze: If ``True`` (default), freeze every light so that the
             CARLA traffic manager does not override the state.
-        route_junction / route_approach / route_turn: The route target.
+        route_junction / route_approach / route_turn: The route target;
+            ``route_junction`` is a whole number from 0 (``2.0`` read as 2).
 
     Raises:
-        ValueError: For a route approach or turn that is not one.
+        ValueError: For a route approach or turn that is not one, or a
+            ``route_junction`` that is a boolean, a fraction, NaN, infinite
+            or negative.
     """
 
     _state: "carla.TrafficLightState"
@@ -120,7 +124,20 @@ class TrafficSignalAction(BaseAction):
                     f"{label}: route_turn must be one of {list(PATH_TURNS)}"
                 )
             turn = route_turn
-        if route_junction < 0:
+        # int() alone would take junction 0.5 as 0 and True as 1, and fail on
+        # NaN with its own message.
+        if isinstance(route_junction, (bool, str)):
+            raise ValueError(
+                f"{label}: route_junction must be a whole number, "
+                f"got {route_junction!r}"
+            )
+        junction = float(route_junction)
+        if not math.isfinite(junction) or math.floor(junction) != junction:
+            raise ValueError(
+                f"{label}: route_junction must be a whole number, "
+                f"got {route_junction!r}"
+            )
+        if junction < 0.0:
             raise ValueError(f"{label}: route_junction counts from 0")
         self._route_junction = int(route_junction)
         self._route_approach = route_approach

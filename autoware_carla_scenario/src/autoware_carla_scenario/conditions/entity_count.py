@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import BaseCondition, ScenarioResult
@@ -22,12 +23,13 @@ class EntityCountCondition(BaseCondition):
     Args:
         entities: Which road users count (:class:`~.entity_filter.EntityFilter`).
         rule: How their number compares to *count*.
-        count: The number compared with.
+        count: The number compared with: a whole number (``2``, or ``2.0``
+            read as 2), not negative.
         label: Human-readable identifier.
 
     Raises:
-        ValueError: *count* below zero, or bounds of *entities* that can
-            never hold.
+        ValueError: *count* a boolean, a fraction, NaN, infinite or below
+            zero, or bounds of *entities* that can never hold.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -45,8 +47,17 @@ class EntityCountCondition(BaseCondition):
         label: str,
     ) -> None:
         super().__init__(label=label)
-        if count < 0:
-            raise ValueError("count must not be negative")
+        # int() alone would compare against 0.5 as 0 (">= 0.5" always holds)
+        # and against True as 1, and fail on NaN with its own message.
+        if isinstance(count, (bool, str)):
+            raise ValueError(f"count must be a whole number, got {count!r}")
+        number = float(count)
+        if not math.isfinite(number):
+            raise ValueError(f"count must be finite, got {count!r}")
+        if math.floor(number) != number:
+            raise ValueError(f"count must be a whole number, got {count!r}")
+        if number < 0.0:
+            raise ValueError(f"count must not be negative, got {count!r}")
         entities.validate()
         self._entities = entities
         self._rule = rule
