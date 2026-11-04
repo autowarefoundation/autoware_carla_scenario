@@ -2263,75 +2263,126 @@ def _stale_lock(path: Path, token: str = "dead-task") -> None:
     os.utime(path, (old, old))
 
 
-def test_two_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
+def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#1360: both waiters judge the lock stale before either takes it over,
-    and the second takes over only once the first holds a fresh lock -- the
-    interleaving in which the second used to delete the first's lock."""
+    """#1360: A and B both judge the lock stale before either takes it over;
+    B takes over only once A holds a fresh lock, and holds the takeover
+    mutex while a third task C polls.  B leaves A's lock alone, and no two
+    tasks hold the lock at once."""
     import threading
 
     from autoware_carla_scenario.slurm import worker
 
     path = tmp_path / "start.lock.excl"
+    mutex = tmp_path / "start.lock.excl.takeover"
     _stale_lock(path)
     real_take_over = worker._take_over
+    real_release = worker._release_lock
+    real_remove = worker._remove_stale
     judged = threading.Barrier(2, timeout=10)
-    first_holds = threading.Event()
-    second_took_over = threading.Event()
+    a_holds = threading.Event()
+    c_polls = threading.Event()
+    b_done = threading.Event()
     arrivals: list[str] = []
+    removed: list[str] = []
     order = threading.Lock()
     local = threading.local()
 
-    def take_over(lock: Path, stale: Any) -> None:
-        if getattr(local, "done", False):
-            real_take_over(lock, stale)
-            return
+    def take_over(*args: Any) -> bool:
+        if threading.current_thread().name == "c" or getattr(local, "done", False):
+            return bool(real_take_over(*args))
         local.done = True
         judged.wait()  # both judged the same stale lock
         with order:
             arrivals.append(threading.current_thread().name)
             second = len(arrivals) == 2
-        if second:
-            assert first_holds.wait(10)
-            real_take_over(lock, stale)  # moves the first's fresh lock
-            second_took_over.set()
-        else:
-            real_take_over(lock, stale)
+        if not second:
+            return bool(real_take_over(*args))
+        assert a_holds.wait(10) and c_polls.wait(10)
+        try:
+            return bool(real_take_over(*args))
+        finally:
+            b_done.set()
+
+    def release(lock: Path, token: str) -> None:
+        if lock == mutex and arrivals[1:] == [threading.current_thread().name]:
+            time.sleep(0.3)  # B mid-takeover, holding the mutex: C polls
+        real_release(lock, token)
+
+    def remove(lock: Path, stale: Any) -> None:
+        removed.append(stale[3])
+        real_remove(lock, stale)
 
     monkeypatch.setattr(worker, "_take_over", take_over)
+    monkeypatch.setattr(worker, "_release_lock", release)
+    monkeypatch.setattr(worker, "_remove_stale", remove)
     holding: list[str] = []
     most = [0]
-    tokens: list[str] = []
+    tokens: dict[str, str] = {}
 
     def hold() -> None:
+        name = threading.current_thread().name
         with worker._exclusive_file(path, stale_after=60.0):
-            name = threading.current_thread().name
             with order:
                 holding.append(name)
                 most[0] = max(most[0], len(holding))
-            tokens.append(path.read_text())
+            tokens[name] = path.read_text()
             if name == arrivals[0]:
-                first_holds.set()
-                assert second_took_over.wait(10)
+                a_holds.set()
+                assert b_done.wait(10)
+                time.sleep(0.1)
                 # Still in place, still this task's.
-                assert path.read_text() == tokens[-1]
-                time.sleep(0.2)
+                assert path.read_text() == tokens[name]
             with order:
                 holding.remove(name)
 
-    threads = [threading.Thread(target=hold, name=f"t{i}") for i in range(2)]
+    threads = [threading.Thread(target=hold, name=name) for name in "ab"]
     for thread in threads:
         thread.start()
-    for thread in threads:
+    assert a_holds.wait(10)
+    c = threading.Thread(target=hold, name="c")
+    c.start()
+    time.sleep(0.1)
+    c_polls.set()
+    for thread in [*threads, c]:
         thread.join(30)
-    assert not any(thread.is_alive() for thread in threads)
-    assert sorted(arrivals) == ["t0", "t1"]
+    assert not any(thread.is_alive() for thread in [*threads, c])
+    assert sorted(arrivals) == ["a", "b"]
     assert most[0] == 1
-    assert len(tokens) == 2 and tokens[0] != tokens[1]
-    assert ":" in tokens[0] and "dead-task" not in tokens
-    assert not path.exists()
+    assert sorted(tokens) == ["a", "b", "c"] and len(set(tokens.values())) == 3
+    assert removed == ["dead-task"]  # the stale lock, and nothing else
     assert list(tmp_path.iterdir()) == []  # nothing left aside
+
+
+def test_a_takeover_waits_for_a_live_mutex_and_clears_a_stale_one(
+    tmp_path: Path,
+) -> None:
+    import threading
+
+    from autoware_carla_scenario.slurm import worker
+
+    path = tmp_path / "start.lock.excl"
+    mutex = tmp_path / "start.lock.excl.takeover"
+    _stale_lock(path)
+    mutex.write_text("other-host:1:taking-over")  # another waiter's, live
+    acquired = threading.Event()
+
+    def hold() -> None:
+        with worker._exclusive_file(path, stale_after=60.0):
+            acquired.set()
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    assert not acquired.wait(0.5)
+    assert path.read_text() == "dead-task"
+    assert mutex.read_text() == "other-host:1:taking-over"
+    # Its holder was killed: stale after a while, and removed.
+    old = time.time() - 3600
+    os.utime(mutex, (old, old))
+    assert acquired.wait(10)
+    thread.join(10)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_releasing_a_lock_taken_over_leaves_the_new_holders(

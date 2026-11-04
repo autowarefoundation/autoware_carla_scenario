@@ -296,6 +296,11 @@ _NO_FLOCK_ERRNOS = frozenset(
 #: is only taken over once it is old, and a new one is not.
 _LockId = tuple[int, int, int, str]
 
+#: How old (by the file server's clock) the takeover mutex of a lock file is
+#: when the waiter holding it was killed: it is held for a few file
+#: operations only.
+_TAKEOVER_STALE_AFTER = 10.0
+
 
 def _lock_sibling(path: Path, kind: str) -> Path:
     """A name beside *path* that no other process uses."""
@@ -316,8 +321,37 @@ def _server_now(path: Path) -> float:
         return os.fstat(fd).st_mtime
     finally:
         os.close(fd)
-        with contextlib.suppress(FileNotFoundError):
+        with contextlib.suppress(OSError):
             os.unlink(probe)
+
+
+class _ServerClock:
+    """The file server's clock, as seen from beside *path*.
+
+    Its offset from this node's ``time.monotonic()`` (which no clock
+    adjustment moves) is measured with a probe file (:func:`_server_now`)
+    the first time it is read, and again whenever a file looks stale by it,
+    so polling costs no probe file and nothing is judged stale by an
+    estimate alone.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._offset: float | None = None
+
+    def now(self) -> float:
+        """The server's time, measured now."""
+        server = _server_now(self._path)
+        self._offset = server - time.monotonic()
+        return server
+
+    def stale(self, mtime: float, after: float) -> bool:
+        """Whether a file of *mtime* is more than *after* seconds old."""
+        if self._offset is not None and (
+            time.monotonic() + self._offset - mtime <= after
+        ):
+            return False
+        return self.now() - mtime > after
 
 
 def _lock_identity(path: Path) -> tuple[_LockId, float] | None:
@@ -332,60 +366,113 @@ def _lock_identity(path: Path) -> tuple[_LockId, float] | None:
     return (st.st_dev, st.st_ino, st.st_mtime_ns, token), st.st_mtime
 
 
-def _take_over(path: Path, stale: _LockId) -> None:
-    """Remove the lock at *path* judged stale as *stale*, if it still is it.
+def _create_lock(path: Path, token: str) -> bool:
+    """Create *path* holding *token* with ``O_EXCL``; whether it was not
+    there yet."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, token.encode("utf-8"))
+    except BaseException:
+        os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(path)  # just made, and no one takes over a fresh lock
+        raise
+    os.close(fd)
+    return True
 
-    There is no "unlink if it is still this file" on NFS, so the lock is
-    renamed aside (atomic) and what was moved is checked.  The interleavings
-    of waiters A and B that both judged lock L1 stale:
 
-    - A renames L1 aside, finds it is L1 and removes it; B's rename then
-      finds nothing (``FileNotFoundError``) and B just tries again.
-    - A has taken L1 over and created its own lock L2 by the time B renames:
-      B moved L2, not L1 (another inode, or the same one reused with a fresh
-      mtime), and puts it back with ``os.link`` (atomic, fails if a lock is
-      there) -- the same inode, so A still holds it and its release finds
-      its token.  The same holds for a holder of L1 that was not dead but
-      released it, and the lock L2 someone created after.
-    - Both rename at once: one rename moves L1, the other finds nothing.
+def _release_lock(path: Path, token: str) -> None:
+    """Remove *path* if it still holds *token*.
 
-    What remains: while B has L2 aside, *path* is free, and a third task C
-    polling in that window (the time of one rename and one read) creates its
-    own lock; B cannot put L2 back, and A and C both hold the lock.  That
-    needs two takeovers of one stale lock to race with a third task's poll,
-    and is logged.  Without hard links L2 is renamed back if *path* is still
-    free, which leaves the same window between the check and the rename.
+    Between the read and the unlink the lock can only change hands if it is
+    taken over as stale in that moment, i.e. if it was held for longer than
+    it may be.
+    """
+    held = _lock_identity(path)
+    if held is not None and held[0][3] == token:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+
+
+_LOST_LOCK = "A live lock %s was taken over: two tasks may hold it"
+
+
+def _remove_stale(path: Path, stale: _LockId) -> None:
+    """Remove the file at *path* if it is still the one judged stale as
+    *stale*: renamed aside (atomic) and removed if what was moved is it.
+
+    Should the move have caught another file -- only possible when two
+    waiters hold the takeover mutex, or a holder judged dead released its
+    lock after all (see :func:`_take_over`) -- it is put back where it was
+    (``os.link``, which fails rather than replace one made meanwhile; a
+    rename back where the file system has no hard links).
     """
     aside = _lock_sibling(path, "stale")
     try:
         os.rename(path, aside)
     except FileNotFoundError:
-        return  # taken over, or released, by someone else
-    moved = _lock_identity(aside)
-    if moved is not None and moved[0] == stale:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(aside)
         return
-    # Another task's lock, which must not be lost: back to where it was.
-    restored = True
     try:
-        os.link(aside, path)
-    except FileExistsError:
-        restored = False
-    except OSError:  # no hard links on this file system
-        if path.exists():
-            restored = False
-        else:
-            os.rename(aside, path)
-            return
-    if not restored:
-        logger.warning(
-            "Another task took the start lock %s while a live one was moved "
-            "aside: two tasks may start together",
-            path,
-        )
-    with contextlib.suppress(FileNotFoundError):
-        os.unlink(aside)
+        moved = _lock_identity(aside)
+        if moved is not None and moved[0] != stale:
+            try:
+                os.link(aside, path)
+            except FileExistsError:
+                logger.warning(_LOST_LOCK, path)
+            except OSError:  # no hard links on this file system
+                if path.exists():
+                    logger.warning(_LOST_LOCK, path)
+                else:
+                    os.rename(aside, path)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(aside)
+
+
+def _take_over(path: Path, clock: _ServerClock, stale_after: float, token: str) -> bool:
+    """Remove the lock at *path* if it is stale, holding its takeover mutex
+    (``<path>.takeover``, an ``O_EXCL`` file); whether this waiter held it.
+
+    Takeovers are mutually exclusive, and a lock is judged stale again under
+    the mutex, so a live lock is never touched: of waiters A and B that both
+    judged lock L1 stale, A takes the mutex, finds L1 still stale, removes
+    it and releases the mutex; when B gets the mutex, *path* is free or holds
+    a fresh lock L2 (A's or another's), which B leaves alone.  A waiter that
+    finds the mutex held leaves the lock to its holder and polls again.  A
+    holder of a lock removes only its own (:func:`_release_lock`), so while a
+    stale lock's holder is dead, nothing but the mutex holder changes *path*
+    between its judgement and the removal; and the removal checks that what
+    it moved aside is the lock judged stale (:func:`_remove_stale`).
+
+    A mutex left by a waiter killed while holding it is stale after
+    :data:`_TAKEOVER_STALE_AFTER` seconds (by the server's clock) and removed
+    the same way, outside the mutex.  Two waiters may then hold it at once
+    (one removed the stale mutex M1, another made M2, a third moved M2 aside
+    and put it back, or a holder stalled for that long), which is harmless
+    on its own: each judges the lock stale again before removing it, and
+    removes it only if it moved that very lock aside.  What remains is one
+    holder moving a fresh L2 aside that another holder's takeover let a task
+    create in between, which is put back at once; only a task polling in
+    that moment could then hold the lock with L2's holder.  That takes a
+    waiter killed inside the mutex, a takeover of that mutex racing another,
+    and a poll in one file operation's time.
+    """
+    mutex = path.with_name(path.name + ".takeover")
+    if not _create_lock(mutex, token):
+        seen = _lock_identity(mutex)
+        if seen is not None and clock.stale(seen[1], _TAKEOVER_STALE_AFTER):
+            _remove_stale(mutex, seen[0])  # its holder was killed
+        return False
+    try:
+        seen = _lock_identity(path)
+        if seen is not None and clock.stale(seen[1], stale_after):
+            _remove_stale(path, seen[0])
+    finally:
+        _release_lock(mutex, token)
+    return True
 
 
 @contextlib.contextmanager
@@ -394,50 +481,29 @@ def _exclusive_file(path: Path, stale_after: float) -> Iterator[None]:
 
     The lock holds a token of its own (host, pid and a random part).  A lock
     older than *stale_after* seconds is the leftover of a task killed while
-    it held it, and is taken over (:func:`_take_over`).  Its age is measured
-    by the file server's clock (:func:`_server_now`), never this node's: a
-    node whose clock runs ahead would otherwise break a live lock (#1360; the
-    recorded start time has the same guard, #784).  The skew between the two
-    clocks is measured once, and again before a lock is taken over, so
-    waiting costs no extra file per poll.  On release the lock is removed
-    only while it still holds this task's token: once taken over as stale, it
-    is another task's.
+    it held it, and is taken over, one waiter at a time
+    (:func:`_take_over`).  Its age is measured by the file server's clock
+    (:class:`_ServerClock`), never this node's: a node whose clock runs
+    ahead would otherwise break a live lock (#1360; the recorded start time
+    has the same guard, #784).  On release the lock is removed only while it
+    still holds this task's token: once taken over as stale, it is another
+    task's.
     """
     token = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
-    skew: float | None = None  # the server's clock minus this node's
-    while True:
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            seen = _lock_identity(path)
-            if seen is None:
-                continue  # released: try again at once
-            lock_id, mtime = seen
-            if skew is None:
-                skew = _server_now(path) - time.time()
-            if time.time() + skew - mtime > stale_after:
-                now = _server_now(path)  # confirmed by the server's clock
-                skew = now - time.time()
-                if now - mtime > stale_after:
-                    _take_over(path, lock_id)
-                    continue
-            time.sleep(0.05)
+    clock = _ServerClock(path)
+    while not _create_lock(path, token):
+        seen = _lock_identity(path)
+        if seen is None:
+            continue  # released: try again at once
+        if clock.stale(seen[1], stale_after) and _take_over(
+            path, clock, stale_after, token
+        ):
             continue
-        try:
-            os.write(fd, token.encode("utf-8"))
-        finally:
-            os.close(fd)
-        break
+        time.sleep(0.05)
     try:
         yield
     finally:
-        # Between this read and the unlink the lock can only change hands if
-        # it is taken over as stale in that moment, i.e. if this task held
-        # it for longer than stale_after.
-        held = _lock_identity(path)
-        if held is not None and held[0][3] == token:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(path)
+        _release_lock(path, token)
 
 
 @contextlib.contextmanager
