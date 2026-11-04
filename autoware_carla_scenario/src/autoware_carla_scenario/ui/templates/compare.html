@@ -67,8 +67,9 @@
   {% for ref in comparison.sessions %}
   <div class="bg-white rounded-lg shadow p-3">
     <div class="text-xs text-gray-500 font-mono">{{ ref }}{% if loop.first %} (baseline){% endif %}</div>
-    <div class="text-2xl font-bold {% if comparison.totals[loop.index0][0] == comparison.totals[loop.index0][1] %}text-green-600{% else %}text-gray-800{% endif %}">{{ pct(comparison.rate(loop.index0)) }}</div>
-    <div class="text-xs text-gray-500">{{ comparison.totals[loop.index0][0] }}/{{ comparison.totals[loop.index0][1] }} passed</div>
+    {% set waiting = pending[loop.index0] %}
+    <div class="text-2xl font-bold {% if comparison.totals[loop.index0][0] == comparison.totals[loop.index0][1] and not waiting %}text-green-600{% else %}text-gray-800{% endif %}">{{ pct(comparison.rate(loop.index0)) }}</div>
+    <div class="text-xs text-gray-500">{{ comparison.totals[loop.index0][0] }}/{{ comparison.totals[loop.index0][1] }} passed{% if waiting %} <span class="text-blue-700" data-pending="{{ waiting }}">&middot; {{ waiting }} pending (not collected)</span>{% endif %}</div>
   </div>
   {% endfor %}
   <div class="bg-white rounded-lg shadow p-3">

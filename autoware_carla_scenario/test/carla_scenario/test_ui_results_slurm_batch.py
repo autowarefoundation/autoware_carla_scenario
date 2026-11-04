@@ -207,6 +207,41 @@ def test_a_pending_case_is_left_out_of_a_comparison(tmp_path: Path) -> None:
     assert changes == {"s|x=0": "same", "s|x=1": "gone"}
 
 
+def test_the_compare_page_counts_a_session_s_pending_cases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An uncollected batch is not shown as complete: its pass rate is of
+    the cases with an outcome, and its pending cases are counted beside it."""
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    baseline = tmp_path / "outputs" / DATE / LOCAL
+    baseline.mkdir(parents=True)
+    _write(
+        baseline / "batch_results.json",
+        [
+            {"scenario": f"s#{i}", "overrides": [f"x={i}"], **_result(True, "ok")}
+            for i in range(2)
+        ],
+        T0,
+    )
+    batch = _slurm_batch(tmp_path, "14-00-00")
+    _record(batch, 0, True, "ok", T0 + 10)
+    found = results.load_results(tmp_path, "batch", DATE, "14-00-00")
+    assert results.pending_count(found) == 1
+    page = TestClient(app_module.app).get(
+        f"/compare?s=batch/{DATE}/{LOCAL}&s=batch/{DATE}/14-00-00"
+    )
+    assert page.status_code == 200
+    summary = page.text.split('id="compare-summary"', 1)[1]
+    assert summary.count("data-pending=") == 1
+    assert 'data-pending="1"' in summary
+    assert "1/1 passed" in summary and "1 pending (not collected)" in summary
+    # Not green, as a complete session's 100% is.
+    baseline_card, partial_card = summary.split('font-mono">')[1:3]
+    assert "2/2 passed" in baseline_card and "text-green-600" in baseline_card
+    assert "1/1 passed" in partial_card and "text-green-600" not in partial_card
+
+
 def test_the_odd_page_labels_a_pending_case(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

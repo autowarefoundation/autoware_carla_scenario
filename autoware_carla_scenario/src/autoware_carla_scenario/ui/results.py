@@ -4,8 +4,7 @@ Each case of a session is read with what it left on disk (``ui.cases``): its
 verdict (a batch's entries, ``ui.cases.batch_entries``: its
 ``batch_results.json``, or what a SLURM batch's tasks recorded while it is not
 collected yet or was resubmitted since; else ``{stem}_result.json``), the case
-it ran (a
-sweep's overrides; the ODD values and buckets it was drawn at, from
+it ran (a sweep's overrides; the ODD values and buckets it was drawn at, from
 ``{stem}_coverage.json``'s ``case``), its coverage document, and a few metrics
 of how the ego drove, read off its trajectory log (:func:`case_metrics`, which
 hands the ego's ticks to ``ui.drive_metrics``, the box geometry and metric
@@ -485,6 +484,12 @@ def cases_in_cell(
 # ── Comparing sessions ──────────────────────────────────────────────────────
 
 
+def pending_count(found: list[CaseResult]) -> int:
+    """How many of a session's cases are pending (a SLURM batch's cases
+    without an outcome yet), which :func:`compare` leaves out."""
+    return sum(1 for r in found if r.pending)
+
+
 def compare(
     sessions: list[tuple[str, list[CaseResult]]],
     *,
@@ -499,7 +504,10 @@ def compare(
     A pending case (a SLURM batch's case without an outcome yet) is left out,
     as if its session had not run it: it has no verdict to tally or to compare
     with, and counting it as not passing would report a regression and lower
-    the pass rate before the case has finished."""
+    the pass rate before the case has finished. The compare page shows how
+    many cases of each session are pending (:func:`pending_count`) beside its
+    pass rate. A task that crashed recorded no outcome, so its case is pending
+    until the batch is collected."""
     return _compare(
         [
             (name, [r.compared() for r in found if not r.pending])

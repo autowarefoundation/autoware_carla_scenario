@@ -692,6 +692,8 @@ async def compare_sessions(request: Request) -> HTMLResponse:
             "selected": [ref for ref, _ in loaded],
             "offered": offered,
             "comparison": comparison,
+            # Each session's pending cases, which the pass rates leave out.
+            "pending": [results.pending_count(found) for _, found in loaded],
             "matrices": matrices,
             "attributes": attributes,
             "metric_names": results.METRICS,

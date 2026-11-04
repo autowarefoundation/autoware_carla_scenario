@@ -1519,7 +1519,10 @@ buckets it was drawn in and a few metrics of how the ego drove, read off its
 trajectory log: the least gap from its box to another road user's
 (`min gap`), its hardest braking (over half a second), when it first stopped,
 how far it drove, its top and final speed, and the elapsed time. openodd's
-plot of the drawn cases (`openodd.CasePlot`) is shown too.
+plot of the drawn cases (`openodd.CasePlot`) is shown too. A SLURM batch is
+shown before it is collected, from what its tasks have recorded: a case
+without an outcome yet is listed as PENDING, and a task that crashed recorded
+none, so its case stays PENDING until the batch is collected.
 
 ### Comparing runs
 
@@ -1542,6 +1545,14 @@ session's page) compares two or more sessions of the same scenarios
   session passes fewer of them, green where more; and openodd's matrix of
   each session beside the others.
 - **Pass rates** of each session.
+
+A SLURM batch can be compared before it is collected, from what its tasks
+have recorded: a case without an outcome yet is PENDING and is left out of
+the comparison, as if that session had not run it (no regression, and not in
+its pass rate), and each session's summary says how many of its cases are
+pending (`1/1 passed · 1 pending (not collected)`). A task that crashed
+recorded no outcome, so its case stays pending until the batch is collected.
+
 ### Running through SLURM
 
 The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
