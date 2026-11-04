@@ -2683,7 +2683,20 @@ dialled by every task, as a TCP one is.</p>
   under one temporary name, so two loads at the same moment fail one case
   with <code>filesystem error: cannot rename</code>) needs <code>start_stagger_seconds</code>,
   enough for one task to load it before the next starts (30 s for
-  OnePlanner, which loads it once a task).</li>
+  OnePlanner, which loads it once a task). The stagger is held with <code>flock</code>
+  on <code>slurm/start.lock</code>, or where the file system has none, with a lock file
+  beside it created with <code>O_EXCL</code>. One a killed task left is taken over once
+  it is <code>start_stagger_seconds</code> + 60 s old by the file server's clock, so a
+  node whose clock is off does not break a live one. One waiter takes a
+  stale lock over: the waiters share a mutex of <code>.takeover.*</code> files beside
+  the lock, one per attempt, created with <code>O_EXCL</code> (a waiter killed holding
+  one is superseded by the next attempt 10 s later), and the one that wins
+  judges the lock stale again before removing it. A task removes the lock
+  on release only while it is still its own. So no waiter removes a live
+  lock, and no two tasks start together, except when a task is still alive
+  past the point its file is judged stale: one that held the lock that
+  long, or a waiter that stalled for 10 s in the middle of taking a lock
+  over.</li>
 <li><strong>ROS 2 and Autoware egos</strong> (<code>ego.entity=ros2</code>, <code>ego.entity=autoware</code> with
   a launcher) run their stacks on DDS, whose domain the tasks would share; give
   each its own <code>ROS_DOMAIN_ID</code> (the Autoware launcher's <code>ros_domain_ids</code>), or
@@ -2718,7 +2731,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 05:38:38 UTC"><span class="timeago" datetime="2026-11-04T05:38:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 05:38:38 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 06:51:35 UTC"><span class="timeago" datetime="2026-11-04T06:51:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 06:51:35 UTC">2026-11-04</span>
   </span>
 
     
