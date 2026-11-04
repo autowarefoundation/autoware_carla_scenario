@@ -382,8 +382,17 @@ def submit_cases(
     manifest: dict[str, Any],
     settings: SlurmSettings,
     case_indices: list[int],
+    before_sbatch: Callable[[int], None] | None = None,
 ) -> int:
     """Submit *case_indices* of the batch as one array; the submission's index.
+
+    The submission's index is reserved first, its record created exclusively
+    (:meth:`BatchLayout.reserve_submission`), so that two submitters of one
+    batch at once each get their own (#1352).  *before_sbatch*, given that
+    index, runs next; should it raise, nothing is submitted.  A resubmit
+    checks there that no other submission of the batch is in flight
+    (``scenario-slurm resubmit``).  Whatever fails before the job id is
+    known removes the record, and with it the reservation.
 
     The cases are split into tasks of ``launcher.cases_per_task`` (in order),
     which SLURM runs at most ``launcher.array_parallelism`` at a time.  Without
@@ -408,15 +417,8 @@ def submit_cases(
             f"({limit}) allows: set launcher.cases_per_task to at least {least}, "
             "or unset it to have the cases spread within the limit (docs/slurm.md)"
         )
-    index = layout.next_submission()
-    script = layout.job_script(index)
-    _write_script(script, job_script(layout, manifest, settings, index))
-    layout.logs.mkdir(parents=True, exist_ok=True)
-    (layout.root / "tasks").mkdir(parents=True, exist_ok=True)
-    (layout.root / "results").mkdir(parents=True, exist_ok=True)
-
     submission: dict[str, Any] = {
-        "index": index,
+        "index": None,
         "created": _now(),
         "submitted_at": time.time(),
         "cases": list(case_indices),
@@ -426,10 +428,19 @@ def submit_cases(
         "collect_job_id": None,
     }
     # Written before sbatch: a task that starts at once reads its chunk here.
-    write_json(layout.submission(index), submission)
-    command = sbatch_command(layout, settings, script, len(chunks))
-    submission["sbatch"] = command
+    # Created exclusively, which reserves the index; job_id None until
+    # sbatch returns marks it in flight (manifest.sbatch_in_flight).
+    index = layout.reserve_submission(submission)
     try:
+        script = layout.job_script(index)
+        _write_script(script, job_script(layout, manifest, settings, index))
+        layout.logs.mkdir(parents=True, exist_ok=True)
+        (layout.root / "tasks").mkdir(parents=True, exist_ok=True)
+        (layout.root / "results").mkdir(parents=True, exist_ok=True)
+        if before_sbatch is not None:
+            before_sbatch(index)
+        command = sbatch_command(layout, settings, script, len(chunks))
+        submission["sbatch"] = command
         submission["job_id"] = _run_sbatch(command)
     except RuntimeError as exc:
         layout.submission(index).unlink(missing_ok=True)

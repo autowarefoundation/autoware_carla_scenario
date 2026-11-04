@@ -101,8 +101,25 @@ how they are spread. A case run again replaces its earlier files: before it
 runs, the task removes every output of its stem (`run_outputs`), its T4
 dataset directory (`{stem}.t4`) included, so none of the last attempt's is left
 beside the new result. So `resubmit` refuses while a job of the batch is queued
-or running, or while `squeue` cannot tell whether one is (`--force` submits all
-the same).
+or running, while `squeue` cannot tell whether one is, or while another
+submission of the batch is in flight (`--force` submits all the same).
+
+Two resubmits of one batch may run at once -- from two viewer tabs, or from
+the viewer and `scenario-slurm resubmit`. Each submission's record,
+`slurm/submissions/<k>.json`, is created exclusively before sbatch runs,
+which reserves its index `k`: a submitter that finds `k` taken takes the next
+one, so no record is written over and no job id lost. The record is
+hard-linked into place from a temporary file (`O_CREAT | O_EXCL` where the file
+system has no hard links), which is atomic on NFS too, where `flock` may not
+be; a reader never sees it empty. Until sbatch returns, its `job_id` is
+`null`, and the submission counts as in flight: having reserved its index, a
+resubmit checks the submissions before it once more, and refuses should one
+be in flight or queued, so of two resubmits at once the later one submits
+nothing. A record whose sbatch fails is removed. One left with no job id by a
+submitter that was killed stops counting as in flight 600 s
+(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. A record that cannot be read
+(empty, or not a JSON object) refuses a resubmit for as long after the file
+was last modified, then is ignored with a warning.
 `collect` can be run any number of times.
 
 `sacct` is not needed: the batch is followed through `squeue` and the files the

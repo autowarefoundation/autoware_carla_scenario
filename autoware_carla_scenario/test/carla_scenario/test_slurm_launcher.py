@@ -1761,7 +1761,11 @@ def test_resubmit_runs_a_case_named_twice_once(
     submitted: list[list[int]] = []
 
     def submit_cases(
-        _layout: object, _manifest: object, _settings: object, chosen: list[int]
+        _layout: object,
+        _manifest: object,
+        _settings: object,
+        chosen: list[int],
+        **_kwargs: object,
     ) -> int:
         submitted.append(chosen)
         return 1
@@ -1772,6 +1776,223 @@ def test_resubmit_runs_a_case_named_twice_once(
     assert cli.main(argv) == 0
     assert "Resubmitting 2 case(s): s#1, s#3" in capsys.readouterr().out
     assert submitted == [[0, 2]]
+
+
+def test_concurrent_submissions_get_indices_of_their_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1352: two submit_cases at once took the same index; the second
+    record replaced the first, whose job id was lost."""
+    import threading
+
+    from autoware_carla_scenario.slurm import submit
+
+    layout = _batch_on_disk(tmp_path)
+    jobs = iter(["1000", "1001"])
+    lock = threading.Lock()
+
+    def run_sbatch(_command: list[str]) -> str:
+        with lock:
+            job = next(jobs)
+        time.sleep(0.5)
+        return job
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
+    settings = SlurmSettings(wait=False, collect_job=False)
+    indices: list[int] = []
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(2)
+
+    def submit_one() -> None:
+        barrier.wait()
+        try:
+            indices.append(
+                submit.submit_cases(layout, layout.read_manifest(), settings, [0, 1])
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=submit_one) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert sorted(indices) == [1, 2]
+    assert layout.submissions() == [0, 1, 2]
+    records = [layout.read_submission(i) for i in (1, 2)]
+    assert [r["index"] for r in records] == [1, 2]
+    assert sorted(r["job_id"] for r in records) == ["1000", "1001"]
+    # No temporary file of the reservation is left.
+    assert sorted(p.name for p in (layout.root / "submissions").iterdir()) == [
+        "0.json",
+        "1.json",
+        "2.json",
+    ]
+
+
+def test_reserve_submission_passes_over_a_taken_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1352: an index another submitter created is never written over."""
+    layout = _batch_on_disk(tmp_path)
+    taken = {"index": 1, "job_id": "5"}
+    layout.submission(1).write_text(json.dumps(taken))
+    # Told index 1, as a submitter racing the one that created 1.json was.
+    told = iter([1])
+    real = BatchLayout.next_submission
+    monkeypatch.setattr(
+        BatchLayout, "next_submission", lambda self: next(told, None) or real(self)
+    )
+    record: dict[str, Any] = {"index": None, "job_id": None}
+    assert layout.reserve_submission(record) == 2
+    assert layout.read_submission(1) == taken
+    assert layout.read_submission(2) == {"index": 2, "job_id": None}
+
+
+def test_a_failed_sbatch_removes_the_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1352: whatever fails before the job id is known frees the index."""
+    from autoware_carla_scenario.slurm import submit
+
+    layout = _batch_on_disk(tmp_path)
+    seen: list[dict[str, Any]] = []
+
+    def run_sbatch(_command: list[str]) -> str:
+        # The reservation holds a whole record while sbatch runs.
+        seen.append(layout.read_submission(1))
+        raise RuntimeError("sbatch failed (1): down")
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
+    with pytest.raises(RuntimeError, match="down"):
+        submit.submit_cases(layout, layout.read_manifest(), SlurmSettings(), [0])
+    assert seen[0]["index"] == 1 and seen[0]["job_id"] is None
+    assert layout.submissions() == [0]
+
+    def refuse(_index: int) -> None:
+        raise RuntimeError("busy")
+
+    with pytest.raises(RuntimeError, match="busy"):
+        submit.submit_cases(
+            layout, layout.read_manifest(), SlurmSettings(), [0], before_sbatch=refuse
+        )
+    assert layout.submissions() == [0]
+    assert len(seen) == 1  # sbatch never ran
+
+
+def test_resubmit_refuses_while_a_submission_is_in_flight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1352: a record whose sbatch has not returned (job_id None) is in
+    flight, not inactive; one left by a submitter that died is ignored once
+    SBATCH_IN_FLIGHT_SECONDS have passed."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    pending: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time(),
+        "chunks": [],
+    }
+    write_json(layout.submission(1), pending)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    err = capsys.readouterr().err
+    assert "submission(s) 1 of this batch are being submitted" in err
+    assert "--force" in err
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run", "--force"]) == 0
+    capsys.readouterr()
+    pending["submitted_at"] = time.time() - SBATCH_IN_FLIGHT_SECONDS - 1
+    write_json(layout.submission(1), pending)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
+    assert "Resubmitting 3 case(s)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "content", ["", "{not json", "[1, 2]", "null"], ids=["empty", "bad", "list", "null"]
+)
+def test_an_unreadable_submission_record_refuses_only_while_young(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    """#1352: a record that cannot be read (empty, not JSON, not an object)
+    may be one being written: it refuses a resubmit for
+    SBATCH_IN_FLIGHT_SECONDS after it was last modified, then is ignored,
+    so a corrupt one never blocks the viewer, which cannot pass --force."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    path = layout.submission(1)
+    path.write_text(content)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    err = capsys.readouterr().err
+    assert f"submission record(s) {path} of this batch are unreadable" in err
+    assert "being submitted" not in err and "--force" in err
+    old = time.time() - SBATCH_IN_FLIGHT_SECONDS - 1
+    os.utime(path, (old, old))
+    with caplog.at_level("WARNING", logger=cli.__name__):
+        assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
+    assert "Resubmitting 3 case(s)" in capsys.readouterr().out
+    assert any(str(path) in r.getMessage() for r in caplog.records)
+
+
+def test_of_two_resubmits_at_once_the_later_index_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1352: both passed the check before either reserved an index; the
+    one that reserved second sees the first's record and submits nothing."""
+    from autoware_carla_scenario.slurm import cli, submit
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(cli, "after_submit", lambda *_: 0)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
+    sbatch: list[list[str]] = []
+
+    def run_sbatch(command: list[str]) -> str:
+        sbatch.append(command)
+        return "99"
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    real_submit = cli.submit_cases
+
+    def submit_cases(*args: Any, **kwargs: Any) -> int:
+        # The other resubmit reserved index 1 after this one's check.
+        write_json(
+            layout.submission(1),
+            {"index": 1, "job_id": None, "submitted_at": time.time(), "chunks": []},
+        )
+        return real_submit(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "submit_cases", submit_cases)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--no-wait"]) == 1
+    assert "submission(s) 1 of this batch are being submitted" in (
+        capsys.readouterr().err
+    )
+    assert sbatch == []
+    assert layout.submissions() == [0, 1]
+    assert layout.read_submission(1)["job_id"] is None
 
 
 def test_batches_started_in_the_same_second_get_directories_of_their_own(
