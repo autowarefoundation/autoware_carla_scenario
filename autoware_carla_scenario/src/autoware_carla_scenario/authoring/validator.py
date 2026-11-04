@@ -35,7 +35,11 @@ from ..trajectory.authoring import (
     vertex_problems,
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
-from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
+from ._builders_generated import (
+    FAILURE_ONLY_CONDITIONS,
+    ONCE_ACTIONS,
+    OVERRIDING_ACTIONS,
+)
 from .registry import (
     EQUAL_TO_DEFAULT_TOLERANCE,
     INT_KINDS,
@@ -424,6 +428,7 @@ def _check_condition(
         )
 
     _check_collision_names_one_target(out, path, node)
+    _check_persistent_child(out, path, node)
     _check_filter_ranges(out, path, node)
     _check_condition_frame(out, path, node)
     _check_equal_tolerance(out, path, spec, node)
@@ -454,6 +459,39 @@ def _check_collision_names_one_target(
             "A collision condition names an entity or a class of object, not "
             "both: they are two ways of saying what was hit, so one of them "
             "would have to be ignored.",
+            node.id,
+        )
+
+
+def _check_persistent_child(out: _Collector, path: str, node: ConditionNode) -> None:
+    """Warn about a persistent block around a condition that only ever reports
+    a failure (#1374).
+
+    A persistent block counts only the ticks its child passes, and a
+    collision, off-road, existence or timeout condition never passes: it
+    fails or says nothing.  The block then never fires, and a fail condition
+    built that way never fails the run.  A warning, not an error: such a
+    document built and ran before this check, and still does.
+    """
+    if node.type != "persistent":
+        return
+    for child in node.children:
+        if child.type not in FAILURE_ONLY_CONDITIONS:
+            continue
+        spec = get_condition_spec(child.type)
+        title = spec.title if spec is not None else child.type
+        out.warn(
+            path,
+            f"Persistent never fires around {title}: that condition only ever "
+            "reports a failure, and Persistent counts only the ticks its child "
+            "passes. A Collision or Timeout keeps its failure once it has "
+            "fired, so there is nothing to wait out: use it on its own (under "
+            "a NOT it would only fail the run later). Off the road and Exists "
+            "re-check every tick: under a NOT, which turns their failure into "
+            "a pass, Persistent fires once the failure has held for its "
+            "duration. To say a state has not held for a while, put the "
+            "condition for that state under a NOT with *Holds while the child "
+            "does not* (holds_when_pending), as the cut-in example does.",
             node.id,
         )
 

@@ -808,6 +808,9 @@ class TrajectoryTimeCondition(BaseCondition):
 
 
 class TimeoutCondition(BaseCondition):
+    # It only ever reports a failure: a PersistentCondition never fires around it.
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("TimeoutCondition(): no constructor takes these arguments "
                       "(required: keyword label)")
@@ -824,6 +827,9 @@ class TimeoutCondition(BaseCondition):
 
 
 class CollisionCondition(BaseCondition):
+    # It only ever reports a failure: a PersistentCondition never fires around it.
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("CollisionCondition(): no constructor takes these arguments "
                       "(required: keyword label)")
@@ -837,6 +843,9 @@ class CollisionCondition(BaseCondition):
 
 
 class EntityExistenceCondition(BaseCondition):
+    # It only ever reports a failure: a PersistentCondition never fires around it.
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("EntityExistenceCondition(): no constructor takes these arguments "
                       "(required: entity_name, keyword label)")
@@ -848,6 +857,9 @@ class EntityExistenceCondition(BaseCondition):
 
 
 class OffRoadFractionCondition(BaseCondition):
+    # It only ever reports a failure: a PersistentCondition never fires around it.
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("OffRoadFractionCondition(): no constructor takes these arguments "
                       "(required: fraction, keyword label)")

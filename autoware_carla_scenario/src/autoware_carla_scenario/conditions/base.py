@@ -34,6 +34,24 @@ def is_post_run(condition: "BaseCondition") -> bool:
     return False
 
 
+def reports_only_failure(condition: "BaseCondition") -> bool:
+    """Whether *condition* only ever reports a failure: when it fires, its
+    result is ``passed=False``, never ``passed=True``
+    (:class:`~.collision.CollisionCondition`, :class:`~.timeout.TimeoutCondition`,
+    ...).
+
+    Such a class says so with ``REPORTS_ONLY_FAILURE: ClassVar[bool] = True``.
+    A wrapper that counts only passing results (a
+    :class:`~.persistent.PersistentCondition`) never fires around one.
+    Recognised by the marker, as :func:`is_post_run` is, rather than by a list
+    of classes.
+    """
+    if hasattr(type(condition), "REPORTS_ONLY_FAILURE"):
+        if type(condition).REPORTS_ONLY_FAILURE:  # type: ignore[attr-defined]
+            return True
+    return False
+
+
 def refuse_post_run(condition: "BaseCondition", owner: str) -> None:
     """Refuse to wrap *condition* in *owner* when it is judged after the run:
     a wrapper reads its condition every tick, where such a one reads nothing.

@@ -375,6 +375,9 @@ class RenderedBuilder:
     args: "tuple[tuple[str, str], ...]"
     uses_params: bool
     needs_actor_assert: bool
+    #: The target only ever reports a failure (its class sets
+    #: ``REPORTS_ONLY_FAILURE``): a persistent block never fires around it.
+    failure_only: bool = False
 
     @property
     def overrides(self) -> bool:
@@ -514,6 +517,7 @@ def _build_one(
     _check_required(parameters, args, where)
     _check_all_fields_used(by_kwarg, parameters, consumed, where)
     _check_arguments_fit(args, where)
+    failure_only = not is_action and bool(getattr(cls, "REPORTS_ONLY_FAILURE", False))
 
     return RenderedBuilder(
         name=spec.builder,
@@ -527,6 +531,7 @@ def _build_one(
         args=tuple(args),
         uses_params=uses_params,
         needs_actor_assert=isinstance(spec, ActionSpec) and spec.actor_required,
+        failure_only=failure_only,
     )
 
 
