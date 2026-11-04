@@ -427,9 +427,15 @@ case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` is past its last case.
 A `--multirun` batch, the viewer and `scenario-expand` refuse such a sweep
 with the same message, naming the scenario. They refuse an invalid sweep (a
-`sweep.case_index` past its cases, a constraint that does not parse, ...) the
-same way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
+`sweep.case_index` past its cases, a constraint that does not parse, a
+Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
+way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
+The sweeper refuses such a map too, before anything runs, exit 1:
+`LaneletConstraintSweeper: <why>`, naming the map -- a `map.directory` that
+does not exist, a `map.source` that cannot be fetched, a map cache whose root
+is not a directory (`AUTOWARE_DATA_DIR` naming a file), a
+`map.lanelet2_path` that is missing or that Lanelet2 cannot read.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
 sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
@@ -453,8 +459,10 @@ sweep that expands to no case is refused rather than listed as `"cases": []`:
 `Error: <scenario>: the sweep expands to no case ...` on stderr, nothing on
 stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` past its cases,
 a constraint or binding that does not parse, constraints for more than one
-key, ...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its
-traceback instead). As for `scenario`, the last `scenario=` wins when it is
+key, a Lanelet2 map that is missing, unreadable or cannot be resolved (a
+`map.directory` that does not exist, a `map.source` that cannot be fetched or
+whose map cache root is not a directory), ...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its traceback
+instead). As for `scenario`, the last `scenario=` wins when it is
 given more than once.
 
 As with `scenario`, `scenario=` may be a glob. Each scenario it matches is

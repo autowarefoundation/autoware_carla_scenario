@@ -1437,7 +1437,8 @@ def _expand_batch(
     names (:func:`check_batch_configs`, checked before its sweep reads any
     map), its ``controls:`` are invalid,
     its sweep is invalid (a ``sweep.case_index`` past its cases, a constraint
-    or binding that does not parse, ...: the ``ValueError`` expand_config
+    or binding that does not parse, a Lanelet2 map that is missing, unreadable
+    or cannot be resolved, ...: the ``ValueError`` expand_config
     refuses it with) or its sweep expands to no case, as the lanelet sweeper
     refuses one (#1407): every such scenario is reported, each named, since a
     batch missing a scenario it was asked for must not look like a complete

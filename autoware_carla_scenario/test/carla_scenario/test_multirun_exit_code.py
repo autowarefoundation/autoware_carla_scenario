@@ -44,8 +44,7 @@ import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
 from autoware_carla_scenario.run_outputs import run_outputs_exist
 
 lcs.check_constraint_keys = lambda sweep: None
-lcs.resolve_map_paths = lambda cfg: None
-lcs.load_map = lambda paths: object()
+lcs.load_sweep_map = lambda map_cfg, **_: object()
 lcs.scenario_controls = lambda cfg: None
 lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: (
     [] if sweep.get("none") else [["+case=1", *arguments], ["+case=2", *arguments]]
