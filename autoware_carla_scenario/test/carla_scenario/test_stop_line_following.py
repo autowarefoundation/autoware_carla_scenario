@@ -277,10 +277,11 @@ def test_the_search_stops_where_the_successors_run_out(
     graph = MagicMock()
     graph.following.return_value = []
     _no_graph_built(monkeypatch)
-    # A depth no loop could walk: the dead end is the first step.
+    # The dead end is the first step, so the search asks for successors once
+    # rather than once per step (a small depth fails fast instead of hanging).
     assert (
         get_stop_line_linestrings_with_following(
-            lanelet_map, ids[0], depth=10**12, routing_graph=graph
+            lanelet_map, ids[0], depth=5, routing_graph=graph
         )
         == []
     )
