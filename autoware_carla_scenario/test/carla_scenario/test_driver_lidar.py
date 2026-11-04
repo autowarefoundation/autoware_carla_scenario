@@ -70,6 +70,9 @@ def test_lidar_config_rejects_an_inverted_field_of_view() -> None:
 @pytest.mark.parametrize(
     "field",
     [
+        "channels",
+        "points_per_second",
+        "noise_seed",
         "range_m",
         "upper_fov_deg",
         "lower_fov_deg",
@@ -90,6 +93,13 @@ def test_lidar_config_rejects_non_finite_numbers(field: str, value: float) -> No
     changes: dict[str, Any] = {field: value}
     with pytest.raises(ValueError, match=f"LiDAR {field} must be finite"):
         DriverLidarConfig(**changes)
+
+
+@pytest.mark.parametrize("field", ["channels", "points_per_second", "noise_seed"])
+def test_a_nan_from_yaml_in_an_int_field_is_refused(field: str) -> None:
+    """``checked_options`` does not coerce, so ``channels: .nan`` arrives a float."""
+    with pytest.raises(ValueError, match=f"LiDAR {field} must be finite"):
+        DriverClientConfig.from_mapping({"lidars": [{field: float("nan")}]})
 
 
 def test_lidar_logical_ids_must_be_unique() -> None:

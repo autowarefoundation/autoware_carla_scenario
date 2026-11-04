@@ -146,6 +146,10 @@ class DriverCameraConfig:
     origin is the rear axle (``base_link``): moved by the rear-axle offset
     (:attr:`DriverClientConfig.rear_axle_offset_m`, else derived), the way
     :func:`~autoware_carla_scenario.driver.observation.sensor_pose_in_rig` moves it.
+
+    Raises:
+        ValueError: If the image size or fps is not positive and finite, the
+            ``fov`` is outside (0, 180) degrees, or the mount is not finite.
     """
 
     logical_id: str = DEFAULT_CAMERA_LOGICAL_ID
@@ -164,10 +168,13 @@ class DriverCameraConfig:
     lens: Optional[DriverCameraLens] = None
 
     def __post_init__(self) -> None:
-        # A zero, negative or NaN fps would only fail (or misbehave) as the
-        # camera attaches, after the ego has spawned (#1391).
+        # A zero, negative, NaN or infinite fps would only fail (or misbehave)
+        # as the camera attaches, after the ego has spawned (#1391).  The
+        # mapping is not coerced, so an int field may hold a float NaN too.
         if (
-            self.image_width <= 0
+            not math.isfinite(float(self.image_width))
+            or not math.isfinite(float(self.image_height))
+            or self.image_width <= 0
             or self.image_height <= 0
             or not math.isfinite(self.fps)
             or self.fps <= 0.0

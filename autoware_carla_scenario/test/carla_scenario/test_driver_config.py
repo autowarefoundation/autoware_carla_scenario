@@ -189,6 +189,9 @@ def test_camera_logical_ids_must_be_unique() -> None:
         {"fps": float("inf")},
         {"image_width": 0},
         {"image_height": -1},
+        {"image_width": float("nan")},
+        {"image_height": float("nan")},
+        {"image_width": float("inf")},
     ],
 )
 def test_camera_refuses_a_non_positive_or_non_finite_size_or_fps(

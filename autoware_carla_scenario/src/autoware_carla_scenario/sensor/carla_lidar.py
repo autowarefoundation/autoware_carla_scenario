@@ -91,8 +91,11 @@ class CarlaLidarSensorConfig:
 
     def __post_init__(self) -> None:
         # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
-        # below, so the numbers are refused unless finite first (#1391).
+        # below, so the numbers are refused unless finite first (#1391).  The
+        # mapping is not coerced, so an int field may hold a float NaN too.
         for key, value in (
+            ("channels", float(self.channels)),
+            ("points_per_second", float(self.points_per_second)),
             ("range_m", self.range_m),
             ("upper_fov_deg", self.upper_fov_deg),
             ("lower_fov_deg", self.lower_fov_deg),
@@ -108,6 +111,9 @@ class CarlaLidarSensorConfig:
         ):
             if not math.isfinite(value):
                 raise ValueError(f"LiDAR {key} must be finite, got {value}")
+        seed = self.noise_seed
+        if seed is not None and not math.isfinite(float(seed)):
+            raise ValueError(f"LiDAR noise_seed must be finite, got {seed}")
         if self.channels < 1:
             raise ValueError("LiDAR channels must be positive")
         if self.range_m <= 0.0 or self.points_per_second <= 0:
