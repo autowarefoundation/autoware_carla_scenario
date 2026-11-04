@@ -142,8 +142,8 @@ def detect_no_3d_model_lanelets(
     Raises
     ------
     ValueError
-        A ray that cannot hit anything: a negative or non-finite distance,
-        or both zero (it would flag every lanelet).
+        A negative or non-finite distance, or a ray of no length (one that
+        cannot hit would flag every lanelet).
     """
     check_ray_distances(
         ray_distance_upper,

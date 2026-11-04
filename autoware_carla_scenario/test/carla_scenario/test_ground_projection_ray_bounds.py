@@ -1,8 +1,9 @@
 """A ground-projection ray that cannot hit is refused up front (issue #1416).
 
 The ray starts ``upper`` metres above the z estimate and searches
-``upper + lower`` metres down.  A negative or non-finite distance, or a ray of
-no length, hits nothing: ``detect-no-3d-model`` would flag every lanelet and
+``upper + lower`` metres down.  A ray of no length, or a non-finite one, hits
+nothing (and a negative range on one side means nothing): ``detect-no-3d-model``
+would flag every lanelet and
 write them all to the map's YAML, and a run would leave every pose at its
 estimate.  ``GroundProjectionConfig``, the runner's ``entity.*`` keys and the
 tool's ``--ray-upper``/``--ray-lower`` (and ``--timeout``) refuse them.  None

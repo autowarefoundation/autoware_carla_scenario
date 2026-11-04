@@ -631,7 +631,7 @@ Controls ground projection (ray casting) and spawn retry behavior:
 
 The two ray distances must be finite and non-negative, and their sum (the
 ray's length) positive. A ray that cannot hit anything would leave every pose
-at its estimate, so a run or batch refuses such a value before anything starts,
+at its estimate (and a negative range means nothing), so a run or batch refuses such a value before anything starts,
 naming the key (`Error: entity.ground_projection_ray_distance_lower must be
 non-negative and finite, got -1.0`).
 

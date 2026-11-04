@@ -65,12 +65,14 @@ class GroundProjectionConfig:
 def check_ray_distances(
     upper: float, lower: float, upper_name: str, lower_name: str
 ) -> None:
-    """Refuse a ground-projection ray that can never hit the ground.
+    """Refuse a ground-projection ray that cannot hit, or whose range is nonsense.
 
     The ray starts *upper* metres above the z estimate and searches
     ``upper + lower`` metres down, so each must be finite and non-negative and
-    the two together positive: a ray of no length (or a negative or NaN one)
-    misses every surface, and every pose keeps its estimate (#1416).
+    the two together positive.  A ray of no length (or a negative or NaN one)
+    misses every surface, and every pose keeps its estimate; a negative range
+    on one side is refused too, as a search range below zero means nothing
+    (#1416).
 
     Args:
         upper: The search range above the z estimate (m).
