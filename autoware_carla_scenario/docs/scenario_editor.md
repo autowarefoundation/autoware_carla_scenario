@@ -579,7 +579,11 @@ box removes it; a malformed one is refused with the reason). A *Follow
 Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
-waypoint conditions. A **Spawn** card brings a hidden entity in (or, with no
+waypoint conditions. Progress is clamped to the route, so the validator warns
+about a Route progress card whose target lies before the route's start or past
+its end: it holds from the first tick or never
+([logical scenarios](logical_scenarios.md#route_progress-condition)). A
+**Spawn** card brings a hidden entity in (or, with no
 actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
 action state.
 

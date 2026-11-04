@@ -3958,7 +3958,11 @@ register_condition_spec(
                 kind="number",
                 default=0.0,
                 unit="m",
-                help="Past the anchor along the route; negative is before it.",
+                help=(
+                    "Past the anchor along the route; negative is before it. "
+                    "Progress is clamped to the route, so keep the target "
+                    "between its start and its end."
+                ),
             ),
             FieldSpec(
                 name="anchor",
