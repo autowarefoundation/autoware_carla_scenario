@@ -2789,6 +2789,38 @@ class TestTheJunctionEditor:
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == ""
 
+    def test_deleting_a_phase_shared_within_its_cycle_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-written duplicate: the other ``phase_1`` is still declared."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[0].phases[1].name = "phase_1"
+        store.save(draft)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase/1/delete")
+
+        document = _document(store, draft_id)
+        phases = document.map.traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1"]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_deleting_a_phase_of_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``junction_1`` still has a ``phase_1`` the card resolves to."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/1/phase/0/delete")
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
     def test_deleting_a_controller_clears_the_cards_that_named_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

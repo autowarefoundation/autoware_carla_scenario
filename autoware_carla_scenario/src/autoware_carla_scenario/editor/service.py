@@ -795,11 +795,25 @@ class EditorService:
     def delete_signal_phase(
         self, document: ScenarioDocument, index: int, phase_index: int
     ) -> None:
-        """Remove one step of a cycle, and any card that named it."""
+        """Remove one step of a cycle, and any card that named it.
+
+        A card names a phase by its controller's name and the phase's, so while
+        another phase still answers to that pair -- a sibling in this cycle, or
+        a phase of a same-named controller -- the cards still resolve to it and
+        are kept, as a rename leaves them: a hand-written duplicate is the
+        validator's to report, not this delete's to guess which one they meant.
+        """
         controller = self._signal_controller(document, index)
         phase = self._signal_phase(document, index, phase_index)
         name = phase.name
         controller.phases.pop(phase_index)
+        if any(
+            other is not phase and other.name == name
+            for cycle in document.map.traffic_signal_controllers
+            if cycle.name == controller.name
+            for other in cycle.phases
+        ):
+            return
         for path, node in _signal_controller_uses(document):
             if (
                 str(node.params.get("controller") or "") == controller.name
