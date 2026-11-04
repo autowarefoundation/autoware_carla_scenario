@@ -688,6 +688,12 @@ whatever the control showed instead:
   is a select of *keep the run's* / *On* / *Off*, not a checkbox. The blank
   choice stores `None`, and a post that leaves the field out keeps the stored
   value. Any other `bool` is a checkbox, whose absence from a post means off.
+  Either way the editor stores a real `true`, `false` or (for the select)
+  `null`. A hand-edited document may also spell a `bool` as `1`/`0`,
+  `true`/`false`, `on`/`off` or `yes`/`no` (any case), and leave it blank or
+  `null` for its default -- for a nullable one, the run's. Anything else
+  (`ture`, `enabled`, `2`, `keep`) is a validation error, not a quiet `false`;
+  write "keep the run's" as `null`, not as a word.
 - A `select` field with no value shows a placeholder rather than its first
   option. When the field is `required` the placeholder cannot be picked back,
   and the browser posts nothing for it, so the field stays unset and the

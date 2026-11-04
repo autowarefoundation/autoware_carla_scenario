@@ -131,6 +131,39 @@ def test_each_record_is_validated_by_its_fields() -> None:
     ]
 
 
+@pytest.mark.parametrize("value", ["ture", "enabled", "2", "keep", 2])
+def test_a_bool_in_a_record_is_checked_as_a_top_level_one_is(value: object) -> None:
+    """A record's bool sub-field is not a quiet ``False`` either (#1459)."""
+    issues = _issues(_records({"enabled": "off"}, {"enabled": value}))
+    assert issues == [
+        (
+            "error",
+            "nade.adversities[1].enabled",
+            f"Enabled must be true or false, got {value!r}.",
+        )
+    ]
+
+
+def test_the_form_s_record_bools_validate() -> None:
+    """What the rows post -- a checked box, a cleared one -- parses to bools
+    the validator takes."""
+    form = {
+        "adversities.__rows": "2",
+        "adversities.0.enabled": "on",
+        "adversities.0.probability": "0.5",
+        "adversities.1.probability": "0.5",
+    }
+    rows = parse_params((ROWS,), form)["adversities"]
+    assert [row["enabled"] for row in rows] == [True, False]
+    assert _issues(rows) == []
+
+
+def test_a_forged_record_bool_is_refused_by_the_form() -> None:
+    form = {"adversities.__rows": "1", "adversities.0.enabled": "maybe"}
+    with pytest.raises(ValueError, match="row 1: Enabled: must be true or false"):
+        parse_params((ROWS,), form)
+
+
 def test_a_required_list_needs_an_entry_and_an_optional_one_does_not() -> None:
     assert _issues([]) == [("error", "nade.adversities", "Adversities is required.")]
     assert _issues(None, required=False) == []

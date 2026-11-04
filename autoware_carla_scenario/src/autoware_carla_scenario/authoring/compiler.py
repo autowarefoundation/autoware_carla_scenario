@@ -31,13 +31,13 @@ from .models import ActionNode, ConditionNode, Entity, ScenarioDocument
 from .registry import (
     INT_KINDS,
     INT_LIST_KINDS,
-    TRUTHY_VALUES,
     ActionSpec,
     ConditionSpec,
     FieldSpec,
     field_holders,
     get_action_spec,
     get_condition_spec,
+    read_bool,
 )
 from ..trajectory.authoring import (
     parse_relative_vertices,
@@ -95,9 +95,13 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     if spec.kind == "number":
         return float(str(value).strip())
     if spec.kind == "bool":
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() in TRUTHY_VALUES
+        # The validator refuses what read_bool cannot read, so a validated
+        # document never raises here; an unvalidated one does, rather than
+        # turning a misspelling into False (#1459).
+        flag = read_bool(value)
+        if flag is None:
+            raise ValueError(f"{spec.label} must be true or false, got {value!r}")
+        return flag
     if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         if isinstance(value, str):
             # A reference such as ${map.no_3d_model_lanelet_ids} passes through

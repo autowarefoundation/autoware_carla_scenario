@@ -19,9 +19,9 @@ from ..authoring.registry import (
     INT_KINDS,
     INT_LIST_KINDS,
     REFERENCE_PATTERN,
-    TRUTHY_VALUES,
     FieldSpec,
     default_params,
+    read_bool,
 )
 
 __all__ = [
@@ -70,13 +70,25 @@ def bool_choice(value: Any) -> str:
     """Return the option of a nullable bool's select that *value* stands for.
 
     ``None`` and blank text are "keep the run's"; anything else is read as the
-    compiler reads a bool.
+    compiler reads a bool (:func:`~autoware_carla_scenario.authoring.registry.read_bool`).
+    A stored spelling that is neither true nor false shows as *Off*, as it
+    always has; the validator reports it, so the author sees it is wrong.
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return _KEEP
-    if isinstance(value, bool):
-        return _ON if value else _OFF
-    return _ON if str(value).strip().lower() in TRUTHY_VALUES else _OFF
+    return _ON if read_bool(value) else _OFF
+
+
+def _parse_bool(raw: Any) -> bool:
+    """Return the bool a posted *raw* spells, as the compiler reads one.
+
+    Raises:
+        ValueError: If *raw* spells neither true nor false.
+    """
+    flag = read_bool(raw)
+    if flag is None:
+        raise ValueError(f"must be true or false, got {raw!r}")
+    return flag
 
 
 def parse_int_list(raw: Any) -> Any:
@@ -102,12 +114,14 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
     """
     if is_nullable_bool(spec):
         # A three-way select: blank keeps the run's setting.
-        choice = bool_choice(raw) if present else _KEEP
-        return None if choice == _KEEP else choice == _ON
+        if not present or raw is None or (isinstance(raw, str) and not raw.strip()):
+            return None
+        return _parse_bool(raw)
     if spec.kind == "bool":
-        return (
-            present and str(raw if raw is not None else "on").lower() in TRUTHY_VALUES
-        )
+        # A checkbox: absent (or blank) is off, and a checked one posts "on".
+        if not present or (isinstance(raw, str) and not raw.strip()):
+            return False
+        return _parse_bool("on" if raw is None else raw)
 
     text = raw if raw is not None else ""
     if isinstance(text, str):

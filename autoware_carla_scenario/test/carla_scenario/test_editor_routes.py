@@ -1025,6 +1025,67 @@ class TestFieldsAFormCannotLeaveUnset:
         assert params["lane_changes"] is None
         assert params["follow_visibility"] is None
 
+    def test_what_the_bool_controls_post_validates(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The editor's own output is never refused by the bool check (#1459):
+        a checkbox checked and cleared, a nullable select on, off and blank."""
+        for type_id in ("traffic_signal", "traffic_parameters"):
+            client.post(
+                f"/draft/{draft_id}/action", data={"type_id": type_id, "actor": ""}
+            )
+        nodes = {
+            a.type: a.id
+            for a in _document(store, draft_id).actions
+            if a.type in ("traffic_signal", "traffic_parameters")
+        }
+        signal_url = f"/draft/{draft_id}/action/{nodes['traffic_signal']}"
+        traffic_url = f"/draft/{draft_id}/action/{nodes['traffic_parameters']}"
+
+        def bool_issues() -> list[str]:
+            return [
+                f"{i.path}: {i.message}"
+                for i in validate_document(_document(store, draft_id)).issues
+                if "true or false" in i.message
+            ]
+
+        for node_id in nodes.values():
+            data = _inspector_post(client, draft_id, "action", node_id)
+            client.post(f"/draft/{draft_id}/action/{node_id}", data=data)
+        assert _action(store, draft_id, nodes["traffic_signal"]).params["freeze"]
+        assert bool_issues() == []
+
+        data = _inspector_post(client, draft_id, "action", nodes["traffic_signal"])
+        data.pop("freeze", None)  # the box cleared
+        client.post(signal_url, data=data)
+        stored = _action(store, draft_id, nodes["traffic_signal"]).params
+        assert stored["freeze"] is False
+        assert bool_issues() == []
+
+        for choice, expected in (("on", True), ("off", False), ("", None)):
+            client.post(traffic_url, data={"lane_changes": choice})
+            stored = _action(store, draft_id, nodes["traffic_parameters"]).params
+            assert stored["lane_changes"] is expected
+            assert bool_issues() == []
+
+    def test_a_forged_bool_post_is_refused_not_stored_as_off(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "traffic_parameters", "actor": ""},
+        )
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "traffic_parameters"
+        )
+        client.post(f"/draft/{draft_id}/action/{node.id}", data={"lane_changes": "on"})
+        client.post(
+            f"/draft/{draft_id}/action/{node.id}", data={"lane_changes": "keep"}
+        )
+        assert _action(store, draft_id, node.id).params["lane_changes"] is True
+
     def test_a_required_select_with_no_value_stores_nothing(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
