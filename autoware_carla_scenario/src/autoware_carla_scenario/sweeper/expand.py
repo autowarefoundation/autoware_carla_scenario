@@ -664,7 +664,8 @@ def expand_config(
             before any map is read -- or when the Lanelet2 map a constraint or
             route sweep needs is not named, is missing, or cannot be read,
             whether ``map.lanelet2_path``, ``map.directory`` or ``map.source``
-            names it (a map that cannot be resolved or fetched).
+            names it (a map that cannot be resolved or fetched;
+            :func:`load_sweep_map`).
     """
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
@@ -694,29 +695,7 @@ def expand_config(
             sweep, None, arguments, odd=odd, controls=controls, drawn=drawn, seed=seed
         )
 
-    from ..maps import (  # noqa: PLC0415 -- clones a map on demand
-        MapCacheError,
-        MapResolutionError,
-        resolve_map_paths,
-    )
-    from .map_loader import load_map  # noqa: PLC0415
-
-    # Refused as an invalid sweep is: a map that is missing or unreadable is
-    # an authoring error of this scenario, which every caller reports by name
-    # and goes on to the next one (#1444), not a crash.  An invalid
-    # `map.source` is a ValueError (MapSourceError) already.
-    try:
-        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
-    except (MapResolutionError, MapCacheError) as exc:  # each names the map
-        raise ValueError(str(exc)) from exc
-    try:
-        lanelet_map = load_map(paths)
-    except FileNotFoundError as exc:  # names the file, or says none is named
-        raise ValueError(str(exc)) from exc
-    except (OSError, RuntimeError) as exc:  # RuntimeError: Lanelet2's parser
-        raise ValueError(
-            f"Could not read the Lanelet2 map {paths.lanelet2_path}: {exc}"
-        ) from exc
+    lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
     return expand_sweep(
         sweep,
         lanelet_map,
@@ -726,6 +705,69 @@ def expand_config(
         drawn=drawn,
         seed=seed,
     )
+
+
+def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
+    """Resolve and load the Lanelet2 map a sweep's ``map`` config names.
+
+    ``scenario-expand``, a ``--multirun`` batch (:func:`expand_config`) and
+    the Hydra sweeper (``LaneletConstraintSweeper``) all load a sweep's map
+    this way, so each refuses a map that is missing or unreadable alike: as
+    an invalid sweep, an authoring error of this scenario that its caller
+    reports by name, not a crash (#1444, #1447).
+
+    Args:
+        map_cfg: The config's ``map`` node (``None`` when it has none).
+        prefix: Put before the message, to say who refuses the map.
+
+    Raises:
+        ValueError: Naming the map, its cause the original error, when it is
+            not named, is missing or cannot be read, whether
+            ``map.lanelet2_path``, ``map.directory`` or ``map.source`` names
+            it -- a map that cannot be resolved or fetched (MapSourceError,
+            MapResolutionError, MapCacheError), an ``OSError`` resolving it
+            (the map cache's root not a directory, say), a Lanelet2 file that
+            is missing (``FileNotFoundError``) or that Lanelet2 cannot read
+            (any ``OSError``, or its parser's ``RuntimeError``).
+    """
+    from ..maps import (  # noqa: PLC0415 -- clones a map on demand
+        MapCacheError,
+        MapResolutionError,
+        MapSourceError,
+        resolve_map_paths,
+    )
+    from .map_loader import load_map  # noqa: PLC0415
+
+    try:
+        paths = resolve_map_paths(map_cfg)
+    except (MapSourceError, MapResolutionError, MapCacheError) as exc:
+        raise ValueError(f"{prefix}{exc}") from exc  # each names the map
+    except OSError as exc:  # the map cache's own directory, say
+        raise ValueError(
+            f"{prefix}Could not resolve the map{_map_label(map_cfg)}: {exc}"
+        ) from exc
+    try:
+        return load_map(paths)
+    except FileNotFoundError as exc:  # names the file, or says none is named
+        raise ValueError(f"{prefix}{exc}") from exc
+    except (OSError, RuntimeError) as exc:  # RuntimeError: Lanelet2's parser
+        raise ValueError(
+            f"{prefix}Could not read the Lanelet2 map {paths.lanelet2_path}: {exc}"
+        ) from exc
+
+
+def _map_label(map_cfg: Any) -> str:
+    """`` map.<key>=<value>`` for the setting *map_cfg*'s map is resolved
+    from -- ``map.directory`` wins over ``map.source``, as in
+    :func:`~autoware_carla_scenario.maps.resolve_map_paths` -- or its
+    ``map.name``; ``""`` when none is set."""
+    if not isinstance(map_cfg, DictConfig):
+        return ""
+    for key in ("directory", "source", "name"):
+        value = OmegaConf.select(map_cfg, key)
+        if value is not None and str(value).strip():
+            return f" map.{key}={value}"
+    return ""
 
 
 def _config_seed(cfg: DictConfig) -> int | None:

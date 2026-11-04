@@ -131,7 +131,7 @@ def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
     sweeper.launcher = MagicMock()
     with (
         patch(
-            "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper.resolve_map_paths"
+            "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper.load_sweep_map"
         ) as resolve,
         pytest.raises(SystemExit) as exited,
     ):
@@ -157,8 +157,7 @@ def test_the_sweeper_refuses_a_negative_cooldown_max_retries(
     )
     sweeper.launcher = MagicMock()
     with (
-        patch.object(mod, "resolve_map_paths") as resolve,
-        patch.object(mod, "load_map"),
+        patch.object(mod, "load_sweep_map") as resolve,
         patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
         pytest.raises(SystemExit) as exited,
     ):

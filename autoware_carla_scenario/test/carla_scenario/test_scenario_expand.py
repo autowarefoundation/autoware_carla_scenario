@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,13 @@ from omegaconf import OmegaConf
 
 from autoware_carla_scenario.sweeper import expand as expand_module
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
+
+
+#: A map source pinned to a commit, so resolving it fetches nothing first.
+_PINNED_SOURCE = (
+    "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+    "@5058c6683a1077a99aa5fdca5e6ecff9d71fcfb1#autoware_maps/Town10HD_Opt"
+)
 
 
 class TestExpandSweep:
@@ -427,11 +435,97 @@ class TestExpandConfig:
         )
         sweeper.launcher = MagicMock()
         with (
-            patch.object(mod, "resolve_map_paths") as resolve,
+            patch.object(mod, "load_sweep_map") as resolve,
             pytest.raises(ValueError, match="one parameter"),
         ):
             sweeper.sweep([])
         resolve.assert_not_called()
+
+    # A map that cannot be resolved, fetched or read is refused by the Hydra
+    # sweeper (a single scenario's --multirun) as scenario-expand refuses it:
+    # a ValueError naming the map, its cause kept, before any case runs
+    # (#1447).  It used to escape as a MapResolutionError, a MapCacheError or
+    # Lanelet2's RuntimeError.
+    @staticmethod
+    def _sweep_on(
+        map_cfg: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> pytest.ExceptionInfo:
+        from unittest.mock import MagicMock
+
+        from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+        def _no_expansion(*_args, **_kwargs):
+            raise AssertionError("a refused map must not be expanded")
+
+        monkeypatch.setattr(mod, "expand_sweep", _no_expansion)
+        sweeper = mod.LaneletConstraintSweeper()
+        sweeper.config = OmegaConf.create(
+            {"map": map_cfg, "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}}}
+        )
+        sweeper.launcher = MagicMock()
+        with pytest.raises(ValueError, match="^LaneletConstraintSweeper: ") as caught:
+            sweeper.sweep([])
+        sweeper.launcher.launch.assert_not_called()
+        return caught
+
+    def test_the_sweeper_refuses_a_map_directory_that_does_not_exist(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        from autoware_carla_scenario.maps import MapResolutionError
+
+        missing = tmp_path / "no_map"
+        caught = self._sweep_on({"directory": str(missing)}, monkeypatch)
+        assert f"Map directory {missing} does not exist" in str(caught.value)
+        assert isinstance(caught.value.__cause__, MapResolutionError)
+
+    def test_the_sweeper_refuses_a_map_that_cannot_be_fetched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.maps import MapCacheError
+
+        def _unreachable(_map_cfg):
+            raise MapCacheError("could not clone the map repository")
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.maps.resolve_map_paths", _unreachable
+        )
+        caught = self._sweep_on({"name": "Town10HD_Opt"}, monkeypatch)
+        assert str(caught.value) == (
+            "LaneletConstraintSweeper: could not clone the map repository"
+        )
+        assert isinstance(caught.value.__cause__, MapCacheError)
+
+    def test_the_sweeper_refuses_a_directory_as_the_lanelet2_map(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        caught = self._sweep_on({"lanelet2_path": str(tmp_path)}, monkeypatch)
+        assert f"Could not read the Lanelet2 map {tmp_path}" in str(caught.value)
+        assert isinstance(caught.value.__cause__, (OSError, RuntimeError))
+
+    def test_a_map_cache_root_that_is_no_directory_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        # The cache root's own OSError, from resolving a `map.source` (#1447).
+        from autoware_carla_scenario.maps.cache import (
+            AUTOWARE_DATA_DIR_ENV,
+            CACHE_ROOT_ENV,
+        )
+
+        data_dir = tmp_path / "autoware_data"
+        data_dir.write_text("")
+        monkeypatch.delenv(CACHE_ROOT_ENV, raising=False)
+        monkeypatch.setenv(AUTOWARE_DATA_DIR_ENV, str(data_dir))
+        source = _PINNED_SOURCE
+        cfg = OmegaConf.create(
+            {
+                "map": {"source": source},
+                "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}},
+            }
+        )
+        expected = f"Could not resolve the map map.source={source}: "
+        with pytest.raises(ValueError, match="^" + re.escape(expected)) as caught:
+            expand_config(cfg)
+        assert isinstance(caught.value.__cause__, NotADirectoryError)
 
 
 @pytest.mark.usefixtures("at_repo_root")
@@ -719,6 +813,34 @@ def test_the_cli_reports_a_map_that_cannot_be_fetched(
     assert code == 1
     for name in ("lane_change/left", "lane_change/right"):
         assert f"Error: {name}: could not clone the map repository" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+# A map cache root that is no directory -- AUTOWARE_DATA_DIR naming a file --
+# is refused the same way, naming the map (#1447): its NotADirectoryError
+# used to escape as a traceback.
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_map_cache_root_that_is_no_directory(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+    from autoware_carla_scenario.maps.cache import (
+        AUTOWARE_DATA_DIR_ENV,
+        CACHE_ROOT_ENV,
+    )
+
+    data_dir = tmp_path / "autoware_data"
+    data_dir.write_text("")
+    monkeypatch.delenv(CACHE_ROOT_ENV, raising=False)
+    monkeypatch.setenv(AUTOWARE_DATA_DIR_ENV, str(data_dir))
+    # Town10HD_Opt's source is pinned to a commit: nothing is fetched.
+    code = main(["scenario=lane_change/*", "map=town10hd_opt"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: Could not resolve the map map.source=" in captured.err
+    assert "Not a directory" in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""
 
