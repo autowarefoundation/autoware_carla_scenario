@@ -60,6 +60,14 @@ def test_every_default_is_a_plain_value() -> None:
     )
 
 
+@pytest.mark.parametrize("key", sorted(_DEFAULTS))
+def test_the_shipped_server_config_sets_every_field(key: str) -> None:
+    # A field the shipped group lacks cannot be overridden on the command
+    # line: server.max_tick_rate_hz=20 failed with "Key 'max_tick_rate_hz' is
+    # not in struct" (#1438).
+    assert key in _shipped_server(), f"localhost.yaml lacks server.{key}"
+
+
 def test_the_cooldown_default_is_the_shipped_one() -> None:
     assert ServerConfig().cooldown_seconds == _shipped_server()["cooldown_seconds"]
 

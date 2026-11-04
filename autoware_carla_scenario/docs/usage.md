@@ -101,7 +101,9 @@ Python version, and the viewer's Run form reads it the same way.
   constraints read it)
 - A config value a case would refuse -- an unknown `server.world_reset`, a
   `scenario.timeout_seconds` that is not positive, a `server.port` out of
-  range, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
+  range, a NaN or negative `server.cooldown_seconds`, a
+  `server.max_tick_rate_hz` or `server.fog_density_scale` that is not a
+  finite number above 0, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
   refused for every case before any scenario is built or the map is resolved,
   locally as under `launcher=slurm`: the batch prints
   `Error: <case>: <key> ...`, naming the case refused, and exits 1, a
@@ -628,8 +630,10 @@ Defines the default config group composition:
 |-----------|------|---------|-------------|
 | `server.host` | str | `localhost` | CARLA server hostname |
 | `server.port` | int | `2000` | CARLA server port |
-| `server.cooldown_seconds` | float | `2.0` | Wait time between consecutive scenario runs |
+| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
 | `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed) |
+| `server.max_tick_rate_hz` | float | `null` | Upper bound (Hz) on how fast the run ticks the world, or `null` for as fast as the server allows; a finite number above `0` (`20` is real time at the 0.05 s step, which `ego.entity=ros2` wants: [ROS 2](ros2.md#timing)) |
+| `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |
 | `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
 | `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
 
