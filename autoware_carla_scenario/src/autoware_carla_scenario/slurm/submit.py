@@ -27,8 +27,10 @@ from typing import TYPE_CHECKING, Any, cast
 from . import scripts
 from .manifest import (
     MANIFEST_VERSION,
+    SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
     config_files,
+    sbatch_in_flight,
     sequential_stems,
     write_json,
 )
@@ -553,7 +555,11 @@ def squeue_states(job: str) -> dict[int, str] | None:
 
 def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* until SLURM lists none of its tasks, then
-    collect the batch; the exit status (0 when every case passed)."""
+    collect the batch; the exit status (0 when every case passed).
+
+    A submission with no job yet (its sbatch has not returned, or its
+    submitter died before it did) is neither followed nor collected (#1417):
+    ``squeue -j None`` would read as a job that ended."""
     from .collect import collect  # noqa: PLC0415
 
     submission = layout.submission_record(index)
@@ -564,6 +570,24 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
             f"scenario-slurm collect {layout.batch_dir}",
             file=sys.stderr,
         )
+        return 1
+    if not submission.get("job_id"):
+        if sbatch_in_flight(submission):
+            print(  # noqa: T201
+                f"Error: submission {index} of this batch is being submitted "
+                "(sbatch has not returned yet), by another resubmit or the "
+                "viewer; try again once it has: "
+                f"scenario-slurm wait {layout.batch_dir}",
+                file=sys.stderr,
+            )
+        else:
+            print(  # noqa: T201
+                f"Error: submission {index} of this batch has no job: its "
+                "submitter stopped before sbatch returned, more than "
+                f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s ago, so the record is stale. "
+                f"See the batch with: scenario-slurm status {layout.batch_dir}",
+                file=sys.stderr,
+            )
         return 1
     job = str(submission["job_id"])
     cases = [case for chunk in submission["chunks"] for case in chunk]

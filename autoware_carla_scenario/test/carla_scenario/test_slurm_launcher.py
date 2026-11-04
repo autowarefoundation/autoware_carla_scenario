@@ -2097,6 +2097,52 @@ def test_wait_and_the_worker_refuse_an_unreadable_submission_record(
     assert f"the submission record {path} is missing" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("stale", [False, True], ids=["in-flight", "stale"])
+def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stale: bool,
+) -> None:
+    """#1417: a record whose sbatch has not returned (job_id None) is not a
+    job that ended: wait asks squeue nothing, collects nothing, and says
+    whether to retry (in flight) or that the record is stale."""
+    from autoware_carla_scenario.slurm import cli, collect, submit
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    asked: list[str] = []
+
+    def squeue_states(job: str) -> dict[str, str]:
+        asked.append(job)
+        return {}
+
+    def no_collect(*_a: Any, **_k: Any) -> int:
+        raise AssertionError("collect must not run")
+
+    monkeypatch.setattr(submit, "squeue_states", squeue_states)
+    monkeypatch.setattr(collect, "collect", no_collect)
+    submitted_at = time.time() - (SBATCH_IN_FLIGHT_SECONDS + 1 if stale else 0)
+    write_json(
+        layout.submission(1),
+        {"index": 1, "job_id": None, "submitted_at": submitted_at, "chunks": [[0]]},
+    )
+    for argv in (["wait"], ["wait", "--submission", "1"]):
+        assert cli.main([*argv, str(layout.batch_dir)]) == 1
+        err = capsys.readouterr().err
+        if stale:
+            assert "submission 1 of this batch has no job" in err
+            assert "stale" in err
+        else:
+            assert "submission 1 of this batch is being submitted" in err
+            assert "try again once it has" in err
+    assert asked == []
+    assert not (layout.batch_dir / "batch_results.json").exists()
+
+
 def test_of_two_resubmits_at_once_the_later_index_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
