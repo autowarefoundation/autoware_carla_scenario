@@ -700,7 +700,10 @@ FieldSpec("speed_threshold", "Counts as stopped below", "number", 0.1,
 A field whose constructor raises for a value needs the matching bound;
 `test_authoring_accepted_builds.py` checks each bound is refused, a value on
 it (or just inside an exclusive one) is accepted and builds, and each default
-lies inside it.
+lies inside it. It also tries every field with no bound on values well outside
+its usual domain (-1, -0.001, 101, 1e12): each one the validator accepts must
+build, so a missing bound shows up there. A spawn or lanelet binding's fields
+are held to the same rule against the sweeper's `parse_binding`.
 
 ### A list of records
 

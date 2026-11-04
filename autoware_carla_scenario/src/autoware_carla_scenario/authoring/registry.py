@@ -935,6 +935,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Leave empty to keep what the world already has.",
             ),
             FieldSpec(
@@ -944,6 +946,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Rain intensity.",
             ),
             FieldSpec(
@@ -953,6 +957,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Water left on the road surface.",
             ),
             FieldSpec(
@@ -962,6 +968,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="How wet surfaces look.",
             ),
             FieldSpec(
@@ -971,6 +979,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Wind strength.",
             ),
             FieldSpec(
@@ -980,6 +990,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Thickness of the fog.",
             ),
             FieldSpec(
@@ -1231,6 +1243,7 @@ register_action_spec(
                 kind="number",
                 default=15.0,
                 unit="m",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="seed",
@@ -3149,6 +3162,7 @@ register_action_spec(
                 kind="int",
                 default=0,
                 required=False,
+                minimum=0,
                 help=(
                     "With Target 'A route junction's path': which junction of the "
                     "route, from 0."
@@ -4733,6 +4747,7 @@ register_condition_spec(
                 label="Max NG seconds",
                 kind="number",
                 default=0.0,
+                minimum=0.0,
                 help=(
                     "How long, in total, the metric may meet the rule before "
                     "the run fails; 0 fails it at the first frame that does."
@@ -5366,6 +5381,7 @@ register_binding_spec(
                 label="Steps on",
                 kind="int",
                 default=1,
+                minimum=1,
                 help="1 is the lanelet after the pick; where the road forks, "
                 "the lowest id.",
             ),
