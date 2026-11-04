@@ -1068,6 +1068,71 @@ class TestFieldsAFormCannotLeaveUnset:
             assert stored["lane_changes"] is expected
             assert bool_issues() == []
 
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("false", False),
+            ("OFF", False),
+            ("0", False),
+            ("no", False),
+            ("yes", True),
+            (" On ", True),
+            ("1", True),
+        ],
+    )
+    def test_a_hand_written_bool_shows_what_the_compiler_reads(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+        spelling: str,
+        expected: bool,
+    ) -> None:
+        """A bool spelled in text renders as the compiler reads it (#1462): a
+        checkbox for ``"false"`` is unchecked, so the next post keeps it off,
+        and a nullable select shows On or Off, not by the text's truthiness."""
+        for type_id in ("traffic_signal", "traffic_parameters"):
+            client.post(
+                f"/draft/{draft_id}/action", data={"type_id": type_id, "actor": ""}
+            )
+        draft = _draft(store, draft_id)
+        nodes = {
+            a.type: a
+            for a in draft.document.actions
+            if a.type in ("traffic_signal", "traffic_parameters")
+        }
+        nodes["traffic_signal"].params["freeze"] = spelling
+        nodes["traffic_parameters"].params["lane_changes"] = spelling
+        store.save(draft)
+        signal_id = nodes["traffic_signal"].id
+        traffic_id = nodes["traffic_parameters"].id
+
+        data = _inspector_post(client, draft_id, "action", signal_id)
+        assert ("freeze" in data) is expected
+        client.post(f"/draft/{draft_id}/action/{signal_id}", data=data)
+        assert _action(store, draft_id, signal_id).params["freeze"] is expected
+
+        data = _inspector_post(client, draft_id, "action", traffic_id)
+        assert data["lane_changes"] == ("on" if expected else "off")
+        client.post(f"/draft/{draft_id}/action/{traffic_id}", data=data)
+        assert _action(store, draft_id, traffic_id).params["lane_changes"] is expected
+
+    def test_a_blank_bool_checkbox_shows_its_default(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Blank text is the field's default to the compiler, so to the box."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "traffic_signal", "actor": ""},
+        )
+        draft = _draft(store, draft_id)
+        node = next(a for a in draft.document.actions if a.type == "traffic_signal")
+        node.params["freeze"] = ""
+        store.save(draft)
+        data = _inspector_post(client, draft_id, "action", node.id)
+        # freeze defaults to True.
+        assert data.get("freeze") == "on"
+
     def test_a_forged_bool_post_is_refused_not_stored_as_off(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

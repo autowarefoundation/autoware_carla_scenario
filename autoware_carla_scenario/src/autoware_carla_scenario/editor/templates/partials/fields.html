@@ -18,8 +18,13 @@
       <option value="off" {% if choice == 'off' %}selected{% endif %}>Off</option>
     </select>
   {% elif spec.kind == 'bool' %}
+    {#- Read as the compiler reads a bool, not by truthiness: a hand-written
+        "false" / "off" / "0" is unchecked, and blank text is the default
+        (#1462). -#}
+    {%- set choice = bool_choice(current) -%}
+    {%- if choice == '' %}{% set choice = bool_choice(spec.default) %}{% endif -%}
     <label class="ed-check">
-      <input type="checkbox" name="{{ name }}" value="on" {% if current %}checked{% endif %}>
+      <input type="checkbox" name="{{ name }}" value="on" {% if choice == 'on' %}checked{% endif %}>
       <span>{{ spec.label }}{% if spec.help %}<span class="ed-help">{{ spec.help }}</span>{% endif %}</span>
     </label>
   {% elif spec.kind == 'select' %}
