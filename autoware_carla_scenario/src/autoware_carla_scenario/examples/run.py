@@ -369,8 +369,14 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     configuration yields the same launcher, so a batch's egos and its queue
     share it.
 
+    The group holds the keys of both launcher types at once (the shipped
+    config does), and each type takes its own; a key neither type reads
+    (``+autoware.launcher.stop_timout_s=60``) is refused, whatever the type,
+    rather than leaving the default in place.
+
     Raises:
-        ValueError: If ``autoware.launcher.type`` names an unknown launcher.
+        ValueError: If ``autoware.launcher.type`` names an unknown launcher, or
+            the group holds a key no launcher reads, naming it.
     """
     ego_cfg = cfg.get("ego") or {}
     if str(ego_cfg.get("entity", "autopilot")) != "autoware":
@@ -380,6 +386,28 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     if launcher_cfg is None:
         return None
     settings = _to_dict(launcher_cfg)
+
+    from autoware_carla_scenario.autoware_stack import (  # noqa: PLC0415
+        CommandAutowareLauncher,
+        DockerAutowareConfig,
+        DockerAutowareLauncher,
+    )
+
+    docker_fields = set(DockerAutowareConfig.__dataclass_fields__)
+    known = (
+        {"type"}
+        | docker_fields
+        | {"command", "env", "stop_timeout_s", "bridge_parameters"}
+    )
+    unknown = sorted(set(settings) - known)
+    if unknown:
+        msg = (
+            "Unknown autoware.launcher key(s): "
+            f"{[f'autoware.launcher.{name}' for name in unknown]}. "
+            f"Known keys: {sorted(known)}"
+        )
+        raise ValueError(msg)
+
     kind = str(settings.pop("type", "none"))
     if kind == "none":
         return None
@@ -389,16 +417,9 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     if cached is not None:
         return cached
 
-    from autoware_carla_scenario.autoware_stack import (  # noqa: PLC0415
-        CommandAutowareLauncher,
-        DockerAutowareConfig,
-        DockerAutowareLauncher,
-    )
-
     launcher: AutowareLauncher
     if kind == "docker":
-        fields = DockerAutowareConfig.__dataclass_fields__
-        options = {k: v for k, v in settings.items() if k in fields}
+        options = {k: v for k, v in settings.items() if k in docker_fields}
         options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
         for name in ("launch", "colcon_args", "docker_args", "ros_domain_ids"):
             if name in options:
