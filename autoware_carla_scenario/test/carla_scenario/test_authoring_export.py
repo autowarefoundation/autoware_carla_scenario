@@ -9,6 +9,7 @@ generated files themselves runs unconditionally.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -688,6 +689,157 @@ class TestRunOnTheDocumentsMap:
         assert own_map_mismatch(document, on_it) is None
         other = {"name": "Town10HD_Opt", "source": _MAP_SOURCE}
         assert "map.source" in (own_map_mismatch(document, other) or "")
+
+
+class TestEveryPathRefusesAnotherMapBeforeReadingIt:
+    """The own-map refusal (#1424) comes before any map is resolved, fetched or
+    searched on every path that composes a scenario and expands or plans it
+    without running it: a ``--multirun`` batch, ``scenario-expand``, the
+    viewer's sweep resolver and ``scenario-odd route`` (#1428).
+
+    The document is registered by the scenario packages' loading alone, as an
+    installed package's ``register()`` does: a path that checked before
+    loading them would find no document and let the run through.
+    """
+
+    _REFUSAL = (
+        r"scenario 'cut_in' runs on the map its document names, but map\.name "
+        r"is 'NishishinjukuMap'.*map=cut_in_map"
+    )
+
+    @pytest.fixture
+    def exported_package(
+        self,
+        tmp_path: Path,
+        scenario_registry: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> Any:
+        """Load the packages: puts the exported package's conf dir on the
+        search path and registers its document, as its ``register()`` would."""
+        # Imported before expand_config is patched: it binds the name on import.
+        import autoware_carla_scenario.examples.expand  # noqa: F401
+        from autoware_carla_scenario.sweeper import expand as sweeper_expand
+
+        document = _document_on_own_map("source")
+        package = export_package(document, tmp_path, **OFFLINE).root
+
+        def load_scenario_plugins() -> None:
+            scenario_registry.register_conf_dir(
+                package / "src" / "cut_in_scenario" / "conf"
+            )
+            scenario_registry.register_scenario_document("cut_in", lambda: document)
+
+        monkeypatch.setattr(
+            scenario_registry, "load_scenario_plugins", load_scenario_plugins
+        )
+
+        def expand_config(*_: Any, **__: Any) -> list[list[str]]:
+            raise AssertionError("expanded the sweep on the composed map")
+
+        monkeypatch.setattr(sweeper_expand, "expand_config", expand_config)
+        return load_scenario_plugins
+
+    def test_a_multirun_batch(
+        self,
+        exported_package: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        exported_package()
+        with pytest.raises(SystemExit) as exited:
+            run.run_batch(["cut_in"], [], expand=True)
+        assert exited.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: cut_in: scenario 'cut_in'")
+        assert re.search(self._REFUSAL, err)
+
+        # On its own map the sweep is expanded.
+        from autoware_carla_scenario.sweeper import expand as sweeper_expand
+
+        monkeypatch.setattr(sweeper_expand, "expand_config", lambda *_, **__: [[]])
+        assert run._expand_batch(["cut_in"], ["map=cut_in_map"]) == [("cut_in", [])]
+
+    def test_the_scenario_cli_loads_the_packages_before_the_batch_checks(
+        self,
+        exported_package: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        monkeypatch.setattr(run, "load_scenario_plugins", exported_package)
+        monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
+        monkeypatch.setattr(sys, "argv", ["scenario", "--multirun", "scenario=cut_in*"])
+        with pytest.raises(SystemExit) as exited:
+            run.main()
+        assert exited.value.code == 1
+        assert re.search(self._REFUSAL, capsys.readouterr().err)
+
+    def test_scenario_expand(
+        self,
+        exported_package: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.examples import expand
+
+        monkeypatch.setattr(expand, "load_scenario_plugins", exported_package)
+        monkeypatch.setattr(
+            expand,
+            "expand_config",
+            lambda *_, **__: pytest.fail("expanded the sweep on the composed map"),
+        )
+        assert expand.main(["scenario=cut_in"]) == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err.startswith("Error: cut_in: scenario 'cut_in'")
+        assert re.search(self._REFUSAL, err)
+
+        monkeypatch.setattr(expand, "expand_config", lambda *_, **__: [[]])
+        assert expand.main(["scenario=cut_in", "map=cut_in_map"]) == 0
+
+    def test_the_viewers_sweep_resolver(
+        self, exported_package: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.ui import sweep_resolver
+
+        monkeypatch.setattr(sweep_resolver, "load_scenario_plugins", exported_package)
+        with pytest.raises(sweep_resolver.SweepResolutionError) as raised:
+            sweep_resolver.resolve_sweep("cut_in")
+        assert str(raised.value).startswith("cut_in: scenario 'cut_in'")
+        assert re.search(self._REFUSAL, str(raised.value))
+
+        from autoware_carla_scenario.sweeper import expand as sweeper_expand
+
+        monkeypatch.setattr(sweeper_expand, "expand_config", lambda *_, **__: [[]])
+        assert sweep_resolver.resolve_sweep("cut_in", ["map=cut_in_map"]) == [
+            ["scenario=cut_in"]
+        ]
+
+    def test_scenario_odd_route(
+        self,
+        exported_package: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+        from autoware_carla_scenario.odd.cli import main as odd_main
+
+        def planned(*_: Any, **__: Any) -> None:
+            raise AssertionError("planned the route on the composed map")
+
+        monkeypatch.setattr(run, "build_planned_route", planned)
+        assert odd_main(["route", "default", "cut_in"]) == 2
+        out = capsys.readouterr().out
+        assert "cut_in: NOT PLANNED: scenario 'cut_in'" in out
+        assert re.search(self._REFUSAL, out)
+        assert "planned the route" not in out
+
+        # On its own map the route is planned.
+        assert odd_main(["route", "default", "cut_in", "map=cut_in_map"]) == 2
+        assert "planned the route" in capsys.readouterr().out
 
 
 #: Valid scenario ids, each with the Python package its export is named after.

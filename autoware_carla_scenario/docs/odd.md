@@ -1503,7 +1503,10 @@ the map's routing graph, leg by leg. A scenario that derives its goal in
 `setup()` from `scenario.expected_route_lanelet_ids`, as
 `intersection_passing` does, gets that goal here too (a configured goal
 wins). A goal derived any other way is only known once the scenario runs:
-that route is reported as not planned.
+that route is reported as not planned. So is an exported scenario on a map of
+its own composed on another map (`map=<id>_map` left out), before any map is
+read: its lanelet ids are its own map's
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
 
 The ODD's attributes are then read lanelet by lanelet along the route, and
 each lanelet gets one of three verdicts:

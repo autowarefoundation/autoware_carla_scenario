@@ -764,10 +764,9 @@ def test_slurm_refuses_what_a_local_batch_refuses_before_submitting(
     monkeypatch.setattr(fake_slurm.run, "_make_batch_output_dir", output_dir)
     with pytest.raises(ValueError, match=re.escape(key)):
         fake_slurm.run.run_batch([_CONCRETE], ["launcher=slurm", override])
-    # A local batch refuses the same value (once its output directory is made).
-    local = fake_slurm.batch_dir("local")
-    monkeypatch.setattr(fake_slurm.run, "_make_batch_output_dir", lambda: local)
-    with pytest.raises(ValueError, match=re.escape(key)):
+    # A local batch refuses the same value, before its output directory is
+    # made too (#1430): run_batch raises it, and the CLI prints its Error line.
+    with pytest.raises(fake_slurm.run.RunConfigError, match=re.escape(key)):
         fake_slurm.run.run_batch([_CONCRETE], [override])
     assert not (fake_slurm.state / "sbatch.log").exists()
 
