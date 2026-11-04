@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from concurrent import futures
 from pathlib import Path
 from types import SimpleNamespace
@@ -471,6 +472,21 @@ class TestSmartPedestrianControllerAction:
             client.negotiate()
         client.close()
 
+    @pytest.mark.parametrize("fps", [0.0, -30.0, math.nan, math.inf])
+    def test_a_generator_without_a_finite_positive_rate_is_refused(
+        self,
+        generator: _Generator,
+        monkeypatch: pytest.MonkeyPatch,
+        fps: float,
+    ) -> None:
+        # #1473: every frame number is a time times the rate.
+        monkeypatch.setattr(sys.modules[__name__], "FPS", fps)
+        backend = pool_module._ACTIVE.backend("ardy")  # type: ignore[union-attr]
+        client = PedestrianMotionClient(backend.address())  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError, match="frame rate"):
+            client.negotiate()
+        client.close()
+
     @pytest.mark.parametrize(
         "kwargs, match",
         [
@@ -509,6 +525,48 @@ class TestSmartPedestrianControllerAction:
         )
         with pytest.raises(ValueError, match="time_s must be finite"):
             SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize("axis", ["x", "y"])
+    def test_a_non_finite_waypoint_is_refused(self, axis: str, value: float) -> None:
+        # #1473: it failed int() only when the action started, after the
+        # generator was up and the walker taken over.
+        point = {"x": 1.0, "y": 2.0, axis: value}
+        with pytest.raises(ValueError, match="waypoint 1 must be finite"):
+            SmartPedestrianControllerAction(
+                "walker1",
+                waypoints=[WalkWaypoint(0.0, 0.0), WalkWaypoint(**point)],
+            )
+
+    @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+    @pytest.mark.parametrize(
+        "field, entry",
+        [
+            ("joint pelvis", '"joints": {"pelvis": [0, %s, 1]}'),
+            ("x", '"x": %s, "y": 0, "joints": {"pelvis": [0, 0, 1]}'),
+            ("y", '"x": 0, "y": %s, "joints": {"pelvis": [0, 0, 1]}'),
+            ("yaw_deg", '"yaw_deg": %s, "joints": {"pelvis": [0, 0, 1]}'),
+        ],
+    )
+    def test_a_non_finite_keyframe_value_is_refused(
+        self, tmp_path: Path, field: str, entry: str, value: str
+    ) -> None:
+        # #1473: json.loads reads NaN and Infinity; only time_s was checked.
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"keyframes": [{"time_s": 1.0, %s}]}' % (entry % value))
+        with pytest.raises(
+            ValueError, match=f"not a keyframes file \\({field} must be finite"
+        ):
+            SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+
+    def test_a_finite_keyframes_file_loads(self, tmp_path: Path) -> None:
+        good = tmp_path / "good.json"
+        good.write_text(
+            '{"keyframes": [{"time_s": 1.0, "x": 1, "y": -2.5, "yaw_deg": 90,'
+            ' "joints": {"pelvis": [0, 0, 1]}}]}'
+        )
+        action = SmartPedestrianControllerAction("walker1", keyframes=str(good))
+        assert action.label == "smart_pedestrian"
 
     def test_a_malformed_keyframes_file_is_refused(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"

@@ -244,11 +244,13 @@ A keyframes file lists full-body poses:
 ```
 
 - `time_s` is the time into the motion: finite and not negative.
-- `x`, `y` and `yaw_deg` place the pose in CARLA's world. Without them, the pose
-  is placed where the motion began and faces the way it did then.
+- `x`, `y` and `yaw_deg` place the pose in CARLA's world; each is finite.
+  Without them, the pose is placed where the motion began and faces the way it
+  did then.
 - `joints` gives each joint the generator places (the `joint_names` it answers
   with; ARDY's SOMA model has 30) in metres. The axes are forward, left and up
-  from the root's ground point, as the body faces.
+  from the root's ground point, as the body faces. Every component is finite.
+  JSON's `NaN` and `Infinity` are refused when the action is built.
 
 ### Parameters
 
@@ -257,7 +259,7 @@ A keyframes file lists full-body poses:
 | `entity_name` | | The pedestrian |
 | `prompt` | `""` | What it does, in words, from the start |
 | `prompts` | `()` | `TimedPrompt(time_s, text)`: texts that take over later (`time_s` finite and not negative) |
-| `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes |
+| `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes (`x` and `y` finite) |
 | `speed_ms` | `1.3` | Walking speed along the waypoints, m/s; finite and positive |
 | `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
 | `duration_s` | `None` | Stop after this long (finite and positive); `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
