@@ -853,8 +853,8 @@ def test_the_route_is_the_lanelets_the_ego_drove_along(route_log: Path) -> None:
     assert len(rows) == len(_numeric(scene.timestamps_ns))
     for row in rows:
         assert row.HasField("value")
-        assert _numeric(row.value.lane_ids).tolist() == [4, 98, 102]
-        assert not row.value.HasField("preferred_lane_ids")
+        assert [list(seg.lane_ids) for seg in row.value.segments] == [[4], [98], [102]]
+        assert not any(seg.HasField("preferred_lane_id") for seg in row.value.segments)
 
 
 def test_the_route_can_be_left_out(route_log: Path, tmp_path: Path) -> None:

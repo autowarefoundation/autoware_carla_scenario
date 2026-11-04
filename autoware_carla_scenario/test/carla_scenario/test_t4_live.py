@@ -222,9 +222,9 @@ def test_the_current_sweep_route_and_goal_ride_along() -> None:
     np.testing.assert_allclose(_numeric(sweep.lidar_pc), [[1.0, 2.0, 3.0, 127.5, 0.0]])
     # Taken a tick before the current row (frame 104, 0.2 s into the run).
     assert sweep.timestamp_ns == 150_000_000
-    assert [list(_numeric(row.value.lane_ids)) for row in scene.routes.rows] == [
-        [11, 12]
-    ] * rows
+    assert [
+        [list(seg.lane_ids) for seg in row.value.segments] for row in scene.routes.rows
+    ] == [[[11], [12]]] * rows
     np.testing.assert_allclose(
         _numeric(scene.goal_poses)[-1], [10.0, 20.0, 0.0, 1.0], atol=1e-12
     )
