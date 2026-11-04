@@ -889,13 +889,23 @@ def driven_route(scene: pb.T4Scene, graph: RouteGraph) -> list[int]:
     return graph.match(np.array(kept))
 
 
+def _route_data(lanelet_ids: Sequence[int]) -> pb.RouteData:
+    """A route as the contract writes one: each lanelet a segment of its own,
+    the way the route runs (``RouteSegment``, one lane and no alternative).
+    The route walks one lane per lanelet, so a segment has nothing else to
+    choose between."""
+    return pb.RouteData(
+        segments=[pb.RouteSegment(lane_ids=[int(i)]) for i in lanelet_ids]
+    )
+
+
 def _fill_route(scene: pb.T4Scene, lanelet_ids: Sequence[int]) -> None:
     """Write *lanelet_ids* as the route of every row, as a live scene writes
     its route; nothing when there are none."""
     if not lanelet_ids:
         return
     rows = int(scene.timestamps_ns.shape[0])
-    route = pb.RouteData(lane_ids=_array(list(lanelet_ids), "i8"))
+    route = _route_data(lanelet_ids)
     scene.routes.rows.extend(pb.RouteRow(value=route) for _ in range(rows))
 
 

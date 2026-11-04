@@ -355,13 +355,19 @@ class MapReference(_message.Message):
     has_elevation: bool
     def __init__(self, sha256: _Optional[str] = ..., map_id: _Optional[str] = ..., global_origin: _Optional[_Union[Pose2D, _Mapping]] = ..., global_origin_3d: _Optional[_Union[RigidTransform3D, _Mapping]] = ..., scope: _Optional[_Union[MapReference.Scope, str]] = ..., has_elevation: bool = ...) -> None: ...
 
-class RouteData(_message.Message):
-    __slots__ = ("lane_ids", "preferred_lane_ids")
+class RouteSegment(_message.Message):
+    __slots__ = ("lane_ids", "preferred_lane_id")
     LANE_IDS_FIELD_NUMBER: _ClassVar[int]
-    PREFERRED_LANE_IDS_FIELD_NUMBER: _ClassVar[int]
-    lane_ids: NumericArray
-    preferred_lane_ids: NumericArray
-    def __init__(self, lane_ids: _Optional[_Union[NumericArray, _Mapping]] = ..., preferred_lane_ids: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+    PREFERRED_LANE_ID_FIELD_NUMBER: _ClassVar[int]
+    lane_ids: _containers.RepeatedScalarFieldContainer[int]
+    preferred_lane_id: int
+    def __init__(self, lane_ids: _Optional[_Iterable[int]] = ..., preferred_lane_id: _Optional[int] = ...) -> None: ...
+
+class RouteData(_message.Message):
+    __slots__ = ("segments",)
+    SEGMENTS_FIELD_NUMBER: _ClassVar[int]
+    segments: _containers.RepeatedCompositeFieldContainer[RouteSegment]
+    def __init__(self, segments: _Optional[_Iterable[_Union[RouteSegment, _Mapping]]] = ...) -> None: ...
 
 class RouteRow(_message.Message):
     __slots__ = ("value",)
