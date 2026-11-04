@@ -3499,7 +3499,13 @@ whatever the control showed instead:</p>
   <em>Lane changes</em> on Traffic Parameters, where unset means "keep the run's")
   is a select of <em>keep the run's</em> / <em>On</em> / <em>Off</em>, not a checkbox. The blank
   choice stores <code>None</code>, and a post that leaves the field out keeps the stored
-  value. Any other <code>bool</code> is a checkbox, whose absence from a post means off.</li>
+  value. Any other <code>bool</code> is a checkbox, whose absence from a post means off.
+  Either way the editor stores a real <code>true</code>, <code>false</code> or (for the select)
+  <code>null</code>. A hand-edited document may also spell a <code>bool</code> as <code>1</code>/<code>0</code>,
+  <code>true</code>/<code>false</code>, <code>on</code>/<code>off</code> or <code>yes</code>/<code>no</code> (any case), and leave it blank or
+  <code>null</code> for its default -- for a nullable one, the run's. Anything else
+  (<code>ture</code>, <code>enabled</code>, <code>2</code>, <code>keep</code>) is a validation error, not a quiet <code>false</code>;
+  write "keep the run's" as <code>null</code>, not as a word.</li>
 <li>A <code>select</code> field with no value shows a placeholder rather than its first
   option. When the field is <code>required</code> the placeholder cannot be picked back,
   and the browser posts nothing for it, so the field stays unset and the
@@ -3899,7 +3905,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:04:44 UTC"><span class="timeago" datetime="2026-11-04T18:04:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:04:44 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 21:54:12 UTC"><span class="timeago" datetime="2026-11-04T21:54:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 21:54:12 UTC">2026-11-04</span>
   </span>
 
     
