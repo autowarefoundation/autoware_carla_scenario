@@ -212,9 +212,11 @@ def load_soma_motion(path: Union[str, Path], fps: Optional[float] = None) -> Som
             absolute = bool(data["absolute_pose"])
         else:
             absolute = "joint_orient" not in keys
+        # Absolute poses already carry the T-pose: a joint_orient beside them
+        # is ignored, not applied a second time.
         orient = (
             np.asarray(data["joint_orient"], dtype=np.float64)
-            if "joint_orient" in keys
+            if "joint_orient" in keys and not absolute
             else None
         )
         rate = fps
