@@ -691,6 +691,18 @@ log says why, once each time the entity becomes mesoscopic. The parts that are t
   (`MesoLink`), moves a vehicle in when it becomes mesoscopic and reads where
   it is to decide when to bring it back.
 
+**Only the `sumo` backend simulates far traffic mesoscopically**
+(`traffic.options.mesoscopic`, [below](#the-sumo-backend)). Under
+`traffic_manager` every vehicle is microscopic, an actor in CARLA wherever it
+is on the map, and `traffic.options.mesoscopic` is an unknown option there
+(an error, like any other). This is by choice, not an omission: the
+TrafficManager exposes neither the route it plans for a vehicle nor a road
+graph, so taking its vehicles out of CARLA and bringing them back would mean
+rebuilding both from the map and guessing where each vehicle was heading. A
+run whose traffic far from the ego matters takes `traffic=sumo` with
+`mesoscopic.enabled=true`; the measurements on Town10HD_Opt
+([below](#measured-on-town10hd_opt)) show what that saves.
+
 ## Using a backend from Python
 
 A scenario run built in code takes the backend the same way it takes the ego:
@@ -1189,7 +1201,9 @@ vehicle CARLA drives (the ego, and the scenario's vehicles under
 on the best lane for its route, and into CARLA -- when it is within
 `micro_radius_m` of one again. SUMO then steps only the traffic near what CARLA
 drives, and CARLA holds an actor only for that, so a large demand costs what
-the traffic around the ego costs.
+the traffic around the ego costs. This is a `sumo` option only: the
+TrafficManager backend keeps every vehicle in CARLA
+([why](#simulating-far-traffic-mesoscopically)).
 
 ```bash
 uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
