@@ -46,6 +46,8 @@ from .test_play_motion import _write_motion
 _DATA = Path(__file__).resolve().parents[3] / "data"
 #: A road lanelet of the fixture map.
 _LANELET = 243
+#: A lanelet of the fixture map with a stop line of its own.
+_OWN_STOP_LINE_LANELET = 249
 #: Entity ids by the kind a card's actor may be.
 _ENTITIES = {"ego": "ego", "vehicle": "car", "pedestrian": "ped"}
 
@@ -735,6 +737,17 @@ def document_errors(document: ScenarioDocument) -> list[Any]:
             },
             "s_margin",
         ),
+        (
+            {
+                "type": "temporary_stop_at_stop_lines",
+                "params": {
+                    "entity": "car",
+                    "from_lanelet": _OWN_STOP_LINE_LANELET,
+                    "depth": -1,
+                },
+            },
+            "depth",
+        ),
         ({"type": "timeout", "params": {"timeout_seconds": 0.0}}, "timeout_seconds"),
         (
             {"type": "lane_ends", "params": {"entity": "car", "distance": 0.0}},
@@ -917,6 +930,9 @@ _BOUNDS_BASE: dict[str, dict[str, Any]] = {
     "traffic_source": {"constraints": "[{type: is_junction}]"},
     "routing": {"goal_lanelet_id": _LANELET},
     "spawn": {"name": None},
+    # A lanelet with a stop line of its own, so a depth of 0 (the lanelet
+    # alone) finds one: the sample lanelet's are a step or more on.
+    "temporary_stop_at_stop_lines": {"from_lanelet": _OWN_STOP_LINE_LANELET},
 }
 
 
@@ -1008,15 +1024,6 @@ def _validated(card: Any, params: dict[str, Any]) -> tuple[ValidationReport, Any
 #: one the validator lets through, or it is missing the runtime's bound.
 _OUT_OF_DOMAIN: tuple[float, ...] = (-1.0, -0.001, 101.0, 1e12)
 
-#: Unbounded fields whose refusal of a probe is the map's, not a bound's:
-#: (card, field) -> why.
-_NOT_A_BOUND: dict[tuple[str, str], str] = {
-    ("temporary_stop_at_stop_lines", "depth"): (
-        "a depth of 0 or less searches only the lanelet itself, which works "
-        "on a lanelet with a stop line of its own; the fixture's has none"
-    ),
-}
-
 
 def _unbounded(fields: tuple[FieldSpec, ...]) -> Iterator[FieldSpec]:
     for spec in fields:
@@ -1055,8 +1062,6 @@ def test_an_accepted_value_of_an_unbounded_field_builds(
     logging.disable(logging.CRITICAL)
     try:
         for spec in _unbounded(card.fields):
-            if (card.type_id, spec.name) in _NOT_A_BOUND:
-                continue
             for value in _probes(spec):
                 typed = _typed(spec, value)
                 params = _with_value(
