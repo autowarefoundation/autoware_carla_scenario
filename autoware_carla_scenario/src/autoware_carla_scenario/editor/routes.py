@@ -21,6 +21,7 @@ from fastapi.responses import (
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
 )
 
 from ..authoring.models import ScenarioDocument
@@ -431,13 +432,33 @@ def map_library(
 
 
 @router.post("/maps/new", response_class=HTMLResponse)
-async def new_draft_on_map(request: Request) -> RedirectResponse:
-    """Start a scenario on a map chosen in the library."""
+async def new_draft_on_map(request: Request) -> Response:
+    """Start a scenario on a map chosen in the library.
+
+    A map that cannot be fetched creates no draft: the library is shown again
+    with the reason, as ``/draft/{id}/map/use`` shows it inline (#1429).
+    """
     form = dict(await request.form())
     uri = str(form.get("uri", "")).strip()
     title = str(form.get("title", "")).strip()
+    repo = str(form.get("repo", "")).strip()
     service = _service(request)
-    draft = await run_in_threadpool(service.create_draft_for_map, uri, title=title)
+    try:
+        draft = await run_in_threadpool(service.create_draft_for_map, uri, title=title)
+    except EditorError as exc:
+        return _templates(request).TemplateResponse(
+            request=request,
+            name="maps.html",
+            context={
+                "repositories": service.map_repositories(),
+                "repo": repo,
+                "entries": [],
+                "error": str(exc),
+                "error_title": "No scenario was created",
+                "draft_id": "",
+                "page": "maps",
+            },
+        )
     return RedirectResponse(f"/draft/{draft.id}", status_code=303)
 
 
