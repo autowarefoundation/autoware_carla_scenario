@@ -50,6 +50,22 @@ class TrafficManagerBackendConfig:
     #: :data:`~autoware_carla_scenario.constants.DEFAULT_TM_PORT`.
     port: int = DEFAULT_TM_PORT
 
+    def __post_init__(self) -> None:
+        # Refused here, where a run's config is checked, rather than by
+        # client.get_trafficmanager() once CARLA is up: a bool is an int to
+        # Python, and 0 or 70000 is no TCP port (the SUMO backend's tm_port
+        # and hils.port have the same rule).
+        port = self.port
+        if (
+            isinstance(port, bool)
+            or not isinstance(port, int)
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError(
+                "traffic.options.port (traffic_manager.port) must be an integer "
+                f"within 1-65535 (got {port!r})"
+            )
+
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficManagerBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""

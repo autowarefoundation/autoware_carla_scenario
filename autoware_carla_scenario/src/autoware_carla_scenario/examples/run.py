@@ -1611,6 +1611,25 @@ def _cooldown_max_retries(cfg: DictConfig) -> int:
     return retries
 
 
+def _check_port_setting(cfg: DictConfig, section: str) -> None:
+    """Refuse ``{section}.port`` of *cfg* unless it is a TCP port: an integer
+    (not a bool) within 1-65535.  Unset or null is left to the reader, as it
+    was.  Without this a port of 0, 70000 or ``true`` reaches the CARLA client
+    and is refused only once a server is up.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    node = cfg.get(section)
+    port = None if node is None else node.get("port")
+    if port is None:
+        return
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(
+            f"{section}.port must be an integer within 1-65535 (got {port!r})"
+        )
+
+
 def _check_batch_queue_settings(cfg: DictConfig) -> None:
     """Refuse what :func:`_batch_queue` would refuse of *cfg*, building nothing
     that starts: no queue, no CARLA, no Autoware.
@@ -1620,6 +1639,8 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
             setting the queue would refuse.
     """
     server = cfg.get("server") or {}
+    _check_port_setting(cfg, "server")
+    _check_port_setting(cfg, "traffic_manager")
     float(server.get("cooldown_seconds", 0.0))
     _cooldown_max_retries(cfg)
     _optional_float(server.get("max_tick_rate_hz"))

@@ -98,6 +98,24 @@ def test_settings_refuse_what_cannot_be_recorded(
         T4Settings.from_driver(_driver(**driver), config)
 
 
+@pytest.mark.parametrize("workers", [True, False, 2.9, 2.0, "2", 0, -1])
+def test_settings_refuse_workers_that_are_not_a_positive_integer(
+    workers: object,
+) -> None:
+    # As max_distance_m beside it refuses a bool: int() would read true as one
+    # thread and 2.9 as two (#1423).
+    with pytest.raises(
+        ValueError, match=r"^t4\.workers must be a positive integer, not "
+    ):
+        T4Settings.from_driver(_driver(), {"workers": workers})
+
+
+def test_settings_take_workers_as_given_and_default_them() -> None:
+    assert T4Settings.from_driver(_driver(), {"workers": 1}).workers == 1
+    assert T4Settings.from_driver(_driver(), {"workers": None}).workers == 4
+    assert T4Settings.from_driver(_driver(), {}).workers == 4
+
+
 @pytest.mark.parametrize(
     "distance", [0.0, -1.0, math.nan, math.inf, -math.inf, True, False]
 )

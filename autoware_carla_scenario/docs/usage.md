@@ -496,6 +496,10 @@ uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=
 uv run scenario scenario=intersection_passing/straight traffic_manager.port=8200
 ```
 
+`server.port` and `traffic_manager.port` (and `traffic.options.port`) must be
+TCP ports, integers within 1-65535; any other value (`0`, `70000`, `true`)
+is refused before anything starts.
+
 ### One Seed for the Whole Run
 
 `seed` (top level, `0` by default) is the one number every random draw of a run
