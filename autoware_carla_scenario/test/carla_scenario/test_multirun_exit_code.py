@@ -24,7 +24,11 @@ import pytest
 #: ``--multirun``, it neither raises nor ``sys.exit``s for a failed scenario.
 #: With ``+raise_once=true`` each case raises the first time it runs, as a run
 #: whose CARLA went away does.  With ``+raise_value=true`` every case raises a
-#: ``ValueError``.
+#: ``ValueError``.  With ``+pass_then_raise=true`` each case, as
+#: ``ScenarioRunner`` does, names its outputs after the first stem none has
+#: taken (``App``, ``App-1`` ...); the first time it runs it writes a passing
+#: result and raises after it (as a teardown that raises does), and the retry
+#: fails.
 _SWEEPER_APP = """
 import json
 import os
@@ -37,6 +41,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
 import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
+from autoware_carla_scenario.run_outputs import run_outputs_exist
 
 lcs.check_constraint_keys = lambda sweep: None
 lcs.resolve_map_paths = lambda cfg: None
@@ -56,6 +61,21 @@ def task(cfg: DictConfig) -> None:
     if cfg.get("raise_once", False) and not raised.exists():
         raised.write_text("yes")
         raise RuntimeError("CARLA went away")
+    if cfg.get("pass_then_raise", False):
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+        stem, n = "App", 0
+        while run_outputs_exist(output_dir, stem):
+            n += 1
+            stem = f"App-{n}"
+        first = not raised.exists()
+        result = {"passed": first, "message": stem, "elapsed_seconds": 1.0}
+        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
+        (output_dir / f"{stem}_coverage.json").write_text("{}")
+        (output_dir / f"{stem}.trajectory.jsonl").write_text("")
+        if first:
+            raised.write_text("yes")
+            raise RuntimeError("the world reset after the result raised")
+        return
     if cfg.get("raise_value", False):
         raise ValueError("some distinctive text")
     if cfg.get("refuse", False):
@@ -101,6 +121,7 @@ def _run(
     *args: str,
     resume_from: int | None = None,
     mode: str = "--multirun",
+    sweep_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     script = tmp_path / "app.py"
     script.write_text(textwrap.dedent(app), encoding="utf-8")
@@ -115,7 +136,7 @@ def _run(
             str(script),
             mode,
             *args,
-            f"hydra.sweep.dir={tmp_path / 'multirun'}",
+            f"hydra.sweep.dir={sweep_dir or tmp_path / 'multirun'}",
         ],
         capture_output=True,
         text=True,
@@ -183,6 +204,85 @@ def test_lanelet_sweeper_retries_a_case_that_raised(tmp_path: Path) -> None:
     assert output.count("case 1") == 2, output
     assert output.count("case 2") == 2, output
     assert "2/2 succeeded, 0 failed" in output, output
+
+
+def test_a_retried_case_keeps_none_of_the_failed_attempts_outputs(
+    tmp_path: Path,
+) -> None:
+    """Before a retry the sweeper removes what the failed attempt wrote in the
+    job's directory, as the queue and the SLURM worker do (#1373).
+
+    The first attempt wrote a passing result, then raised; the retry failed.
+    The viewer, which shows a job's first stem, and the coverage merge, which
+    reads every coverage file, must read the retry's alone, as the sweeper's
+    verdict does.
+    """
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _read_verdict,
+    )
+    from autoware_carla_scenario.ui import results, scanner
+
+    date, time = "2026-11-04", "10-00-00"
+    session = tmp_path / "multirun" / date / time
+    # An earlier sweep's output in a directory named again is not touched.
+    (session / "1").mkdir(parents=True)
+    (session / "1" / "AnEarlierRun_result.json").write_text('{"passed": true}')
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+pass_then_raise=true",
+        sweep_dir=session,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert output.count("case 1") == 2, output
+    assert "0/2 succeeded, 2 failed" in output, output
+
+    job = session / "0"
+    assert sorted(p.name for p in job.iterdir() if p.name != ".hydra") == [
+        "App.trajectory.jsonl",
+        "App_coverage.json",
+        "App_result.json",
+        "app.log",  # Hydra's job log, not a CARLA recorder log
+    ]
+    assert _read_verdict(job) is False
+    assert sorted(p.name for p in (session / "1").glob("*_result.json")) == [
+        "AnEarlierRun_result.json",
+        "App_result.json",
+    ]
+    assert len(list(session.glob("*/*_coverage.json"))) == 2  # one per case
+
+    # Job 0, whose directory held nothing before: the viewer reads the retry.
+    scanner.clear_cache()
+    try:
+        items = scanner.load_session(tmp_path, "multirun", date, time)
+        loaded = results.load_results(tmp_path, "multirun", date, time, metrics=False)
+    finally:
+        scanner.clear_cache()
+    assert (items[0].passed, items[0].message) == (False, "App"), items
+    assert (loaded[0].passed, loaded[0].message) == (False, "App"), loaded
+
+
+def test_the_stems_a_retry_removes_are_those_of_run_outputs(tmp_path: Path) -> None:
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _run_output_stems,
+    )
+
+    for name in (
+        "X_result.json",
+        "Y.sensors.rrd",  # a recording left half done: stem Y, not Y.sensors
+        "Z.log",  # a CARLA recorder log
+        "app.log",  # Hydra's job log
+        "notes.txt",
+    ):
+        (tmp_path / name).write_text("")
+    (tmp_path / "W.t4").mkdir()
+    (tmp_path / ".hydra").mkdir()
+    assert _run_output_stems(tmp_path, "app.log") == {"W", "X", "Y", "Z"}
+    assert _run_output_stems(tmp_path / "missing", None) == set()
 
 
 def test_lanelet_sweeper_turns_off_the_retries_of_its_cases_queue(
