@@ -5327,6 +5327,33 @@ collision metrics <code>collision</code>, <code>offroad</code> <code>lane_keepin
 its metric's NG time ran out (<a href="../metrics/#judging-a-run-on-a-metric">Metrics</a>). A sticky or persistent
 condition says what it wraps. A combination of conditions (AND, OR, NOT) says
 nothing, and the run's failure is <code>other</code>: give it a category.</p>
+<blockquote>
+<p><strong>A persistent condition never fires around a failure-only condition.</strong>
+<code>PersistentCondition</code> counts only the ticks its child <em>passes</em>, and resets on
+a failure. <code>CollisionCondition</code>, <code>OffRoadFractionCondition</code>,
+<code>EntityExistenceCondition</code> and <code>TimeoutCondition</code> never pass: they report a
+failure (<code>passed=False</code>) or nothing (their classes set
+<code>REPORTS_ONLY_FAILURE</code>). So <code>PersistentCondition(OffRoadFractionCondition(...), 0.5)</code>
+-- "off the road for 0.5 s" -- never fires, and never fails the run.
+Building one logs a warning, and the scenario editor's validator warns on
+the Persistent card. What to write instead depends on the condition:</p>
+<ul>
+<li><code>CollisionCondition</code> and <code>TimeoutCondition</code> keep their failure once they
+  have fired (a collision is cached, a timeout stays past its limit), so
+  there is nothing to wait out: register them on their own.
+  <code>PersistentCondition(NotCondition(child), d)</code> would only fail the run <code>d</code>
+  later, not say that anything held for <code>d</code>.</li>
+<li><code>OffRoadFractionCondition</code> and <code>EntityExistenceCondition</code> check again on
+  every tick, so a plain <code>NotCondition(child)</code> turns their failure into a
+  pass the persistent condition counts, and it fires once the failure has
+  held for the duration (a NOT says no category: give it one).</li>
+<li>To say a state has <em>not</em> held for a while, wrap the condition for that
+  state in <code>NotCondition(..., holds_when_pending=True)</code>, as the
+  <a href="../scenarios/cut_in/#staying-on-the-lanes-ahead">cut-in example</a> does.</li>
+</ul>
+<p>Only a direct child is recognised: a failure-only condition under a sticky,
+AND or OR condition inside the persistent one draws no warning.</p>
+</blockquote>
 <p><code>detail</code> tells a <code>progress</code> failure apart by how the ego ended the run:
 <code>never_moved</code> (it never drove 1 m), <code>stalled</code> (it had stood
 still for 3 s or more: waiting for something that never cleared) or <code>moving</code>
@@ -6153,7 +6180,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 07:40:18 UTC"><span class="timeago" datetime="2026-11-04T07:40:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 07:40:18 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 07:54:10 UTC"><span class="timeago" datetime="2026-11-04T07:54:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 07:54:10 UTC">2026-11-04</span>
   </span>
 
     
