@@ -268,8 +268,13 @@ def _resolve_sweeps(
     Blocking (Hydra, the Lanelet2 map, route searches): :func:`run_scenarios`
     runs it on a worker thread.  Hydra's global state is guarded by
     :data:`.sweep_resolver.HYDRA_LOCK` inside :func:`.sweep_resolver.resolve_sweep`.
+
+    A scenario whose sweep expands to no case is an error of its own, as the
+    lanelet sweeper and ``scenario-batch`` refuse it (#1407): a run missing a
+    scenario it was asked for must not look like a complete one.
     """
     from ..odd.sampler import OddDraws  # noqa: PLC0415
+    from ..sweeper.expand import EMPTY_SWEEP_MESSAGE  # noqa: PLC0415
     from .sweep_resolver import SweepResolutionError, resolve_sweep  # noqa: PLC0415
 
     overrides_list: list[list[str]] = []
@@ -278,10 +283,15 @@ def _resolve_sweeps(
     drawn = OddDraws()
     for name in scenario_names:
         try:
-            overrides_list.extend(resolve_sweep(name, extra_overrides, drawn=drawn))
+            jobs = resolve_sweep(name, extra_overrides, drawn=drawn)
         except SweepResolutionError as exc:
             logger.error("Sweep resolution failed for %s: %s", name, exc)
             errors.append(str(exc))
+            continue
+        if not jobs:
+            logger.error("Sweep resolution failed for %s: no case", name)
+            errors.append(f"{name}: {EMPTY_SWEEP_MESSAGE}")
+        overrides_list.extend(jobs)
     return overrides_list, errors
 
 
@@ -341,12 +351,8 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
                 "status": "error",
                 "message": "Sweep resolution failed: " + "; ".join(errors),
             }
-        if not overrides_list:
-            return {
-                "status": "error",
-                "message": "No jobs generated: the sweep matched no lanelets "
-                "or routes",
-            }
+        # A scenario whose sweep expands to no case is one of the errors
+        # (resolve_sweep refuses it, #1407), so every scenario gave a job.
 
         # The jobs were resolved with the extra overrides, and run with them
         # too, after each job's own (as /api/run/preview shows, and as

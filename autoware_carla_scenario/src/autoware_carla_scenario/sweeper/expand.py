@@ -629,6 +629,17 @@ def expand_route(
     return cases
 
 
+#: Why a sweep that expands to no case is refused -- by the lanelet sweeper,
+#: a ``--multirun`` batch, the viewer and ``scenario-expand`` alike (#1407).
+#: Exit 0 means every case passed: a sweep that tests nothing (a misspelt
+#: constraint, the wrong map) must not look like one. A config without a
+#: sweep is not refused: it expands to itself, one case.
+EMPTY_SWEEP_MESSAGE = (
+    "the sweep expands to no case (its constraints, route or ODD sample match "
+    "nothing on this map)"
+)
+
+
 def expand_config(
     cfg: DictConfig,
     arguments: Sequence[str] = (),
@@ -708,6 +719,7 @@ def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
 
 
 __all__ = [
+    "EMPTY_SWEEP_MESSAGE",
     "check_constraint_keys",
     "expand_config",
     "expand_route",

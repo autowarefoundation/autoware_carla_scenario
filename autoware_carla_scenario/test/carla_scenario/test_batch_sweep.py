@@ -256,3 +256,71 @@ def test_a_batch_refuses_a_concrete_scenario_with_invalid_controls(
         capsys.readouterr().err
     )
     assert batch.configs == []
+
+
+# A scenario whose sweep expands to no case is refused before anything runs,
+# naming it, as the lanelet sweeper refuses it (#1407): the batch used to log
+# "0 case(s)" and run the other scenarios' cases alone.
+@pytest.mark.parametrize("glob", [False, True])
+def test_a_batch_refuses_a_scenario_whose_sweep_expands_to_no_case(
+    batch: _Batch,
+    twin: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    glob: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    real = expand.expand_config
+
+    def expand_config(cfg: DictConfig, *args: Any, **kwargs: Any) -> list[list[str]]:
+        # The twin's sweep matches nothing; the other scenario has its cases.
+        if cfg.scenario.get("timeout_seconds") == 1234:
+            return []
+        return real(cfg, *args, **kwargs)
+
+    monkeypatch.setattr(expand, "expand_config", expand_config)
+    names = [_CONCRETE, twin] if glob else [twin]
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(names, ["scenario.timeout_seconds=1234"], expand=True)
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    assert f"Error: {twin}: the sweep expands to no case (its constraints" in err
+    assert batch.configs == []
+
+
+def test_a_batch_refuses_an_odd_sample_of_no_case(
+    batch: _Batch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE], ["+sweep.odd_sample.count=0"], expand=True)
+    assert exited.value.code == 1
+    assert f"Error: {_CONCRETE}: the sweep expands to no case" in (
+        capsys.readouterr().err
+    )
+    assert batch.configs == []
+
+
+def test_a_slurm_batch_whose_sweep_expands_to_no_case_submits_nothing(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``launcher=slurm`` expands the batch in run_batch too: refused before
+    anything is submitted."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import settings
+
+    monkeypatch.setattr(settings, "require_sbatch", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            [_CONCRETE],
+            ["+sweep.odd_sample.count=0", "launcher=slurm"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    assert f"Error: {_CONCRETE}: the sweep expands to no case" in (
+        capsys.readouterr().err
+    )
+    assert batch.configs == []
