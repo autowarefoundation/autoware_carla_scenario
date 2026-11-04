@@ -110,6 +110,11 @@ def start_run(
         ),
         daemon=True,
     )
+    # The run's worker from before it starts, so no other run's thread can
+    # take its place; stop_run() joins it only once it is alive.
+    with _lock:
+        global _worker  # noqa: PLW0603
+        _worker = thread
     # A thread that does not start (``RuntimeError: can't start new
     # thread``) never runs the worker, which would end the run: end it here.
     started = False
@@ -119,9 +124,6 @@ def start_run(
     finally:
         if not started:
             _end_run()
-    with _lock:
-        global _worker  # noqa: PLW0603
-        _worker = thread
     return True
 
 
@@ -145,7 +147,7 @@ def stop_run(timeout: float = STOP_TIMEOUT_SECONDS) -> None:
     if job is not None:
         logger.info("Stopping the running scenario (pid %d)", job.pid)
         _terminate_group(job.pid, timeout)
-    if worker is not None:
+    if worker is not None and worker.is_alive():
         worker.join(timeout)
 
 

@@ -104,6 +104,9 @@ class _UnstartedThread:
     def join(self, timeout: float | None = None) -> None:
         pass
 
+    def is_alive(self) -> bool:
+        return self.started
+
 
 @pytest.fixture
 def unstarted_threads(monkeypatch: pytest.MonkeyPatch) -> list[_UnstartedThread]:
@@ -431,8 +434,44 @@ def test_the_apps_shutdown_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> Non
     with TestClient(app_module.app):
         assert not app_module._shutting_down
         assert stopped == []
-    assert app_module._shutting_down
+    # Cleared once the shutdown is over: the app, served again, streams.
+    assert not app_module._shutting_down
     assert stopped == [True]
+
+
+def test_the_progress_streams_after_a_served_app_shut_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As a test that enters TestClient(app) leaves the app for the next one.
+    monkeypatch.setattr(runner, "stop_run", lambda: None)
+    monkeypatch.setattr(app_module, "_shutting_down", False)
+    monkeypatch.setattr(
+        runner,
+        "get_progress",
+        lambda: RunProgress(current=1, total=1, scenario_name="", status="done"),
+    )
+
+    def events(client: TestClient) -> list[str]:
+        text = client.get("/api/run/progress").text
+        return [line for line in text.splitlines() if line.startswith("data:")]
+
+    for _ in range(2):
+        with TestClient(app_module.app) as client:
+            assert len(events(client)) == 1
+    assert len(events(TestClient(app_module.app))) == 1
+
+
+def test_the_flag_is_set_while_the_app_shuts_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    during: list[bool] = []
+    monkeypatch.setattr(
+        runner, "stop_run", lambda: during.append(app_module._shutting_down)
+    )
+    monkeypatch.setattr(app_module, "_shutting_down", False)
+    with TestClient(app_module.app):
+        pass
+    assert during == [True]
 
 
 def test_the_viewer_bounds_its_shutdown_and_stops_the_run(
