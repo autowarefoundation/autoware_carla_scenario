@@ -101,7 +101,12 @@ def resolve_sweep(
     # Before the sweep resolves, fetches or searches any map: a scenario
     # composed on another map than its document names would be expanded on
     # that one (#1428).
-    refusal = scenario_map_refusal(cfg)
+    try:
+        refusal = scenario_map_refusal(cfg)
+    except Exception as exc:  # noqa: BLE001 -- OmegaConf reading cfg.map, ...
+        raise SweepResolutionError(
+            f"{scenario_name}: {type(exc).__name__}: {exc}"
+        ) from exc
     if refusal is not None:
         raise SweepResolutionError(f"{scenario_name}: {refusal}")
     try:

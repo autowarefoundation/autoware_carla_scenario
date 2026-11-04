@@ -103,11 +103,12 @@ Python version, and the viewer's Run form reads it the same way.
   `scenario.timeout_seconds` that is not positive, a `server.port` out of
   range, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
   refused for every case before any scenario is built or the map is resolved,
-  locally as under `launcher=slurm`: the batch prints `Error: <key> ...` and
-  exits 1, a configuration error as a single run's is
-  (`HYDRA_FULL_ERROR=1` shows the traceback). With `--multirun` each
-  scenario's config is checked before its sweep reads the map, as the lanelet
-  sweeper checks it, and reported as `Error: <scenario>: <key> ...`
+  locally as under `launcher=slurm`: the batch prints
+  `Error: <case>: <key> ...`, naming the case refused, and exits 1, a
+  configuration error as a single run's is (`HYDRA_FULL_ERROR=1` shows the
+  traceback). With `--multirun` each scenario's config is checked before its
+  sweep reads the map, as the lanelet sweeper checks it, and reported as
+  `Error: <scenario>: <key> ...`
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
   then `HH-MM-SS-2`, ...: every batch has a directory of its own)
@@ -1209,7 +1210,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
-| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <key> ...` before anything is built) |
+| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
 | 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 

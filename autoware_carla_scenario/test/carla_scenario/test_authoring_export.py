@@ -818,6 +818,26 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
             ["scenario=cut_in"]
         ]
 
+    def test_the_viewers_sweep_resolver_reports_what_the_check_raises(
+        self, exported_package: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An error reading the composed config is the resolver's own error."""
+        from omegaconf.errors import InterpolationResolutionError
+
+        from autoware_carla_scenario.authoring import hydra_config
+        from autoware_carla_scenario.ui import sweep_resolver
+
+        def refusal(*_: Any, **__: Any) -> None:
+            raise InterpolationResolutionError("map.name: no such key")
+
+        monkeypatch.setattr(sweep_resolver, "load_scenario_plugins", exported_package)
+        monkeypatch.setattr(hydra_config, "scenario_map_refusal", refusal)
+        with pytest.raises(
+            sweep_resolver.SweepResolutionError,
+            match=r"^cut_in: InterpolationResolutionError: map\.name: no such key",
+        ):
+            sweep_resolver.resolve_sweep("cut_in")
+
     def test_scenario_odd_route(
         self,
         exported_package: Any,

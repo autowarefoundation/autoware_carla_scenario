@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -412,16 +413,48 @@ def test_a_batch_refuses_a_bad_config_value_with_an_error_line(
     # A configuration error, as a single run's is (docs/usage.md, Exit Codes).
     assert exited.value.code == 1
     out, err = capsys.readouterr()
-    # Each scenario named, as --multirun reports the others it refuses.
-    named = f"Error: {_CONCRETE}: {key}" if multirun else f"Error: {key}"
-    assert named in err
+    # The case named (the glob's first), as the batch's map checks name theirs.
+    assert re.search(
+        rf"^Error: intersection_passing/straight\S*: {re.escape(key)}", err
+    )
     assert "Traceback" not in out + err
 
 
+def test_a_batch_names_the_case_a_bad_config_value_is_refused_for(
+    monkeypatch: pytest.MonkeyPatch, twin: str
+) -> None:
+    """Every case is checked, so the one refused is named: here the second."""
+    from autoware_carla_scenario.examples import run
+
+    compose = run._compose_config
+
+    def composed(name: str, overrides: list[str]) -> Any:
+        cfg = compose(name, overrides)
+        if name == twin:
+            cfg.server.world_reset = "fast"
+        return cfg
+
+    monkeypatch.setattr(run, "_compose_config", composed)
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
+    )
+    with pytest.raises(
+        run.RunConfigError,
+        match=rf"^{re.escape(twin)}: server\.world_reset must be one of",
+    ):
+        run.run_batch([_CONCRETE, twin], [])
+
+
+@pytest.mark.parametrize("multirun", [False, True])
 def test_a_batch_raises_a_bad_config_value_with_hydra_full_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, multirun: bool
 ) -> None:
     from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    monkeypatch.setattr(
+        expand, "expand_config", lambda *_, **__: pytest.fail("expanded a sweep")
+    )
 
     monkeypatch.setattr(
         run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
@@ -431,7 +464,12 @@ def test_a_batch_raises_a_bad_config_value_with_hydra_full_error(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["scenario", f"scenario={_CONCRETE}*", "server.world_reset=fast"],
+        [
+            "scenario",
+            *(["--multirun"] if multirun else []),
+            f"scenario={_CONCRETE}*",
+            "server.world_reset=fast",
+        ],
     )
     with pytest.raises(run.RunConfigError, match="server.world_reset"):
         run.main()
