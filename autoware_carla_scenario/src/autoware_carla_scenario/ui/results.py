@@ -1,7 +1,10 @@
 """A session's results on its ODD, and sessions compared case by case.
 
 Each case of a session is read with what it left on disk (``ui.cases``): its
-verdict (``batch_results.json`` or ``{stem}_result.json``), the case it ran (a
+verdict (a batch's entries, ``ui.cases.batch_entries``: its
+``batch_results.json``, or what a SLURM batch's tasks recorded while it is not
+collected yet or was resubmitted since; else ``{stem}_result.json``), the case
+it ran (a
 sweep's overrides; the ODD values and buckets it was drawn at, from
 ``{stem}_coverage.json``'s ``case``), its coverage document, and a few metrics
 of how the ego drove, read off its trajectory log (:func:`case_metrics`, which
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .cases import CaseFiles, case_files, job_dir, session_dir
+from .cases import CaseFiles, batch_entries, case_files, job_dir, session_dir
 
 # The comparison of sessions, compiled by the library check; the names it
 # had here stay importable from here.
@@ -117,6 +120,8 @@ class CaseResult:
     files: CaseFiles | None
     coverage: dict[str, Any] | None
     metrics: dict[str, float] = field(default_factory=dict)
+    #: A SLURM batch's case without an outcome yet (``passed`` ``None``).
+    pending: bool = False
 
     @property
     def scenario(self) -> str:
@@ -378,9 +383,12 @@ def load_results(
         return []
     out: list[CaseResult] = []
     if session_type == "batch":
-        entries = _read_json(directory / "batch_results.json")
-        if not isinstance(entries, list):
+        # Its summary, or a SLURM batch's cases recorded so far: the entries
+        # the session page and case_files() read.
+        found = batch_entries(directory)
+        if found is None:
             return []
+        entries = found[0]
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
@@ -399,6 +407,7 @@ def load_results(
                     overrides=_strings(entry.get("overrides")),
                     files=files,
                     coverage=_read_json(files.coverage) if files else None,
+                    pending=bool(entry.get("pending")),
                 )
             )
     else:
@@ -485,9 +494,17 @@ def compare(
     """Compare sessions (oldest first: the first is the baseline) case by case
     and ODD cell by cell, the cells along *x* and *y* (the attributes the
     cases were drawn over, :func:`default_axes` when not given): the checked
-    ``ui.comparison``'s, fed each case's :meth:`CaseResult.compared`."""
+    ``ui.comparison``'s, fed each case's :meth:`CaseResult.compared`.
+
+    A pending case (a SLURM batch's case without an outcome yet) is left out,
+    as if its session had not run it: it has no verdict to tally or to compare
+    with, and counting it as not passing would report a regression and lower
+    the pass rate before the case has finished."""
     return _compare(
-        [(name, [r.compared() for r in found]) for name, found in sessions],
+        [
+            (name, [r.compared() for r in found if not r.pending])
+            for name, found in sessions
+        ],
         x=x,
         y=y,
     )
