@@ -1025,6 +1025,33 @@ def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> 
         )
 
 
+@pytest.mark.parametrize("seconds", [math.inf, -math.inf, math.nan])
+def test_tick_multiple_refuses_a_value_that_is_not_finite(seconds: float) -> None:
+    """#1384: a ValueError naming the key, not round()'s OverflowError (for
+    infinity) or its unnamed ValueError (for NaN)."""
+    from autoware_carla_scenario.constants import tick_multiple
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^t4scene\.step_s={seconds} is not a positive multiple of the 0\.05 s tick$",
+    ):
+        tick_multiple(seconds, "t4scene.step_s")
+
+
+@pytest.mark.parametrize("override", ["inf", "nan"])
+def test_the_run_check_refuses_a_step_that_is_not_finite(override: str) -> None:
+    """#1384: refused as a RunConfigError naming the key, as a lanelet sweep and
+    a batch refuse it, rather than an OverflowError out of the check."""
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(run.RunConfigError, match=r"^t4scene\.step_s="):
+        run.check_run_config(
+            _shipped(["t4scene.enabled=true", f"t4scene.step_s={override}"])
+        )
+
+
 # 0, a negative distance and NaN would keep no road user, infinity is what
 # null says: each is refused, by every entry point, before a scene is written.
 _BAD_DISTANCES = (0.0, -100.0, math.nan, math.inf)
@@ -1112,6 +1139,22 @@ def test_cli_refuses_a_distance_that_is_not_positive_and_finite(
         main([str(log), "--no-map", f"--max-distance={override}"])
     assert raised.value.code == 2
     assert "--max-distance must be positive and finite" in capsys.readouterr().err
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+@pytest.mark.parametrize("override", ["0", "-0.1", "0.07", "nan", "inf"])
+def test_cli_refuses_a_step_that_is_not_a_multiple_of_the_tick(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    """#1384: refused up front (2), as --max-distance is, not once per log (1)."""
+    log = _one_car_log(tmp_path)
+    with pytest.raises(SystemExit) as raised:
+        main([str(log), "--no-map", f"--step={override}"])
+    assert raised.value.code == 2
+    assert "is not a positive multiple of the 0.05 s tick" in (
+        err := capsys.readouterr().err
+    )
+    assert "--step=" in err
     assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
 
 
