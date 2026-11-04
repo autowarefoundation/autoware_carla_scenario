@@ -40,6 +40,11 @@ See [HD Maps from a Git Repository](maps.md). Two things are worth knowing here:
 a map Autoware's own setup already downloaded is used as it sits, and OpenDRIVE
 is not needed to author a scenario -- lanelets are.
 
+A scenario on a map from the library (or a **Map directory**) is exported with a
+map group of its own, `conf/map/<id>_map.yaml` in the package, and run with
+`map=<id>_map` -- see
+[Running an authored scenario](#running-an-authored-scenario).
+
 ## Where it happens: the places panel
 
 One map carries every lanelet the scenario names -- each entity's spawn, the
@@ -927,6 +932,10 @@ files:
 notes: []
 ```
 
+A scenario whose map is a source or a directory also lists
+`map_config: src/cut_in_scenario/conf/map/cut_in_map.yaml`, the map group it
+runs with ([Running an authored scenario](#running-an-authored-scenario)).
+
 Anything that could not be determined is `null` with a note, never a plausible
 guess.
 
@@ -965,6 +974,37 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
 .venv/bin/scenario --multirun scenario=cut_in map=nishishinjuku \
     hydra/sweeper=lanelet_constraint
 ```
+
+`map=nishishinjuku` is the starter's map, the scenario's **Hydra map group**. A
+scenario whose map is named by a source (picked from the Map library) or a
+**Map directory** is on no built-in group, so its package ships one of its own,
+`src/<package>/conf/map/<id>_map.yaml`, and is run with it -- the export log,
+the package's README and the Scenario inspector all name it:
+
+```bash
+.venv/bin/scenario scenario=cut_in map=cut_in_map
+```
+
+```yaml
+# @package _global_
+map:
+  name: Town10HD_Opt
+  source: git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@<commit>#autoware_maps/Town10HD_Opt
+  directory: null
+  lanelet2_path: null
+  xodr_path: null
+  projector_type: null
+  overwrite_xodr: false
+  no_3d_model_lanelet_ids: []
+```
+
+It sets every `map` key, the ones the document leaves empty as `null`. Running
+the scenario with a built-in group instead -- or with none, which selects the
+default, `nishishinjuku` -- runs it on that group's map: the framework composes
+the `map` group after the `scenario` one, so the group's name, Lanelet2 and
+OpenDRIVE paths and exclusion list win over the `map` keys the scenario's own
+config writes (and a scenario config cannot select another group, as Hydra
+refuses an `override /map` from a group composed before it).
 
 The CARLA client needs no separate install: `typesafe-carla` is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything

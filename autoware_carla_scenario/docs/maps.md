@@ -320,6 +320,14 @@ the CARLA map name from the directory. The editor only serves a map from inside
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache, so a directory
 elsewhere has to be added to `SCENARIO_EDITOR_MAP_ROOTS` to be previewed.
 
+A scenario whose map is a source or a directory is exported with a map group of
+its own, `conf/map/<id>_map.yaml` inside the package, setting every `map` key
+(the paths the document leaves empty as `null`, `overwrite_xodr: false`, its own
+`no_3d_model_lanelet_ids`), and runs with `map=<id>_map`. Selecting a built-in
+group instead would put that group's map under the scenario: the `map` group is
+composed after the scenario's config, and its explicit paths win over a source
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
+
 ## Troubleshooting
 
 | Symptom | Cause |

@@ -383,6 +383,129 @@ class TestGeneratedPackage:
         assert any("not reproducible" in note for note in manifest["notes"])
 
 
+#: The framework's own Hydra config directory, the primary config of a run.
+_FRAMEWORK_CONF = (
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "autoware_carla_scenario"
+    / "examples"
+    / "conf"
+)
+
+_MAP_SOURCE = (
+    "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+    "@5058c6683a1077a99aa5fdca5e6ecff9d71fcfb1#autoware_maps/Town10HD_Opt"
+)
+
+
+def _document_on_own_map(kind: str):
+    """The starter document, on a map named by *kind* (source or directory).
+
+    As the editor leaves it: the starter's Nishishinjuku files cleared, the
+    CARLA map name taken from the new map, the group still the starter's.
+    """
+    document = new_document()
+    if kind == "source":
+        document.map.source = _MAP_SOURCE
+    else:
+        document.map.directory = "/maps/Town10HD_Opt"
+    document.map.name = "Town10HD_Opt"
+    document.map.lanelet2_path = None
+    document.map.xodr_path = None
+    document.map.no_3d_model_lanelet_ids = [7, 11]
+    assert document.map.group == "nishishinjuku"
+    return document
+
+
+def _compose_exported(package: Path, *overrides: str) -> Any:
+    """Compose a run of the exported *package* as the ``scenario`` CLI does.
+
+    The framework's config is the primary one; the package's ``conf/`` reaches
+    Hydra's search path through ``register_conf_dir``, as the package's
+    ``register()`` puts it there once installed.
+    """
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+
+    from autoware_carla_scenario.registry import (
+        register_conf_dir,
+        unregister_conf_dir,
+    )
+
+    conf_dir = package / "src" / "cut_in_scenario" / "conf"
+    register_conf_dir(conf_dir)
+    try:
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(
+            config_dir=str(_FRAMEWORK_CONF.resolve()), version_base=None
+        ):
+            return compose(
+                config_name="config", overrides=["scenario=cut_in", *overrides]
+            )
+    finally:
+        unregister_conf_dir(conf_dir)
+
+
+class TestExportedMapGroup:
+    """A scenario on a source or directory map runs on that map (#1422).
+
+    The framework composes the ``map`` group after the ``scenario`` one, so the
+    ``map`` keys of the scenario's config lose to whichever group the run
+    selects: the export ships the document's map as a group of its own.
+    """
+
+    @pytest.mark.parametrize("kind", ["source", "directory"])
+    def test_the_exported_run_resolves_the_documents_map(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        document = _document_on_own_map(kind)
+        package = export_package(document, tmp_path, **OFFLINE).root
+
+        group = package / "src" / "cut_in_scenario" / "conf" / "map" / "cut_in_map.yaml"
+        assert group.read_text().splitlines()[0] == "# @package _global_"
+
+        cfg = _compose_exported(package, "map=cut_in_map")
+        resolved = cfg.map
+        assert resolved.name == "Town10HD_Opt"
+        assert resolved.lanelet2_path is None
+        assert resolved.xodr_path is None
+        assert resolved.projector_type is None
+        assert resolved.overwrite_xodr is False
+        assert list(resolved.no_3d_model_lanelet_ids) == [7, 11]
+        if kind == "source":
+            assert resolved.source == _MAP_SOURCE
+            assert resolved.directory is None
+        else:
+            assert resolved.directory == "/maps/Town10HD_Opt"
+            assert resolved.source is None
+
+    def test_the_package_says_to_run_it_with_its_own_group(
+        self, tmp_path: Path
+    ) -> None:
+        result = export_package(_document_on_own_map("source"), tmp_path, **OFFLINE)
+        readme = (result.root / "README.md").read_text()
+        assert "scenario scenario=cut_in map=cut_in_map" in readme
+        assert "map=nishishinjuku" not in readme
+        init = (result.root / "src/cut_in_scenario/__init__.py").read_text()
+        assert "map=cut_in_map" in init
+        manifest = yaml.safe_load((result.root / "scenario/manifest.yaml").read_text())
+        assert (
+            manifest["files"]["map_config"]
+            == "src/cut_in_scenario/conf/map/cut_in_map.yaml"
+        )
+
+    def test_a_built_in_group_ships_no_map_group(self, package: Path) -> None:
+        assert not (package / "src" / "cut_in_scenario" / "conf" / "map").exists()
+        assert "map=nishishinjuku" in (package / "README.md").read_text()
+        manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
+        assert "map_config" not in manifest["files"]
+
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        assert cfg.map.name == "NishishinjukuMap"
+        assert cfg.map.overwrite_xodr is True
+        assert cfg.map.lanelet2_path
+
+
 #: Valid scenario ids, each with the Python package its export is named after.
 #: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
 #: so they are where the scenario id and the names derived from it could part.
