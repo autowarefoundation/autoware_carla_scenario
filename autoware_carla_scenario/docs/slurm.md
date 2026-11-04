@@ -117,7 +117,9 @@ resubmit checks the submissions before it once more, and refuses should one
 be in flight or queued, so of two resubmits at once the later one submits
 nothing. A record whose sbatch fails is removed. One left with no job id by a
 submitter that was killed stops counting as in flight 600 s
-(`SBATCH_IN_FLIGHT_SECONDS`) after it was made.
+(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. A record that cannot be read
+(empty, or not a JSON object) refuses a resubmit for as long after the file
+was last modified, then is ignored with a warning.
 `collect` can be run any number of times.
 
 `sacct` is not needed: the batch is followed through `squeue` and the files the

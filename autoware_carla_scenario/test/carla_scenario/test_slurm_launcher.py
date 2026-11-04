@@ -1920,6 +1920,39 @@ def test_resubmit_refuses_while_a_submission_is_in_flight(
     assert "Resubmitting 3 case(s)" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "content", ["", "{not json", "[1, 2]", "null"], ids=["empty", "bad", "list", "null"]
+)
+def test_an_unreadable_submission_record_refuses_only_while_young(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    """#1352: a record that cannot be read (empty, not JSON, not an object)
+    may be one being written: it refuses a resubmit for
+    SBATCH_IN_FLIGHT_SECONDS after it was last modified, then is ignored,
+    so a corrupt one never blocks the viewer, which cannot pass --force."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    path = layout.submission(1)
+    path.write_text(content)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    err = capsys.readouterr().err
+    assert f"submission record(s) {path} of this batch are unreadable" in err
+    assert "being submitted" not in err and "--force" in err
+    old = time.time() - SBATCH_IN_FLIGHT_SECONDS - 1
+    os.utime(path, (old, old))
+    with caplog.at_level("WARNING", logger=cli.__name__):
+        assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
+    assert "Resubmitting 3 case(s)" in capsys.readouterr().out
+    assert any(str(path) in r.getMessage() for r in caplog.records)
+
+
 def test_of_two_resubmits_at_once_the_later_index_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

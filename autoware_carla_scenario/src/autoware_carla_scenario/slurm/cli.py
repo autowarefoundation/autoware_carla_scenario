@@ -15,7 +15,9 @@ Light: no CARLA, no Hydra.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -32,6 +34,8 @@ from .submit import (
 
 __all__ = ["main"]
 
+logger = logging.getLogger(__name__)
+
 
 def _layout(path: str) -> BatchLayout:
     return BatchLayout(Path(path).expanduser().resolve())
@@ -39,23 +43,47 @@ def _layout(path: str) -> BatchLayout:
 
 def _active_jobs(
     layout: BatchLayout, below: int | None = None
-) -> tuple[list[str], list[str], list[int]]:
+) -> tuple[list[str], list[str], list[int], list[int]]:
     """The batch's array jobs SLURM still lists, those squeue could not be
-    asked about (which may be running too), and the submissions whose sbatch
-    has not returned yet (``manifest.sbatch_in_flight``): of every
-    submission, or of those before *below*."""
+    asked about (which may be running too), the submissions whose sbatch has
+    not returned yet (``manifest.sbatch_in_flight``), and those whose record
+    cannot be read yet is younger than ``SBATCH_IN_FLIGHT_SECONDS``: of every
+    submission, or of those before *below*.
+
+    A record that cannot be read (not JSON, or not a JSON object) may be one
+    another submitter is still writing; past ``SBATCH_IN_FLIGHT_SECONDS``
+    after the file was last modified, it is ignored with a warning, so that
+    a corrupt record never refuses every resubmit (the viewer cannot pass
+    ``--force``).
+    """
     active: list[str] = []
     unknown: list[str] = []
     in_flight: list[int] = []
+    unreadable: list[int] = []
     for index in layout.submissions():
         if below is not None and index >= below:
             continue
+        path = layout.submission(index)
         try:
             submission = layout.read_submission(index)
         except FileNotFoundError:
             continue  # removed since: its sbatch failed
-        except ValueError:
-            in_flight.append(index)  # being created, on a file system without links
+        except (OSError, ValueError):
+            submission = None
+        if not isinstance(submission, dict):
+            try:
+                age = time.time() - path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if age < SBATCH_IN_FLIGHT_SECONDS:
+                unreadable.append(index)
+            else:
+                logger.warning(
+                    "Ignoring %s: it cannot be read as a submission record, "
+                    "and was last modified %.0f s ago",
+                    path,
+                    age,
+                )
             continue
         job = submission.get("job_id")
         if not job:
@@ -67,14 +95,14 @@ def _active_jobs(
             unknown.append(str(job))
         elif any(state in ACTIVE_STATES for state in states.values()):
             active.append(str(job))
-    return active, unknown, in_flight
+    return active, unknown, in_flight, unreadable
 
 
 def _busy(layout: BatchLayout, below: int | None = None) -> str | None:
     """Why the batch cannot be resubmitted now, if it cannot: a job of it is
     queued or running, ``squeue`` cannot tell, or another submission of it is
     in flight (another ``resubmit``, the viewer's, #1352)."""
-    active, unknown, in_flight = _active_jobs(layout, below)
+    active, unknown, in_flight, unreadable = _active_jobs(layout, below)
     if active:
         return (
             f"job(s) {', '.join(active)} of this batch are still queued or "
@@ -88,6 +116,14 @@ def _busy(layout: BatchLayout, below: int | None = None) -> str | None:
             "resubmit or the viewer; try again once it has, or pass --force. "
             "A record left by a submitter that died is ignored "
             f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s after it was made"
+        )
+    if unreadable:
+        files = ", ".join(str(layout.submission(i)) for i in unreadable)
+        return (
+            f"the submission record(s) {files} of this batch are unreadable "
+            "(another submitter may still be writing them); try again shortly, "
+            "or pass --force. An unreadable record is ignored "
+            f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s after it was last modified"
         )
     if unknown:
         # A task still running would have its outputs removed under it.
