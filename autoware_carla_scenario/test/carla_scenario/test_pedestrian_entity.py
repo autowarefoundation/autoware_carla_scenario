@@ -284,7 +284,9 @@ class TestWalking:
         backend.release_pedestrian.assert_called_once_with(walker, world)
 
     def test_a_negative_speed_is_refused_at_construction(self) -> None:
-        with pytest.raises(ValueError, match="must not be negative"):
+        with pytest.raises(
+            ValueError, match="speed_ms must be finite and not negative"
+        ):
             WalkStraightAction(entity_name="walker1", speed_ms=-1.0)
 
     def test_commanding_a_vehicle_is_a_no_op_rather_than_a_crash(self) -> None:
