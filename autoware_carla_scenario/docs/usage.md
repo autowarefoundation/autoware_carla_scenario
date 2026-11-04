@@ -629,6 +629,12 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry (meters) |
 | `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry (meters) |
 
+The two ray distances must be finite and non-negative, and their sum (the
+ray's length) positive. A ray that cannot hit anything would leave every pose
+at its estimate, so a run or batch refuses such a value before anything starts,
+naming the key (`Error: entity.ground_projection_ray_distance_lower must be
+non-negative and finite, got -1.0`).
+
 #### Traffic Manager Configuration
 
 | Parameter | Type | Default | Description |
@@ -1348,7 +1354,7 @@ uv run detect-no-3d-model $CONF/nishishinjuku.yaml -v
 | `--port` | - | No | `2000` | CARLA server port |
 | `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters); the runner's `entity.ground_projection_ray_distance_upper` |
 | `--ray-lower` | - | No | `10.0` | Ray search range below z estimate (meters); the runner's `entity.ground_projection_ray_distance_lower` |
-| `--timeout` | - | No | `10.0` | CARLA client timeout (seconds) |
+| `--timeout` | - | No | `10.0` | CARLA client timeout (seconds); positive and finite |
 | `--verbose` | `-v` | No | false | Enable DEBUG logging |
 
 The ray defaults are the runner's shipped `entity.*` values, so the tool flags
@@ -1356,6 +1362,12 @@ only lanelets a run's own ground projection would miss. If your runs override
 `entity.ground_projection_ray_distance_upper`/`_lower`, pass the same values
 here, or the tool may flag lanelets those runs project onto (or miss ones they
 cannot).
+
+`--ray-upper` and `--ray-lower` must be finite and non-negative, with a
+positive sum, as the runner's keys must be: a ray of no length hits nothing, so
+every lanelet would be flagged and written to the YAML. The tool refuses such
+values, and a `--timeout` that is not positive and finite, with a usage error
+(exit 2) before it connects to CARLA or reads the YAML.
 
 ### Input YAML Requirements
 

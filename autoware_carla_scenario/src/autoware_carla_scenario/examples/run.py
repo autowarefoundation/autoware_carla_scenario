@@ -83,7 +83,9 @@ from autoware_carla_scenario.rerun import (
     RerunUnavailableError,
 )
 from autoware_carla_scenario.rerun import report as rerun_report
+from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
+from autoware_carla_scenario.scenario_config import EntityConfig
 from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
@@ -250,10 +252,7 @@ def build_ego_and_spawn(
     :meth:`~autoware_carla_scenario.BaseScenario.register_route_to_goal` refuses
     an ego that still has nowhere to go.
     """
-    ground_projection = GroundProjectionConfig(
-        ray_distance_upper=float(cfg.entity.ground_projection_ray_distance_upper),
-        ray_distance_lower=float(cfg.entity.ground_projection_ray_distance_lower),
-    )
+    ground_projection = build_ground_projection(cfg)
     ego = EgoConfig(
         spawn_location=SpawnTransform(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
@@ -267,6 +266,36 @@ def build_ego_and_spawn(
         waypoint_poses=build_waypoint_poses(cfg),
     )
     return ego, build_spawn_pose(cfg), ground_projection
+
+
+#: The config keys of the ground-projection ray (:func:`build_ground_projection`).
+_RAY_UPPER_KEY = "entity.ground_projection_ray_distance_upper"
+_RAY_LOWER_KEY = "entity.ground_projection_ray_distance_lower"
+
+
+def build_ground_projection(cfg: DictConfig) -> GroundProjectionConfig:
+    """The :class:`GroundProjectionConfig` of *cfg*'s
+    ``entity.ground_projection_ray_distance_upper`` and ``_lower``.
+
+    Raises:
+        ValueError: naming the key, for a value that is not a number, is
+            negative or not finite, or a ray of no length (both zero): a ray
+            that cannot hit leaves every pose at its estimate (#1416).
+    """
+    entity = cfg.get("entity") or {}
+    distances: list[float] = []
+    for key, default in (
+        (_RAY_UPPER_KEY, EntityConfig.ground_projection_ray_distance_upper),
+        (_RAY_LOWER_KEY, EntityConfig.ground_projection_ray_distance_lower),
+    ):
+        value = entity.get(key.split(".", 1)[1], default)
+        try:
+            distances.append(float(value))
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number, got {value!r}") from None
+    upper, lower = distances
+    check_ray_distances(upper, lower, _RAY_UPPER_KEY, _RAY_LOWER_KEY)
+    return GroundProjectionConfig(ray_distance_upper=upper, ray_distance_lower=lower)
 
 
 def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
@@ -1721,6 +1750,7 @@ def check_batch_configs(
         for cfg in configs:
             run_timeout_seconds(cfg)
             _odd_case(cfg)
+            build_ground_projection(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
             # ego's entity too: build_autoware_launcher reads the launcher only
             # for an ``ego.entity=autoware`` case.
@@ -1874,6 +1904,14 @@ def run_batch(
     except RunConfigError as exc:
         print(f"Error: {exc}")  # noqa: T201
         sys.exit(1)
+    # Before any scenario is built (build_ego_and_spawn reads it), naming the
+    # key and the case: a ray that cannot hit spawns nothing (#1416).
+    for label, cfg in zip(labels, configs):
+        try:
+            build_ground_projection(cfg)
+        except ValueError as exc:
+            print(f"Error: {label}: {exc}")  # noqa: T201
+            sys.exit(1)
 
     # One launcher for the whole batch: the queue prepares it (and puts its
     # logs in the batch's output directory) and every ego starts its stacks
