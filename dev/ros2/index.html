@@ -2412,9 +2412,11 @@ server built without it, the entity publishes them as well:</p>
 <p>A camera in <code>cameras</code> takes the rendering and mount fields of a
 <a href="../driver_interface/">driver camera</a> (<code>image_width</code>, <code>image_height</code>, <code>fov</code>, <code>fps</code>,
 <code>position_x/y/z</code>, <code>roll</code>, <code>pitch</code>, <code>yaw</code>, in CARLA's convention), plus its <code>topic</code> and
-<code>frame_id</code>. Its frames go out from the sensor's own thread as they are rendered, the
-way CARLA's own interface publishes them, and under the names a node already
-subscribes to:</p>
+<code>frame_id</code>, and the same bounds: <code>image_width</code>, <code>image_height</code> and <code>fps</code> positive and
+finite, <code>fov</code> in (0, 180) degrees, and the mount finite. A camera out of these bounds is
+refused as the config is read, not when it attaches after the ego spawned. Its frames go
+out from the sensor's own thread as they are rendered, the way CARLA's own interface
+publishes them, and under the names a node already subscribes to:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">ros2</span><span class="p">:</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">clock_topic</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/clock</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">cameras</span><span class="p">:</span>
@@ -2605,7 +2607,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 05:42:21 UTC"><span class="timeago" datetime="2026-11-03T05:42:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 05:42:21 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 11:37:10 UTC"><span class="timeago" datetime="2026-11-04T11:37:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 11:37:10 UTC">2026-11-04</span>
   </span>
 
     
