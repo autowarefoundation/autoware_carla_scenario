@@ -2465,8 +2465,11 @@ job of its own, and each job starts and removes its own Autoware the same way:</
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="s1">'autoware.launcher.launch=[...]'</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>+sweep.job_timeout_seconds<span class="o">=</span><span class="m">900</span>
 </code></pre></div>
-<p><code>sweep.job_timeout_seconds</code> (120 s by default; <code>+</code> adds it to a sweep YAML
-that does not set it) is a whole job's budget --
+<p><code>sweep.job_timeout_seconds</code> (120 s by default, and when <code>null</code>; <code>+</code> adds it
+to a sweep YAML that does not set it; 0 for no timeout) is a whole job's
+budget, in whole seconds -- a fraction, a negative value, NaN, infinity or a
+value above 2147483647 (what <code>signal.alarm</code> takes) is refused, with exit
+status 2, before any job starts --
 starting Autoware, localizing, routing, engaging and the scenario itself --
 so raise it: launching Autoware alone can take most of two minutes. A job the
 sweeper kills at that limit leaves its container behind, and the next job's
@@ -2556,7 +2559,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 14:40:35 UTC"><span class="timeago" datetime="2026-11-04T14:40:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 14:40:35 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 15:15:01 UTC"><span class="timeago" datetime="2026-11-04T15:15:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 15:15:01 UTC">2026-11-04</span>
   </span>
 
     
