@@ -451,9 +451,9 @@ class AdversityConfig:
     def __post_init__(self) -> None:
         """Refuse a NADE number outside its bounds, naming its key (#1458).
 
-        As :class:`~autoware_carla_scenario.NadeSettings` and
-        :class:`~autoware_carla_scenario.NadeAdversity` would once the
-        scenario is set up, but when the config is built: a run checks it
+        As :class:`~autoware_carla_scenario.NadeSettings` and the
+        adversarial traffic action (which refuses a ``probability`` outside
+        [0, 1]) would once the scenario is set up, but when the config is built: a run checks it
         before anything starts (``examples.run.check_batch_configs``).
         """
         for key, value in (
