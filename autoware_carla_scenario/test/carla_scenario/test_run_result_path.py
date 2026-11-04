@@ -77,7 +77,6 @@ def _run(output_dir: Path) -> None:
             "build_backend_pool",
         )
     }
-    stubs["_optional_float"] = MagicMock(return_value=None)
     with (
         patch.multiple(run, **stubs),
         patch.object(run, "build_scenario", return_value=(None, _Scenario())),

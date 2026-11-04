@@ -256,6 +256,14 @@ def test_visionpilot_safety_island_preset_replaces_the_bench_bridge() -> None:
     assert config.kinematic_state_topic == "/localization/kinematic_state"
 
 
+def test_the_documented_ros2_run_composes() -> None:
+    # docs/ros2.md's command line, and the one the "not paced" warning advises
+    # (#1438): server.max_tick_rate_hz must be a key of the shipped server.
+    cfg = _composed(["ego.entity=ros2", "server.max_tick_rate_hz=20"])
+    assert cfg.ego.entity == "ros2"
+    assert cfg.server.max_tick_rate_hz == 20
+
+
 def test_run_builds_the_ros2_entity() -> None:
     from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
     from autoware_carla_scenario.examples.run import build_ego_entity
@@ -277,6 +285,22 @@ def test_run_warns_when_the_run_is_not_paced(caplog: pytest.LogCaptureFixture) -
     caplog.clear()
     build_ego_entity(_composed(["ros2=visionpilot_safety_island"]))
     assert "max_tick_rate_hz" not in caplog.text
+
+    caplog.clear()
+    build_ego_entity(_composed(["ego.entity=ros2", "server.max_tick_rate_hz=20"]))
+    assert "max_tick_rate_hz" not in caplog.text
+
+
+@pytest.mark.parametrize("rate", ["0", "-20", "nan"])
+def test_run_warns_when_the_rate_paces_nothing(
+    rate: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A run refuses such a rate first (check_run_config); built without that
+    # check, the runner reads it as uncapped, so the warning says so (#1439).
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    build_ego_entity(_composed(["ego.entity=ros2", f"server.max_tick_rate_hz={rate}"]))
+    assert "max_tick_rate_hz" in caplog.text
 
 
 def test_run_refuses_ros2_without_its_group() -> None:

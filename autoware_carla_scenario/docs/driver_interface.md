@@ -498,7 +498,9 @@ Each grows with its intensity (0-100). Clear weather leaves a sweep as CARLA cas
 How thick a `fog_density` looks is the server's `carla.Weather.FogDensityScale`, and the
 LiDAR's fog follows it so that it matches the cameras': the model is tuned at `0.01`, the
 scale that draws fog a camera sees, and CARLA's default `0.001` gives a tenth of its fog.
-`server.fog_density_scale` sets both: a server the run starts is started with
+`server.fog_density_scale` (a finite number above 0, as a LiDAR's own must be, or
+`null`; anything else is refused before the run starts, LiDARs or none) sets both: a
+server the run starts is started with
 `-ExecCmds="carla.Weather.FogDensityScale <scale>"`, and every LiDAR that sets no scale of
 its own takes it. A server already running keeps the scale it was started with (the run
 warns), so start it with the same one. Built without the runner, pass

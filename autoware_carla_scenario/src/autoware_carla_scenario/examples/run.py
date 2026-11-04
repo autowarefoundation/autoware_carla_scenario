@@ -608,10 +608,13 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             )
             raise ValueError(msg)
 
-        if (cfg.get("server") or {}).get("max_tick_rate_hz") is None:
+        if not _paced(cfg):
             # Freshness is judged in simulation time while the nodes publish on
             # the wall clock: unpaced, a 10 Hz node's commands land more than
             # stale_s apart and its source flaps between fresh and stale.
+            # A run refuses a rate that is not a finite positive number
+            # (check_run_config); built without that check, the runner reads
+            # one as uncapped, so it is warned of as unset is.
             logger.warning(
                 "ego.entity=ros2 without server.max_tick_rate_hz: the run is not "
                 "paced to real time, so ROS 2 nodes may look stale; set "
@@ -835,9 +838,63 @@ def run_scenario_with_queue(
     return results[0]
 
 
-def _optional_float(value: object) -> float | None:
-    """Read an optional numeric config value that may be absent or null."""
-    return None if value is None else float(value)  # type: ignore[arg-type]
+def _server_number(
+    cfg: DictConfig, key: str, default: float | None, *, positive: bool
+) -> float | None:
+    """``server.<key>`` of *cfg* (*default* when absent), checked: *None* for
+    null, else a finite number -- an int or a float, not a bool -- that is
+    above 0 when *positive*, at least 0 otherwise.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    value = (cfg.get("server") or {}).get(key, default)
+    if value is None:
+        return None
+    bound = "> 0" if positive else ">= 0"
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or (value <= 0 if positive else value < 0)
+    ):
+        raise ValueError(
+            f"server.{key} must be a finite number {bound} (got {value!r})"
+        )
+    return float(value)
+
+
+def _cooldown_seconds(cfg: DictConfig) -> float:
+    """``server.cooldown_seconds``, checked: a finite number of seconds, 0 or
+    more.  A NaN or negative cooldown used to be read as none.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    cooldown = _server_number(cfg, "cooldown_seconds", 0.0, positive=False)
+    if cooldown is None:
+        raise ValueError(
+            "server.cooldown_seconds must be a finite number >= 0 (got None)"
+        )
+    return cooldown
+
+
+def _max_tick_rate_hz(cfg: DictConfig) -> float | None:
+    """``server.max_tick_rate_hz``, checked: null (uncapped) or a finite rate
+    above 0.  The runner used to read a NaN or non-positive rate as uncapped.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    return _server_number(cfg, "max_tick_rate_hz", None, positive=True)
+
+
+def _paced(cfg: DictConfig) -> bool:
+    """Whether *cfg*'s ``server.max_tick_rate_hz`` caps the tick rate."""
+    try:
+        return _max_tick_rate_hz(cfg) is not None
+    except ValueError:
+        return False
 
 
 def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
@@ -860,8 +917,14 @@ def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
 
 
 def _fog_density_scale(cfg: DictConfig) -> float | None:
-    """``server.fog_density_scale``, or *None* to keep the server's own."""
-    return _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
+    """``server.fog_density_scale``, or *None* to keep the server's own.
+
+    Raises:
+        ValueError: naming the key, unless it is null or a finite number
+            above 0, as a LiDAR's own ``fog_density_scale`` must be: without
+            a LiDAR a NaN would reach the server's command line.
+    """
+    return _server_number(cfg, "fog_density_scale", None, positive=True)
 
 
 def server_extra_args(cfg: DictConfig) -> list[str]:
@@ -1596,7 +1659,7 @@ def _batch_queue(
     (:func:`build_rerun_converter`); the first config's ``t4`` writes each
     case as a T4 dataset (:func:`build_t4_recorder`).
     """
-    cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
+    cooldown = _cooldown_seconds(first_cfg)
     cooldown_max_retries = _cooldown_max_retries(first_cfg)
     world_reset, reload_every = world_reset_settings(first_cfg)
     return ScenarioQueue(
@@ -1611,7 +1674,7 @@ def _batch_queue(
         cooldown_seconds=cooldown,
         cooldown_max_retries=cooldown_max_retries,
         output_dir=output_dir,
-        max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
+        max_tick_rate_hz=_max_tick_rate_hz(first_cfg),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(first_cfg),
         odd=_odd_spec(first_cfg),
@@ -1667,13 +1730,13 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
         ValueError: naming the key, for a server, traffic or Autoware launcher
             setting the queue would refuse.
     """
-    server = cfg.get("server") or {}
     _check_port_setting(cfg, "server")
     _check_port_setting(cfg, "traffic_manager")
-    float(server.get("cooldown_seconds", 0.0))
+    _cooldown_seconds(cfg)
     _cooldown_max_retries(cfg)
-    _optional_float(server.get("max_tick_rate_hz"))
+    _max_tick_rate_hz(cfg)
     world_reset_settings(cfg)
+    # server.fog_density_scale, checked whether or not a LiDAR reads it.
     server_extra_args(cfg)
     build_traffic_backend(cfg)
     build_autoware_launcher(cfg)
@@ -2533,7 +2596,7 @@ def _run_scenario(
     check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     map_paths = resolve_map_paths(cfg.map)
-    cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
+    cooldown = _cooldown_seconds(cfg)
     cooldown_max_retries = _queue_retries(cfg)
     world_reset, reload_every = world_reset_settings(cfg)
 
@@ -2562,7 +2625,7 @@ def _run_scenario(
         # The runner's own fail-safe: the queue default (60 s) is shorter than
         # an Autoware stack needs to localize, route and engage.
         timeout_seconds=run_timeout_seconds(cfg),
-        max_tick_rate_hz=_optional_float(cfg.server.get("max_tick_rate_hz")),
+        max_tick_rate_hz=_max_tick_rate_hz(cfg),
         projector_type=map_paths.projector_type,
         traffic_backend=build_traffic_backend(cfg),
         odd=_odd_spec(cfg),
