@@ -51,8 +51,8 @@ class StandstillCondition(CompositionCondition):
     ) -> None:
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("duration must be positive and finite")
-        if speed_threshold < 0:
-            raise ValueError("speed_threshold must be non-negative")
+        if not math.isfinite(speed_threshold) or speed_threshold < 0:
+            raise ValueError("speed_threshold must be non-negative and finite")
 
         speed_cond = SpeedCondition(
             entity_name=entity_name,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...coordinate.lane_distance import lane_closing_speed, lane_separation
@@ -119,8 +120,8 @@ class TimeToCollisionCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
         if (target is None) == (position is None):
             raise ValueError(
                 "a time-to-collision condition measures to an entity or to a "

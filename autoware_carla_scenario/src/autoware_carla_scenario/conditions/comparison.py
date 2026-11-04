@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
@@ -69,12 +70,24 @@ class ScalarComparisonRule:
         rule: The comparison operator.
         value: The threshold value.
         tolerance: Tolerance for EQUAL_TO comparisons.
+
+    Raises:
+        ValueError: A value that is not finite, or a tolerance that is
+            negative or not finite.
     """
 
     field: str
     rule: ComparisonRule
     value: float
     tolerance: float = 1e-6
+
+    def __post_init__(self) -> None:
+        # NaN fails every comparison, so a NaN value or tolerance would make
+        # the rule never hold and the condition never fire (#1327).
+        if not math.isfinite(self.value):
+            raise ValueError(f"{self.field}: value must be finite")
+        if not math.isfinite(self.tolerance) or self.tolerance < 0:
+            raise ValueError(f"{self.field}: tolerance must be non-negative and finite")
 
     def satisfied(self, actual: float) -> bool:
         """Return True if *actual* satisfies this rule."""

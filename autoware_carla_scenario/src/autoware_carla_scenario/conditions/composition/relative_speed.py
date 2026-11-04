@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
@@ -80,8 +81,8 @@ class RelativeSpeedCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
         super().__init__(entity_name=entity_name, label=label)
         # Kept as its string, the one thing every use of it reads.
         self._reference_entity_name = str(reference_entity_name)

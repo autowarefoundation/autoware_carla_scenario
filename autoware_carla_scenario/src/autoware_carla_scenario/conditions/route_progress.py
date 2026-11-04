@@ -8,6 +8,7 @@ route search found (:mod:`autoware_carla_scenario.route`).
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..constants import EGO_ROLE_NAME
@@ -95,7 +96,8 @@ class RouteProgressCondition(BaseCondition):
         tolerance: Tolerance for :attr:`ComparisonRule.EQUAL_TO`.
 
     Raises:
-        ValueError: On an anchor that is not one, or a negative tolerance.
+        ValueError: On an anchor that is not one, a value that is not
+            finite, or a tolerance that is negative or not finite.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -120,8 +122,10 @@ class RouteProgressCondition(BaseCondition):
         from ..route.model import parse_anchor  # noqa: PLC0415
 
         super().__init__(label=label)
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
+        if not math.isfinite(value):
+            raise ValueError("value must be finite")
         if anchor is not None and str(anchor).strip():
             parse_anchor(anchor)
         else:

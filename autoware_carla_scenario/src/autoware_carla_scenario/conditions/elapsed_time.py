@@ -61,8 +61,8 @@ class ElapsedTimeCondition(BaseCondition):
         super().__init__(label=label)
         if not math.isfinite(duration_seconds) or duration_seconds <= 0:
             raise ValueError("duration_seconds must be positive and finite")
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
         self._comparison = ScalarComparisonRule(
             field="elapsed", rule=rule, value=duration_seconds, tolerance=tolerance
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -74,8 +75,8 @@ class AccelerationCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
         super().__init__(entity_name=entity_name, label=label)
         self._comparison = ScalarComparisonRule(
             field="acceleration", rule=rule, value=value, tolerance=tolerance

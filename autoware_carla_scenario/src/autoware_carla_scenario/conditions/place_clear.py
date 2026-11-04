@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -94,10 +95,12 @@ class PlaceClearCondition(BaseCondition):
         label: str,
     ) -> None:
         super().__init__(label=label)
-        if length <= 0.0 or width <= 0.0:
-            raise ValueError("length and width must be positive")
-        if margin < 0.0:
-            raise ValueError("margin must be non-negative")
+        if not math.isfinite(length) or length <= 0.0:
+            raise ValueError("length must be positive and finite")
+        if not math.isfinite(width) or width <= 0.0:
+            raise ValueError("width must be positive and finite")
+        if not math.isfinite(margin) or margin < 0.0:
+            raise ValueError("margin must be non-negative and finite")
         self._at = TrajectoryVertex(position)
         self._length = float(length)
         self._width = float(width)
