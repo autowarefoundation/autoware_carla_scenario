@@ -156,6 +156,54 @@ class TestExpandSweep:
             ]
         ]
 
+    def test_exclude_drops_a_case_by_the_lanelet_its_walk_back_lands_on(
+        self, _matching
+    ) -> None:
+        # The pick (29, 30) is fine; the spawn stop_line_offset walks 29's case
+        # back onto, 40, is a lanelet CARLA does not draw.
+        _matching(
+            [29, 30],
+            {
+                "ego.spawn_s": lambda lid, m, g: SimpleNamespace(
+                    value=3.0, lanelet_id_override=lid + 11
+                )
+            },
+        )
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.spawn_lanelet_id": [{}]},
+                "bindings": {"ego.spawn_s": {}},
+                "exclude": {"ego.spawn_lanelet_id": [40]},
+            },
+            lanelet_map=object(),
+        )
+
+        assert cases == [["ego.spawn_lanelet_id=41", "ego.spawn_s=3.0"]]
+
+    def test_exclude_reads_a_list_the_way_the_case_writes_it(self, _matching) -> None:
+        _matching(
+            [5, 6],
+            {
+                "scenario.expected_route_lanelet_ids": lambda lid,
+                m,
+                g: SimpleNamespace(value=[lid, lid + 1], lanelet_id_override=None)
+            },
+        )
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.spawn_lanelet_id": [{}]},
+                "bindings": {"scenario.expected_route_lanelet_ids": {}},
+                "exclude": {"scenario.expected_route_lanelet_ids": [[6, 7]]},
+            },
+            lanelet_map=object(),
+        )
+
+        assert cases == [
+            ["ego.spawn_lanelet_id=5", "scenario.expected_route_lanelet_ids=[5,6]"]
+        ]
+
     def test_the_ego_walk_back_moves_its_lanelet_when_another_slot_is_swept(
         self, _matching
     ) -> None:

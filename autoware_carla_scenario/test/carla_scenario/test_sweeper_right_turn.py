@@ -37,9 +37,12 @@ class _Graph:
         return [self._layer[i] for i in self._edges.get(lanelet.id, [])]
 
 
-def _map(edges: dict[int, list[int]]) -> Any:
+def _map(edges: dict[int, list[int]], junction: frozenset[int] = frozenset()) -> Any:
     ids = set(edges) | {i for following in edges.values() for i in following}
-    layer = {i: _lanelet(i) for i in ids}
+    layer = {
+        i: _lanelet(i, **({"turn_direction": "right"} if i in junction else {}))
+        for i in ids
+    }
     return SimpleNamespace(laneletLayer=layer, _edges=edges)
 
 
@@ -117,6 +120,35 @@ class TestRouteThroughBinding:
         ).resolve(10, lanelet_map, graph)
 
         assert result.value == 30
+
+    def test_through_junction_goes_on_to_the_first_lanelet_out_of_it(self) -> None:
+        # Town10's first right turn: 4821 and 3343 are both junction lanelets,
+        # so depth 1 alone ends the route inside the junction.
+        lanelet_map = _map(
+            {4821: [3343], 3343: [3392], 3392: [3400]}, junction=frozenset({4821, 3343})
+        )
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+
+        def route(**kwargs: Any) -> Any:
+            return (
+                RouteThroughBinding(target_key="k", **kwargs)
+                .resolve(4821, lanelet_map, graph)
+                .value
+            )
+
+        assert route() == [4821, 3343]
+        assert route(through_junction=True) == [4821, 3343, 3392]
+        # Out of the junction already: depth alone decides.
+        assert route(depth=3, through_junction=True) == [4821, 3343, 3392, 3400]
+
+    def test_through_junction_refuses_a_junction_that_loops(self) -> None:
+        lanelet_map = _map({1: [2], 2: [1]}, junction=frozenset({1, 2}))
+        graph: Any = _Graph(lanelet_map.laneletLayer, lanelet_map._edges)
+
+        with pytest.raises(ValueError, match="without leaving the junction"):
+            RouteThroughBinding(target_key="k", through_junction=True).resolve(
+                1, lanelet_map, graph
+            )
 
 
 class TestOverrideValue:
