@@ -4002,7 +4002,14 @@ its run raised (CARLA went away, a spawn failed), timed out
 (<code>sweep.job_timeout_seconds</code>) or crashed. A case whose scenario ran to a
 FAILED verdict is final and is not retried, as in a batch. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
-at most <code>1 + server.cooldown_max_retries</code> times, as in a batch.</p>
+at most <code>1 + server.cooldown_max_retries</code> times, as in a batch.
+A retry runs in the case's job directory, and before it starts the sweeper
+removes what the failed attempt wrote there (its result, coverage file,
+trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
+takes the same file stem, so the viewer and the coverage merge read the
+retry's outputs alone. Only the outputs the case's own attempts wrote are
+removed; Hydra's job log and anything already in the directory before the
+case started (one <code>hydra.sweep.dir=</code> names again) are kept.</p>
 <p>A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it
 10 s before <code>SIGKILL</code>. So before the next attempt -- a retry or the next case
@@ -6146,7 +6153,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 05:56:21 UTC"><span class="timeago" datetime="2026-11-04T05:56:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 05:56:21 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 07:40:18 UTC"><span class="timeago" datetime="2026-11-04T07:40:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 07:40:18 UTC">2026-11-04</span>
   </span>
 
     
