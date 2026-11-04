@@ -28,6 +28,7 @@ only when a map is converted: a policy reading the files does not need it.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -35,7 +36,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 from ..utils.opendrive import sanitize_opendrive
 
@@ -105,8 +106,11 @@ def export_map(
     run's Lanelet2 map, the set holds it as its ``t4`` format (and ``t4`` is
     written even if ``formats`` leaves it out); without, ``t4`` cannot be
     written. A complete set already holding every format is reused
-    as it is. A set is built in a scratch directory beside its destination and
-    moved into place whole, so a reader never sees one half written.
+    as it is. One lacking some is built again holding the formats it has and
+    those asked for, its id unchanged: a set only grows, except by a format
+    this version or its roadgen cannot write, which is dropped with a warning. A set is built in
+    a scratch directory beside its destination and moved into place whole, so
+    a reader never sees one half written.
     """
     provided: Dict[str, Path] = {}
     if lanelet2_path is not None:
@@ -136,69 +140,212 @@ def export_map(
     )
     root = Path(map_dir)
     target = root / map_id
-    if _has_formats(target, formats):
+    present = _formats_in(target)
+    if set(formats) <= set(present):
         logger.info("map %s already written to %s", map_id, target)
         return map_id
 
+    # The id names the content, not the formats, so a set grows by the formats
+    # a run asks for and never loses one an earlier run wrote -- nor one an
+    # old set kept aside holds (``.<map_id>.*/old``: below, or a run killed
+    # while replacing the set; only read, as it may be a live run's). Every
+    # run of one id gives the same files (they are in the id): whatever the
+    # set holds that this run does not give was converted, and is converted
+    # again, so that every format's trace leads into the same IR. A format
+    # this version cannot write (a newer version's, or one the installed
+    # roadgen lacks an exporter for) is dropped, with a warning.
+    dropped: Set[str] = set()
+    present = _known(_held(root, target), dropped, map_id)
+    root.mkdir(parents=True, exist_ok=True)
+    last_error: Optional[OSError] = None
+    requested = set(formats)
+    kept: List[Path] = []
+    for _ in range(len(MAP_FORMATS) + 2):
+        formats = tuple(dict.fromkeys((*formats, *present)))
+        with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
+            out = Path(scratch) / "set"
+            formats = _build(
+                out, map_id, map_name, opendrive, formats, requested, provided, given
+            )
+            dropped |= set(present) - set(formats)
+
+            # Runs in other processes may write the same set meanwhile (the
+            # tasks of a SLURM batch, docs/slurm.md). Theirs is kept if it
+            # holds every format this one does -- the id is the content's;
+            # one holding formats this one lacks is built again with them.
+            present = _known(_formats_in(target), dropped, map_id)
+            if set(formats) <= set(present):
+                logger.info("map %s written to %s meanwhile", map_id, target)
+                _discard(kept, formats)
+                return map_id
+            if set(present) <= set(formats):
+                # Each rename moves a complete set: a reader never sees one half
+                # written (only, between the two, none). The old set is moved
+                # into a directory of its own, which nothing removes on its
+                # own: if it can be neither replaced nor put back, whatever
+                # goes wrong, it stays there for later runs to read.
+                hold = Path(tempfile.mkdtemp(dir=root, prefix=f".{map_id}."))
+                aside = hold / "old"
+                replaced = False
+                try:
+                    if target.exists():
+                        target.rename(aside)
+                    if set(_known(_formats_in(aside), dropped, map_id)) <= set(formats):
+                        out.rename(target)
+                        replaced = True
+                    else:
+                        aside.rename(target)  # grown meanwhile: put it back
+                except OSError as error:
+                    # Only another run taking or filling the set's place is
+                    # retried; anything else (permissions, a read-only file
+                    # system) would fail again.
+                    if error.errno not in _RACES:
+                        raise
+                    last_error = error
+                finally:
+                    if replaced:
+                        shutil.rmtree(hold, ignore_errors=True)
+                    else:
+                        _put_back(aside, target)
+                        if aside.exists():
+                            logger.warning(
+                                "map %s: kept the set it replaced in %s", map_id, hold
+                            )
+                            kept.append(hold)
+                        else:
+                            _remove_empty(hold)
+                if replaced:
+                    logger.info(
+                        "wrote map %s (%s) to %s", map_id, ", ".join(formats), target
+                    )
+                    _discard(kept, formats)
+                    return map_id
+            present = _known(_held(root, target), dropped, map_id)
+    raise RuntimeError(
+        f"map {map_id} kept changing in {target} while written"
+    ) from last_error
+
+
+def _held(root: Path, target: Path) -> Dict[str, Any]:
+    """The formats of the set at ``target`` and of every old set kept aside."""
+    held = _formats_in(target)
+    for leftover in sorted(root.glob(f".{target.name}.*/old")):
+        held = {**held, **_formats_in(leftover)}
+    return held
+
+
+def _put_back(aside: Path, target: Path) -> None:
+    """Return the old set at ``aside`` to ``target`` if it is still there and
+    ``target`` is free; otherwise it stays, kept, where it is."""
+    if aside.exists():
+        try:
+            aside.rename(target)
+        except OSError:
+            pass
+
+
+def _remove_empty(directory: Path) -> None:
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
+
+
+def _discard(kept: List[Path], formats: Tuple[str, ...]) -> None:
+    """Remove the old sets this run kept aside whose formats ``formats`` holds.
+
+    Only this run's: another run's leftover may be a live run's scratch.
+    """
+    for keep in kept:
+        if set(_formats_in(keep / "old")) <= set(formats):
+            shutil.rmtree(keep, ignore_errors=True)
+
+
+#: What a rename fails with when another run moved the set or put one in place.
+_RACES = frozenset({errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY})
+
+
+def _known(
+    formats: Mapping[str, Any], dropped: Set[str], map_id: str
+) -> Dict[str, Any]:
+    """``formats`` without those this version cannot write, warning of each."""
+    unknown = sorted(n for n in formats if n not in MAP_FORMATS or n in dropped)
+    for name in unknown:
+        if name not in dropped:
+            logger.warning(
+                "map %s holds the format %r, which this version cannot write; "
+                "it is dropped when the set is written again",
+                map_id,
+                name,
+            )
+            dropped.add(name)
+    return {n: e for n, e in formats.items() if n in MAP_FORMATS and n not in dropped}
+
+
+def _build(
+    out: Path,
+    map_id: str,
+    map_name: str,
+    opendrive: str,
+    formats: Tuple[str, ...],
+    required: Set[str],
+    provided: Mapping[str, Path],
+    given: Mapping[str, bytes],
+) -> Tuple[str, ...]:
+    """Write the set holding ``formats`` to the new directory ``out``.
+
+    Returns the formats written: those the installed roadgen has no exporter
+    for are left out with a warning, unless ``required``. The manifest is
+    written last, so a set without it is incomplete.
+    """
     converted = [name for name in formats if name not in provided and name not in given]
     roadgen = _import_roadgen(converted) if converted else None
+    out.mkdir()
+    (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
+    manifest: Dict[str, Any] = {
+        "map_id": map_id,
+        "map_name": map_name,
+        "roadgen_version": "",
+        "source": SOURCE_FILE,
+        "ir": IR_FILE,
+        "read_trace": READ_TRACE_FILE,
+    }
+    written: Dict[str, Dict[str, Any]] = {}
+    if roadgen is not None:
+        sanitized = out / READ_FILE
+        sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
+        world_map = roadgen.read_opendrive(str(sanitized))
+        for warning in world_map.read_warnings():
+            logger.info("roadgen read %s: %s", map_name, warning)
 
-    root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
-        out = Path(scratch)
-        (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
-        manifest: Dict[str, Any] = {
-            "map_id": map_id,
-            "map_name": map_name,
-            "roadgen_version": "",
-            "source": SOURCE_FILE,
-            "ir": IR_FILE,
-            "read_trace": READ_TRACE_FILE,
-        }
-        written: Dict[str, Dict[str, Any]] = {}
-        if roadgen is not None:
-            sanitized = out / READ_FILE
-            sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
-            world_map = roadgen.read_opendrive(str(sanitized))
-            for warning in world_map.read_warnings():
-                logger.info("roadgen read %s: %s", map_name, warning)
+        world_map.export_ir(str(out / IR_FILE))
+        world_map.write_read_trace(str(out / READ_TRACE_FILE))
+        manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
+        for name in converted:
+            if name in required or _can_export(world_map, name):
+                written[name] = _export(world_map, name, out)
+            else:
+                logger.warning(
+                    "map %s holds the format %r, which the installed roadgen "
+                    "cannot write; it is dropped",
+                    map_id,
+                    name,
+                )
+    else:
+        _write_json(out / IR_FILE, {})
+        _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
+    for name, path in provided.items():
+        written[name] = _copy_provided(path, out / MAP_FORMATS[name])
+    for name, data in given.items():
+        written[name] = _write_given(data, out / MAP_FORMATS[name])
+    formats = tuple(name for name in formats if name in written)
+    manifest["formats"] = {name: written[name] for name in formats}
+    (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return formats
 
-            world_map.export_ir(str(out / IR_FILE))
-            world_map.write_read_trace(str(out / READ_TRACE_FILE))
-            manifest["roadgen_version"] = getattr(roadgen, "__version__", "")
-            written = {name: _export(world_map, name, out) for name in converted}
-        else:
-            _write_json(out / IR_FILE, {})
-            _write_json(out / READ_TRACE_FILE, _EMPTY_TRACE)
-        for name, path in provided.items():
-            written[name] = _copy_provided(path, out / MAP_FORMATS[name])
-        for name, data in given.items():
-            written[name] = _write_given(data, out / MAP_FORMATS[name])
-        manifest["formats"] = {name: written[name] for name in formats}
-        (out / MANIFEST_FILE).write_text(
-            json.dumps(manifest, indent=1), encoding="utf-8"
-        )
 
-        # Runs in other processes may write the same set meanwhile (the tasks
-        # of a SLURM batch, docs/slurm.md): one complete by now is theirs, and
-        # as good as this one -- the id is the content's.
-        if _has_formats(target, formats):
-            logger.info("map %s written to %s meanwhile", map_id, target)
-            return map_id
-        if target.exists():
-            shutil.rmtree(target)
-        try:
-            out.rename(target)
-        except OSError:
-            if _has_formats(target, formats):
-                logger.info("map %s written to %s meanwhile", map_id, target)
-                return map_id
-            raise
-        # The scratch directory is gone; recreate it so the context manager's
-        # cleanup has something to remove.
-        out.mkdir()
-    logger.info("wrote map %s (%s) to %s", map_id, ", ".join(formats), target)
-    return map_id
+def _can_export(world_map: Any, name: str) -> bool:
+    return hasattr(world_map, f"export_{name}")
 
 
 _EMPTY_TRACE: Dict[str, Any] = {"links": []}
@@ -265,9 +412,11 @@ def _export(world_map: Any, name: str, out: Path) -> Dict[str, Optional[str]]:
     return {"path": path, "trace": f"{path}.trace.json"}
 
 
-def _has_formats(directory: Path, formats: Tuple[str, ...]) -> bool:
+def _formats_in(directory: Path) -> Dict[str, Any]:
+    """The formats a complete set in ``directory`` holds; none if there is none."""
     try:
         manifest = json.loads((directory / MANIFEST_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return set(formats) <= set(manifest.get("formats", {}))
+        return {}
+    formats = manifest.get("formats") if isinstance(manifest, dict) else None
+    return dict(formats) if isinstance(formats, dict) else {}
