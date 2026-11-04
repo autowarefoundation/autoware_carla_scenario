@@ -7,7 +7,9 @@ simulation run.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -163,6 +165,59 @@ def test_from_mapping_rejects_an_unknown_camera_key() -> None:
         Ros2EgoConfig.from_mapping(
             {"cameras": [{"topic": "/carla/hero/main_cam/image", "encoding": "rgb8"}]}
         )
+
+
+_CAMERA_TOPIC = "/carla/hero/main_cam/image"
+
+
+@pytest.mark.parametrize("fov", [0.0, -30.0, 180.0, 270.0])
+def test_a_camera_refuses_a_fov_outside_0_to_180(fov: float) -> None:
+    # CARLA's pinhole only spans (0, 180) degrees; outside it the camera would
+    # only fail as it attaches, after the ego spawned (#1399).
+    with pytest.raises(ValueError, match=r"fov must be in \(0, 180\) degrees"):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=fov)
+
+
+def test_a_camera_refuses_a_nan_fov() -> None:
+    with pytest.raises(ValueError, match="fov must be finite"):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=math.nan)
+
+
+@pytest.mark.parametrize("fov", [0.001, 90.0, 179.9])
+def test_a_camera_accepts_a_fov_inside_0_to_180(fov: float) -> None:
+    assert Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=fov).fov == fov
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [math.nan, math.inf, 0, -1])
+def test_a_camera_refuses_a_bad_image_size(key: str, value: Any) -> None:
+    with pytest.raises(
+        ValueError, match="image size and fps must be positive and finite"
+    ):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("fov", 0.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", -30.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", 180.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", 270.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", math.nan, "fov must be finite"),
+        ("image_width", math.nan, "image size and fps must be positive and finite"),
+        ("image_height", math.nan, "image size and fps must be positive and finite"),
+        ("image_width", math.inf, "image size and fps must be positive and finite"),
+        ("image_height", 0, "image size and fps must be positive and finite"),
+    ],
+)
+def test_from_mapping_refuses_a_camera_out_of_bounds(
+    key: str, value: Any, match: str
+) -> None:
+    # The mapping is not coerced, so a YAML `.nan` reaches an int field as a
+    # float; it is refused as the config is read.
+    with pytest.raises(ValueError, match=match):
+        Ros2EgoConfig.from_mapping({"cameras": [{"topic": _CAMERA_TOPIC, key: value}]})
 
 
 # ---------------------------------------------------------------------------

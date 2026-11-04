@@ -171,6 +171,11 @@ class Ros2CameraConfig:
         frame_id: ``header.frame_id`` of the published images; the
             :attr:`logical_id` when empty.
         logical_id: The camera's name in logs.
+
+    Raises:
+        ValueError: If the topic is empty, the image size or fps is not
+            positive and finite, the ``fov`` is outside (0, 180) degrees, or
+            the mount is not finite.
     """
 
     topic: str = ""
@@ -190,10 +195,6 @@ class Ros2CameraConfig:
     def __post_init__(self) -> None:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
-        if self.image_width <= 0 or self.image_height <= 0 or self.fps <= 0.0:
-            raise ValueError(
-                f"camera {self.logical_id!r}: image size and fps must be positive"
-            )
         for key, value in (
             ("fov", self.fov),
             ("fps", self.fps),
@@ -208,6 +209,28 @@ class Ros2CameraConfig:
                 raise ValueError(
                     f"camera {self.logical_id!r}: {key} must be finite, got {value}"
                 )
+        # As a driver camera's (DriverCameraConfig): a bad size or fov would
+        # only fail as the camera attaches, after the ego has spawned (#1399).
+        # The mapping is not coerced, so an int field may hold a float NaN too.
+        if (
+            not math.isfinite(float(self.image_width))
+            or not math.isfinite(float(self.image_height))
+            or self.image_width <= 0
+            or self.image_height <= 0
+            or self.fps <= 0.0
+        ):
+            raise ValueError(
+                f"camera {self.logical_id!r}: image size and fps must be positive "
+                f"and finite, got {self.image_width}x{self.image_height} "
+                f"at {self.fps} fps"
+            )
+        # CARLA renders a pinhole of the horizontal fov, which only spans
+        # (0, 180) degrees.
+        if not 0.0 < self.fov < 180.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: fov must be in (0, 180) degrees, "
+                f"got {self.fov}"
+            )
 
     @property
     def header_frame_id(self) -> str:
