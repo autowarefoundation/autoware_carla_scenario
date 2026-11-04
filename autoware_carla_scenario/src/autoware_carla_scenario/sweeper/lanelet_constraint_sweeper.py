@@ -354,7 +354,8 @@ def _refuse_before_forking(cfg: DictConfig) -> None:
     """Exit :data:`_REFUSED_EXIT_CODE`, saying why, when every case of the
     sweep of *cfg* would be refused before it starts: for a config value its
     run refuses (:func:`examples.run.check_run_config`: the queue's server,
-    traffic and Autoware launcher settings, the run timeout, ``odd_case``,
+    traffic and Autoware launcher settings, the run timeout, the seeds
+    (``seed``, ``sweep.odd_sample.seed`` and ``.count``), ``odd_case``,
     ``rerun.lidar_max_points``, the ``t4`` and ``driver`` settings and the
     ``t4scene`` settings), or for an extra it asks for that is not installed
     (:func:`examples.run.check_run_extras`).  Builds nothing that starts, and

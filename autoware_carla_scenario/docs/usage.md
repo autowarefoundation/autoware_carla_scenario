@@ -525,6 +525,14 @@ follows, so the same seed runs the same scenario again:
 uv run scenario scenario=intersection_passing/straight seed=42
 ```
 
+A seed -- `seed`, and `sweep.odd_sample.seed` -- is a whole number, not
+negative: `42` or `42.0`, not `1.9`, a boolean or a string that is no
+integer, as a route search's counts are
+([Logical Scenarios](logical_scenarios.md)); `sweep.odd_sample.count` is a
+whole number of at least 1. Any other value is refused before anything
+starts, naming the key, on every path: a single run, a batch (local or
+SLURM), a lanelet sweep and `scenario-expand`.
+
 It is the seed of:
 
 | What draws | Its own seed, which wins when set |

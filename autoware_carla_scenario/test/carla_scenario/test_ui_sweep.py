@@ -193,7 +193,7 @@ def test_a_scenario_whose_sweep_expands_to_no_case_stops_the_run(
 
 
 @pytest.mark.usefixtures("at_repo_root")
-def test_an_odd_sample_of_no_case_is_refused_on_the_real_config(
+def test_an_odd_sample_count_of_no_case_is_refused_on_the_real_config(
     started: dict[str, Any], client: TestClient
 ) -> None:
     response = client.post(
@@ -206,8 +206,10 @@ def test_an_odd_sample_of_no_case_is_refused_on_the_real_config(
     )
     data = response.json()
     assert data["status"] == "error"
+    # Refused for its count, named, before anything is drawn (#1437).
+    assert "intersection_passing/straight_3npc: " in data["message"]
     assert (
-        "intersection_passing/straight_3npc: the sweep expands to no case"
+        "sweep.odd_sample.count must be a whole number of at least 1, got 0"
         in data["message"]
     )
     assert "jobs" not in started

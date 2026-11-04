@@ -139,6 +139,78 @@ def test_the_config_seed_is_read_from_the_top_level() -> None:
     assert run.config_seed(OmegaConf.create({})) is None
 
 
+def test_a_whole_float_config_seed_is_that_seed() -> None:
+    assert run.config_seed(OmegaConf.create({"seed": 2.0})) == 2
+    assert run.config_seed(OmegaConf.create({"seed": "7"})) == 7
+
+
+# What int() alone took (1.9 and true as seed 1), or refused only once the
+# scenario was built (-1), with a traceback (#1437).
+_NOT_SEEDS = [1.9, True, False, "abc", "1.5", "", -1, float("nan"), float("inf")]
+
+
+@pytest.mark.parametrize("value", _NOT_SEEDS)
+def test_a_config_seed_that_is_no_seed_is_refused(value: object) -> None:
+    with pytest.raises(ValueError, match=r"^seed must "):
+        run.config_seed(OmegaConf.create({"seed": value}))
+
+
+@pytest.mark.parametrize("value", _NOT_SEEDS)
+def test_expanding_a_config_refuses_a_seed_that_is_no_seed(value: object) -> None:
+    # A config without a sweep too: every case would run with it.
+    with pytest.raises(ValueError, match=r"^seed must "):
+        expand_config(OmegaConf.create({"seed": value}))
+    with pytest.raises(ValueError, match=r"^seed must "):
+        _odd_cases({"seed": value, "sweep": {"odd_sample": {"count": 2}}})
+
+
+def _shipped(overrides: list[str]) -> object:
+    from .test_video_removed import _shipped as compose
+
+    return compose(overrides)
+
+
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("seed=1.9", "seed"),
+        ("seed=true", "seed"),
+        ("seed=abc", "seed"),
+        ("seed=-1", "seed"),
+        ("+sweep.odd_sample.seed=1.5", "sweep.odd_sample.seed"),
+        ("+sweep.odd_sample.seed=-3", "sweep.odd_sample.seed"),
+        ("+sweep.odd_sample.count=2.7", "sweep.odd_sample.count"),
+        ("+sweep.odd_sample.count=0", "sweep.odd_sample.count"),
+        ("+sweep.odd_sample.count=true", "sweep.odd_sample.count"),
+    ],
+)
+def test_a_run_is_refused_for_a_seed_or_count_before_anything_is_built(
+    override: str, key: str
+) -> None:
+    # A single run (run_scenario), the lanelet sweeper (before forking) and
+    # a local or SLURM batch all refuse it in check_batch_configs, naming
+    # the key, rather than once build_scenario sets the seed.
+    cfg = _shipped([override])
+    with pytest.raises(run.RunConfigError, match=rf"^{key} must "):
+        run.check_run_config(cfg)  # type: ignore[arg-type]
+    good = _shipped([])
+    with pytest.raises(run.RunConfigError, match=rf"^bad: {key} must "):
+        run.check_batch_configs([good, cfg], ["good", "bad"])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        ["seed=2.0"],
+        ["seed=null"],
+        ["+sweep.odd_sample.seed=4", "+sweep.odd_sample.count=3.0"],
+        ["+sweep.odd_sample.seed=null", "+sweep.odd_sample.count=null"],
+    ],
+)
+def test_a_run_with_whole_seeds_and_counts_is_accepted(overrides: list[str]) -> None:
+    run.check_run_config(_shipped(overrides))  # type: ignore[arg-type]
+
+
 class _Scenario(BaseScenario):
     def setup(self) -> None:
         pass

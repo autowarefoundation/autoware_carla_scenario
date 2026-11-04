@@ -291,17 +291,21 @@ def test_a_batch_refuses_a_scenario_whose_sweep_expands_to_no_case(
     assert batch.configs == []
 
 
-def test_a_batch_refuses_an_odd_sample_of_no_case(
-    batch: _Batch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("count", ["0", "2.7", "-1"])
+def test_a_batch_refuses_an_odd_sample_count_that_is_no_count(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], count: str
 ) -> None:
+    # 0 drew no case, a sweep refused for matching nothing on the map; 2.7
+    # drew 2 (#1437).
     from autoware_carla_scenario.examples import run
 
     with pytest.raises(SystemExit) as exited:
-        run.run_batch([_CONCRETE], ["+sweep.odd_sample.count=0"], expand=True)
+        run.run_batch([_CONCRETE], [f"+sweep.odd_sample.count={count}"], expand=True)
     assert exited.value.code == 1
-    assert f"Error: {_CONCRETE}: the sweep expands to no case" in (
-        capsys.readouterr().err
-    )
+    assert (
+        f"Error: {_CONCRETE}: sweep.odd_sample.count must be a whole number of "
+        f"at least 1, got {count}"
+    ) in capsys.readouterr().err
     assert batch.configs == []
 
 
@@ -312,18 +316,47 @@ def test_a_slurm_batch_whose_sweep_expands_to_no_case_submits_nothing(
     anything is submitted."""
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm import settings
+    from autoware_carla_scenario.sweeper import expand
 
     monkeypatch.setattr(settings, "require_sbatch", lambda: None)
+    # A sweep matching nothing on the map: odd_sample.count=0 is refused for
+    # its count now (#1437), as the next test checks.
+    monkeypatch.setattr(expand, "expand_config", lambda *_, **__: [])
     with pytest.raises(SystemExit) as exited:
         run.run_batch(
             [_CONCRETE],
-            ["+sweep.odd_sample.count=0", "launcher=slurm"],
+            ["+sweep.odd_sample.count=1", "launcher=slurm"],
             expand=True,
         )
     assert exited.value.code == 1
     assert f"Error: {_CONCRETE}: the sweep expands to no case" in (
         capsys.readouterr().err
     )
+    assert batch.configs == []
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("+sweep.odd_sample.count=0", "sweep.odd_sample.count must be a whole"),
+        ("seed=1.9", "seed must be a whole number, got 1.9"),
+    ],
+)
+def test_a_slurm_batch_with_a_bad_seed_or_count_submits_nothing(
+    batch: _Batch,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+    message: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import settings
+
+    monkeypatch.setattr(settings, "require_sbatch", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE], [override, "launcher=slurm"], expand=True)
+    assert exited.value.code == 1
+    assert f"Error: {_CONCRETE}: {message}" in capsys.readouterr().err
     assert batch.configs == []
 
 
@@ -376,6 +409,13 @@ def test_a_batch_reports_the_invalid_controls_of_each_scenario(
         ("scenario.timeout_seconds=-1", "scenario.timeout_seconds"),
         ("server.port=70000", "server.port"),
         ("server.cooldown_max_retries=-1", "server.cooldown_max_retries"),
+        # Taken as seed 1, or refused only once the scenario was built (#1437).
+        ("seed=1.9", "seed"),
+        ("seed=true", "seed"),
+        ("seed=-1", "seed"),
+        ("seed=abc", "seed"),
+        ("++sweep.odd_sample.seed=0.5", "sweep.odd_sample.seed"),
+        ("++sweep.odd_sample.count=2.7", "sweep.odd_sample.count"),
     ],
 )
 @pytest.mark.parametrize("multirun", [False, True])

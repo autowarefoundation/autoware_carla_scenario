@@ -34,6 +34,7 @@ from autoware_carla_scenario.odd.probes import illumination_level, intensity_lev
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
     decode_case,
+    sample_count,
     sample_seed,
     sampler_from_config,
     search_from_config,
@@ -523,6 +524,54 @@ def test_a_null_or_missing_sample_seed_is_the_default_seed() -> None:
     expected = draws({"seed": DEFAULT_SEED})
     assert draws({"seed": None}) == expected
     assert draws({}) == expected
+
+
+def test_a_whole_float_sample_seed_and_count_are_whole_numbers() -> None:
+    assert sample_seed({"seed": 4.0}) == 4
+    assert sample_count({"count": 3.0}) == 3
+    assert sample_count({"count": None}) is None
+    assert sample_count({}) is None
+
+
+@pytest.mark.parametrize("value", [1.9, True, "abc", "", -1, float("nan")])
+def test_a_sample_seed_that_is_no_seed_is_refused(value: Any) -> None:
+    # int() took 1.9 and true as seed 1 (#1437).
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.seed must "):
+        sample_seed({"seed": value})
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.seed must "):
+        search_from_config({"seed": value}, odd="default")
+
+
+@pytest.mark.parametrize("value", [2.7, True, "two", "", 0, -2, float("inf")])
+def test_a_sample_count_that_is_no_count_is_refused(value: Any) -> None:
+    # int() drew 2 cases for 2.7; 0 drew none, a sweep refused for matching
+    # nothing on the map (#1437).
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.count must "):
+        sample_count({"count": value})
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.count must "):
+        sampler_from_config({"count": value}, odd="default")
+
+
+@pytest.mark.parametrize(
+    ("odd_sample", "key"),
+    [({"count": 2.7}, "count"), ({"count": 2, "seed": -1}, "seed")],
+)
+def test_expanding_a_sweep_refuses_a_bad_count_or_seed_before_the_map(
+    odd_sample: dict[str, Any], key: str
+) -> None:
+    # The constraints would load the map first: the value is refused before.
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "map": {"lanelet2_path": "/nonexistent/map.osm"},
+            "sweep": {
+                "constraints": {"ego.spawn": [{"type": "is_junction"}]},
+                "odd_sample": odd_sample,
+            },
+        }
+    )
+    with pytest.raises(ValueError, match=rf"^sweep\.odd_sample\.{key} must "):
+        expand_config(cfg, [])
 
 
 def test_a_flaky_search_with_a_null_seed_is_built() -> None:
