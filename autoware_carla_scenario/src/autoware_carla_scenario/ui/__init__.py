@@ -9,6 +9,9 @@ from pathlib import Path
 
 from ..serve_cli import add_bind_arguments, warn_if_exposed
 
+SHUTDOWN_TIMEOUT_SECONDS = 5
+"""How long the viewer's server waits for open connections as it shuts down."""
+
 
 def _fetch_web_viewer(argv: list[str]) -> None:
     """``viewer --fetch-rerun-web-viewer [--from TGZ] [--version V]``: keep a
@@ -87,6 +90,7 @@ def main(argv: list[str] | None = None) -> None:
     import uvicorn  # noqa: PLC0415
 
     from ..registry import load_scenario_plugins  # noqa: PLC0415
+    from . import runner  # noqa: PLC0415
     from .app import app  # noqa: PLC0415, F811
 
     # External scenario packages (the ``autoware_carla_scenario.scenarios``
@@ -106,4 +110,18 @@ def main(argv: list[str] | None = None) -> None:
         args.port,
         "browse the results and start scenario runs and SLURM submissions",
     )
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    try:
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            # An open progress stream (/api/run/progress) follows the run
+            # until it is done: it does not keep the server from shutting
+            # down past this, and the app's shutdown then stops the run (#1351).
+            timeout_graceful_shutdown=SHUTDOWN_TIMEOUT_SECONDS,
+        )
+    finally:
+        # A second Ctrl-C skips the app's shutdown: the run is stopped here
+        # instead, its job not left running on its own.
+        runner.stop_run()

@@ -11,8 +11,11 @@ single-scenario run.
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import subprocess
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from .models import RunProgress, Status
@@ -22,10 +25,20 @@ logger = logging.getLogger(__name__)
 RAW_OUTPUT_LOG = "raw_output.log"
 """Filename used to persist subprocess stdout/stderr alongside result JSON."""
 
+STOP_TIMEOUT_SECONDS = 10.0
+"""How long a stopped job's process group has after ``SIGTERM``, before ``SIGKILL``."""
+
 # Global state for the current run.
 _lock = threading.Lock()
 _progress: RunProgress | None = None
 _running = False
+# Set by stop_run(): the worker starts no further job (#1351).
+_stopping = False
+# The job running now, started in a process group of its own, which
+# stop_run() terminates.
+_job: subprocess.Popen[str] | None = None
+# The thread running the current run's jobs, once it has started.
+_worker: threading.Thread | None = None
 
 
 def get_progress() -> RunProgress | None:
@@ -97,6 +110,11 @@ def start_run(
         ),
         daemon=True,
     )
+    # The run's worker from before it starts, so no other run's thread can
+    # take its place; stop_run() joins it only once it is alive.
+    with _lock:
+        global _worker  # noqa: PLW0603
+        _worker = thread
     # A thread that does not start (``RuntimeError: can't start new
     # thread``) never runs the worker, which would end the run: end it here.
     started = False
@@ -109,6 +127,65 @@ def start_run(
     return True
 
 
+def stop_run(timeout: float = STOP_TIMEOUT_SECONDS) -> None:
+    """Stop the run in progress, if there is one (#1351).
+
+    No further job starts: the worker checks between jobs.  The job running
+    now, a process group of its own, gets ``SIGTERM``, and ``SIGKILL`` if any
+    of the group is still there *timeout* seconds later.  The worker records
+    that job as failed and ends the run, its progress ``done``.  This returns
+    once the group is gone and the worker has ended, or the bounded waits
+    have run out.
+    """
+    with _lock:
+        global _stopping  # noqa: PLW0603
+        if not _running:
+            return
+        _stopping = True
+        job = _job
+        worker = _worker
+    if job is not None:
+        logger.info("Stopping the running scenario (pid %d)", job.pid)
+        _terminate_group(job.pid, timeout)
+    if worker is not None and worker.is_alive():
+        worker.join(timeout)
+
+
+def _stop_requested() -> bool:
+    with _lock:
+        return _stopping
+
+
+def _signal_group(pgid: int, sig: int) -> bool:
+    """Send *sig* to the process group *pgid*; ``False`` if none of it is left."""
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _terminate_group(pgid: int, timeout: float) -> None:
+    """``SIGTERM`` to the group *pgid*, then ``SIGKILL`` after *timeout* seconds.
+
+    The group is gone once each of its processes has exited and been
+    reaped (the job's own by the worker that waits for it).
+    """
+    if not _signal_group(pgid, int(signal.SIGTERM)):
+        return
+    deadline = time.monotonic() + timeout
+    while _signal_group(pgid, 0):
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "The stopped scenario (pid %d) still runs %gs after SIGTERM: SIGKILL",
+                pgid,
+                timeout,
+            )
+            _signal_group(pgid, int(signal.SIGKILL))
+            return
+        time.sleep(0.1)
+
+
 def _claim_run(total: int) -> bool:
     """Mark a run of *total* jobs as running, unless one already is.
 
@@ -119,9 +196,13 @@ def _claim_run(total: int) -> bool:
     with _lock:
         global _running  # noqa: PLW0603
         global _progress  # noqa: PLW0603
+        global _stopping  # noqa: PLW0603
+        global _worker  # noqa: PLW0603
         if _running:
             return False
         _running = True
+        _stopping = False
+        _worker = None
         _progress = RunProgress(
             current=0, total=total, scenario_name="", status="running"
         )
@@ -138,7 +219,9 @@ def _end_run() -> None:
     with _lock:
         global _running  # noqa: PLW0603
         global _progress  # noqa: PLW0603
+        global _stopping  # noqa: PLW0603
         _running = False
+        _stopping = False
         p = _progress
         if p is None:
             _progress = RunProgress(current=0, total=0, scenario_name="", status="done")
@@ -170,7 +253,11 @@ def _run_worker(
             multirun_dir = _multirun_dir(now)
             logger.info("Grouping %d jobs under %s", total, multirun_dir)
 
+        stopped = False
         for i, overrides in enumerate(overrides_list):
+            if _stop_requested():
+                stopped = True
+                break
             scenario_name = _extract_scenario_name(overrides)
             _set_progress(
                 RunProgress(
@@ -191,34 +278,36 @@ def _run_worker(
                 cmd.append(f"hydra.run.dir={multirun_dir}/{i}")
             logger.info("Running [%d/%d]: %s", i + 1, total, " ".join(cmd))
 
+            status: Status = "failed"
+            launched = True
             try:
-                result = subprocess.run(  # noqa: S603
-                    cmd,
-                    cwd=cwd,
-                    capture_output=True,
-                    # A job may print bytes that are not UTF-8: replace them
-                    # rather than fail to read the output (#1073).
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                status: Status = "passed" if result.returncode == 0 else "failed"
-                if result.returncode != 0:
-                    logger.warning(
-                        "Scenario %s failed (exit code %d): %s",
-                        scenario_name,
-                        result.returncode,
-                        result.stderr[-500:] if result.stderr else "",
-                    )
-                # Save raw terminal output to the job directory.
-                if multirun_dir:
-                    base = Path(cwd) if cwd else Path.cwd()
-                    _save_raw_output(result, base / multirun_dir / str(i))
+                result = _run_job(cmd, cwd)
+                if result is None:
+                    launched = False
+                else:
+                    status = "passed" if result.returncode == 0 else "failed"
+                    if result.returncode != 0:
+                        logger.warning(
+                            "Scenario %s %s (exit code %d): %s",
+                            scenario_name,
+                            "was stopped" if _stop_requested() else "failed",
+                            result.returncode,
+                            result.stderr[-500:] if result.stderr else "",
+                        )
+                    # Save raw terminal output to the job directory.
+                    if multirun_dir:
+                        base = Path(cwd) if cwd else Path.cwd()
+                        _save_raw_output(result, base / multirun_dir / str(i))
             except Exception as exc:
                 # Whatever stops one job from being launched or collected (an
                 # OSError, or anything unexpected) fails that job, not the
                 # run: the next jobs still run (#1073).
                 status = "failed"
                 logger.error("Failed to run scenario %s: %s", scenario_name, exc)
+            if not launched:
+                # Stopped before this job started: it is not run.
+                stopped = True
+                break
 
             _set_progress(
                 RunProgress(
@@ -228,6 +317,11 @@ def _run_worker(
                     status=status,
                 )
             )
+
+        if stopped:
+            # _end_run() publishes the `done`, after the last job that ran.
+            logger.info("The run was stopped: the jobs after it do not run")
+            return
 
         # Signal completion
         _set_progress(
@@ -240,6 +334,58 @@ def _run_worker(
         )
     finally:
         _end_run()
+
+
+def _run_job(
+    cmd: list[str], cwd: str | None
+) -> subprocess.CompletedProcess[str] | None:
+    """Run *cmd* as ``subprocess.run(cmd, cwd=cwd, capture_output=True)`` does.
+
+    The job is started in a session, so a process group, of its own, which
+    :func:`stop_run` can terminate as a whole (#1351); it is ``None``, and
+    nothing is started, once the run is being stopped.
+    """
+    job = _launch(cmd, cwd)
+    if job is None:
+        return None
+    collected = False
+    try:
+        stdout, stderr = job.communicate()
+        returncode = job.wait()
+        collected = True
+    finally:
+        with _lock:
+            global _job  # noqa: PLW0603
+            _job = None
+        if not collected:
+            # As subprocess.run() kills the job it fails to collect.
+            _signal_group(job.pid, int(signal.SIGKILL))
+    return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+
+def _launch(cmd: list[str], cwd: str | None) -> subprocess.Popen[str] | None:
+    """Start *cmd*, unless the run is being stopped, as the run's job.
+
+    Under the lock that :func:`stop_run` takes, so a job is either never
+    started or one that stop_run() sees.
+    """
+    with _lock:
+        global _job  # noqa: PLW0603
+        if _stopping:
+            return None
+        job: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            # A job may print bytes that are not UTF-8: replace them
+            # rather than fail to read the output (#1073).
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+        )
+        _job = job
+    return job
 
 
 def _multirun_dir(now: datetime) -> str:

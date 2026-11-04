@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import shlex
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +31,35 @@ _UI_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _UI_DIR / "templates"
 _STATIC_DIR = _UI_DIR / "static"
 
-app = FastAPI(title="Scenario Result Viewer")
+# Set while the app shuts down (its lifespan's shutdown), when a progress
+# stream still open ends. Under uvicorn that shutdown runs only once the
+# connections have closed, or been cancelled after timeout_graceful_shutdown:
+# what bounds a stream there is that timeout (``ui.main`` sets it) and the
+# stream's own client-disconnect check, rarely this flag (#1351).
+_shutting_down = False
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """On shutdown, stop the run in progress (and end any progress stream).
+
+    Uvicorn runs this shutdown after the open connections have closed or been
+    cancelled (after ``timeout_graceful_shutdown``, which ``ui.main``
+    bounds): the run is stopped then, its running job terminated and the jobs
+    after it not started. The flag is cleared again on the way out, so the
+    app, served again in the same process (a test's next client), streams.
+    """
+    global _shutting_down  # noqa: PLW0603
+    _shutting_down = False
+    yield
+    _shutting_down = True
+    try:
+        await asyncio.to_thread(runner.stop_run)
+    finally:
+        _shutting_down = False
+
+
+app = FastAPI(title="Scenario Result Viewer", lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
@@ -354,11 +384,15 @@ async def run_status() -> dict[str, Any]:
 
 
 @app.get("/api/run/progress")
-async def run_progress() -> StreamingResponse:
-    """SSE endpoint for run progress updates."""
+async def run_progress(request: Request) -> StreamingResponse:
+    """SSE endpoint for run progress updates.
+
+    The stream ends on the run's ``done``, when the client goes away, or when
+    the server begins to shut down (#1351).
+    """
 
     async def event_stream() -> Any:
-        while True:
+        while not _shutting_down:
             progress = runner.get_progress()
             if progress is None:
                 # Not running; send idle event and close
@@ -377,6 +411,8 @@ async def run_progress() -> StreamingResponse:
                 break
 
             await asyncio.sleep(0.5)
+            if await request.is_disconnected():
+                break
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
