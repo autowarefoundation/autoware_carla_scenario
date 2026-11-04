@@ -84,6 +84,53 @@ def test_the_metrics_read_off_a_trajectory_log(tmp_path: Path) -> None:
     assert metrics["distance_m"] == pytest.approx(43.0, abs=0.1)
 
 
+def test_a_truncated_last_line_keeps_the_metrics_of_every_good_tick(
+    tmp_path: Path,
+) -> None:
+    """A killed run loses at most the tick being written (#1378): a log cut
+    off mid-line reads as the log without that line, and is kept."""
+    plain = tmp_path / "Plain.trajectory.jsonl"
+    _trajectory(plain, stop_short_of=3.0)
+    cut = tmp_path / "Cut.trajectory.jsonl"
+    cut.write_text(
+        plain.read_text(encoding="utf-8")
+        + '{"type": "tick", "frame": 201, "t": 10.05, "actors": [[1, 25.0',
+        encoding="utf-8",
+    )
+    metrics = results.case_metrics(cut)
+    assert metrics
+    assert metrics == results.case_metrics(plain)
+    assert str(cut) in results._metrics_cache
+
+
+def test_a_bad_line_in_the_middle_is_skipped(tmp_path: Path) -> None:
+    """A line that is not JSON, and a tick that cannot be used (an actor's
+    state too short, a time missing), are skipped; the ticks around them
+    count."""
+    plain = tmp_path / "Plain.trajectory.jsonl"
+    _trajectory(plain, stop_short_of=3.0)
+    lines = plain.read_text(encoding="utf-8").splitlines()
+    short = json.loads(lines[50])
+    short["actors"][1] = [2, 0.0]
+    untimed = json.loads(lines[60])
+    del untimed["t"]
+    lines[40:40] = ['{"type": "tick", garbage', json.dumps(short), json.dumps(untimed)]
+    bad = tmp_path / "Bad.trajectory.jsonl"
+    bad.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert results.case_metrics(bad) == results.case_metrics(plain)
+
+
+def test_an_unreadable_log_has_no_metrics(tmp_path: Path) -> None:
+    """Only a log that cannot be read at all gives no metrics, and that is
+    not kept."""
+    missing = tmp_path / "Missing.trajectory.jsonl"
+    assert results.case_metrics(missing) == {}
+    directory = tmp_path / "Dir.trajectory.jsonl"
+    directory.mkdir()
+    assert results.case_metrics(directory) == {}
+    assert str(directory) not in results._metrics_cache
+
+
 def test_a_road_user_parked_under_the_map_is_no_gap(tmp_path: Path) -> None:
     """A hidden road user is parked 500 m under the map, here right under the
     ego's path (#844): it is not 0 m away."""
