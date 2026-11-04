@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -140,6 +141,17 @@ def _from_server(
         ) from exc
 
     wanted = _short_map_name(map_name)
+    # Nothing listening is said here, before the CARLA client is made: on
+    # arm64 its get_world() on a refused connection can abort the process
+    # (std::terminate, not a RuntimeError), and with it the editor serving
+    # the request.
+    try:
+        socket.create_connection((host, port), timeout=min(timeout, 2.0)).close()
+    except OSError as exc:
+        raise OpenDriveUnavailable(
+            f"Could not read OpenDRIVE from the CARLA server at {host}:{port}: "
+            f"nothing accepts a connection there ({exc})."
+        ) from exc
     try:
         client = carla.Client(host, port)
         client.set_timeout(timeout)

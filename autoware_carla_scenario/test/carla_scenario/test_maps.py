@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -1727,6 +1728,24 @@ class TestOpenDrive:
         resolved = resolve_map(_uri(origin_repo), cache=cache)
         with pytest.raises(OpenDriveUnavailable, match=map_asset_env_var("TownA")):
             ensure_xodr(resolved, allow_server=False)
+
+    def test_a_port_nothing_listens_on_is_refused_before_the_carla_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CARLA client is not asked: on arm64 its get_world() on a refused
+        connection can abort the process instead of raising."""
+        carla = pytest.importorskip("typesafe_carla.carla")
+        from autoware_carla_scenario.maps import opendrive
+
+        def no_client(*_args: object) -> None:
+            raise AssertionError("the CARLA client was made for a closed port")
+
+        monkeypatch.setattr(carla, "Client", no_client)
+        with socket.socket() as free:
+            free.bind(("127.0.0.1", 0))
+            port = free.getsockname()[1]
+        with pytest.raises(OpenDriveUnavailable, match="nothing accepts a connection"):
+            opendrive._from_server("TownA", host="127.0.0.1", port=port, timeout=1.0)
 
 
 # ---------------------------------------------------------------------------
