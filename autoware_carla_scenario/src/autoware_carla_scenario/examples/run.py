@@ -1986,7 +1986,8 @@ def check_batch_configs(
     reads them (:func:`_check_batch_writer_settings`); each case's timeout,
     seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
     ``background_traffic`` (:func:`background_traffic_settings`),
-    ``environment`` (:func:`environment_settings`), ``driver`` settings of an
+    ``environment`` (:func:`environment_settings`) and the form of its
+    ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
     ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`), the
     ``scenario`` settings its config class refuses
     (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
@@ -2025,6 +2026,7 @@ def check_batch_configs(
             _check_seeds(cfg)
             background_traffic_settings(cfg)
             environment_settings(cfg)
+            _check_weather_rules(cfg)
             _check_driver_settings(cfg)
             _check_scenario_config(cfg)
             _odd_case(cfg)
@@ -2556,6 +2558,23 @@ def environment_settings(cfg: DictConfig) -> dict[str, float]:
             raise ValueError(f"environment.{key} {refusal}")
         settings[str(key)] = number
     return settings
+
+
+def _check_weather_rules(cfg: DictConfig) -> None:
+    """Refuse the config's ``environment.rules`` when it is not of the form
+    :func:`add_environment` reads (a file, or ``{default, vehicles}`` of
+    files), reading no rule file.
+
+    Raises:
+        ValueError: An ``openodd.RulesError`` naming the key.
+    """
+    from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
+        check_weather_rules,
+    )
+
+    env_cfg = cfg.get("environment")
+    raw = {} if env_cfg is None else _to_dict(env_cfg)
+    check_weather_rules(raw.get("rules"))
 
 
 def _rules_locations(spec: Any) -> Any:
