@@ -1982,7 +1982,16 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     over the default rules, or ``{default, vehicles}`` for rules that differ
     by vehicle.  The default rules when ``null``; set for every run, so one
     run's do not reach the next.
+
+    Raises:
+        ValueError: An ``environment.<key>`` is not a number, or is one
+            :class:`~autoware_carla_scenario.EnvironmentAction` refuses (not
+            finite, or outside the range its argument takes); the message
+            names the key.
     """
+    from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
+        _refusal,
+    )
     from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
         use_weather_rules,
     )
@@ -1990,9 +1999,20 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
     use_weather_rules(_rules_locations(raw.pop("rules", None)))
-    settings: dict[str, Any] = {
-        str(key): float(value) for key, value in raw.items() if value is not None
-    }
+    settings: dict[str, Any] = {}
+    for key, value in raw.items():
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"environment.{key} must be a number, got {value!r}"
+            ) from None
+        refusal = _refusal(str(key), number)
+        if refusal != "":
+            raise ValueError(f"environment.{key} {refusal}")
+        settings[str(key)] = number
     if not settings:
         return
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415

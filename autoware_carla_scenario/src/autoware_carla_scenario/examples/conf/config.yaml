@@ -300,6 +300,11 @@ controls: {}
 # water or wetness given beside `rain` win over the ones it derives;
 # `precipitation` may not be given with it. rain=0 is a dry, clear day.
 #
+# Every value must be a finite number (NaN or infinity fails the run at its
+# start, naming the key); cloudiness, precipitation, precipitation_deposits,
+# wetness, wind_intensity and fog_density are 0-100, tire_friction and
+# visibility_m positive, the quantiles 0-1. rain outside 0-100 is clamped.
+#
 # The road's grip follows its water (EnvironmentAction, docs/odd.md): a run
 # that sets `rain`, `wetness` or `precipitation_deposits` scales every
 # vehicle's tire friction into the range that water leaves -- a wet road
