@@ -17,6 +17,7 @@ scenario:
   # so it does, however the lanelets are cut and curve.
   npc_ahead_m: 10.0
   npc_gap_m: null
+  npc_vehicle_type: vehicle.mini.cooper
   npc_initial_speed_kmh: 30.0
   cut_in_after_seconds: 2.0
   hold_seconds: 3.0

@@ -10,6 +10,20 @@ scenario:
   npc_ahead_m: 15.0
   npc_speed_kmh: 30.0
   timeout_seconds: 30.0
+  # The rest are AdversityConfig's defaults, listed so that a
+  # scenario.<key>= override finds them (#1317).
+  npc_offset_m: -3.0
+  npc_vehicle_type: vehicle.mini.cooper
+  walker_type: walker.pedestrian.0015
+  ego_speed_kmh: null
+  red_light: false
+  # nade only.
+  nade_seconds: 45.0
+  nade_probability: 0.05
+  nade_is_probability: 0.5
+  nade_cooldown: 2.0
+  nade_challenge_npcs: true
+  nade_seed: 7
 
 ego:
   initial_speed_kmh: 30.0

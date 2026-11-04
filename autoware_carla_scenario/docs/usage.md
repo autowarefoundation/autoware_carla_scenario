@@ -746,7 +746,8 @@ xodr_path: ${oc.env:NISHISHINJUKU_XODR_PATH,path/to/default.xodr}
 In the parameter tables below, **Default** is the value a key takes when the
 scenario's YAML omits it (the dataclass default in `examples/configs.py`), and
 **Shipped** is the value the shipped config (`examples/conf/scenario/...`) sets,
-or — when it leaves the key unset, so the default applies.
+or — when it ships the default. Every shipped config lists every key of its
+config class, so a `scenario.<key>=` override reaches any of them without `+`.
 
 #### Intersection Passing
 
@@ -767,13 +768,13 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 | `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
 | `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
 | `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below). `null` disables check |
-| `scenario.speed_check_delay_seconds` | float | `0.3` | `0.3` (`straight`, `straight_3npc`) | Grace period before speed check starts |
+| `scenario.speed_check_delay_seconds` | float | `0.3` | — | Grace period before speed check starts |
 | `scenario.turn_direction` | str \| null | null | per config (above) | `"left"`, `"right"` or `"straight"` registers a `TurnAction` for that direction; `null` registers none |
 | `scenario.turn_indicator_before_m` | float \| null | null | — | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
 | `scenario.turn_indicator_grace_seconds` | float | `0.5` | — | How long the indicator may be wrong before the run fails |
 | `scenario.max_steering_reversals` | int \| null | null | — | Fail once the steering has turned back this many times since the start (the `steering_reversals` metric, [metrics.md](metrics.md#weaving)). `null` disables the check |
 | `scenario.max_turn_indicator_changes` | int \| null | null | — | Fail once the turn indicators have changed this many times since the start, counted apart from the steering (the `turn_indicator_changes` metric). `null` disables the check |
-| `scenario.npc_vehicles` | list | `[]` | 3 vehicles (`straight_3npc`) | NPC vehicle configurations (see below) |
+| `scenario.npc_vehicles` | list | `[]` | 3 vehicles (`straight_3npc`), else — | NPC vehicle configurations (see below) |
 
 **NPC vehicle configuration:**
 
