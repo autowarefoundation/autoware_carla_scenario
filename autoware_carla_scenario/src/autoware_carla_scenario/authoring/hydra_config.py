@@ -36,6 +36,19 @@ keys a concrete match is carried in (:data:`ROUTE_CONFIG_DEFAULTS`).
 ``scenario-expand`` (and the sweeper) find the matches and write those keys,
 and the ego's spawn and goal, per match; a run that was not expanded leaves
 them empty and the scenario searches the map it runs on itself.
+
+Map group
+---------
+The framework's ``config.yaml`` composes the ``scenario`` group *before* the
+``map`` group, so whatever map group a run selects overrides the ``map`` keys a
+scenario config writes -- and a scenario config cannot select another one
+(Hydra refuses ``override /map`` from a group composed before ``map``).  That
+is harmless for a document on a built-in group, which names the group's own
+map.  A document that names its map by ``source`` or ``directory`` describes a
+map no built-in group does, so an export ships it as a map group of its own
+(:func:`build_map_group_config`, ``conf/map/<own_map_group>.yaml``) that sets
+every ``map`` key, and the package is run with ``map=<own_map_group>``
+(:func:`run_map_group`).
 """
 
 from __future__ import annotations
@@ -48,9 +61,13 @@ from .persistence import dump_yaml
 __all__ = [
     "PACKAGE_GLOBAL_HEADER",
     "ROUTE_CONFIG_DEFAULTS",
+    "build_map_group_config",
     "build_scenario_config",
+    "dump_map_group_config",
     "dump_scenario_config",
+    "own_map_group",
     "param_override_key",
+    "run_map_group",
     "slot_lanelet_key",
     "spawn_lanelet_key",
     "spawn_s_key",
@@ -182,11 +199,13 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     ``${map.no_3d_model_lanelet_ids}``.
 
     A document that names its own map by ``source`` or ``directory`` is the
-    exception: the group
-    a run selects then describes a *different* map, and inheriting that map's
-    exclusion list would hand this scenario a set of lanelet ids that mean
-    nothing on the map it actually runs on.  So the list is written out even
-    when it is empty, which is what stops it being inherited.
+    exception: a built-in group describes a *different* map, and inheriting
+    that map's exclusion list would hand this scenario a set of lanelet ids
+    that mean nothing on the map it actually runs on.  So the list is written
+    out even when it is empty.  The ``map`` group is composed after the
+    scenario, though, so these keys alone do not keep a built-in group's
+    paths, name and list out of the run: that is what the document's own map
+    group (:func:`build_map_group_config`) is for.
     """
     map_ref = document.map
     overrides: dict[str, Any] = {}
@@ -203,6 +222,68 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     if map_ref.no_3d_model_lanelet_ids or map_ref.source or map_ref.directory:
         overrides["no_3d_model_lanelet_ids"] = list(map_ref.no_3d_model_lanelet_ids)
     return overrides
+
+
+def own_map_group(document: ScenarioDocument) -> str | None:
+    """Return the name of the map group an export of *document* ships, if any.
+
+    Only a document that names its map by ``source`` or ``directory`` gets one
+    (see the module docstring); one on a built-in group runs on that group and
+    ships none.  The name is derived from the document's id -- by convention
+    unique among installed scenario packages, though nothing enforces it: two
+    packages shipping the same id collide on their ``conf/scenario`` files and
+    on this group alike -- and its ``_map`` suffix keeps it apart from the
+    built-in groups, named after the map they describe: a scenario called
+    ``town10hd_opt`` must not shadow that group.
+    """
+    map_ref = document.map
+    if not (map_ref.source or map_ref.directory):
+        return None
+    return f"{document.id}_map"
+
+
+def run_map_group(document: ScenarioDocument) -> str:
+    """Return the ``map=<group>`` a run of *document* selects."""
+    return own_map_group(document) or document.map.group
+
+
+def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:
+    """Return the document's own ``map`` group as a plain dict, or ``None``.
+
+    ``None`` for a document on a built-in group (:func:`own_map_group`).
+    Otherwise every key a ``map`` group can set is written, the ones the
+    document leaves empty as ``null`` (``overwrite_xodr`` as ``false``):
+    selecting this group replaces the built-in one, and a key it left out would
+    fall back to the base config, not to anything about this map.
+    """
+    if own_map_group(document) is None:
+        return None
+    map_ref = document.map
+    return {
+        "map": {
+            "name": map_ref.name,
+            "source": map_ref.source or None,
+            "directory": map_ref.directory or None,
+            "lanelet2_path": map_ref.lanelet2_path or None,
+            "xodr_path": map_ref.xodr_path or None,
+            "projector_type": None,
+            # Never on by default: installing an OpenDRIVE replaces the road
+            # network of the CARLA installation itself, an opt-in only the
+            # Nishishinjuku group makes, for assets that ship without one.  A
+            # document's xodr_path is what the run reads geometry from; a run
+            # that does want it installed asks with map.overwrite_xodr=true.
+            "overwrite_xodr": False,
+            "no_3d_model_lanelet_ids": list(map_ref.no_3d_model_lanelet_ids),
+        }
+    }
+
+
+def dump_map_group_config(document: ScenarioDocument) -> str | None:
+    """Return the document's own ``map`` group as YAML text, or ``None``."""
+    config = build_map_group_config(document)
+    if config is None:
+        return None
+    return f"{PACKAGE_GLOBAL_HEADER}\n{dump_yaml(config)}"
 
 
 def build_scenario_config(

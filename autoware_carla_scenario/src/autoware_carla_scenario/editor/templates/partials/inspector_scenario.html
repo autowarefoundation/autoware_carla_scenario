@@ -79,7 +79,15 @@
   <div class="ed-field">
     <label class="ed-label">Hydra map group</label>
     <input type="text" name="map_group" class="ed-input mono" value="{{ document.map.group }}">
+    {% if run_map_group(document) != document.map.group %}
+    <p class="ed-help">
+      Not used: this scenario names its map by source or directory, so its
+      export ships a map group of its own and runs with
+      <code>map={{ run_map_group(document) }}</code>.
+    </p>
+    {% else %}
     <p class="ed-help">Selected as <code>map={{ document.map.group }}</code> when running.</p>
+    {% endif %}
   </div>
   <div class="ed-field">
     <label class="ed-label">Map directory <span class="unit">(local)</span></label>

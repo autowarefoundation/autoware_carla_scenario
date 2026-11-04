@@ -18,6 +18,15 @@ uv sync --locked                                  # exact dependencies, no resol
 uv run scenario scenario={{ scenario_id }} map={{ map_group }}
 ```
 
+{% if own_map_group %}
+`map={{ map_group }}` is this package's own map group,
+[`src/{{ package_name }}/conf/map/{{ map_group }}.yaml`](src/{{ package_name }}/conf/map/{{ map_group }}.yaml):
+the scenario names its map by `map.source` or `map.directory`, which no
+built-in group describes. Run it with that group. The framework composes the
+`map` group after the scenario, so any other one -- including the default,
+`nishishinjuku` -- would replace this scenario's map with its own.
+
+{% endif %}
 `--locked` is deliberate: if `uv.lock` and `pyproject.toml` ever disagree, the
 command fails instead of quietly resolving something new. That is what makes
 this directory reproducible.
@@ -76,7 +85,12 @@ build on the target, and it needs no C compiler.
 |   |-- scenario.py             # binds the document to DeclarativeScenario
 |   |-- document.yaml           # the Scenario IR -- edit this
 |   `-- conf/
+{% if own_map_group %}
+|       |-- scenario/{{ scenario_id }}.yaml   # Hydra config for this scenario
+|       `-- map/{{ map_group }}.yaml   # the map it runs on (map={{ map_group }})
+{% else %}
 |       `-- scenario/{{ scenario_id }}.yaml   # Hydra config for this scenario
+{% endif %}
 `-- tests/
     `-- test_scenario.py
 ```
