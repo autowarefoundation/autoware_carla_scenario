@@ -68,6 +68,7 @@ from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_DIR_SUFFIXES, RUN_FILE_SUFFIXES, remove_run_outputs
 from ..ui.case_paths import last_result_path
 from .expand import (
+    EMPTY_SWEEP_MESSAGE,
     _config_seed,
     check_constraint_keys,
     expand_sweep,
@@ -522,10 +523,7 @@ class LaneletConstraintSweeper(Sweeper):
         if not batches:
             # Exit 0 means every case passed: a sweep that tests nothing
             # (a misspelt constraint, the wrong map) must not look like one.
-            raise SweepFailedError(
-                "Sweep failed: the sweep expands to no case (its constraints, "
-                "route or ODD sample match nothing on this map)."
-            )
+            raise SweepFailedError(f"Sweep failed: {EMPTY_SWEEP_MESSAGE}.")
 
         logger.info(
             "Sweeping %d case(s): %s",

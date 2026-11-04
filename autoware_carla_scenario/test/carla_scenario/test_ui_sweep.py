@@ -168,6 +168,51 @@ def test_one_failing_scenario_stops_the_run(
     assert "jobs" not in started
 
 
+# A scenario of a glob whose sweep expands to no case is refused, as the
+# lanelet sweeper and scenario-batch refuse it (#1407): the run used to start
+# with the other scenarios' jobs alone.
+def test_a_scenario_whose_sweep_expands_to_no_case_stops_the_run(
+    started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def resolve(name: str, extra: Any = None, **_: Any) -> list[list[str]]:
+        return [] if name == "b/empty" else [[f"scenario={name}"]]
+
+    monkeypatch.setattr(sweep_resolver, "resolve_sweep", resolve)
+    monkeypatch.setattr(
+        app_module, "_resolve_scenario_names", lambda pattern: ["a/good", "b/empty"]
+    )
+    response = client.post(
+        "/api/run", json={"scenario": "*/*", "extra_overrides": [], "sweeper": "x"}
+    )
+    assert response.json() == {
+        "status": "error",
+        "message": "Sweep resolution failed: b/empty: the sweep expands to no "
+        "case (its constraints, route or ODD sample match nothing on this map)",
+    }
+    assert "jobs" not in started
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_an_odd_sample_of_no_case_is_refused_on_the_real_config(
+    started: dict[str, Any], client: TestClient
+) -> None:
+    response = client.post(
+        "/api/run",
+        json={
+            "scenario": "intersection_passing/straight_3npc",
+            "extra_overrides": ["+sweep.odd_sample.count=0"],
+            "sweeper": "x",
+        },
+    )
+    data = response.json()
+    assert data["status"] == "error"
+    assert (
+        "intersection_passing/straight_3npc: the sweep expands to no case"
+        in data["message"]
+    )
+    assert "jobs" not in started
+
+
 def test_a_scenario_without_a_sweep_runs_once(
     started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

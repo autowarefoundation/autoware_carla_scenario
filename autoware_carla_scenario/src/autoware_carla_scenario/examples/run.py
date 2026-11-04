@@ -1299,13 +1299,22 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
 
     Scenarios that draw from one ODD go on from each other's draws: a later
     one aims at what the earlier ones left uncovered (``strategy: coverage``)
-    and does not draw their values again."""
+    and does not draw their values again.
+
+    Exits 1 before anything runs when a scenario's sweep expands to no case,
+    naming each such scenario, as the lanelet sweeper refuses one (#1407): a
+    batch missing a scenario it was asked for must not look like a complete
+    one. A scenario without a sweep is one case, never refused."""
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
     from ..odd.sampler import OddDraws  # noqa: PLC0415
-    from ..sweeper.expand import expand_config  # noqa: PLC0415 -- loads Lanelet2
+    from ..sweeper.expand import (  # noqa: PLC0415 -- loads Lanelet2
+        EMPTY_SWEEP_MESSAGE,
+        expand_config,
+    )
 
     drawn = OddDraws()
     cases: list[BatchCase] = []
+    empty: list[str] = []
     for name in scenario_names:
         try:
             expanded = expand_config(
@@ -1316,7 +1325,13 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
                 print(line, file=sys.stderr)  # noqa: T201
             sys.exit(1)
         logger.info("%s: %d case(s)", name, len(expanded))
+        if not expanded:
+            empty.append(name)
         cases.extend((name, case) for case in expanded)
+    if empty:
+        for name in empty:
+            print(f"Error: {name}: {EMPTY_SWEEP_MESSAGE}", file=sys.stderr)  # noqa: T201
+        sys.exit(1)
     return cases
 
 

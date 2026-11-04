@@ -26,7 +26,9 @@ other's draws, as in a batch, so a scenario's listing in a glob can differ
 from its listing alone: each is the cases the batch run of the same glob runs.
 
 The exit status is 0 when every scenario expanded, 1 when the ``controls:`` of
-one are invalid, and 2 when the command line does not compose: no
+one are invalid or its sweep expands to no case (its constraints, route or
+ODD sample match nothing on the map; a scenario without a sweep is one case),
+and 2 when the command line does not compose: no
 ``scenario=``, no config matches it, or an override names a key a config does
 not have (the message suggests the closest config or key; ``+key=value`` adds
 a new one). Every scenario's problems are reported, and the higher status wins.
@@ -40,7 +42,7 @@ import logging
 import sys
 
 from ..registry import load_scenario_plugins
-from ..sweeper.expand import expand_config
+from ..sweeper.expand import EMPTY_SWEEP_MESSAGE, expand_config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
             # An authoring error: one line per problem, with its config path.
             for line in format_diagnostics(exc.diagnostics, name):
                 print(line, file=sys.stderr)
+            status = max(status, 1)
+            continue
+        if not cases:
+            # Refused as the lanelet sweeper and a batch refuse it (#1407):
+            # a fan-out of no case would test nothing and look like a pass.
+            print(f"Error: {name}: {EMPTY_SWEEP_MESSAGE}", file=sys.stderr)
             status = max(status, 1)
             continue
         listings.append({"scenario": name, "cases": cases})

@@ -546,6 +546,28 @@ def test_a_bad_scenario_in_a_glob_prints_no_listing(
     assert captured.out == ""
 
 
+# A sweep that expands to no case is refused, not listed as `"cases": []`
+# with exit 0 (#1407), as the lanelet sweeper and a batch refuse it.
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize(
+    "scenario", ["intersection_passing/straight_3npc", "intersection_passing/str*"]
+)
+def test_the_cli_refuses_a_sweep_that_expands_to_no_case(
+    capsys: pytest.CaptureFixture[str], scenario: str
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main([f"scenario={scenario}", "+sweep.odd_sample.count=0"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert (
+        "Error: intersection_passing/straight_3npc: the sweep expands to no case "
+        "(its constraints, route or ODD sample match nothing on this map)"
+    ) in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
 # A scenario without a sweep has its `controls:` checked too (#1191).
 @pytest.mark.parametrize("override", ["+controls.x=5", "+controls.x.rnge=[1,2]"])
 def test_the_cli_refuses_a_concrete_scenario_with_invalid_controls(

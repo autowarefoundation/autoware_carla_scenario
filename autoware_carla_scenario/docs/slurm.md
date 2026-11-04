@@ -29,7 +29,9 @@ On the machine you run `scenario` on (a SLURM submit host):
 1. The batch is expanded, labelled, built and statically checked exactly as a
    local batch is: the ODD sampling, the case labels, the [static
    check](typecheck.md) (once a config shape), the map fetched. A config error
-   is refused here, before anything is submitted.
+   is refused here, before anything is submitted, and so is a scenario whose
+   sweep expands to no case (`Error: <scenario>: the sweep expands to no
+   case ...`, exit 1).
 2. A manifest is written into the batch's output directory
    (`slurm/manifest.json`): every case's scenario and overrides, its resolved
    config, and the file stem it is to be named by.
