@@ -11,6 +11,15 @@ scenario:
   # A swept case may turn at a stop sign, where the ego waits before it goes.
   timeout_seconds: 20.0
   turn_direction: left
+  # The rest are IntersectionPassingConfig's defaults, listed so that a
+  # scenario.<key>= override finds them (#1317).
+  min_speed_kmh: null
+  speed_check_delay_seconds: 0.3
+  turn_indicator_before_m: null
+  turn_indicator_grace_seconds: 0.5
+  max_steering_reversals: null
+  max_turn_indicator_changes: null
+  npc_vehicles: []
 
 ego:
   initial_speed_kmh: 20.0

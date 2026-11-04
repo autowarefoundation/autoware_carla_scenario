@@ -18,6 +18,13 @@ scenario:
       spawn_s: 25.0
       vehicle_type: vehicle.mini.cooper
       initial_speed_kmh: 25.0
+  # The rest are IntersectionPassingConfig's defaults, listed so that a
+  # scenario.<key>= override finds them (#1317).
+  turn_direction: null
+  turn_indicator_before_m: null
+  turn_indicator_grace_seconds: 0.5
+  max_steering_reversals: null
+  max_turn_indicator_changes: null
 
 ego:
   initial_speed_kmh: 5.0

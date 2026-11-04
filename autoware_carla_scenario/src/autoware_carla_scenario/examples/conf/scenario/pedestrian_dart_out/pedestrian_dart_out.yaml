@@ -16,6 +16,14 @@ scenario:
   # Runs out at 2 m/s once the ego is within 20 m.
   trigger_distance_m: 20.0
   walk_speed_ms: 2.0
+  # Off by default (null): it runs across whatever comes. Set either and it
+  # turns back once a vehicle's time to collision with it, or its distance to
+  # it, is at most that, if it is no further than turn_back_within_m onto the
+  # road.
+  turn_back_ttc_s: null
+  turn_back_distance_m: null
+  turn_back_within_m: 1.0
+  walker_type: walker.pedestrian.0015
   pass_beyond_m: 10.0
   timeout_seconds: 25.0
 
