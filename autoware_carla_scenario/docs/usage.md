@@ -1333,6 +1333,12 @@ Each option defaults to its environment variable, so a flag on the command line
 wins over the environment. An unknown option is an error (exit 2) and serves
 nothing.
 
+Ctrl-C or `SIGTERM` stops the viewer and the run it started from the Run form.
+An open browser tab keeps the server waiting for it for at most 5 s. The
+running `uv run scenario` job, which runs in a process group of its own, then
+gets `SIGTERM`, and `SIGKILL` if any of that group is left 10 s later. That job
+is recorded as failed, and the jobs after it do not start.
+
 !!! warning "The viewer listens on this machine only by default"
     The viewer has no authentication, and its API starts scenario runs
     (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). It therefore

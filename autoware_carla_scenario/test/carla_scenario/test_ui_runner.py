@@ -1,10 +1,11 @@
-"""ui.runner: its helpers, as spelled for the Codon check (#132), and how a
-run starts (#664)."""
+"""ui.runner: its helpers, as spelled for the Codon check (#132), how a run
+starts (#664), and how it stops (#1351)."""
 
 from __future__ import annotations
 
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -61,11 +62,11 @@ def test_a_run_appends_the_extra_overrides(
 ) -> None:
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
         commands.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_run_job", run)
     runner._run_worker([["scenario=a"], ["scenario=b", "x=1"]], None, ["y=2"], False)
     assert commands == [
         ["uv", "run", "scenario", "scenario=a", "y=2"],
@@ -100,6 +101,9 @@ class _UnstartedThread:
     def run(self) -> None:
         self.target(*self.args)
 
+    def join(self, timeout: float | None = None) -> None:
+        pass
+
 
 @pytest.fixture
 def unstarted_threads(monkeypatch: pytest.MonkeyPatch) -> list[_UnstartedThread]:
@@ -116,10 +120,10 @@ def unstarted_threads(monkeypatch: pytest.MonkeyPatch) -> list[_UnstartedThread]
         RunProgress(current=1, total=1, scenario_name="", status="done"),
     )
 
-    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_run_job", run)
     return _UnstartedThread.made
 
 
@@ -278,15 +282,178 @@ def test_a_job_that_cannot_be_collected_fails_alone(
     published = _record_progress(monkeypatch)
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
         commands.append(cmd)
         if "scenario=a" in cmd:
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_run_job", run)
     runner._run_worker([["scenario=a"], ["scenario=b"]], None, [], False)
     assert len(commands) == 2
     finished = [(p.scenario_name, p.status) for p in published if p.status != "running"]
     assert finished == [("a", "failed"), ("b", "passed"), ("", "done")]
     assert not runner.is_running()
+
+
+# ── Stopping a run (#1351) ─────────────────────────────────────────────────
+
+
+def test_a_stop_between_jobs_starts_no_further_job(
+    unstarted_threads: list[_UnstartedThread], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = _record_progress(monkeypatch)
+    commands: list[list[str]] = []
+
+    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        # The server shuts down while the first job runs.
+        runner.stop_run()
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner, "_run_job", run)
+    assert runner.start_run([["scenario=a"], ["scenario=b"], ["scenario=c"]])
+    unstarted_threads[0].run()
+    assert [c[3] for c in commands] == ["scenario=a"]
+    finished = [(p.scenario_name, p.status) for p in published if p.status != "running"]
+    assert finished == [("a", "passed")]
+    running, progress = runner.get_status()
+    assert not running
+    assert progress is not None
+    assert (progress.current, progress.total, progress.status) == (1, 3, "done")
+    # The next run is not stopped by the last one's stop.
+    commands.clear()
+
+    def run_all(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner, "_run_job", run_all)
+    assert runner.start_run([["scenario=d"], ["scenario=e"]])
+    unstarted_threads[1].run()
+    assert [c[3] for c in commands] == ["scenario=d", "scenario=e"]
+
+
+def test_stopping_without_a_run_does_nothing() -> None:
+    assert not runner.is_running()
+    runner.stop_run(timeout=0.1)
+    assert not runner._stop_requested()
+
+
+def _alive(pid: int) -> bool:
+    """Whether process *pid* still runs (a zombie, exited unreaped, does not)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def _wait_for(condition: Any, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def test_a_stop_terminates_the_running_jobs_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A `uv` whose job leaves a child that ignores SIGTERM, as a CARLA or an
+    # Autoware it started might: the group is killed after the timeout.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launched = tmp_path / "launched.log"
+    child_pid = tmp_path / "child.pid"
+    script = bin_dir / "uv"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$3" >> "{launched}"\n'
+        'sh -c \'trap "" TERM; echo $$ > "$0"; exec sleep 30\' '
+        f'"{child_pid}" &\n'
+        "wait\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(runner, "_running", False)
+    monkeypatch.setattr(runner, "_progress", None)
+    published = _record_progress(monkeypatch)
+
+    assert runner.start_run([["scenario=a"], ["scenario=b"]], tmp_path)
+    try:
+        assert _wait_for(lambda: child_pid.is_file() and child_pid.read_text())
+        pid = int(child_pid.read_text())
+        assert _alive(pid)
+        started = time.monotonic()
+        runner.stop_run(timeout=1.0)
+        assert time.monotonic() - started < 5.0
+        assert _wait_for(lambda: not _alive(pid))
+        assert _wait_for(lambda: not runner.is_running())
+    finally:
+        runner.stop_run(timeout=1.0)
+    assert launched.read_text(encoding="utf-8").splitlines() == ["scenario=a"]
+    finished = [(p.scenario_name, p.status) for p in published if p.status != "running"]
+    assert finished == [("a", "failed")]
+    progress = runner.get_progress()
+    assert progress is not None
+    assert (progress.current, progress.total, progress.status) == (1, 2, "done")
+
+
+def test_the_progress_stream_ends_when_the_server_shuts_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def get_progress() -> RunProgress:
+        calls.append(1)
+        if len(calls) == 2:
+            monkeypatch.setattr(app_module, "_shutting_down", True)
+        return RunProgress(current=1, total=3, scenario_name="a", status="running")
+
+    monkeypatch.setattr(app_module, "_shutting_down", False)
+    monkeypatch.setattr(runner, "get_progress", get_progress)
+    response = TestClient(app_module.app).get("/api/run/progress")
+    events = [line for line in response.text.splitlines() if line.startswith("data:")]
+    # The run is not done, but the stream ends with the server.
+    assert len(events) == 2
+
+
+def test_the_apps_shutdown_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped: list[bool] = []
+    monkeypatch.setattr(runner, "stop_run", lambda: stopped.append(True))
+    monkeypatch.setattr(app_module, "_shutting_down", False)
+    with TestClient(app_module.app):
+        assert not app_module._shutting_down
+        assert stopped == []
+    assert app_module._shutting_down
+    assert stopped == [True]
+
+
+def test_the_viewer_bounds_its_shutdown_and_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uvicorn
+
+    from autoware_carla_scenario import ui
+
+    served: list[dict[str, Any]] = []
+    stopped: list[bool] = []
+
+    def serve(app: object, **kwargs: Any) -> None:
+        served.append(kwargs)
+        # A second Ctrl-C: the app's shutdown does not run.
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(uvicorn, "run", serve)
+    monkeypatch.setattr(runner, "stop_run", lambda: stopped.append(True))
+    monkeypatch.setattr(app_module, "BASE_PATH", app_module.BASE_PATH)
+    with pytest.raises(KeyboardInterrupt):
+        ui.main([])
+    assert served[0]["timeout_graceful_shutdown"] == ui.SHUTDOWN_TIMEOUT_SECONDS
+    assert stopped == [True]
