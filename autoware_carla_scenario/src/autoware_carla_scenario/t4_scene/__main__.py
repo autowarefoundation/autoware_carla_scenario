@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..constants import FIXED_DELTA_SECONDS
-from .convert import LOG_SUFFIX, write_t4_scene
+from .convert import LOG_SUFFIX, checked_rear_axle_offset, write_t4_scene
 from .grid import checked_max_distance, scene_stem
 
 
@@ -68,7 +68,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         help=(
             "the ego's rear axle from its origin, metres along x (default: the"
             " log's rear_axle record, else a quarter of its box length back,"
-            " -0.5 * extent.x)"
+            " -0.5 * extent.x); negative is behind, any finite value"
         ),
     )
     parser.add_argument(
@@ -92,6 +92,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         checked_max_distance(args.max_distance, "--max-distance", "--all-objects")
+        if args.rear_axle_offset is not None:
+            checked_rear_axle_offset(args.rear_axle_offset, "--rear-axle-offset")
     except ValueError as error:
         parser.error(str(error))
 

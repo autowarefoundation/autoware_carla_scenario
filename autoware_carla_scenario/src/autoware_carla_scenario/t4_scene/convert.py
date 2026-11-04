@@ -198,7 +198,10 @@ class _Log:
                 center=_xyz(record.get("center") or (0.0, 0.0, 0.0)),
             )
         elif kind == "rear_axle":
-            self.rear_axles[int(record["id"])] = float(record["offset"])
+            actor_id = int(record["id"])
+            self.rear_axles[actor_id] = checked_rear_axle_offset(
+                record["offset"], f"the rear_axle record of actor {actor_id}: offset"
+            )
         elif kind == "turn_indicators":
             for actor_id, state in record["states"].items():
                 changes = self.turn_indicators.setdefault(int(actor_id), ([], []))
@@ -234,6 +237,32 @@ class _Log:
         return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
 
 
+def checked_rear_axle_offset(
+    rear_axle_offset_m: float, key: str = "rear_axle_offset_m"
+) -> float:
+    """*rear_axle_offset_m* as a float, which must be finite.
+
+    The offset is where the ego's rear axle (its ``base_link``) is from its
+    actor origin along its x axis: negative behind the origin -- the usual
+    case, and the default's ``-0.5 * extent.x`` -- 0 at it, positive ahead of
+    it, so any finite value is a place.  NaN or infinity would put the ego's
+    every pose and ``base_link_to_front`` at NaN, so either is refused before
+    a scene is written.  A bool is refused too: ``true`` is not an offset,
+    though ``float()`` would read it as 1 m.
+
+    Args:
+        rear_axle_offset_m: The offset, metres.
+        key: The setting's name, which the error names (``--rear-axle-offset``).
+
+    Raises:
+        ValueError: If *rear_axle_offset_m* is a bool, or not finite.
+    """
+    value = float(rear_axle_offset_m)
+    if isinstance(rear_axle_offset_m, bool) or not math.isfinite(value):
+        raise ValueError(f"{key} must be finite, not {rear_axle_offset_m}")
+    return value
+
+
 def _read_log(path: Path, step_frames: int) -> _Log:
     log = _Log(step_frames=step_frames)
     with path.open("rb") as stream:
@@ -246,7 +275,10 @@ def _read_log(path: Path, step_frames: int) -> _Log:
                 raise ValueError(
                     f"{path}:{number}: not a JSON line ({error})"
                 ) from None
-            log.feed(record)
+            try:
+                log.feed(record)
+            except ValueError as error:
+                raise ValueError(f"{path}:{number}: {error}") from None
     if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log
@@ -777,7 +809,9 @@ def trajectory_log_to_t4_scene(
             default as the run took it (the log's ``rear_axle`` record), else
             half its box's half-length behind (``-0.5 * extent.x``, a quarter
             of its length), as the run itself takes it on CARLA UE5
-            (``driver.rear_axle_offset_m``).
+            (``driver.rear_axle_offset_m``).  Any finite value; NaN and
+            infinity are refused, as is a ``rear_axle`` record the log holds
+            with one.
         with_map: Write the run's Lanelet2 map as the scene's map.
         lanelet2_path: The Lanelet2 map to use instead of the one the log
             names (a map moved since the run).
@@ -789,10 +823,13 @@ def trajectory_log_to_t4_scene(
 
     Raises:
         ValueError: If the log has no tick or no ego, *step_s* or
-            *current_index* does not fit it, or *max_distance_m* is not
-            positive and finite.
+            *current_index* does not fit it, *max_distance_m* is not
+            positive and finite, *rear_axle_offset_m* is not finite, or the
+            log's ``rear_axle`` record's offset is not.
     """
     max_distance_m = checked_max_distance(max_distance_m)
+    if rear_axle_offset_m is not None:
+        rear_axle_offset_m = checked_rear_axle_offset(rear_axle_offset_m)
     path = Path(log_path)
     step = step_frames(step_s)
     log = _read_log(path, step)

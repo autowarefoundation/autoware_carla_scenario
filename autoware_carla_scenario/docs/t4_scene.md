@@ -158,7 +158,10 @@ What the log does not hold is left out, never made up:
   (`-0.5 * extent.x`, a quarter of its length) behind its origin, where
   the run takes it on CARLA UE5 (no wheel positions).
   `shape.base_link_to_front` is from there to its box's front, and
-  `base_link_to_rear_axle` is 0.
+  `base_link_to_rear_axle` is 0. The offset may be any finite number
+  (negative behind the origin, positive ahead of it); a `--rear-axle-offset`
+  (or `rear_axle_offset_m`) of `nan` or `inf` is refused before anything is
+  written, and so is a log whose `rear_axle` record holds one.
 - The ego's velocity is its `base_link`'s too. The log records its actor
   origin's, so the rigid-body lever arm is added: `v = v_origin + w x r`,
   `w` the tick's `angular_velocity` and `r` the rotated

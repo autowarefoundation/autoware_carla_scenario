@@ -1125,6 +1125,77 @@ def test_cli_takes_a_positive_distance_or_every_object(
     assert _objects(scene) == 1
 
 
+_BAD_OFFSETS = (math.nan, math.inf, -math.inf)
+
+
+@pytest.mark.parametrize("offset", _BAD_OFFSETS)
+def test_the_converter_refuses_a_rear_axle_offset_that_is_not_finite(
+    tmp_path: Path, offset: float
+) -> None:
+    log = _one_car_log(tmp_path)
+    with pytest.raises(ValueError, match="rear_axle_offset_m must be finite"):
+        trajectory_log_to_t4_scene(log, with_map=False, rear_axle_offset_m=offset)
+    with pytest.raises(ValueError, match="rear_axle_offset_m must be finite"):
+        write_t4_scene(log, with_map=False, rear_axle_offset_m=offset)
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+# Behind the origin (the usual case), at it, or ahead of it: all places.
+@pytest.mark.parametrize("offset", [-1.5, 0.0, 0.5, None])
+def test_the_converter_takes_any_finite_rear_axle_offset(
+    tmp_path: Path, offset: Optional[float]
+) -> None:
+    scene = trajectory_log_to_t4_scene(
+        _one_car_log(tmp_path), with_map=False, rear_axle_offset_m=offset
+    ).scene
+    assert np.isfinite(_numeric(scene.ego.poses).compressed()).all()
+    assert math.isfinite(scene.ego.shape.base_link_to_front)
+
+
+@pytest.mark.parametrize("offset", ["NaN", "Infinity"])
+def test_a_log_whose_rear_axle_record_is_not_finite_is_refused(
+    tmp_path: Path, offset: str
+) -> None:
+    log = tmp_path / "Run.trajectory.jsonl"
+    _write_log(log, EGO, _tick(100, _state(1, 0.0, 0.0)))
+    # json.dumps would write the bare NaN token, which is not JSON; a string
+    # is what float() reads as NaN.
+    with log.open("a") as stream:
+        stream.write(json.dumps({"type": "rear_axle", "id": 1, "offset": offset}))
+    with pytest.raises(
+        ValueError, match=r"Run.trajectory.jsonl:\d+: the rear_axle record of actor 1"
+    ):
+        trajectory_log_to_t4_scene(log, with_map=False)
+
+
+def test_the_live_scene_refuses_a_rear_axle_offset_that_is_not_finite() -> None:
+    from autoware_carla_scenario.t4_scene.live import LiveT4Scene
+
+    with pytest.raises(ValueError, match="rear_axle_offset_m must be finite"):
+        LiveT4Scene(1, rear_axle_offset_m=math.nan)
+    assert LiveT4Scene(1, rear_axle_offset_m=-1.5).rear_axle_offset_m == -1.5
+
+
+@pytest.mark.parametrize("override", ["nan", "inf", "-inf"])
+def test_cli_refuses_a_rear_axle_offset_that_is_not_finite(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    log = _one_car_log(tmp_path)
+    with pytest.raises(SystemExit) as raised:
+        main([str(log), "--no-map", f"--rear-axle-offset={override}"])
+    assert raised.value.code == 2
+    assert "--rear-axle-offset must be finite" in capsys.readouterr().err
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+@pytest.mark.parametrize("override", ["-1.5", "0", "0.5"])
+def test_cli_takes_any_finite_rear_axle_offset(tmp_path: Path, override: str) -> None:
+    log = _one_car_log(tmp_path)
+    assert main([str(log), "--no-map", f"--rear-axle-offset={override}"]) == 0
+    scene = pb.T4Scene.FromString((tmp_path / f"Run{SCENE_SUFFIX}").read_bytes())
+    assert math.isfinite(scene.ego.shape.base_link_to_front)
+
+
 def test_the_runner_hands_each_closed_log_to_the_exporter(tmp_path: Path) -> None:
     from unittest.mock import MagicMock, patch
 
