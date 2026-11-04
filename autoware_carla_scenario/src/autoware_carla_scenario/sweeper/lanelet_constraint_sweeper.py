@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -88,6 +89,10 @@ logger = logging.getLogger(__name__)
 # ``sweep.job_timeout_seconds`` in the scenario YAML.
 _DEFAULT_JOB_TIMEOUT = 120
 
+#: The largest ``sweep.job_timeout_seconds``: ``signal.alarm`` takes a C
+#: ``int`` and raises ``OverflowError`` above it (about 68 years).
+_MAX_JOB_TIMEOUT = 2**31 - 1
+
 #: The exit status of a refused run (docs/usage.md, "Exit Codes").
 _REFUSED_EXIT_CODE = 2
 
@@ -111,6 +116,43 @@ class SweepFailedError(CompactHydraException):
     a :class:`~hydra.errors.CompactHydraException`, it is printed without a
     traceback.
     """
+
+
+def _job_timeout_seconds(value: Any) -> int:
+    """``sweep.job_timeout_seconds``, checked: the hard timeout per job, in
+    whole seconds, :data:`_DEFAULT_JOB_TIMEOUT` when *value* is unset
+    (``None``, as ``job_timeout_seconds: null`` reads), 0 for none.
+
+    A case is stopped by ``signal.alarm``, which counts whole seconds, so
+    *value* must be a whole number (``900`` or ``900.0``): a fraction would
+    be truncated, and ``0.5`` would become 0, no timeout at all.  A negative,
+    NaN or infinite value is refused too, rather than silently disabling the
+    timeout, and so is one above :data:`_MAX_JOB_TIMEOUT`, which
+    ``signal.alarm`` cannot take, rather than failing after the first fork.
+
+    Raises:
+        ValueError: *value* is not a whole number of seconds from 0 to
+            :data:`_MAX_JOB_TIMEOUT`.
+    """
+    if value is None:
+        return _DEFAULT_JOB_TIMEOUT
+    message = (
+        "sweep.job_timeout_seconds must be a whole number of seconds from 0 "
+        f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {value!r}"
+    )
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(message) from None
+    if (
+        not math.isfinite(seconds)
+        or not 0 <= seconds <= _MAX_JOB_TIMEOUT
+        or seconds != math.floor(seconds)
+    ):
+        raise ValueError(message)
+    return int(seconds)
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
@@ -494,6 +536,13 @@ class LaneletConstraintSweeper(Sweeper):
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
         check_constraint_keys(sweep_dict)
+        # Checked here, before any map is fetched or case runs, and refused
+        # as step 0 refuses a config value: exit 2, naming the key.
+        try:
+            job_timeout = _job_timeout_seconds(sweep_dict.get("job_timeout_seconds"))
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(_REFUSED_EXIT_CODE)
 
         # -- 2. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)
@@ -531,10 +580,8 @@ class LaneletConstraintSweeper(Sweeper):
             [b[0] if b else "" for b in batches],
         )
 
-        # -- 7. Resolve per-job timeout, cooldown, retry count, and resume ---
-        job_timeout: int = int(
-            sweep_dict.get("job_timeout_seconds", _DEFAULT_JOB_TIMEOUT)
-        )
+        # -- 7. Resolve cooldown, retry count, and resume ---
+        # (job_timeout: read and checked at step 1.)
         cooldown: float = float(
             OmegaConf.select(cfg, "server.cooldown_seconds", default=0.0)
         )

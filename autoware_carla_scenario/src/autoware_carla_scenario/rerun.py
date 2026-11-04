@@ -573,6 +573,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "when that data cannot be carried over into the new one",
     )
     args = parser.parse_args(argv)
+    if args.jobs is not None and args.jobs < 1:
+        # The converter's pool refuses it with an OverflowError (-1) for the
+        # first PATH, which is not a PATH that cannot be converted.
+        parser.error(f"argument --jobs: must be at least 1, got {args.jobs}")
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
