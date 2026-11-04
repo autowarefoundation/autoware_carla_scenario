@@ -700,7 +700,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "to_dict": _AS_DICT,
         "from_dict": _FROM_MAPPING,
     },
-    "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
+    "SweepConfig": _members("bindings constraints exclude odd_sample", _SWEEP_FIELD),
     "DriverConfig": {
         "bridge": (
             "a Hydra mapping of AutowareBridgeConfig's fields, or None "
