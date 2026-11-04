@@ -424,8 +424,9 @@ case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` is past its last case.
 A `--multirun` batch, the viewer and `scenario-expand` refuse such a sweep
 with the same message, naming the scenario. They refuse an invalid sweep (a
-`sweep.case_index` past its cases, a constraint that does not parse, ...) the
-same way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
+`sweep.case_index` past its cases, a constraint that does not parse, a
+Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
+way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
@@ -450,8 +451,10 @@ sweep that expands to no case is refused rather than listed as `"cases": []`:
 `Error: <scenario>: the sweep expands to no case ...` on stderr, nothing on
 stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` past its cases,
 a constraint or binding that does not parse, constraints for more than one
-key, ...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its
-traceback instead). As for `scenario`, the last `scenario=` wins when it is
+key, a Lanelet2 map that is missing, unreadable or cannot be resolved (a
+`map.directory` that does not exist, a `map.source` that cannot be fetched),
+...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its traceback
+instead). As for `scenario`, the last `scenario=` wins when it is
 given more than once.
 
 As with `scenario`, `scenario=` may be a glob. Each scenario it matches is

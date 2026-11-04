@@ -398,6 +398,22 @@ class TestExpandConfig:
         with pytest.raises(ValueError, match="one parameter"):
             expand_config(cfg)
 
+    def test_an_unreadable_map_is_refused_as_an_invalid_sweep(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        # A directory: Lanelet2's parser refuses it with a bare RuntimeError.
+        monkeypatch.setattr(
+            "autoware_carla_scenario.maps.resolve_map_paths",
+            lambda _m: SimpleNamespace(
+                lanelet2_path=tmp_path, xodr_path=None, projector_type=None
+            ),
+        )
+        cfg = OmegaConf.create(
+            {"sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}}}
+        )
+        with pytest.raises(ValueError, match="Could not read the Lanelet2 map"):
+            expand_config(cfg)
+
     def test_the_sweeper_refuses_a_second_key_before_the_map_is_fetched(
         self,
     ) -> None:
@@ -644,6 +660,79 @@ def test_hydra_full_error_raises_an_invalid_sweep(
     monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
     with pytest.raises(ValueError, match="case_index 99 is out of range"):
         main(["scenario=cut_in/left", *_OUT_OF_RANGE])
+
+
+# A missing Lanelet2 map is refused, named, for every scenario of a glob
+# (#1444): load_map's FileNotFoundError used to escape as a traceback.
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize("glob", [False, True])
+def test_the_cli_reports_a_missing_map_of_each_scenario(
+    capsys: pytest.CaptureFixture[str], tmp_path, glob: bool
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    missing = tmp_path / "missing.osm"
+    names = ["lane_change/left", "lane_change/right"] if glob else ["lane_change/left"]
+    scenario = "lane_change/*" if glob else "lane_change/left"
+    code = main([f"scenario={scenario}", f"map.lanelet2_path={missing}"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in names:
+        assert f"Error: {name}: Lanelet2 file not found: {missing}" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+# A map that cannot be resolved -- a `map.directory` that does not exist, a
+# `map.source` that cannot be fetched -- is refused the same way (#1444).
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_map_directory_that_does_not_exist(
+    capsys: pytest.CaptureFixture[str], tmp_path
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    missing = tmp_path / "no_map"
+    code = main(["scenario=lane_change/*", f"+map.directory={missing}"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: Map directory {missing} does not exist" in (
+            captured.err
+        )
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_map_that_cannot_be_fetched(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+    from autoware_carla_scenario.maps import MapCacheError
+
+    def _unreachable(_map_cfg):
+        raise MapCacheError("could not clone the map repository")
+
+    monkeypatch.setattr("autoware_carla_scenario.maps.resolve_map_paths", _unreachable)
+    code = main(["scenario=lane_change/*"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: could not clone the map repository" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_hydra_full_error_raises_a_missing_map(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    with pytest.raises(ValueError, match="Lanelet2 file not found") as caught:
+        main(["scenario=lane_change/left", f"map.lanelet2_path={tmp_path}/no.osm"])
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
 
 
 # `scenario=` given twice: the last wins, as for `scenario` and Hydra (#1412);
