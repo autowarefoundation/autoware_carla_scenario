@@ -337,7 +337,13 @@ dialled by every task, as a TCP one is.
   under one temporary name, so two loads at the same moment fail one case
   with `filesystem error: cannot rename`) needs `start_stagger_seconds`,
   enough for one task to load it before the next starts (30 s for
-  OnePlanner, which loads it once a task).
+  OnePlanner, which loads it once a task). The stagger is held with `flock`
+  on `slurm/start.lock`, or where the file system has none, with a lock file
+  beside it created with `O_EXCL`. One a killed task left is taken over once
+  it is `start_stagger_seconds` + 60 s old by the file server's clock, so a
+  node whose clock is off does not break a live one; a takeover moves the
+  lock aside and checks that it moved the stale one, and a task removes the
+  lock on release only while it is still its own.
 - **ROS 2 and Autoware egos** (`ego.entity=ros2`, `ego.entity=autoware` with
   a launcher) run their stacks on DDS, whose domain the tasks would share; give
   each its own `ROS_DOMAIN_ID` (the Autoware launcher's `ros_domain_ids`), or

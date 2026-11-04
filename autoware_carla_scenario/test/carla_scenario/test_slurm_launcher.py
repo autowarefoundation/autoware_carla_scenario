@@ -2256,6 +2256,145 @@ def test_start_stagger_without_flock_uses_a_lock_file(
         wait_for_start_turn(lock, spacing)
 
 
+def _stale_lock(path: Path, token: str = "dead-task") -> None:
+    """A lock file a task killed an hour ago left."""
+    path.write_text(token)
+    old = time.time() - 3600
+    os.utime(path, (old, old))
+
+
+def test_two_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1360: both waiters judge the lock stale before either takes it over,
+    and the second takes over only once the first holds a fresh lock -- the
+    interleaving in which the second used to delete the first's lock."""
+    import threading
+
+    from autoware_carla_scenario.slurm import worker
+
+    path = tmp_path / "start.lock.excl"
+    _stale_lock(path)
+    real_take_over = worker._take_over
+    judged = threading.Barrier(2, timeout=10)
+    first_holds = threading.Event()
+    second_took_over = threading.Event()
+    arrivals: list[str] = []
+    order = threading.Lock()
+    local = threading.local()
+
+    def take_over(lock: Path, stale: Any) -> None:
+        if getattr(local, "done", False):
+            real_take_over(lock, stale)
+            return
+        local.done = True
+        judged.wait()  # both judged the same stale lock
+        with order:
+            arrivals.append(threading.current_thread().name)
+            second = len(arrivals) == 2
+        if second:
+            assert first_holds.wait(10)
+            real_take_over(lock, stale)  # moves the first's fresh lock
+            second_took_over.set()
+        else:
+            real_take_over(lock, stale)
+
+    monkeypatch.setattr(worker, "_take_over", take_over)
+    holding: list[str] = []
+    most = [0]
+    tokens: list[str] = []
+
+    def hold() -> None:
+        with worker._exclusive_file(path, stale_after=60.0):
+            name = threading.current_thread().name
+            with order:
+                holding.append(name)
+                most[0] = max(most[0], len(holding))
+            tokens.append(path.read_text())
+            if name == arrivals[0]:
+                first_holds.set()
+                assert second_took_over.wait(10)
+                # Still in place, still this task's.
+                assert path.read_text() == tokens[-1]
+                time.sleep(0.2)
+            with order:
+                holding.remove(name)
+
+    threads = [threading.Thread(target=hold, name=f"t{i}") for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert not any(thread.is_alive() for thread in threads)
+    assert sorted(arrivals) == ["t0", "t1"]
+    assert most[0] == 1
+    assert len(tokens) == 2 and tokens[0] != tokens[1]
+    assert ":" in tokens[0] and "dead-task" not in tokens
+    assert not path.exists()
+    assert list(tmp_path.iterdir()) == []  # nothing left aside
+
+
+def test_releasing_a_lock_taken_over_leaves_the_new_holders(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.slurm import worker
+
+    path = tmp_path / "start.lock.excl"
+    with worker._exclusive_file(path, stale_after=60.0):
+        mine = path.read_text()
+        # Taken over as stale meanwhile, and held by another task now.
+        path.unlink()
+        path.write_text("other-host:1:another-task")
+    assert path.read_text() == "other-host:1:another-task"
+    assert mine != "other-host:1:another-task"
+    # Its own lock is removed.
+    path.unlink()
+    with worker._exclusive_file(path, stale_after=60.0):
+        assert path.exists()
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("skew", [3600.0, -3600.0])
+def test_a_lock_is_judged_stale_by_the_file_servers_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skew: float
+) -> None:
+    """#1360: this node's clock an hour ahead (or behind) the file server's
+    neither breaks a live lock nor keeps a stale one."""
+    import threading
+
+    from autoware_carla_scenario.slurm import worker
+
+    class _SkewedClock:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(time, name)
+
+        def time(self) -> float:
+            return time.time() + skew
+
+    monkeypatch.setattr(worker, "time", _SkewedClock())
+    path = tmp_path / "start.lock.excl"
+    # A live lock, just made: not taken over however far ahead this clock is.
+    path.write_text("other-host:1:live-task")
+    acquired = threading.Event()
+
+    def hold() -> None:
+        with worker._exclusive_file(path, stale_after=5.0):
+            acquired.set()
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    assert not acquired.wait(0.5)
+    assert path.read_text() == "other-host:1:live-task"
+    path.unlink()  # its holder releases it
+    assert acquired.wait(10)
+    thread.join(10)
+    # A lock an hour old is stale, however far behind this clock is.
+    _stale_lock(path)
+    with worker._exclusive_file(path, stale_after=5.0):
+        assert path.read_text() != "dead-task"
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_failing_collect_job_is_reported_not_raised(
     fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
 ) -> None:

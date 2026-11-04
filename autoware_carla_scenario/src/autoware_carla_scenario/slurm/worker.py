@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -290,31 +291,153 @@ _NO_FLOCK_ERRNOS = frozenset(
 )
 
 
+#: A lock file's identity: its device, inode, mtime (ns) and token.  The
+#: mtime tells a lock apart from a later one that reuses its inode: a lock
+#: is only taken over once it is old, and a new one is not.
+_LockId = tuple[int, int, int, str]
+
+
+def _lock_sibling(path: Path, kind: str) -> Path:
+    """A name beside *path* that no other process uses."""
+    return path.with_name(f"{path.name}.{kind}.{uuid.uuid4().hex}")
+
+
+def _server_now(path: Path) -> float:
+    """The time by the clock of the file system holding *path*: the mtime of
+    a file created beside it.
+
+    A lock's mtime is set by that clock too (the NFS server's), so the age of
+    a lock is measured with one clock, whatever the skew between this node's
+    and the server's.
+    """
+    probe = _lock_sibling(path, "probe")
+    fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    try:
+        return os.fstat(fd).st_mtime
+    finally:
+        os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(probe)
+
+
+def _lock_identity(path: Path) -> tuple[_LockId, float] | None:
+    """The identity of the lock file at *path* and its mtime; ``None`` when
+    there is none."""
+    try:
+        with open(path, "rb") as stream:
+            token = stream.read().decode("utf-8", "replace")
+            st = os.fstat(stream.fileno())
+    except FileNotFoundError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_mtime_ns, token), st.st_mtime
+
+
+def _take_over(path: Path, stale: _LockId) -> None:
+    """Remove the lock at *path* judged stale as *stale*, if it still is it.
+
+    There is no "unlink if it is still this file" on NFS, so the lock is
+    renamed aside (atomic) and what was moved is checked.  The interleavings
+    of waiters A and B that both judged lock L1 stale:
+
+    - A renames L1 aside, finds it is L1 and removes it; B's rename then
+      finds nothing (``FileNotFoundError``) and B just tries again.
+    - A has taken L1 over and created its own lock L2 by the time B renames:
+      B moved L2, not L1 (another inode, or the same one reused with a fresh
+      mtime), and puts it back with ``os.link`` (atomic, fails if a lock is
+      there) -- the same inode, so A still holds it and its release finds
+      its token.  The same holds for a holder of L1 that was not dead but
+      released it, and the lock L2 someone created after.
+    - Both rename at once: one rename moves L1, the other finds nothing.
+
+    What remains: while B has L2 aside, *path* is free, and a third task C
+    polling in that window (the time of one rename and one read) creates its
+    own lock; B cannot put L2 back, and A and C both hold the lock.  That
+    needs two takeovers of one stale lock to race with a third task's poll,
+    and is logged.  Without hard links L2 is renamed back if *path* is still
+    free, which leaves the same window between the check and the rename.
+    """
+    aside = _lock_sibling(path, "stale")
+    try:
+        os.rename(path, aside)
+    except FileNotFoundError:
+        return  # taken over, or released, by someone else
+    moved = _lock_identity(aside)
+    if moved is not None and moved[0] == stale:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(aside)
+        return
+    # Another task's lock, which must not be lost: back to where it was.
+    restored = True
+    try:
+        os.link(aside, path)
+    except FileExistsError:
+        restored = False
+    except OSError:  # no hard links on this file system
+        if path.exists():
+            restored = False
+        else:
+            os.rename(aside, path)
+            return
+    if not restored:
+        logger.warning(
+            "Another task took the start lock %s while a live one was moved "
+            "aside: two tasks may start together",
+            path,
+        )
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(aside)
+
+
 @contextlib.contextmanager
 def _exclusive_file(path: Path, stale_after: float) -> Iterator[None]:
     """Hold *path* created with ``O_EXCL``, retrying until no one else does.
 
-    A file older than *stale_after* seconds is the leftover of a task killed
-    while it held it, and is removed.
+    The lock holds a token of its own (host, pid and a random part).  A lock
+    older than *stale_after* seconds is the leftover of a task killed while
+    it held it, and is taken over (:func:`_take_over`).  Its age is measured
+    by the file server's clock (:func:`_server_now`), never this node's: a
+    node whose clock runs ahead would otherwise break a live lock (#1360; the
+    recorded start time has the same guard, #784).  The skew between the two
+    clocks is measured once, and again before a lock is taken over, so
+    waiting costs no extra file per poll.  On release the lock is removed
+    only while it still holds this task's token: once taken over as stale, it
+    is another task's.
     """
+    token = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+    skew: float | None = None  # the server's clock minus this node's
     while True:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime > stale_after:
-                    path.unlink(missing_ok=True)
+            seen = _lock_identity(path)
+            if seen is None:
+                continue  # released: try again at once
+            lock_id, mtime = seen
+            if skew is None:
+                skew = _server_now(path) - time.time()
+            if time.time() + skew - mtime > stale_after:
+                now = _server_now(path)  # confirmed by the server's clock
+                skew = now - time.time()
+                if now - mtime > stale_after:
+                    _take_over(path, lock_id)
                     continue
-            except FileNotFoundError:
-                continue
             time.sleep(0.05)
             continue
-        os.close(fd)
+        try:
+            os.write(fd, token.encode("utf-8"))
+        finally:
+            os.close(fd)
         break
     try:
         yield
     finally:
-        path.unlink(missing_ok=True)
+        # Between this read and the unlink the lock can only change hands if
+        # it is taken over as stale in that moment, i.e. if this task held
+        # it for longer than stale_after.
+        held = _lock_identity(path)
+        if held is not None and held[0][3] == token:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
 
 
 @contextlib.contextmanager
