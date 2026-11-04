@@ -41,7 +41,12 @@ from typing import Any, Optional
 from ..templating import code_environment
 from ..text_escape import toml_string
 from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
-from .hydra_config import dump_scenario_config
+from .hydra_config import (
+    dump_map_group_config,
+    dump_scenario_config,
+    own_map_group,
+    run_map_group,
+)
 from .models import ScenarioDocument
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
@@ -277,7 +282,8 @@ def _write_package_tree(
             else "not recorded -- uv version could not be determined at export time"
         ),
         "python_version": _python_version(),
-        "map_group": document.map.group,
+        "map_group": run_map_group(document),
+        "own_map_group": own_map_group(document) is not None,
         "generated_at": generated_at,
         "action_count": len(document.actions),
         "pass_count": len(document.assertions.pass_conditions),
@@ -316,6 +322,17 @@ def _write_package_tree(
     hydra_path.parent.mkdir(parents=True, exist_ok=True)
     hydra_path.write_text(dump_scenario_config(document), encoding="utf-8")
 
+    # A map named by source or directory is no built-in group's: the package
+    # carries the group that selects it (hydra_config's module docstring).
+    map_files: dict[str, str] = {}
+    map_config = dump_map_group_config(document)
+    if map_config is not None:
+        map_rel = f"src/{package_name}/conf/map/{run_map_group(document)}.yaml"
+        map_path = root / map_rel
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+        map_path.write_text(map_config, encoding="utf-8")
+        map_files["map_config"] = map_rel
+
     (root / ".gitignore").write_text(
         "# uv.lock is intentionally tracked: it is what makes this package\n"
         "# reproducible. Everything below is build output.\n"
@@ -334,6 +351,7 @@ def _write_package_tree(
         "manifest": "scenario/manifest.yaml",
         "lockfile": "uv.lock",
         "python_version": ".python-version",
+        **map_files,
     }
 
 
@@ -596,7 +614,7 @@ def _build_wheelhouse(
             be installed where it runs is not an export anyone can use, so this
             fails the whole thing rather than coming back half-done.
     """
-    run = f"scenario scenario={names['scenario_id']} map={document.map.group}"
+    run = f"scenario scenario={names['scenario_id']} map={run_map_group(document)}"
     try:
         return build_wheelhouse(
             staging,

@@ -1571,6 +1571,18 @@ class TestResolveDirectory:
         # Its own map, so the selected group's exclusion list is not inherited.
         assert overrides["no_3d_model_lanelet_ids"] == []
 
+    def test_the_inspector_names_the_map_group_it_runs_with(
+        self, editor: "TestClient", drafts: "DraftStore", local_map: Path
+    ) -> None:
+        """Its own group, not the starter's built-in one (#1422)."""
+        draft_id = _new_draft(editor)
+        body = editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        ).text
+        scenario_id = _stored(drafts, draft_id).id
+        assert f"<code>map={scenario_id}_map</code>" in body
+        assert "<code>map=nishishinjuku</code>" not in body
+
     def test_a_file_typed_alongside_it_in_the_editor_is_kept(
         self, editor: "TestClient", drafts: "DraftStore", local_map: Path
     ) -> None:

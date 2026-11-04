@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
 from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
+from ..authoring.hydra_config import run_map_group
 from ..authoring.models import SIGNAL_STATE_NAMES
 from ..authoring.persistence import DraftStore, default_draft_dir
 from ..trajectory.authoring import (
@@ -198,6 +199,9 @@ def create_app(
         # A trajectory field's rows as the text the inspector edits.
         format_vertices=format_vertices,
         trajectory_summary=trajectory_summary,
+        # The `map=` an export of the document runs with: its own group when
+        # it names its map by source or directory.
+        run_map_group=run_map_group,
         format_relative_vertices=format_relative_vertices,
         relative_trajectory_summary=relative_trajectory_summary,
         format_route_vertices=format_route_vertices,
