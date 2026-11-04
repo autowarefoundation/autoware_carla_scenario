@@ -342,7 +342,7 @@ graph LR
 
     subgraph Retry["Retry Logic"]
         direction TB
-        R1["Attempt 1"] -->|fail| R2["Cooldown"]
+        R1["Attempt 1"] -->|fail| R2["Cooldown, reset_world()"]
         R2 --> R3["Attempt 2"]
         R3 -->|fail| R4["..."]
         R4 --> R5["Attempt N"]
@@ -355,6 +355,8 @@ Key features:
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
 - **Retry**: A scenario whose run raises is retried up to `cooldown_max_retries` times before raising an error; one that runs and fails is not. The lanelet sweeper follows the same rule for its forked cases.
   A retry runs the same scenario object again, and so does a second `run_all()`: before each `setup()` the runner resets what an earlier attempt registered (`BaseScenario._reset_registrations()`) -- its conditions, actions, callbacks, entities, coverage and measures -- back to what the scenario's `__init__` registered, and resets each of those (`BaseCondition.reset()`, `BaseAction.reset()`) to the state it was built in, so a condition that latched in a failed attempt cannot decide the retry, a `once` action that fired there fires again, and a closed `CollisionCondition` attaches a sensor of its own.
+  A run that raises never reaches the reset at its end (`run_scenario(reset_world=True)`), so the queue resets the world (`ScenarioRunner.reset_world()`) before the retry runs on it: the weather, frozen traffic lights and light states the failed attempt set do not carry into the retry. The reset is part of the retry's attempt -- one that raises fails that attempt, and the next resets again -- and an attempt that failed before it ran (in its cooldown) is retried on the world as it is, without a reset.
+  A `run_all()` that raises (a scenario failing every attempt without `continue_on_error`, or Ctrl-C) leaves the world as it was, as a `run_all()` that ends normally does after its last scenario: the next `run_all()` resets the world before its first scenario.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), the world is reloaded, and the queue goes on with the next one.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
   A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.

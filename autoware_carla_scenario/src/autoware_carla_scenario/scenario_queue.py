@@ -375,11 +375,14 @@ class ScenarioQueue:
         if self._world_left_as_is:
             # The last run_all() left its last scenario's world as it was.
             self._runner.reset_world()
-            self._world_left_as_is = False
         results: List[ScenarioResult] = []
         self._errored = []
         max_attempts = 1 + self._cooldown_max_retries
         total = len(self._scenarios)
+        # Set before the first scenario runs, not after the last: a run that
+        # raises out of here (without continue_on_error, or on Ctrl-C) leaves
+        # its world as it was too, and the next run_all() resets it first.
+        self._world_left_as_is = total > 0
         # Taken from the end of a reversed copy, so that once the loop has
         # moved on nothing here refers to a scenario that has run.
         pending = list(reversed(self._scenarios))
@@ -413,6 +416,13 @@ class ScenarioQueue:
                 run_stem = file_stem
             last_error: Optional[Exception] = None
             last_message = ""
+            # Whether an attempt got as far as running (or resetting) on the
+            # world: one that then raised skipped the runner's own reset at
+            # its end, so the weather, traffic light and light states it set
+            # are still in the world (the runner's next run reloads only for
+            # another episode, and clears only the actors).  One that failed
+            # before that (in its cooldown) left the world as it found it.
+            world_dirty = False
             for attempt in range(max_attempts):
                 try:
                     # Cooldown: between consecutive scenarios on the first
@@ -452,6 +462,13 @@ class ScenarioQueue:
                         # would refuse to write over ...) makes way for this
                         # one's.
                         remove_run_outputs(self._output_dir, run_stem)
+                    if attempt > 0 and world_dirty:
+                        # The failed attempt's world is reset before the
+                        # retry runs on it.  Inside the try: a reset that
+                        # raises is this attempt's failure, and the next
+                        # attempt resets again.
+                        self._runner.reset_world(type(scenario).__name__)
+                    world_dirty = True
                     if file_stem is None:
                         result = self._runner.run_scenario(
                             scenario,
@@ -533,11 +550,11 @@ class ScenarioQueue:
                 results.append(result)
                 self._errored.append(i)
                 if i < total - 1:
-                    # A run that raises never reaches its own reload, so what
-                    # it spawned is still in the world.
+                    # The last attempt raised (in its run, or in the reset
+                    # before it), so it never reached its own reset: what it
+                    # spawned and set is still in the world.
                     self._runner.reset_world()
 
-        self._world_left_as_is = total > 0
         self._results = results
         return results
 

@@ -660,7 +660,7 @@ def test_a_batch_goes_on_past_a_case_that_cannot_run(
         def load_map_by_name(self, _name: str) -> None:
             pass
 
-        def reset_world(self) -> None:
+        def reset_world(self, scenario_name: str = "") -> None:
             pass
 
         def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:

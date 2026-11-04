@@ -85,7 +85,7 @@ class _RecordingRunner:
         self.results.append(result)
         return result
 
-    def reset_world(self) -> None:
+    def reset_world(self, scenario_name: str = "") -> None:
         pass
 
 
@@ -110,8 +110,37 @@ class _SecondCaseRaises:
             raise self.error
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self) -> None:
+    def reset_world(self, scenario_name: str = "") -> None:
         self.events.append("reset")
+
+
+class _RaisesThenRuns:
+    """A runner whose first *run_failures* runs raise, and whose first
+    *reset_failures* resets do; it records each run (by position, with the
+    reset_world it was given) and each reset (with the name it was given)."""
+
+    def __init__(self, *, run_failures: int = 1, reset_failures: int = 0) -> None:
+        self.run_failures = run_failures
+        self.reset_failures = reset_failures
+        self.order: list[int] = []
+        self.events: list[tuple[str, object]] = []
+
+    def run_scenario(
+        self, scenario: BaseScenario, *, reset_world: bool = True, **_: object
+    ) -> ScenarioResult:
+        if id(scenario) not in self.order:
+            self.order.append(id(scenario))
+        self.events.append(("run", (self.order.index(id(scenario)), reset_world)))
+        if self.run_failures > 0:
+            self.run_failures -= 1
+            raise RuntimeError("RPC timed out")
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self, scenario_name: str = "") -> None:
+        self.events.append(("reset", scenario_name))
+        if self.reset_failures > 0:
+            self.reset_failures -= 1
+            raise RuntimeError("reset failed")
 
 
 def _make_queue_with_mock_runner() -> tuple[ScenarioQueue, MagicMock]:
@@ -436,8 +465,9 @@ class TestScenarioQueueUnit:
         # Both attempts of the second case, then the third case.
         assert runner.ran == [0, 1, 1, 2]
         assert queue.errored_indices() == [1]
-        # Reloaded after the errored case, which never reached its own reload.
-        assert runner.events == ["run", "run", "run", "reset", "run"]
+        # Reset before the retry, which runs on the world the failed attempt
+        # left, and after the errored case, which never reached its own reset.
+        assert runner.events == ["run", "run", "reset", "run", "reset", "run"]
         if not release:
             assert queue.result_for(scenarios[1]) is results[1]
 
@@ -471,6 +501,97 @@ class TestScenarioQueueUnit:
             queue.run_all()
 
         assert runner.ran == [0, 1, 1]
+
+    def test_a_run_after_one_that_raised_resets_the_world_first(self) -> None:
+        """A run that raises out of run_all() never reaches the reset at
+        the end of its run: the next run_all() resets the world before its
+        first case."""
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(
+            RuntimeError("no"), retries=0
+        )
+        with pytest.raises(RuntimeError, match="failed after 1 attempt"):
+            queue.run_all()
+        assert runner.events == ["run", "run"]
+        runner.failing = None
+
+        queue.run_all()
+
+        assert runner.events == ["run", "run", "reset", "run", "run", "run"]
+
+    def test_a_retry_resets_the_world_the_failed_attempt_left(self) -> None:
+        """A run that raises skips its own reset: the world is reset
+        before its retry, and not before a first attempt."""
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=1)
+        runner = _RaisesThenRuns()
+        queue._runner = runner  # type: ignore[assignment]
+        queue.add(_NullScenario(_make_ego_config()))
+        queue.add(_NullScenario(_make_ego_config()))
+
+        results = queue.run_all()
+
+        assert [r.passed for r in results] == [True, True]
+        assert runner.events == [
+            ("run", (0, True)),
+            ("reset", "_NullScenario"),
+            ("run", (0, True)),
+            ("run", (1, False)),
+        ]
+
+    def test_a_failed_reset_is_the_failure_of_its_attempt(self) -> None:
+        """A reset before a retry that raises fails that attempt, and the
+        next attempt resets again before it runs."""
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=2)
+        runner = _RaisesThenRuns(reset_failures=1)
+        queue._runner = runner  # type: ignore[assignment]
+        queue.add(_NullScenario(_make_ego_config()))
+
+        results = queue.run_all()
+
+        assert results[0].passed
+        assert runner.events == [
+            ("run", (0, False)),
+            ("reset", "_NullScenario"),
+            ("reset", "_NullScenario"),
+            ("run", (0, False)),
+        ]
+
+    def test_a_case_whose_last_reset_fails_errors_with_that_error(self) -> None:
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=1)
+        runner = _RaisesThenRuns(reset_failures=1)
+        queue._runner = runner  # type: ignore[assignment]
+        queue.add(_NullScenario(_make_ego_config()))
+
+        results = queue.run_all(continue_on_error=True)
+
+        assert results[0].message == (
+            "Errored after 2 attempt(s): RuntimeError: reset failed"
+        )
+        assert queue.errored_indices() == [0]
+        assert runner.events == [("run", (0, False)), ("reset", "_NullScenario")]
+
+    def test_a_retry_after_a_failed_cooldown_does_not_reset(self) -> None:
+        """An attempt that fails in its cooldown never ran on the world,
+        which the case before reset: its retry runs on it as it is."""
+        queue = ScenarioQueue(
+            server=MagicMock(), cooldown_seconds=1.0, cooldown_max_retries=1
+        )
+        runner = _RaisesThenRuns(run_failures=0)
+        queue._runner = runner  # type: ignore[assignment]
+        queue.add(_NullScenario(_make_ego_config()))
+        queue.add(_NullScenario(_make_ego_config()))
+        waits: list[str] = []
+
+        def wait(_seconds: float, *, desc: str) -> None:
+            waits.append(desc)
+            if len(waits) == 1:
+                raise RuntimeError("CARLA did not answer")
+
+        with patch("autoware_carla_scenario.scenario_queue._wait_with_progress", wait):
+            results = queue.run_all()
+
+        assert [r.passed for r in results] == [True, True]
+        assert waits == ["CARLA cooldown", "CARLA cooldown (retry)"]
+        assert runner.events == [("run", (0, True)), ("run", (1, False))]
 
     def test_an_interrupt_ends_a_run_that_continues_on_error(self) -> None:
         queue, runner, _ = self._queue_whose_second_case_cannot_run(KeyboardInterrupt())
@@ -829,7 +950,7 @@ class _FirstAttemptFailsMidRun:
         (self.output_dir / f"{stem}_result.json").write_text(f"{attempt}\n")
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self) -> None:
+    def reset_world(self, scenario_name: str = "") -> None:
         pass
 
 
