@@ -9,6 +9,7 @@ generated files themselves runs unconditionally.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,10 @@ from autoware_carla_scenario.authoring.package_export import (
     package_names,
 )
 from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.validator import (
+    scenario_id_problem,
+    validate_document,
+)
 from autoware_carla_scenario.authoring.wheelhouse import (
     TESTED_PYTHONS,
     WheelhouseError,
@@ -383,14 +388,96 @@ class TestGeneratedPackage:
         assert any("not reproducible" in note for note in manifest["notes"])
 
 
-#: Valid scenario ids, each with the Python package its export is named after.
-#: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
-#: so they are where the scenario id and the names derived from it could part.
+#: Scenario ids an export accepts, each with the Python package it is named
+#: after.  Before #1358 ``__`` and a trailing ``_`` were what the package-name
+#: sanitising rewrote, and so where the scenario id and the names derived from
+#: it could part (#1072); they are now refused instead (see below).
 _SCENARIO_IDS = [
-    ("stop__line", "stop_line_scenario"),
-    ("stop_line_", "stop_line_scenario"),
     ("stop_line", "stop_line_scenario"),
+    ("cut_in", "cut_in_scenario"),
+    ("scenario", "scenario_scenario"),
+    ("autoware", "autoware_scenario"),
+    ("autoware_carla_x", "autoware_carla_x_scenario"),
+    ("scenario_one", "scenario_one_scenario"),
+    ("autoware_carla_scenario", "autoware_carla_scenario_scenario"),
+    # ``_scenario`` is always added: ``stop_line`` already has its package.
+    ("stop_line_scenario", "stop_line_scenario_scenario"),
+    ("new_scenario", "new_scenario_scenario"),
 ]
+
+#: Ids the model's pattern accepts whose package another id already has
+#: (#1358): each with the id it would collide with and a phrase the refusal
+#: must contain.
+_COLLIDING_IDS = [
+    ("stop__line", "stop_line", "contains `__`"),
+    ("stop_line_", "stop_line", "ends in `_`"),
+]
+
+
+class TestPackageNameCollisions:
+    """No two exportable ids share a package, nor take the framework's (#1358)."""
+
+    @pytest.mark.parametrize(("scenario_id", "other", "phrase"), _COLLIDING_IDS)
+    def test_a_colliding_id_is_a_validation_error(
+        self, scenario_id: str, other: str, phrase: str
+    ) -> None:
+        # Without the check both would be packaged under the same name.
+        assert (
+            package_names(new_document(scenario_id))["package_name"]
+            == package_names(new_document(other))["package_name"]
+        )
+        assert scenario_id_problem(other) is None
+        errors = [
+            issue
+            for issue in validate_document(new_document(scenario_id)).issues
+            if issue.severity == "error" and issue.path == "id"
+        ]
+        assert len(errors) == 1
+        assert phrase in errors[0].message
+        assert f"`{other}_scenario`" in errors[0].message
+
+    @pytest.mark.parametrize(("scenario_id", "_other", "phrase"), _COLLIDING_IDS)
+    def test_a_colliding_id_is_not_exported(
+        self, tmp_path: Path, scenario_id: str, _other: str, phrase: str
+    ) -> None:
+        with pytest.raises(PackageExportError, match=re.escape(phrase)):
+            export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "scenario_id", ["autoware_carla", "autoware__carla", "autoware_carla_"]
+    )
+    def test_the_frameworks_name_is_refused(
+        self, tmp_path: Path, scenario_id: str
+    ) -> None:
+        problem = scenario_id_problem(scenario_id)
+        assert problem is not None
+        assert "`autoware_carla_scenario`" in problem
+        assert "framework's own name" in problem
+        assert any(
+            issue.path == "id" and issue.message == problem
+            for issue in validate_document(new_document(scenario_id)).issues
+        )
+        with pytest.raises(PackageExportError, match="framework's own name"):
+            export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_an_accepted_id_has_its_own_package(
+        self, scenario_id: str, package_name: str
+    ) -> None:
+        assert scenario_id_problem(scenario_id) is None
+        assert not any(
+            issue.path == "id"
+            for issue in validate_document(new_document(scenario_id)).issues
+        )
+        assert package_names(new_document(scenario_id))["package_name"] == (
+            package_name
+        )
+
+    def test_accepted_ids_map_to_distinct_distributions(self) -> None:
+        ids = [scenario_id for scenario_id, _ in _SCENARIO_IDS]
+        names = {package_names(new_document(i))["distribution_name"] for i in ids}
+        assert len(names) == len(ids)
 
 
 class TestScenarioIdAgreement:
@@ -431,7 +518,7 @@ class TestScenarioIdAgreement:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert manifest["scenario"]["id"] == scenario_id
 
-    @pytest.mark.parametrize("scenario_id", ["stop__line", "stop_line_"])
+    @pytest.mark.parametrize("scenario_id", ["stop_line"])
     def test_the_exported_packages_own_tests_pass(
         self, tmp_path: Path, scenario_id: str
     ) -> None:

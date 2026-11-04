@@ -349,7 +349,7 @@ compiled and exported anywhere.
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
 | `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
 | `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |
-| `validate_document` -> `ValidationReport` | Metadata-driven validation; errors block export, warnings do not. |
+| `validate_document` -> `ValidationReport` | Metadata-driven validation; errors block export, warnings do not. Among them, a scenario id whose exported package another id or the framework already has ([The scenario id names the package](scenario_editor.md#the-scenario-id-names-the-package)). |
 | `compile_document` -> `CompiledScenario` | Resolve entity ids to CARLA roles and type-check parameters, without importing CARLA. |
 | `authoring.builders` | Factories that turn a compiled plan into the framework's own `BaseAction` / `BaseCondition`. Imports CARLA lazily. |
 | `build_scenario_config`, `dump_scenario_config` | Render a document as the framework's Hydra scenario config, including a `sweep` section the existing sweeper understands. |

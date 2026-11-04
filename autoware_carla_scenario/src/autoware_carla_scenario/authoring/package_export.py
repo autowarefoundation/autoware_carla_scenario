@@ -46,7 +46,7 @@ from .models import ScenarioDocument
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
-from .validator import validate_document
+from .validator import PACKAGE_SUFFIX, validate_document
 from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
 
 logger = logging.getLogger(__name__)
@@ -142,12 +142,19 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
     string, never as a Python identifier, so a keyword such as ``class`` is
     harmless.  Only the Python package and distribution names are sanitised;
     the package name always ends in ``_scenario``, so it is never a keyword.
+
+    ``_scenario`` is added even to an id that already ends in it, so ``foo``
+    and ``foo_scenario`` are ``foo_scenario`` and ``foo_scenario_scenario``
+    rather than one package (#1358).  The mapping is one-to-one over the ids
+    :func:`~autoware_carla_scenario.authoring.validator.scenario_id_problem`
+    accepts; it refuses ``foo__bar`` and ``foo_bar_``, which would be named
+    after ``foo_bar``, and ``autoware_carla``, which would be named after the
+    framework.  :func:`export_package` validates the document first, so it
+    never exports one of those.
     """
     scenario_id = document.id
     module_id = _sanitize_identifier(scenario_id)
-    package_name = (
-        module_id if module_id.endswith("_scenario") else f"{module_id}_scenario"
-    )
+    package_name = f"{module_id}{PACKAGE_SUFFIX}"
     return {
         "scenario_id": scenario_id,
         "package_name": package_name,

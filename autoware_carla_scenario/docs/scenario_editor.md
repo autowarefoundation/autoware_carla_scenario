@@ -820,6 +820,36 @@ The scenario's document and Hydra config travel **inside** its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept
 beside it.
 
+### The scenario id names the package
+
+The scenario id is the name `scenario=<id>` selects, and the exported package
+is named after it with `_scenario` added: id `cut_in` becomes the module
+`cut_in_scenario` and the distribution `cut-in-scenario`. The suffix is added
+even to an id that already ends in it, so `new_scenario` is exported as
+`new_scenario_scenario`, never as the package of the id `new`.
+
+Package installers compare distribution names with every run of `_`, `-` and
+`.` folded into one `-`, so an id that differs from another only in its
+underscores would be the *same* package -- installing one would silently
+uninstall the other. The validator reports these ids as errors on the `id`
+field, and export refuses them:
+
+| Id | Would be packaged as | Use instead |
+| --- | --- | --- |
+| `stop__line` (a `__`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
+| `stop_line_` (a trailing `_`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
+| `autoware_carla` | `autoware_carla_scenario`, the framework itself | any other id |
+
+A draft that already uses such an id still opens and saves; rename it before
+exporting.
+
+!!! note "Ids ending in `_scenario` before #1358"
+    Earlier exports did not add the suffix to an id that already ended in
+    `_scenario`, so `stop_line_scenario` and `stop_line` both became the
+    package `stop_line_scenario`. Such an id now exports as
+    `stop_line_scenario_scenario`; reinstall it under that name. Every other
+    id keeps exactly the package name it always had.
+
 ### What the wheelhouse is built from
 
 The exporter still generates the uv project it always did -- `pyproject.toml`

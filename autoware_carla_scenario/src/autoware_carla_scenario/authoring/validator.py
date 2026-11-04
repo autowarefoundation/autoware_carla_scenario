@@ -62,6 +62,14 @@ MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
 #: a real one never shows amber to a movement that crosses it either.
 PERMISSIVE_SIGNAL_STATES = frozenset({"green", "yellow"})
 
+#: Python package names an exported scenario must not take: installing it would
+#: replace the distribution that already owns the name.  An exported package's
+#: name always ends in ``_scenario``, so only the framework's own can collide.
+RESERVED_PACKAGE_NAMES = frozenset({"autoware_carla_scenario"})
+
+#: The suffix an exported package always adds to the scenario id.
+PACKAGE_SUFFIX = "_scenario"
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -1478,6 +1486,41 @@ def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) ->
         )
 
 
+def scenario_id_problem(scenario_id: str) -> Optional[str]:
+    """Return why *scenario_id* cannot name an exported package, or ``None``.
+
+    The exported package is ``<id>_scenario`` (distribution
+    ``<id>-scenario``), and installers compare distribution names with every
+    run of ``_`` folded into one ``-`` (PEP 503).  So ``__`` and a trailing
+    ``_``, which the model's pattern accepts, would give an id the package of
+    the id without them, and one id would give the framework's own package;
+    installing either would replace the package already there (#1358).  They
+    are refused here, not in the model, so a draft that already uses one still
+    opens and can be renamed.
+    """
+    stem = "_".join(part for part in scenario_id.split("_") if part)
+    package = stem + PACKAGE_SUFFIX
+    if package in RESERVED_PACKAGE_NAMES:
+        return (
+            f"Scenario id {scenario_id!r} would be exported as the package "
+            f"`{package}`, which is the framework's own name; installing it "
+            "would replace the framework. Choose another id."
+        )
+    if "__" in scenario_id:
+        return (
+            f"Scenario id {scenario_id!r} contains `__`, so it would be "
+            f"exported as `{package}`, the same package as the id {stem!r}. "
+            "Use a single `_` between words."
+        )
+    if scenario_id.endswith("_"):
+        return (
+            f"Scenario id {scenario_id!r} ends in `_`, so it would be exported "
+            f"as `{package}`, the same package as the id {stem!r}. Drop the "
+            "trailing `_`."
+        )
+    return None
+
+
 def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
     """Warn when a stored layout draws an order the runtime cannot honour.
 
@@ -1556,6 +1599,10 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     incomplete draft is still saveable).
     """
     out = _Collector()
+
+    id_problem = scenario_id_problem(document.id)
+    if id_problem is not None:
+        out.error("id", id_problem)
 
     entity_ids: set[str] = set()
     for index, entity in enumerate(document.entities):
