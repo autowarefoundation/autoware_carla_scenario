@@ -455,6 +455,12 @@ def test_the_settings_take_good_values() -> None:
     assert settings.worker_settings()["horizon_steps"] == 1
 
 
+def test_the_workers_may_be_any_integer() -> None:
+    np = pytest.importorskip("numpy")
+    settings = cr_session.CommonRoadSettings(workers=np.int64(2))
+    assert settings.workers == 2 and type(settings.workers) is int
+
+
 #: A worker that, the first time any is started (no marker file yet), exits
 #: (3) on its first ``evaluate``; afterwards the stand-in.
 _DIES_ONCE = textwrap.dedent(
@@ -524,6 +530,34 @@ def test_an_exited_pooled_worker_restarts_the_pool(
     # Every worker of the old pool was closed, the one alive too.
     assert not any(worker.running() for worker in first)
     assert [r["op"] for r in _requests(stand_in)].count("init") == 4
+
+
+def test_a_worker_that_cannot_be_closed_does_not_mask_the_failure(
+    opendrive: str, stand_in: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _following(opendrive)
+    frames = _recorded(world, [0.0])
+    evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    stuck, other = cr_session._POOL.workers
+    close = stuck.close
+
+    def cannot_close() -> None:
+        raise BrokenPipeError("cannot close")
+
+    def fails(*_: Any) -> Any:
+        raise cr_worker.CommonRoadWorkerError("the worker failed: boom")
+
+    monkeypatch.setattr(stuck, "close", cannot_close)
+    monkeypatch.setattr(other, "evaluate", fails)
+    monkeypatch.setattr(stuck, "evaluate", fails)
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError, match="boom"):
+            evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+        # The other worker was still closed, and the pool reset.
+        assert not other.running()
+        assert cr_session._POOL.workers == []
+    finally:
+        close()
 
 
 #: A worker that, the first time any is started, exits before its ``init``;

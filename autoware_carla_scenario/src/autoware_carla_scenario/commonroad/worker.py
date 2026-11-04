@@ -18,6 +18,7 @@ The command that starts it is, in order:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -190,4 +191,6 @@ class CommonRoadWorker:
                 process.wait()
         for stream in (process.stdin, process.stdout):
             if stream is not None:
-                stream.close()
+                # Flushing a dead worker's stdin raises BrokenPipeError.
+                with contextlib.suppress(OSError):
+                    stream.close()

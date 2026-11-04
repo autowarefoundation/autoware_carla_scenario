@@ -23,6 +23,7 @@ from __future__ import annotations
 import atexit
 import logging
 import math
+import operator
 import os
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -100,9 +101,16 @@ def _check_period(name: str, period: float) -> None:
         raise ValueError(f"{name} must be positive and finite, got {period}")
 
 
-def _check_workers(workers: int) -> None:
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+def _check_workers(workers: Any) -> int:
+    """*workers* as an ``int``: an integer (a NumPy one too, not a bool) of at
+    least 1."""
+    try:
+        count = None if isinstance(workers, bool) else operator.index(workers)
+    except TypeError:
+        count = None
+    if count is None or count < 1:
         raise ValueError(f"workers must be an integer of at least 1, got {workers!r}")
+    return count
 
 
 @dataclass(frozen=True)
@@ -156,7 +164,7 @@ class CommonRoadSettings:
                     f"({', '.join(COMMONROAD_METRICS)})"
                 )
             _check_period(f"metric_periods_s[{key!r}]", period)
-        _check_workers(self.workers)
+        object.__setattr__(self, "workers", _check_workers(self.workers))
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)
         _check_period("radius_m", self.radius_m)
@@ -270,8 +278,7 @@ def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
     started = [f.result() for f in futures if f.exception() is None]
     failed = [f.exception() for f in futures if f.exception() is not None]
     if failed:
-        for worker in started:
-            worker.close()
+        _close_all(started)
         raise failed[0]  # type: ignore[misc]
     return started
 
@@ -340,8 +347,17 @@ def close_commonroad_workers() -> None:
     with _POOL_LOCK:
         workers = _POOL.workers
         _POOL.workers, _POOL.map_name = [], None
+    _close_all(workers)
+
+
+def _close_all(workers: list[CommonRoadWorker]) -> None:
+    """Close each of *workers*: one that cannot be closed neither stops the
+    others' closing nor masks the error being raised, if any."""
     for worker in workers:
-        worker.close()
+        try:
+            worker.close()
+        except Exception:  # noqa: BLE001
+            logger.warning("could not close a CommonRoad worker", exc_info=True)
 
 
 atexit.register(close_commonroad_workers)
