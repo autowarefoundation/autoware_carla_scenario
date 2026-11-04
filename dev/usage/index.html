@@ -3780,6 +3780,16 @@ Python version, and the viewer's Run form reads it the same way.</p>
   configured. A batch whose cases differ in any of them is refused, naming the
   key and the cases (<code>map.no_3d_model_lanelet_ids</code> may differ: only a sweep's
   constraints read it)</li>
+<li>A config value a case would refuse -- an unknown <code>server.world_reset</code>, a
+  <code>scenario.timeout_seconds</code> that is not positive, a <code>server.port</code> out of
+  range, a <code>t4scene.step_s</code> that is not a multiple of the tick, ... -- is
+  refused for every case before any scenario is built or the map is resolved,
+  locally as under <code>launcher=slurm</code>: the batch prints
+  <code>Error: &lt;case&gt;: &lt;key&gt; ...</code>, naming the case refused, and exits 1, a
+  configuration error as a single run's is (<code>HYDRA_FULL_ERROR=1</code> shows the
+  traceback). With <code>--multirun</code> each scenario's config is checked before its
+  sweep reads the map, as the lanelet sweeper checks it, and reported as
+  <code>Error: &lt;scenario&gt;: &lt;key&gt; ...</code></li>
 <li>Results are written to <code>outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json</code>
   (a batch started in the same second as another gets <code>HH-MM-SS-1</code>,
   then <code>HH-MM-SS-2</code>, ...: every batch has a directory of its own)</li>
@@ -3821,8 +3831,12 @@ sample match nothing on the map) is refused as the lanelet sweeper refuses
 it: the batch prints <code>Error: &lt;scenario&gt;: the sweep expands to no case ...</code> for
 each such scenario of the glob and exits 1 before anything runs, even when the
 other scenarios have cases. A scenario without a <code>sweep:</code> is one case, never
-refused. <code>launcher=slurm</code> expands the batch the same way, so it submits
-nothing.</p>
+refused. An exported scenario on a map of its own composed on another map
+(<code>map=&lt;id&gt;_map</code> left out) is refused the same way, before its sweep reads any
+map:
+<code>Error: &lt;scenario&gt;: scenario '&lt;id&gt;' runs on the map its document names, but ...</code>
+(<a href="../scenario_editor/#running-an-authored-scenario">Running an authored scenario</a>).
+<code>launcher=slurm</code> expands the batch the same way, so it submits nothing.</p>
 <p>On a SLURM cluster, <code>launcher=slurm</code> runs a batch's cases as array jobs, several
 at once, each on a CARLA of its own, with the same outputs (off unless
 selected; see <a href="../slurm/">Running a Batch on SLURM</a>):</p>
@@ -5428,7 +5442,7 @@ driver ending the run is <code>driver</code>, and a case that raised on every at
 </tr>
 <tr>
 <td>1</td>
-<td>One or more scenarios failed or errored, or configuration/runtime error</td>
+<td>One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints <code>Error: &lt;case&gt;: &lt;key&gt; ...</code> before anything is built)</td>
 </tr>
 <tr>
 <td>2</td>
@@ -6237,7 +6251,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 16:25:07 UTC"><span class="timeago" datetime="2026-11-04T16:25:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 16:25:07 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:04:44 UTC"><span class="timeago" datetime="2026-11-04T18:04:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:04:44 UTC">2026-11-04</span>
   </span>
 
     
