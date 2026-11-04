@@ -2477,6 +2477,47 @@ def test_a_resubmission_into_a_stale_lock_and_aged_mutexes_takes_it_over_once(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_a_gap_below_a_dead_takeover_generation_is_climbed_past(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1360: generation 1's winner stalled, found generation 2 and backed
+    off; generation 2's winner was killed.  A stale lock, a dead generation
+    2 and no generation 1: a waiter neither hangs nor spins on them."""
+    import threading
+
+    from autoware_carla_scenario.slurm import worker
+
+    monkeypatch.setattr(worker, "_TAKEOVER_STALE_AFTER", 0.3)
+    path = tmp_path / "start.lock.excl"
+    _stale_lock(path)
+    dead = _takeover_mutex(path, 2)
+    dead.write_text("killed-host:2:waiter")
+    old = time.time() - 3600
+    os.utime(dead, (old, old))
+    real_create = worker._create_lock
+    created: list[str] = []
+
+    def create(lock: Path, token: str) -> bool:
+        created.append(lock.name)
+        return bool(real_create(lock, token))
+
+    monkeypatch.setattr(worker, "_create_lock", create)
+    acquired = threading.Event()
+
+    def hold() -> None:
+        with worker._exclusive_file(path, stale_after=60.0):
+            acquired.set()
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    assert acquired.wait(10)
+    thread.join(10)
+    # Generation 1 is won once, left while it is live, then climbed past.
+    attempts = [name for name in created if ".takeover." in name]
+    assert len(attempts) < 20, attempts
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_releasing_a_lock_taken_over_leaves_the_new_holders(
     tmp_path: Path,
 ) -> None:

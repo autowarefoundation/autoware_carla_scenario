@@ -343,14 +343,14 @@ dialled by every task, as a TCP one is.
   it is `start_stagger_seconds` + 60 s old by the file server's clock, so a
   node whose clock is off does not break a live one. One waiter takes a
   stale lock over: the waiters share a mutex of `.takeover.*` files beside
-  the lock, one per attempt, created with `O_EXCL` and never removed while
-  in use (a waiter killed holding one is superseded by the next attempt
-  10 s later), and the one that wins judges the lock stale again before
-  removing it, so no waiter renames or removes a live lock. A task removes
-  the lock on release only while it is still its own. Two tasks can then
-  only start together if a task is still alive past the point its file is
-  judged stale: one that held the lock that long, or a waiter that stalled
-  for 10 s in the middle of taking a lock over.
+  the lock, one per attempt, created with `O_EXCL` (a waiter killed holding
+  one is superseded by the next attempt 10 s later), and the one that wins
+  judges the lock stale again before removing it. A task removes the lock
+  on release only while it is still its own. So no waiter removes a live
+  lock, and no two tasks start together, except when a task is still alive
+  past the point its file is judged stale: one that held the lock that
+  long, or a waiter that stalled for 10 s in the middle of taking a lock
+  over.
 - **ROS 2 and Autoware egos** (`ego.entity=ros2`, `ego.entity=autoware` with
   a launcher) run their stacks on DDS, whose domain the tasks would share; give
   each its own `ROS_DOMAIN_ID` (the Autoware launcher's `ros_domain_ids`), or
