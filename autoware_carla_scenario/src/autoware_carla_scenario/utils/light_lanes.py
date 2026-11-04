@@ -19,7 +19,7 @@ A lit lanelet in a scene is therefore the light a scenario sets.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 import numpy as np
 
@@ -156,18 +156,25 @@ def elements_ahead(
     return list(found)
 
 
-#: The lanes read of a Lanelet2 map, by the map they were read from
-#: (:func:`_lanes_of`): one map at a time, the run's.
-_LANES: dict[int, LightLanes] = {}
+#: The lanes read of a Lanelet2 map, with the map they were read from
+#: (:func:`_lanes_of`): one map at a time, the run's.  The map is held and
+#: compared with ``is``, as :func:`..coordinate.transform._ref_lines` does:
+#: keyed by its ``id`` alone, a new map allocated at a freed one's address
+#: (a scenario queue reloads the map at each start) would be handed the old
+#: map's lanes.
+_LANES: "Optional[tuple[lanelet2.core.LaneletMap, LightLanes]]" = None
 
 
 def _lanes_of(lanelet_map: lanelet2.core.LaneletMap) -> LightLanes:
     """:func:`light_lanes` of *lanelet_map*, read once."""
-    key = id(lanelet_map)
-    if key not in _LANES:
-        _LANES.clear()
-        _LANES[key] = light_lanes(lanelet_map)
-    return _LANES[key]
+    global _LANES
+
+    kept = _LANES
+    if kept is not None and kept[0] is lanelet_map:
+        return kept[1]
+    lanes = light_lanes(lanelet_map)
+    _LANES = (lanelet_map, lanes)
+    return lanes
 
 
 def lights_of_element(
