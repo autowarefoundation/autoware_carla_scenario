@@ -852,7 +852,7 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 
 #### Temporary Stop
 
-Tests that the ego vehicle stops at a designated stop line for a minimum duration, then restarts.
+Tests that the ego vehicle stops at a stop line for a minimum duration, then restarts. The stop lines are read off the map, from the spawn lanelet and up to three lanelets after it. Run unexpanded, the ego spawns on lanelet 285 of the Nishi-Shinjuku map; the config's `sweep:` expands one case per stop line that no traffic light governs (see [Temporary Stop](scenarios/temporary_stop.md)).
 
 | Config |
 |--------|
