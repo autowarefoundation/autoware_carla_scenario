@@ -1,20 +1,45 @@
-"""Example scenario: Ego vehicle performs a temporary stop at a designated position.
+"""Example scenario: the ego stops at a stop line, then drives on.
 
-This scenario spawns the ego vehicle on lanelet 285 and verifies that it
-performs a temporary stop using
-:class:`~autoware_carla_scenario.TemporaryStopCondition`.
+The ego is spawned on ``ego.spawn_lanelet_id``. Without expanding, that is
+lanelet 285 of the Nishi-Shinjuku map, the default in
+``conf/scenario/temporary_stop/temporary_stop.yaml``. The YAML's ``sweep:``
+expands one case per stop line that no traffic light governs (a stop sign's),
+skipping the map's lanelets with no 3D model; each case replaces
+``ego.spawn_lanelet_id``, ``ego.spawn_s`` (15 m short of the line, on the
+lanelet before when the line is nearer its lanelet's start than that) and
+``ego.goal_lanelet_id`` (the lanelet past the line).
 
-The pass condition requires the ego to be within ``s_margin`` of the stop
-position on the correct OpenDRIVE road **and** remain below
-``speed_threshold`` for at least ``stop_duration`` seconds.
+The stop lines are not configured: they are read off the map with
+:func:`~autoware_carla_scenario.get_stop_line_poses_with_following`
+(``depth=3``): the spawn lanelet's own, or else those of the first step of
+its successors in the routing graph, up to three steps on, that has any.
+Each is projected onto the lanelet that owns it, as a
+:class:`~autoware_carla_scenario.Lanelet2Pose`. Setup raises
+:class:`ValueError` if none is found.
+
+The pass condition is a stop *followed by* a restart, both at once:
+
+* a latched (:class:`~autoware_carla_scenario.StickyCondition`)
+  :class:`~autoware_carla_scenario.TemporaryStopCondition`: the ego has been
+  within ``s_margin`` metres of one of the stop lines, along the lanelet that
+  owns it (carried onto the lanelets before and after it as far as the margin
+  reaches), below ``speed_threshold`` m/s for at least ``stop_duration``
+  seconds; **and**
+* a :class:`~autoware_carla_scenario.SpeedCondition`: the ego is now moving at
+  ``restart_speed_kmh`` km/h or more.
+
+The scenario fails once ``timeout_seconds`` pass.
 
 Typical usage
 -------------
-Standalone::
+The unexpanded case (lanelet 285)::
 
     uv run scenario scenario=temporary_stop/temporary_stop
 
-With pytest — see ``test/carla_scenario/test_examples.py``.
+Every case on a map, one run each::
+
+    uv run scenario --multirun hydra/sweeper=lanelet_constraint \\
+        scenario=temporary_stop/temporary_stop map=<map>
 """
 
 from __future__ import annotations
@@ -47,18 +72,25 @@ logger = logging.getLogger(__name__)
 
 
 class TemporaryStopScenario(BaseScenario):
-    """Spawn the ego and verify it performs a temporary stop at the target position.
+    """Spawn the ego and verify it stops at a stop line, then drives on.
 
     The scenario:
 
-    1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn.
-    2. Sets every traffic light to green so the ego proceeds normally.
-    3. Registers a :class:`TemporaryStopCondition` as the pass condition,
-       targeting the configured stop position.
-    4. Registers a :class:`TimeoutCondition` as a fail-safe.
+    1. Snaps the Lanelet2 spawn pose to the CARLA road surface.
+    2. Sets every traffic light to green.
+    3. Finds the stop lines: the spawn lanelet's own, or else those of the
+       first step of its successors, up to three steps on, that has any
+       (:func:`get_stop_line_poses_with_following`, ``depth=3``), raising
+       :class:`ValueError` if there are none.
+    4. Registers the pass condition: a :class:`StickyCondition`-latched
+       :class:`TemporaryStopCondition` -- within ``s_margin`` m of a stop line
+       along its lanelet, below ``speed_threshold`` m/s for ``stop_duration`` s -- AND a
+       :class:`SpeedCondition` at ``restart_speed_kmh`` km/h or more. A stop
+       alone does not pass; the ego has to restart after it.
+    5. Registers a :class:`TimeoutCondition` of ``timeout_seconds`` as the
+       fail condition.
 
-    The ego is expected to detect the stop line (or other regulatory element)
-    on the lanelet and perform a temporary stop autonomously.
+    The ego is expected to see the stop line and make the stop on its own.
     """
 
     _config: TemporaryStopConfig
