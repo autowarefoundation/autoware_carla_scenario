@@ -247,6 +247,24 @@ class TestConstruction:
         with pytest.raises(ValueError, match="initial_distance_offset"):
             _route("npc1", _line(), initial_distance_offset=-1.0)
 
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "initial_distance_offset",
+            "walking_speed",
+            "turn_back_ttc_s",
+            "turn_back_distance_m",
+            "turn_back_within_m",
+        ],
+    )
+    def test_a_non_finite_parameter_is_refused(self, name: str, value: float) -> None:
+        # #1328: NaN passed the sign checks; a NaN turn-back threshold never
+        # triggered.  ``None`` is how a threshold is turned off.
+        kwargs: dict[str, Any] = {name: value}
+        with pytest.raises(ValueError, match=f"{name} must be finite"):
+            _route("npc1", _line(), **kwargs)
+
     def test_it_reissues_every_tick(self) -> None:
         assert _route("npc1", _line()).reissues_while_running
 

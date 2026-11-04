@@ -141,7 +141,7 @@ naming it; the bone names are those of CARLA's walkers (`crl_arm__L`,
 | `motion_path` | | The `.npz`; a relative path is taken from the working directory |
 | `fps` | the file's, else 30 | Frames per second; finite and positive |
 | `loop` | `False` | Play the motion over again when it ends |
-| `duration_s` | `None` | Stop after this long; `None`: when the motion ends, or, looping, at the scenario's end |
+| `duration_s` | `None` | Stop after this long (finite and positive); `None`: when the motion ends, or, looping, at the scenario's end |
 | `upper_body_only` | `True` | Drive the spine, neck and arms only (animation domain); `False`: the whole body (animation and movement) |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
 
@@ -243,7 +243,7 @@ A keyframes file lists full-body poses:
 }
 ```
 
-- `time_s` is the time into the motion.
+- `time_s` is the time into the motion: finite and not negative.
 - `x`, `y` and `yaw_deg` place the pose in CARLA's world. Without them, the pose
   is placed where the motion began and faces the way it did then.
 - `joints` gives each joint the generator places (the `joint_names` it answers
@@ -256,11 +256,11 @@ A keyframes file lists full-body poses:
 |---|---|---|
 | `entity_name` | | The pedestrian |
 | `prompt` | `""` | What it does, in words, from the start |
-| `prompts` | `()` | `TimedPrompt(time_s, text)`: texts that take over later |
+| `prompts` | `()` | `TimedPrompt(time_s, text)`: texts that take over later (`time_s` finite and not negative) |
 | `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes |
-| `speed_ms` | `1.3` | Walking speed along the waypoints, m/s |
+| `speed_ms` | `1.3` | Walking speed along the waypoints, m/s; finite and positive |
 | `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
-| `duration_s` | `None` | Stop after this long; `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
+| `duration_s` | `None` | Stop after this long (finite and positive); `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
 | `seed` | `0` | The generator's draws |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
 

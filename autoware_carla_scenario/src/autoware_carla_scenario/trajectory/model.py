@@ -826,11 +826,12 @@ class TrajectoryTiming:
     Args:
         domain: What the times are measured from.
         scale: Factor applied to every vertex time; ``2.0`` plays a recording at
-            half speed.  Must be positive.
-        offset: Seconds added after scaling.
+            half speed.  Must be finite and positive.
+        offset: Seconds added after scaling.  Must be finite.
 
     Raises:
-        ValueError: If *scale* is not positive.
+        ValueError: If *scale* is not finite and positive, or *offset* is
+            not finite.
     """
 
     domain: ReferenceContext = ReferenceContext.RELATIVE
@@ -838,8 +839,18 @@ class TrajectoryTiming:
     offset: float = 0.0
 
     def __post_init__(self) -> None:
-        if not self.scale > 0.0:
-            raise ValueError("TrajectoryTiming.scale must be positive")
+        # NaN fails `> 0.0`, but infinity passes it and would freeze a timed
+        # trajectory at its first vertex; a non-finite offset makes every
+        # trajectory time NaN.
+        if not math.isfinite(self.scale) or not self.scale > 0.0:
+            raise ValueError(
+                f"TrajectoryTiming.scale must be finite and positive, "
+                f"not {self.scale!r}"
+            )
+        if not math.isfinite(self.offset):
+            raise ValueError(
+                f"TrajectoryTiming.offset must be finite, not {self.offset!r}"
+            )
 
     def trajectory_time(self, scenario_time: float, action_start: float) -> float:
         """The vertex time that corresponds to *scenario_time*."""

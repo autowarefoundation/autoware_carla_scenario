@@ -252,7 +252,8 @@ class SpawnAction(BaseAction):
     Raises:
         ValueError: For the ego; for neither or both of *entity_name* and
             *name* (a blank *name* is none); a prop with no *position*, or
-            one on lanelet 0 or less; a negative *shift_max* or *speed*.
+            one on lanelet 0 or less; a negative or non-finite *shift_max*, *speed*, *length* or
+            *width*.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -317,12 +318,24 @@ class SpawnAction(BaseAction):
             raise ValueError(f"{label}: the ego is in the scene from the start")
         if entity_name is None and position is None:
             raise ValueError(f"{label}: adding prop '{prop_name}' needs a position")
-        if shift_max < 0.0:
-            raise ValueError(f"{label}: shift_max must not be negative")
-        if speed < 0.0:
-            raise ValueError(f"{label}: speed must not be negative")
-        if length < 0.0 or width < 0.0:
-            raise ValueError(f"{label}: length and width must not be negative")
+        # NaN passes `< 0.0` and would reach the placement and the speed.
+        if not math.isfinite(shift_max) or shift_max < 0.0:
+            raise ValueError(
+                f"{label}: shift_max must be finite and not negative, "
+                f"not {shift_max!r}"
+            )
+        if not math.isfinite(speed) or speed < 0.0:
+            raise ValueError(
+                f"{label}: speed must be finite and not negative, not {speed!r}"
+            )
+        if not math.isfinite(length) or length < 0.0:
+            raise ValueError(
+                f"{label}: length must be finite and not negative, not {length!r}"
+            )
+        if not math.isfinite(width) or width < 0.0:
+            raise ValueError(
+                f"{label}: width must be finite and not negative, not {width!r}"
+            )
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = "" if entity_name is None else str(entity_name)
         self._name = prop_name

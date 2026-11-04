@@ -485,6 +485,31 @@ class TestSmartPedestrianControllerAction:
         with pytest.raises(ValueError, match=match):
             SmartPedestrianControllerAction("walker1", **kwargs)
 
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize("name", ["speed_ms", "duration_s", "prompt time_s"])
+    def test_non_finite_arguments_are_refused(self, name: str, value: float) -> None:
+        # #1328: NaN passed the sign checks and failed int() at start, or
+        # never reached the end of the run.
+        kwargs: dict[str, Any] = (
+            {"prompts": [TimedPrompt(value, "x")]}
+            if name == "prompt time_s"
+            else {name: value}
+        )
+        with pytest.raises(ValueError, match=f"{name.split()[-1]} must be finite"):
+            SmartPedestrianControllerAction("walker1", **kwargs)
+
+    @pytest.mark.parametrize("time_s", ["NaN", "Infinity", "-Infinity"])
+    def test_a_non_finite_keyframe_time_is_refused(
+        self, tmp_path: Path, time_s: str
+    ) -> None:
+        # json.loads reads NaN and Infinity; they passed `time_s < 0`.
+        bad = tmp_path / "bad.json"
+        bad.write_text(
+            '{"keyframes": [{"time_s": %s, "joints": {"pelvis": [0, 0, 1]}}]}' % time_s
+        )
+        with pytest.raises(ValueError, match="time_s must be finite"):
+            SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+
     def test_a_malformed_keyframes_file_is_refused(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"keyframes": [{"joints": {}}]}')
