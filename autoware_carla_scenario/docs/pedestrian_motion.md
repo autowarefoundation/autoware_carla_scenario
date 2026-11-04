@@ -62,7 +62,7 @@ python -m tools.convert_amass_to_soma --input wave_amass.npz \
 |---|---|
 | `poses` | Each joint's rotation relative to its parent: `(N, J, 3)` axis-angle or `(N, J, 3, 3)` matrices |
 | `joint_names` | The joints' names, in the order of `poses` (the SOMA rig's order if absent) |
-| `absolute_pose`, `joint_orient` | Poses relative to the T-pose need its `joint_orient`; absolute poses need nothing more |
+| `absolute_pose`, `joint_orient` | Poses relative to the T-pose need its `joint_orient`; absolute poses need nothing more, and a `joint_orient` beside them is ignored |
 | `fps` | The frame rate, if the file stores one (`save_soma_npz` does not; give `fps=`, or 30 is assumed) |
 
 `transl`, the identity coefficients and the units are not read: the walker
