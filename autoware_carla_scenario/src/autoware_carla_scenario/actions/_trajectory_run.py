@@ -217,7 +217,7 @@ class TrajectoryRun(BaseAction):
     Raises:
         ValueError: If a timing is given for an untimed trajectory, the
             initial distance offset is negative or not finite, the speed is
-            negative,
+            negative or not finite,
             or *hidden_outside_trajectory* is asked for without ``POSITION``
             mode and a time reference.
     """
@@ -295,8 +295,14 @@ class TrajectoryRun(BaseAction):
                 "initial_distance_offset must be finite and not negative, "
                 f"not {initial_distance_offset!r}"
             )
-        if speed is not None and not speed >= 0.0:
-            raise ValueError("speed must not be negative")
+        # An infinite speed makes the run's distance infinite after one tick
+        # (#1333); ``None`` is how the entity keeps its own speed.
+        if speed is not None:
+            given_speed: float = speed
+            if not math.isfinite(given_speed) or given_speed < 0.0:
+                raise ValueError(
+                    f"speed must be finite and not negative, not {given_speed!r}"
+                )
         # An if statement, not a conditional expression: Codon does not take
         # a subclass for an Optional of its base there (docs/typecheck.md).
         ending: Optional[BaseCondition] = until

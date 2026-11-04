@@ -356,8 +356,8 @@ class RoutingAction(TrajectoryRun):
         ValueError: Without a goal or a trajectory, with both, with
             waypoints beside a trajectory, a goal with a mode other than
             ``driver`` or a positive *initial_distance_offset*, a walking
-            speed that is not finite and positive, a turn-back threshold that
-            is negative or not finite, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
+            speed that is not finite and positive, a *speed* or turn-back
+            threshold that is negative or not finite, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
     _stop_at_goal: bool
