@@ -3782,7 +3782,9 @@ Python version, and the viewer's Run form reads it the same way.</p>
   constraints read it)</li>
 <li>A config value a case would refuse -- an unknown <code>server.world_reset</code>, a
   <code>scenario.timeout_seconds</code> that is not positive, a <code>server.port</code> out of
-  range, a <code>t4scene.step_s</code> that is not a multiple of the tick, ... -- is
+  range, a NaN or negative <code>server.cooldown_seconds</code>, a
+  <code>server.max_tick_rate_hz</code> or <code>server.fog_density_scale</code> that is not a
+  finite number above 0, a <code>t4scene.step_s</code> that is not a multiple of the tick, ... -- is
   refused for every case before any scenario is built or the map is resolved,
   locally as under <code>launcher=slurm</code>: the batch prints
   <code>Error: &lt;case&gt;: &lt;key&gt; ...</code>, naming the case refused, and exits 1, a
@@ -4346,13 +4348,25 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>server.cooldown_seconds</code></td>
 <td>float</td>
 <td><code>2.0</code></td>
-<td>Wait time between consecutive scenario runs</td>
+<td>Wait time (seconds) between consecutive scenario runs; a finite number, <code>0</code> or more (<code>0</code>: none)</td>
 </tr>
 <tr>
 <td><code>server.cooldown_max_retries</code></td>
 <td>int</td>
 <td><code>0</code></td>
 <td>Maximum retries of a run that raised (not of one that ran and failed)</td>
+</tr>
+<tr>
+<td><code>server.max_tick_rate_hz</code></td>
+<td>float</td>
+<td><code>null</code></td>
+<td>Upper bound (Hz) on how fast the run ticks the world, or <code>null</code> for as fast as the server allows; a finite number above <code>0</code> (<code>20</code> is real time at the 0.05 s step, which <code>ego.entity=ros2</code> wants: <a href="../ros2/#timing">ROS 2</a>)</td>
+</tr>
+<tr>
+<td><code>server.fog_density_scale</code></td>
+<td>float</td>
+<td><code>null</code></td>
+<td><code>carla.Weather.FogDensityScale</code> for a server the run starts and for the LiDARs' fog, or <code>null</code> to keep the server's own <code>0.001</code>; a finite number above <code>0</code> (<a href="../driver_interface/">Driver Interface</a>)</td>
 </tr>
 <tr>
 <td><code>server.world_reset</code></td>
@@ -6260,7 +6274,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:25:38 UTC"><span class="timeago" datetime="2026-11-04T18:25:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:25:38 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:42:47 UTC"><span class="timeago" datetime="2026-11-04T18:42:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:42:47 UTC">2026-11-04</span>
   </span>
 
     

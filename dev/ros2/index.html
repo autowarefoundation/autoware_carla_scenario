@@ -2340,7 +2340,9 @@ check. This is how a ROS 2 bridge that relays to CARLA behaves (VisionPilot's ru
 the world in synchronous mode, paced to wall-clock 10 Hz, without waiting for a
 command).</p>
 <p><code>ego.entity=ros2</code> without <code>server.max_tick_rate_hz</code> logs a warning: unpaced, the
-simulation outruns the nodes and their sources look stale.</p>
+simulation outruns the nodes and their sources look stale. The rate must be a finite
+number above 0 or <code>null</code>; anything else (<code>0</code>, a negative rate, <code>nan</code>) is refused
+before the run starts.</p>
 <p>Published stamps and the freshness of commands are both in simulation time, the time
 CARLA's <code>/clock</code> carries, which is what nodes with <code>use_sim_time</code> read.</p>
 <h2 id="what-the-ego-publishes">What the ego publishes<a class="headerlink" href="#what-the-ego-publishes" title="Permanent link">&para;</a></h2>
@@ -2607,7 +2609,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 11:37:10 UTC"><span class="timeago" datetime="2026-11-04T11:37:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 11:37:10 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:42:47 UTC"><span class="timeago" datetime="2026-11-04T18:42:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:42:47 UTC">2026-11-04</span>
   </span>
 
     
