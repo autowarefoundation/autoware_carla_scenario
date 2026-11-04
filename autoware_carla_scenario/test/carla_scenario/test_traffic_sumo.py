@@ -4028,6 +4028,49 @@ def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
             BicycleConfig(min_distance_m=bad)
 
 
+def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
+    # randomTrips.py keeps a ride min <= distance < max: an inverted or equal
+    # pair kept none, and generated no ride without a word (#1452).
+    for low, high in ((3000.0, 2000.0), (2000.0, 2000.0)):
+        with pytest.raises(
+            ValueError,
+            match="^bicycles.min_distance_m must be less than bicycles.max_distance_m",
+        ):
+            BicycleConfig(enabled=True, min_distance_m=low, max_distance_m=high)
+        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be less"):
+            SumoBackendConfig.from_mapping(
+                {"bicycles": {"min_distance_m": low, "max_distance_m": high}}
+            )
+    ride = BicycleConfig(min_distance_m=100.0, max_distance_m=100.5)
+    assert (ride.min_distance_m, ride.max_distance_m) == (100.0, 100.5)
+    # No limit above leaves any shortest ride allowed.
+    assert (
+        BicycleConfig(min_distance_m=5000.0, max_distance_m=None).max_distance_m is None
+    )
+    assert (
+        BicycleConfig(min_distance_m=5000.0, max_distance_m=math.inf).min_distance_m
+        == 5000.0
+    )
+
+
+def test_a_run_with_inverted_bicycle_ride_distances_is_refused_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(
+        [
+            "traffic=sumo",
+            "traffic.options.bicycles.min_distance_m=3000.0",
+            "traffic.options.bicycles.max_distance_m=2000.0",
+        ]
+    )
+    with pytest.raises(
+        run.RunConfigError, match="bicycles.min_distance_m must be less"
+    ):
+        run.check_run_config(cfg)
+
+
 @needs_sumo
 def test_max_vehicles_zero_mirrors_no_ambient_vehicle(
     crossroads: Path, tmp_path: Path

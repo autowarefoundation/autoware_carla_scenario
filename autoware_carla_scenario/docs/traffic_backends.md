@@ -1064,8 +1064,9 @@ apart from one built without, and a network given as `net_path` is used as it
 is.
 
 **SUMO's own bicycles** (`bicycles`, off by default) ride from and to edges a
-bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, from
-`min_distance_m` to `max_distance_m` each) and are mirrored into CARLA as
+bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, each
+at least `min_distance_m` and under `max_distance_m` long, so `min_distance_m`
+must be less than `max_distance_m`) and are mirrored into CARLA as
 bicycles, each one of `blueprints` (those the world lacks are left out; with
 none left, bicycles ride in SUMO only, where its traffic still sees them), with
 the role name `sumo:<id>`. They count against limits of their own:
