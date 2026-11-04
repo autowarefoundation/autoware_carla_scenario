@@ -1003,7 +1003,7 @@ The scanner discovers results from two directory layouts:
 base_path/
 ├── outputs/                          # Single and batch runs
 │   └── YYYY-MM-DD/
-│       └── HH-MM-SS/
+│       └── HH-MM-SS/                 # HH-MM-SS-1, -2, ...: a later run in the same second
 │           ├── ScenarioName_result.json
 │           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
 │           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
@@ -1098,7 +1098,7 @@ sequenceDiagram
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
 - **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
-- **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories.
+- **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories. The directory is the run's alone: one started in the same second as another run or a CLI sweep gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...
 
 ### Condition Tree Display
 

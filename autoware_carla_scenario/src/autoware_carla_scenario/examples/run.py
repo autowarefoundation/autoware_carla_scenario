@@ -1366,22 +1366,23 @@ def _log_batch_plan(
     logger.info(sep)
 
 
-def _make_batch_output_dir() -> Path:
-    """Create a Hydra-style timestamped output directory for batch runs.
+def _reserve_output_dir(root: str) -> Path:
+    """Create a Hydra-style timestamped directory under *root* that is this
+    run's alone, and return it relative to the working directory.
 
-    The directory is this batch's alone: it is created with ``mkdir``, which
-    fails when it exists, so two batches started in the same second never
-    share one (#1223).  The first gets ``HH-MM-SS``, the next ``HH-MM-SS-1``,
-    then ``HH-MM-SS-2``, and so on.
+    The directory is created with ``mkdir``, which fails when it exists, so
+    two runs started in the same second never share one (#1223, #1359).  The
+    first gets ``<root>/YYYY-MM-DD/HH-MM-SS``, the next ``HH-MM-SS-1``, then
+    ``HH-MM-SS-2``, and so on.
 
-    Returns:
-        Absolute path to the created directory
-        (e.g. ``outputs/2026-03-13/12-00-00/``).
+    Relative, as Hydra's own ``outputs/...`` and ``multirun/...`` defaults
+    are, so it can be handed to Hydra as an override whatever characters the
+    working directory's path holds.
     """
     from datetime import datetime  # noqa: PLC0415
 
     now = datetime.now()  # noqa: DTZ005
-    day = Path("outputs") / now.strftime("%Y-%m-%d")
+    day = Path(root) / now.strftime("%Y-%m-%d")
     day.mkdir(parents=True, exist_ok=True)
     name = now.strftime("%H-%M-%S")
     suffix = 0
@@ -1392,7 +1393,81 @@ def _make_batch_output_dir() -> Path:
         except FileExistsError:
             suffix += 1
             continue
-        return output_dir.resolve()
+        return output_dir
+
+
+def _make_batch_output_dir() -> Path:
+    """Create a Hydra-style timestamped output directory for batch runs.
+
+    The directory is this batch's alone (:func:`_reserve_output_dir`): two
+    batches started in the same second never share one (#1223).  The first
+    gets ``HH-MM-SS``, the next ``HH-MM-SS-1``, then ``HH-MM-SS-2``, and so on.
+
+    Returns:
+        Absolute path to the created directory
+        (e.g. ``outputs/2026-03-13/12-00-00/``).
+    """
+    return _reserve_output_dir("outputs").resolve()
+
+
+#: Hydra's command-line flags that print something and run no job: a run
+#: directory reserved for them would be left empty.
+_HYDRA_NO_JOB_FLAGS = (
+    "--help",
+    "-h",
+    "--hydra-help",
+    "--version",
+    "--cfg",
+    "-c",
+    "--info",
+    "-i",
+    "--shell-completion",
+    "-sc",
+)
+
+
+def _sets_hydra_key(argv: list[str], key: str) -> bool:
+    """Return ``True`` when an override in *argv* sets *key* (``key=``,
+    ``+key=``, ``++key=`` or ``~key``)."""
+    for arg in argv:
+        name = arg.lstrip("+~").split("=", 1)[0]
+        if name == key:
+            return True
+    return False
+
+
+def _reserve_hydra_output_dir(argv: list[str]) -> tuple[list[str], Path | None]:
+    """Reserve this Hydra run's output directory before Hydra starts (#1359).
+
+    Hydra's defaults, ``outputs/<date>/<time>`` for a run and
+    ``multirun/<date>/<time>`` for a sweep, are created with ``exist_ok``:
+    two runs started in the same second would share one.  This creates the
+    directory exclusively, as a batch's is (:func:`_reserve_output_dir`), and
+    returns *argv* with a ``hydra.run.dir`` (or, for ``--multirun``,
+    ``hydra.sweep.dir``) override naming it, and the directory.
+
+    *argv* is returned unchanged, with ``None``, when it sets that directory
+    itself (the UI runner's ``hydra.run.dir=multirun/<date>/<time>/<i>``, a
+    user's own) or asks Hydra for something other than a job (``--help``,
+    ``--cfg``, ...).
+    """
+    if any(arg.split("=", 1)[0] in _HYDRA_NO_JOB_FLAGS for arg in argv[1:]):
+        return argv, None
+    multirun = _multirun_requested_in_argv(argv)
+    key = "hydra.sweep.dir" if multirun else "hydra.run.dir"
+    if _sets_hydra_key(argv, key):
+        return argv, None
+    reserved = _reserve_output_dir("multirun" if multirun else "outputs")
+    return [*argv, f"{key}={reserved.as_posix()}"], reserved
+
+
+def _remove_if_empty(directory: Path) -> None:
+    """Remove *directory* when nothing was written in it (Hydra refused the
+    overrides before its job started); keep it otherwise."""
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
 
 
 def _batch_queue(
@@ -2535,7 +2610,14 @@ def _dispatch(resume_from: int) -> None:
         # this process (tests, an embedding runner).
         _multirun_failed.clear()
         _multirun_ran.clear()
-        _hydra_main()
+        # This run's own output directory, reserved before Hydra creates
+        # Hydra's timestamped one with exist_ok (#1359).
+        sys.argv, reserved = _reserve_hydra_output_dir(sys.argv)
+        try:
+            _hydra_main()
+        finally:
+            if reserved is not None:
+                _remove_if_empty(reserved)
         _exit_if_multirun_failed()
 
 

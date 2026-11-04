@@ -507,10 +507,13 @@ def test_basic_sweeper_stops_with_2_on_a_refused_case(
 
 
 def test_main_does_not_exit_for_an_earlier_calls_failed_cases(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The verdicts recorded are those of this main() call alone."""
     from autoware_carla_scenario.examples import run
+
+    # main() reserves the sweep's multirun/ directory here (#1359).
+    monkeypatch.chdir(tmp_path)
 
     monkeypatch.setattr(run, "_multirun_failed", ["+verdict=fail"])
     monkeypatch.setattr(run, "_multirun_ran", ["+verdict=fail"])
@@ -521,9 +524,12 @@ def test_main_does_not_exit_for_an_earlier_calls_failed_cases(
     run.main()  # no SystemExit
 
 
-def _stub_main(monkeypatch: pytest.MonkeyPatch, hydra_main: Any) -> Any:
-    """``examples.run`` with main()'s single-run path calling *hydra_main*."""
+def _stub_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hydra_main: Any) -> Any:
+    """``examples.run`` with main()'s single-run path calling *hydra_main*,
+    in *tmp_path*, where main() reserves the run's directory (#1359)."""
     from autoware_carla_scenario.examples import run
+
+    monkeypatch.chdir(tmp_path)
 
     monkeypatch.setattr(run, "_multirun_failed", [])
     monkeypatch.setattr(run, "_multirun_ran", [])
@@ -534,12 +540,14 @@ def _stub_main(monkeypatch: pytest.MonkeyPatch, hydra_main: Any) -> Any:
 
 
 def test_resume_from_is_this_main_calls_alone(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """--resume-from reaches the sweeper of its own run, not a later one's (#797)."""
     seen: list[str | None] = []
     run = _stub_main(
-        monkeypatch, lambda: seen.append(os.environ.get("SWEEP_RESUME_FROM"))
+        monkeypatch,
+        tmp_path,
+        lambda: seen.append(os.environ.get("SWEEP_RESUME_FROM")),
     )
     monkeypatch.delenv("SWEEP_RESUME_FROM", raising=False)
     argv = ["scenario", "--multirun", "scenario=a/b"]
@@ -552,7 +560,7 @@ def test_resume_from_is_this_main_calls_alone(
 
 
 def test_resume_from_puts_back_the_value_it_replaced(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A value the user set stands for the runs without the flag, and comes
     back after one with it, even one that exits."""
@@ -562,7 +570,7 @@ def test_resume_from_puts_back_the_value_it_replaced(
         raise SystemExit(1)
 
     seen: list[str | None] = []
-    run = _stub_main(monkeypatch, hydra_main)
+    run = _stub_main(monkeypatch, tmp_path, hydra_main)
     monkeypatch.setenv("SWEEP_RESUME_FROM", "5")
     argv = ["scenario", "--multirun", "scenario=a/b"]
     monkeypatch.setattr(sys, "argv", [*argv, "--resume-from", "3"])

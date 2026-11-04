@@ -323,7 +323,9 @@ uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compl
 ```
 
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
-not `outputs/`. The result viewer scans both directories.
+not `outputs/`. The result viewer scans both directories. A sweep started in
+the same second as another gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...: every
+sweep has a directory of its own, unless `hydra.sweep.dir=` names one.
 
 A failed, crashed or timed-out case does not stop the sweep: every case runs,
 the sweeper logs `Sweep complete: P/N succeeded, F failed (T timed out).`, and
@@ -910,7 +912,10 @@ uv run scenario-odd route path/to/urban.yaml 'intersection_passing/*' lane_chang
 
 ### Output Files
 
-Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
+Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/` (a run
+started in the same second as another run or a batch gets `HH-MM-SS-1`, then
+`HH-MM-SS-2`, ...: every run has a directory of its own, unless
+`hydra.run.dir=` names one):
 
 | File | Description |
 |------|-------------|
