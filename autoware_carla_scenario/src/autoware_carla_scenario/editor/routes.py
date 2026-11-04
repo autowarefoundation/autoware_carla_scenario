@@ -921,6 +921,12 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
 
     The readout beside the map in the lanelet picker: the map itself is already
     open there, and is handed the matching ids to outline.
+
+    The evaluation runs in a worker thread: with ``load_map`` set it parses the
+    whole Lanelet2 map -- seconds for a city -- and run inline that would stall
+    the event loop, so no other tab would be served until it finished.  The
+    draft is read from disk per request, so the document the thread evaluates
+    is this request's own copy and shares nothing with concurrent edits.
     """
     form = dict(await request.form())
     slot_key = str(form.get("slot", ""))
@@ -933,7 +939,9 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
             error=f"No lanelet field named {slot_key!r}."
         )
     else:
-        result = map_preview.evaluate_slot(draft.document, slot, load_map=load_map)
+        result = await run_in_threadpool(
+            map_preview.evaluate_slot, draft.document, slot, load_map=load_map
+        )
     return _templates(request).TemplateResponse(
         request=request,
         name="partials/lanelet_preview.html",
