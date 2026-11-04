@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from ..constants import FIXED_DELTA_SECONDS
+from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from .convert import LOG_SUFFIX, checked_rear_axle_offset, write_t4_scene
 from .grid import checked_max_distance, scene_stem
 
@@ -91,6 +91,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     try:
+        tick_multiple(args.step, "--step")
         checked_max_distance(args.max_distance, "--max-distance", "--all-objects")
         if args.rear_axle_offset is not None:
             checked_rear_axle_offset(args.rear_axle_offset, "--rear-axle-offset")

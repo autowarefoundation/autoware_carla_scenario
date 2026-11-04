@@ -65,7 +65,7 @@ def test_shipped_policy_timestep_is_a_multiple_of_the_tick() -> None:
     assert ticks >= 1
 
 
-@pytest.mark.parametrize("seconds", [0.12, 0.07])
+@pytest.mark.parametrize("seconds", [0.12, 0.07, math.inf, math.nan])
 def test_policy_timestep_between_ticks_is_refused(seconds: float) -> None:
     """The policy is asked on tick boundaries only: 0.12 would run every 0.15 s
     while asking for plans 0.12 s ahead, so it is refused up front (#952)."""
