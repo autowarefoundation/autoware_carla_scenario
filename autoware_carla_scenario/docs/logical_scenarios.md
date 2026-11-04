@@ -289,10 +289,15 @@ more than 12 m from the route within that window (it was teleported -- an
 appearing entity --, or the condition was not checked for a while) the whole
 route is searched instead and the nearer answer kept. The result is clamped
 to `[0, length]`, so a target off the route is one the rule meets on every
-tick or on none: from `start` with a negative `value` (or past `end` with a
-positive one), `greater_than_or_equal` holds from the first tick even for an
-entity behind the start (never holds past the end, and a waypoint waiting on
-it never departs). The validator **warns** about such a target where the
+tick or on none. Before the start (`start` with a negative `value`),
+`greater_than_or_equal` holds from the first tick the entity is on the map,
+even for an entity behind the start. Past the end (`end` with a positive
+`value`), it never holds, and a waypoint waiting on it never departs. A
+target exactly on a bound never holds with a strict rule pointing off the
+route either: `less_than` with `start` and `value: 0`, `greater_than` with
+`end` and `value: 0`. The other rules there can hold, the default
+`greater_than_or_equal` from `start`, and `less_than_or_equal` to `end`, among
+them. The validator **warns** about either kind of target where the
 pattern pins its anchor to a bound -- `start`, `end`, `segment:0:start`, the
 last segment's `end`, a junction that is the first or last segment -- and
 says nothing of other anchors, whose distance from a bound is the map's. An

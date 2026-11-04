@@ -1846,28 +1846,41 @@ def _check_route_progress_bounds(
 
     An entity's route s is clamped to ``[0, length]``, so a target before the
     route's start or past its end is one the rule always or never meets: from
-    ``start - 15 m``, ``>=`` holds from the first tick for any entity on the
-    route, even one behind the start; to ``end + 5 m`` it never holds, and a
-    waypoint waiting on it never departs.  Only an anchor pinned to a bound
-    (:func:`_route_bound`) is judged, the length being the map's.  A warning,
-    not an error, as for the other conditions that never fire
-    (:func:`_check_persistent_child`, :func:`_check_equal_tolerance`): the
-    document builds and runs as it did.
+    ``start - 15 m``, ``>=`` holds from the first tick the entity is on the map
+    (one not spawned yet, or hidden below the route, has no progress), even
+    behind the start; to ``end + 5 m`` it never holds, and a waypoint waiting
+    on it never departs.  A target exactly on a bound with a strict rule
+    pointing off the route never holds either (#1389): ``<`` the start, ``>``
+    the end.  The other rules there -- the default ``>=`` the start, and
+    ``<=`` the end, ``>`` the start, ``<`` the end, ``=`` either -- can all
+    hold.  Only an anchor pinned to a bound (:func:`_route_bound`) is judged,
+    the length being the map's.  A warning, not an error, as for the other
+    conditions that never fire (:func:`_check_persistent_child`,
+    :func:`_check_equal_tolerance`): the document builds and runs as it did.
     """
     params = node.params
     value = _number(params, "value")
     if value is None:
         return
     bound = _route_bound(params.get("anchor"), route)
+    rule = str(params.get("rule") or "greater_than_or_equal")
+    hint = "Give a distance that puts the target on the route."
     if bound == "start" and value < 0:
         where = f"{-value:g} m before the route's start"
         below = True
     elif bound == "end" and value > 0:
         where = f"{value:g} m past the route's end"
         below = False
+    elif bound == "start" and value == 0 and rule == "less_than":
+        where = "the route's start"
+        below = True
+        hint = 'Use "less than or equal" (or a positive distance) instead.'
+    elif bound == "end" and value == 0 and rule == "greater_than":
+        where = "the route's end"
+        below = False
+        hint = 'Use "greater than or equal" (or a negative distance) instead.'
     else:
         return
-    rule = str(params.get("rule") or "greater_than_or_equal")
     rising = rule in ("greater_than", "greater_than_or_equal")
     falling = rule in ("less_than", "less_than_or_equal")
     if rule == "equal_to":
@@ -1884,7 +1897,10 @@ def _check_route_progress_bounds(
     reading = rule.replace("_", " ")
     if always:
         extreme = "behind the route's start" if below else "at the route's end"
-        verdict = f'"{reading}" holds from the first tick, even for an entity {extreme}'
+        verdict = (
+            f'"{reading}" holds from the first tick the entity is on the map, '
+            f"even for one {extreme}"
+        )
     else:
         verdict = (
             f'"{reading}" can never hold: an action waiting on it never '
@@ -1893,8 +1909,7 @@ def _check_route_progress_bounds(
     out.warn(
         node.id,
         f"Route progress: the target is {where}. Progress is clamped to the "
-        f"route, from 0 to its length, so {verdict}. Give a distance that "
-        "puts the target on the route.",
+        f"route, from 0 to its length, so {verdict}. {hint}",
         node.id,
     )
 
