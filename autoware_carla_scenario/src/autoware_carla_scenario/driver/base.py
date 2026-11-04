@@ -146,6 +146,10 @@ class DriverCameraConfig:
     origin is the rear axle (``base_link``): moved by the rear-axle offset
     (:attr:`DriverClientConfig.rear_axle_offset_m`, else derived), the way
     :func:`~autoware_carla_scenario.driver.observation.sensor_pose_in_rig` moves it.
+
+    Raises:
+        ValueError: If the image size or fps is not positive and finite, the
+            ``fov`` is outside (0, 180) degrees, or the mount is not finite.
     """
 
     logical_id: str = DEFAULT_CAMERA_LOGICAL_ID
@@ -162,6 +166,43 @@ class DriverCameraConfig:
     #: The lens the frames are drawn through; ``None`` is CARLA's pinhole of
     #: :attr:`fov`.
     lens: Optional[DriverCameraLens] = None
+
+    def __post_init__(self) -> None:
+        # A zero, negative, NaN or infinite fps would only fail (or misbehave)
+        # as the camera attaches, after the ego has spawned (#1391).  The
+        # mapping is not coerced, so an int field may hold a float NaN too.
+        if (
+            not math.isfinite(float(self.image_width))
+            or not math.isfinite(float(self.image_height))
+            or self.image_width <= 0
+            or self.image_height <= 0
+            or not math.isfinite(self.fps)
+            or self.fps <= 0.0
+        ):
+            raise ValueError(
+                f"camera {self.logical_id!r}: image size and fps must be positive "
+                f"and finite, got {self.image_width}x{self.image_height} "
+                f"at {self.fps} fps"
+            )
+        # CARLA renders a pinhole of the horizontal fov, which only spans
+        # (0, 180) degrees; a lens camera is still made with it.
+        if not 0.0 < self.fov < 180.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: fov must be in (0, 180) degrees, "
+                f"got {self.fov}"
+            )
+        for key, value in (
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"camera {self.logical_id!r}: {key} must be finite, got {value}"
+                )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverCameraConfig":
@@ -440,6 +481,9 @@ class DriverClientConfig:
                 "unset, so it must name a Unix socket (unix:///path/policy.sock), "
                 f"got {self.address!r}"
             )
+        camera_ids = [camera.logical_id for camera in self.cameras]
+        if len(set(camera_ids)) != len(camera_ids):
+            raise ValueError(f"camera logical ids must be unique, got {camera_ids}")
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):
             raise ValueError(f"LiDAR logical ids must be unique, got {ids}")

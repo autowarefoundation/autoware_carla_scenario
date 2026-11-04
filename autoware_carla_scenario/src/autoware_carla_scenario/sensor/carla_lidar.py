@@ -19,6 +19,7 @@ it is taken (:mod:`.lidar_weather`).
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import time
 from dataclasses import dataclass
@@ -89,6 +90,30 @@ class CarlaLidarSensorConfig:
     yaw: float = 0.0
 
     def __post_init__(self) -> None:
+        # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
+        # below, so the numbers are refused unless finite first (#1391).  The
+        # mapping is not coerced, so an int field may hold a float NaN too.
+        for key, value in (
+            ("channels", float(self.channels)),
+            ("points_per_second", float(self.points_per_second)),
+            ("range_m", self.range_m),
+            ("upper_fov_deg", self.upper_fov_deg),
+            ("lower_fov_deg", self.lower_fov_deg),
+            ("dropoff_general_rate", self.dropoff_general_rate),
+            ("weather_noise", self.weather_noise),
+            ("fog_density_scale", self.fog_density_scale),
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"LiDAR {key} must be finite, got {value}")
+        seed = self.noise_seed
+        if seed is not None and not math.isfinite(float(seed)):
+            raise ValueError(f"LiDAR noise_seed must be finite, got {seed}")
         if self.channels < 1:
             raise ValueError("LiDAR channels must be positive")
         if self.range_m <= 0.0 or self.points_per_second <= 0:

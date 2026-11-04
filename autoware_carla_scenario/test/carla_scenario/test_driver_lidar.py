@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -64,6 +65,41 @@ def test_a_rolled_mount_puts_a_point_below_the_sensor_on_the_ground() -> None:
 def test_lidar_config_rejects_an_inverted_field_of_view() -> None:
     with pytest.raises(ValueError, match="lower_fov_deg"):
         DriverLidarConfig(upper_fov_deg=-30.0, lower_fov_deg=10.0)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "channels",
+        "points_per_second",
+        "noise_seed",
+        "range_m",
+        "upper_fov_deg",
+        "lower_fov_deg",
+        "dropoff_general_rate",
+        "weather_noise",
+        "fog_density_scale",
+        "position_x",
+        "position_y",
+        "position_z",
+        "roll",
+        "pitch",
+        "yaw",
+    ],
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_lidar_config_rejects_non_finite_numbers(field: str, value: float) -> None:
+    """A NaN fails every comparison, so ``range_m=nan`` used to pass (#1391)."""
+    changes: dict[str, Any] = {field: value}
+    with pytest.raises(ValueError, match=f"LiDAR {field} must be finite"):
+        DriverLidarConfig(**changes)
+
+
+@pytest.mark.parametrize("field", ["channels", "points_per_second", "noise_seed"])
+def test_a_nan_from_yaml_in_an_int_field_is_refused(field: str) -> None:
+    """``checked_options`` does not coerce, so ``channels: .nan`` arrives a float."""
+    with pytest.raises(ValueError, match=f"LiDAR {field} must be finite"):
+        DriverClientConfig.from_mapping({"lidars": [{field: float("nan")}]})
 
 
 def test_lidar_logical_ids_must_be_unique() -> None:

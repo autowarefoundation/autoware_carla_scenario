@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml  # type: ignore[import-untyped]
@@ -164,6 +165,59 @@ def test_multiple_cameras_are_supported() -> None:
     )
     assert [camera.logical_id for camera in config.cameras] == ["front", "rear"]
     assert config.cameras[1].yaw == pytest.approx(180.0)
+
+
+def test_camera_logical_ids_must_be_unique() -> None:
+    """Two cameras under one id would both attach, the second's mount winning (#1391)."""
+    with pytest.raises(ValueError, match="camera logical ids must be unique"):
+        DriverClientConfig.from_mapping(
+            {
+                "cameras": [
+                    {"logical_id": "front"},
+                    {"logical_id": "front", "yaw": 180.0},
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"fps": 0.0},
+        {"fps": -10.0},
+        {"fps": float("nan")},
+        {"fps": float("inf")},
+        {"image_width": 0},
+        {"image_height": -1},
+        {"image_width": float("nan")},
+        {"image_height": float("nan")},
+        {"image_width": float("inf")},
+    ],
+)
+def test_camera_refuses_a_non_positive_or_non_finite_size_or_fps(
+    values: dict,
+) -> None:
+    """Each would only fail as the camera attaches, after the ego spawned (#1391)."""
+    with pytest.raises(ValueError, match="image size and fps must be positive"):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", **values}]}
+        )
+
+
+@pytest.mark.parametrize("fov", [0.0, -30.0, 180.0, 270.0, float("nan"), float("inf")])
+def test_camera_refuses_a_fov_a_pinhole_cannot_have(fov: float) -> None:
+    with pytest.raises(ValueError, match=r"fov must be in \(0, 180\)"):
+        DriverCameraConfig(logical_id="front", fov=fov)
+
+
+@pytest.mark.parametrize(
+    "field", ["position_x", "position_y", "position_z", "roll", "pitch", "yaw"]
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_camera_refuses_a_non_finite_mount(field: str, value: float) -> None:
+    changes: dict[str, Any] = {field: value}
+    with pytest.raises(ValueError, match=f"{field} must be finite"):
+        DriverCameraConfig(logical_id="front", **changes)
 
 
 def test_camera_maps_onto_a_carla_sensor_config() -> None:
