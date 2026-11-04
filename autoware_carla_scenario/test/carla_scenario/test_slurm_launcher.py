@@ -841,6 +841,40 @@ def test_slurm_checks_the_launcher_of_an_autoware_case_after_an_autopilot_one(
         run.check_batch_configs([first, second])
 
 
+@pytest.mark.parametrize("kind", ["docker", "command"])
+def test_a_batch_with_an_unknown_launcher_key_is_refused_before_anything_runs(
+    fake_slurm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """#1413: a typo under autoware.launcher refuses the whole batch up front,
+    under SLURM and locally, naming the key."""
+    from autoware_carla_scenario.slurm import submit
+
+    run = fake_slurm.run
+    overrides = [
+        "ego.entity=autoware",
+        f"autoware.launcher.type={kind}",
+        "+autoware.launcher.stop_timout_s=60",
+    ]
+    with pytest.raises(
+        run.RunConfigError, match=re.escape("autoware.launcher.stop_timout_s")
+    ):
+        run.check_batch_configs([run._compose_config(_CONCRETE, overrides)])
+
+    monkeypatch.setattr(
+        submit, "submit_batch", lambda **_: pytest.fail("submitted the batch")
+    )
+    monkeypatch.setattr(
+        run, "_make_batch_output_dir", lambda: pytest.fail("made the output dir")
+    )
+    with pytest.raises(ValueError, match=re.escape("autoware.launcher.stop_timout_s")):
+        run.run_batch([_CONCRETE], ["launcher=slurm", *overrides])
+    local = fake_slurm.batch_dir("local")
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: local)
+    with pytest.raises(ValueError, match=re.escape("autoware.launcher.stop_timout_s")):
+        run.run_batch([_CONCRETE], overrides)
+    assert not (fake_slurm.state / "sbatch.log").exists()
+
+
 #: One ``map`` setting a batch's second case sets differently: each decides
 #: the map its run is on (#1241).
 _MAP_SETTINGS = [
