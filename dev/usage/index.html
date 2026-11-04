@@ -3784,7 +3784,10 @@ Python version, and the viewer's Run form reads it the same way.</p>
   <code>scenario.timeout_seconds</code> that is not positive, a <code>server.port</code> out of
   range, a NaN or negative <code>server.cooldown_seconds</code>, a
   <code>server.max_tick_rate_hz</code> or <code>server.fog_density_scale</code> that is not a
-  finite number above 0, a <code>t4scene.step_s</code> that is not a multiple of the tick, ... -- is
+  finite number above 0, a <code>server.cooldown_max_retries</code> or
+  <code>server.reload_every</code> that is not a whole number, a seed or count that is
+  not one (<a href="#one-seed-for-the-whole-run">One Seed for the Whole Run</a>), an
+  <code>environment.*</code> value that is not a number, a <code>t4scene.step_s</code> that is not a multiple of the tick, ... -- is
   refused for every case before any scenario is built or the map is resolved,
   locally as under <code>launcher=slurm</code>: the batch prints
   <code>Error: &lt;case&gt;: &lt;key&gt; ...</code>, naming the case refused, and exits 1, a
@@ -4164,13 +4167,23 @@ is refused before anything starts.</p>
 follows, so the same seed runs the same scenario again:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight<span class="w"> </span><span class="nv">seed</span><span class="o">=</span><span class="m">42</span>
 </code></pre></div>
-<p>A seed -- <code>seed</code>, and <code>sweep.odd_sample.seed</code> -- is a whole number, not
-negative: <code>42</code> or <code>42.0</code>, not <code>1.9</code>, a boolean or a string that is no
-integer, as a route search's counts are
-(<a href="../logical_scenarios/">Logical Scenarios</a>); <code>sweep.odd_sample.count</code> is a
-whole number of at least 1. Any other value is refused before anything
-starts, naming the key, on every path: a single run, a batch (local or
-SLURM), a lanelet sweep and <code>scenario-expand</code>.</p>
+<p>A seed -- <code>seed</code>, <code>sweep.odd_sample.seed</code>, and each component's own below
+(<code>background_traffic.seed</code>, <code>driver.random_seed</code>,
+<code>driver.lidars[].noise_seed</code>) -- is a whole number, not negative: <code>42</code> or
+<code>42.0</code>, not <code>1.9</code>, a boolean or a string that is no integer, as a route
+search's counts are (<a href="../logical_scenarios/">Logical Scenarios</a>);
+<code>sweep.odd_sample.count</code> is a whole number of at least 1. Any other value is
+refused before anything starts, naming the key, on every path: a single run,
+a batch (local or SLURM), a lanelet sweep and <code>scenario-expand</code> (which reads
+only <code>seed</code> and <code>sweep.odd_sample</code>). The driver's and its LiDARs' seeds are
+refused when their config is built, with an <code>ego.entity=carla_driver</code> run's
+other checks; being typed fields, they take no string at all, not even
+<code>"7"</code>.</p>
+<p>The other whole-number settings a run reads follow the same rule:
+<code>background_traffic.source.initial_vehicles</code> and <code>.max_vehicles</code> (not
+negative; <code>max_vehicles</code> may be null), <code>server.cooldown_max_retries</code> and
+<code>server.reload_every</code> (not negative). <code>2.0</code> is 2, but <code>2.5</code> or <code>true</code> is
+refused, naming the key, rather than run as 2 or 1.</p>
 <p>It is the seed of:</p>
 <table>
 <thead>
@@ -4369,7 +4382,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>server.cooldown_max_retries</code></td>
 <td>int</td>
 <td><code>0</code></td>
-<td>Maximum retries of a run that raised (not of one that ran and failed)</td>
+<td>Maximum retries of a run that raised (not of one that ran and failed); a whole number, <code>0</code> or more (<code>2.0</code> is 2; <code>1.9</code> or <code>true</code> is refused)</td>
 </tr>
 <tr>
 <td><code>server.max_tick_rate_hz</code></td>
@@ -4393,7 +4406,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>server.reload_every</code></td>
 <td>int</td>
 <td><code>0</code></td>
-<td>With <code>world_reset: soft</code>, load the map on every N-th reset anyway; <code>0</code>: only when a soft reset cannot be done</td>
+<td>With <code>world_reset: soft</code>, load the map on every N-th reset anyway; <code>0</code> (or <code>null</code>): only when a soft reset cannot be done; a whole number, <code>0</code> or more</td>
 </tr>
 </tbody>
 </table>
@@ -6289,7 +6302,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 20:02:44 UTC"><span class="timeago" datetime="2026-11-04T20:02:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 20:02:44 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 20:28:38 UTC"><span class="timeago" datetime="2026-11-04T20:28:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 20:28:38 UTC">2026-11-04</span>
   </span>
 
     
