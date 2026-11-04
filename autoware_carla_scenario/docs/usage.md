@@ -315,7 +315,7 @@ uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compl
 
 # Resume a sweep from job number N (1-indexed; 0 disables).
 uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compliance \
-  hydra/sweeper=lanelet_constraint sweep.resume_from=10
+  hydra/sweeper=lanelet_constraint --resume-from 10
 ```
 
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
@@ -357,8 +357,7 @@ exit 1.
 
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
-(`the sweep expands to no case`), or `--resume-from` / `sweep.resume_from` is
-past its last case.
+(`the sweep expands to no case`), or `--resume-from` is past its last case.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
 sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
