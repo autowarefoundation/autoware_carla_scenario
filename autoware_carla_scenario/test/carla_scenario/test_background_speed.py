@@ -248,7 +248,7 @@ def _scenario() -> BaseScenario:
     )
 
 
-def _with_background(speed: str) -> Any:
+def _with_background(speed: str, *extra: str) -> Any:
     from pathlib import Path
 
     from hydra import compose, initialize_config_dir
@@ -262,6 +262,7 @@ def _with_background(speed: str) -> Any:
             overrides=[
                 "background_traffic.enabled=true",
                 f"background_traffic.source.speed_kmh={speed}",
+                *extra,
             ],
         )
 
@@ -282,6 +283,20 @@ def test_the_config_takes_a_small_positive_speed() -> None:
     (initial,) = scenario._init_actions
     assert isinstance(initial, TrafficSourceAction)
     assert initial._speed_kmh == 2.0
+
+
+@pytest.mark.parametrize("key", ["vehicles_per_minute", "min_gap_m"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-1.0", "many"])
+def test_the_config_refuses_a_bad_rate_or_gap_naming_the_key(
+    key: str, value: str
+) -> None:
+    # #1321: a NaN rate failed `rate > 0` and was dropped without a word; an
+    # infinite one crashed the run on its second tick.
+    from autoware_carla_scenario.examples.run import add_background_traffic
+
+    config = _with_background("30.0", f"background_traffic.source.{key}={value}")
+    with pytest.raises(ValueError, match=rf"background_traffic\.source\.{key}"):
+        add_background_traffic(config, _scenario())
 
 
 def _speed_errors(speed: Any) -> list[str]:

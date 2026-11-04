@@ -792,6 +792,10 @@ self.register_pre_tick(
   editor's validator, because a vehicle that never moves is no traffic (a parked
   car is an entity). **`max_vehicles`** counts every background vehicle on the
   road, whichever source made it.
+- **`vehicles_per_minute`** and **`min_gap_m`** (the least distance from a new
+  vehicle to any other) must be finite and not negative; NaN or infinity is
+  refused by `TrafficSourceAction` and by `background_traffic.source.*`, naming
+  the key, rather than crashing the run or being dropped without a word.
 
 The examples take all of this from the config, for any scenario:
 

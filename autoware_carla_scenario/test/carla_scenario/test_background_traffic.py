@@ -6,6 +6,7 @@ then drives the vehicles is the backends' business, tested with them.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -222,6 +223,21 @@ class TestSource:
             TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=-1)
         with pytest.raises(ValueError):
             TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=-1.0)
+
+    @pytest.mark.parametrize("rate", [math.nan, math.inf, -math.inf])
+    def test_a_rate_must_be_finite(self, rate: float) -> None:
+        # #1321: NaN or infinity failed int() on the second tick, mid-run.
+        with pytest.raises(ValueError, match="vehicles_per_minute"):
+            TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=rate)
+
+    @pytest.mark.parametrize("gap", [math.nan, math.inf, -1.0])
+    def test_a_gap_must_be_finite_and_not_negative(self, gap: float) -> None:
+        # A NaN gap let every spot through: no distance is below it.
+        with pytest.raises(ValueError, match="min_gap_m"):
+            TrafficSourceAction(_NOT_JUNCTION, min_gap_m=gap)
+
+    def test_a_zero_rate_and_gap_are_taken(self) -> None:
+        TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=0.0, min_gap_m=0.0)
 
     def test_a_vehicle_parked_under_the_map_takes_no_room(self) -> None:
         # #853: an entity parked 500 m under the map until its spawn.

@@ -139,7 +139,7 @@ naming it; the bone names are those of CARLA's walkers (`crl_arm__L`,
 |---|---|---|
 | `entity_name` | | The pedestrian |
 | `motion_path` | | The `.npz`; a relative path is taken from the working directory |
-| `fps` | the file's, else 30 | Frames per second |
+| `fps` | the file's, else 30 | Frames per second; finite and positive |
 | `loop` | `False` | Play the motion over again when it ends |
 | `duration_s` | `None` | Stop after this long; `None`: when the motion ends, or, looping, at the scenario's end |
 | `upper_body_only` | `True` | Drive the spine, neck and arms only (animation domain); `False`: the whole body (animation and movement) |

@@ -86,8 +86,9 @@ class PlayMotionAction(BaseAction):
 
     Raises:
         FileNotFoundError: If there is no file at *motion_path*.
-        ValueError: If the file is not a SOMA body motion, or *fps* or
-            *duration_s* is not positive.
+        ValueError: If the file is not a SOMA body motion, *fps* (given or
+            the file's) is not finite and positive, or *duration_s* is not
+            positive.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -118,8 +119,9 @@ class PlayMotionAction(BaseAction):
         upper_body_only: bool = True,
         overrides: bool = False,
     ) -> None:
-        if fps is not None and fps <= 0:
-            raise ValueError("fps must be positive")
+        # NaN passes `<= 0`, and NaN or infinity would fail int() mid-run.
+        if fps is not None and (not math.isfinite(fps) or fps <= 0):
+            raise ValueError(f"fps must be finite and positive, not {fps!r}")
         if duration_s is not None and duration_s <= 0:
             raise ValueError("duration_s must be positive")
         finished: BaseCondition = _MotionPlayed(self, label)

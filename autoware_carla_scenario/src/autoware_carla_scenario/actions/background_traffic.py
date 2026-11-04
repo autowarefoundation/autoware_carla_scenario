@@ -239,7 +239,8 @@ class TrafficSourceAction(_BackendAction):
             by default: each tick of its run is a tick it may add a vehicle on.
 
     Raises:
-        ValueError: If a count or rate is negative, or *speed_kmh* is below
+        ValueError: If a count or rate is negative, *vehicles_per_minute* or
+            *min_gap_m* is negative or not finite, or *speed_kmh* is below
             1 km/h or not finite.
     """
 
@@ -275,11 +276,23 @@ class TrafficSourceAction(_BackendAction):
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
-        if initial_vehicles < 0 or vehicles_per_minute < 0:
+        if initial_vehicles < 0:
             raise ValueError("vehicle counts and rates must not be negative")
+        # NaN passes `< 0`, and NaN or infinity would fail int() on a later
+        # tick, mid-run (#1321).
+        if not math.isfinite(vehicles_per_minute) or vehicles_per_minute < 0:
+            raise ValueError(
+                f"vehicles_per_minute must be finite and not negative, "
+                f"not {vehicles_per_minute!r}"
+            )
         if max_vehicles is not None and max_vehicles < 0:
             raise ValueError("max_vehicles must not be negative")
         speed_kmh = check_background_speed(speed_kmh)
+        # A NaN gap would let every spot through: no distance is below it.
+        if not math.isfinite(min_gap_m) or min_gap_m < 0:
+            raise ValueError(
+                f"min_gap_m must be finite and not negative, not {min_gap_m!r}"
+            )
         super().__init__(
             label,
             condition=condition,
