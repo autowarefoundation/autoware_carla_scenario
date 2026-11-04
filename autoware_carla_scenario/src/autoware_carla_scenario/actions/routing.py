@@ -356,7 +356,8 @@ class RoutingAction(TrajectoryRun):
         ValueError: Without a goal or a trajectory, with both, with
             waypoints beside a trajectory, a goal with a mode other than
             ``driver`` or a positive *initial_distance_offset*, a walking
-            speed that is not positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
+            speed that is not finite and positive, a turn-back threshold that
+            is negative or not finite, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
     _stop_at_goal: bool
@@ -416,14 +417,31 @@ class RoutingAction(TrajectoryRun):
         stop_at_end: bool = True,
         stop_at_goal: bool = False,
     ) -> None:
-        if not walking_speed > 0.0:
-            raise ValueError("walking_speed must be positive")
-        if turn_back_ttc_s is not None and turn_back_ttc_s < 0.0:
-            raise ValueError("turn_back_ttc_s must not be negative")
-        if turn_back_distance_m is not None and turn_back_distance_m < 0.0:
-            raise ValueError("turn_back_distance_m must not be negative")
-        if turn_back_within_m < 0.0:
-            raise ValueError("turn_back_within_m must not be negative")
+        # NaN passes `< 0.0` and would never trigger a turn back; ``None`` is
+        # how a threshold is off.
+        if not math.isfinite(walking_speed) or walking_speed <= 0.0:
+            raise ValueError(
+                f"walking_speed must be finite and positive, not {walking_speed!r}"
+            )
+        if turn_back_ttc_s is not None and (
+            not math.isfinite(turn_back_ttc_s) or turn_back_ttc_s < 0.0
+        ):
+            raise ValueError(
+                "turn_back_ttc_s must be finite and not negative, "
+                f"not {turn_back_ttc_s!r}"
+            )
+        if turn_back_distance_m is not None and (
+            not math.isfinite(turn_back_distance_m) or turn_back_distance_m < 0.0
+        ):
+            raise ValueError(
+                "turn_back_distance_m must be finite and not negative, "
+                f"not {turn_back_distance_m!r}"
+            )
+        if not math.isfinite(turn_back_within_m) or turn_back_within_m < 0.0:
+            raise ValueError(
+                "turn_back_within_m must be finite and not negative, "
+                f"not {turn_back_within_m!r}"
+            )
         if cross_factor is not None:
             share: float = cross_factor
             if not 0.0 <= share <= 1.0:

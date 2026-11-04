@@ -342,8 +342,21 @@ def test_without_turn_back_options_the_walk_is_over_at_once(scene: Any) -> None:
     "option", ["turn_back_ttc_s", "turn_back_distance_m", "turn_back_within_m"]
 )
 def test_a_negative_turn_back_option_is_refused(option: str) -> None:
-    with pytest.raises(ValueError, match=f"{option} must not be negative"):
+    with pytest.raises(ValueError, match=f"{option} must be finite and not negative"):
         options: dict[str, Any] = {option: -1.0}
+        WalkStraightAction("walker1", **options)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    "option",
+    ["speed_ms", "turn_back_ttc_s", "turn_back_distance_m", "turn_back_within_m"],
+)
+def test_a_non_finite_option_is_refused(option: str, value: float) -> None:
+    # #1328: NaN passed `< 0`; a NaN threshold never triggered.  ``None`` is
+    # how a threshold is turned off, so infinity is not needed for that.
+    with pytest.raises(ValueError, match=f"{option} must be finite"):
+        options: dict[str, Any] = {option: value}
         WalkStraightAction("walker1", **options)
 
 

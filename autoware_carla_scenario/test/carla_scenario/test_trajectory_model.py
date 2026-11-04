@@ -171,6 +171,18 @@ class TestTiming:
         with pytest.raises(ValueError, match="scale"):
             TrajectoryTiming(scale=0.0)
 
+    @pytest.mark.parametrize("scale", [math.nan, math.inf, -math.inf])
+    def test_scale_must_be_finite(self, scale: float) -> None:
+        # #1328: an infinite scale froze a timed trajectory at its first vertex.
+        with pytest.raises(ValueError, match="scale must be finite"):
+            TrajectoryTiming(scale=scale)
+
+    @pytest.mark.parametrize("offset", [math.nan, math.inf, -math.inf])
+    def test_offset_must_be_finite(self, offset: float) -> None:
+        # #1328: a NaN offset made every trajectory time NaN.
+        with pytest.raises(ValueError, match="offset must be finite"):
+            TrajectoryTiming(offset=offset)
+
 
 # ---------------------------------------------------------------------------
 # Where a trajectory puts the entity

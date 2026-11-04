@@ -119,8 +119,9 @@ class SmartPedestrianControllerAction(BaseAction):
 
     Raises:
         FileNotFoundError: If there is no file at *keyframes*.
-        ValueError: If *speed_ms* or *duration_s* is not positive, a prompt's
-            time is negative, or the keyframes file is malformed.
+        ValueError: If *speed_ms* or *duration_s* is not finite and
+            positive, a prompt's time is not finite or is negative, or the
+            keyframes file is malformed (a keyframe's ``time_s`` included).
     """
 
     _entity_name: str
@@ -159,15 +160,22 @@ class SmartPedestrianControllerAction(BaseAction):
         seed: int = 0,
         overrides: bool = False,
     ) -> None:
-        if speed_ms <= 0:
-            raise ValueError("speed_ms must be positive")
-        if duration_s is not None and duration_s <= 0:
-            raise ValueError("duration_s must be positive")
+        # NaN passes `<= 0` and `< 0`: it would fail int() at start, or never
+        # reach the end of the run; infinity would put every waypoint at 0.
+        if not math.isfinite(speed_ms) or speed_ms <= 0:
+            raise ValueError(f"speed_ms must be finite and positive, not {speed_ms!r}")
+        if duration_s is not None and (
+            not math.isfinite(duration_s) or duration_s <= 0
+        ):
+            raise ValueError(
+                f"duration_s must be finite and positive, not {duration_s!r}"
+            )
         texts = [(0.0, prompt)] if prompt else []
         for timed in prompts:
-            if timed.time_s < 0:
+            if not math.isfinite(timed.time_s) or timed.time_s < 0:
                 raise ValueError(
-                    f"a prompt's time must not be negative, not {timed.time_s}"
+                    "a prompt's time_s must be finite and not negative, "
+                    f"not {timed.time_s!r}"
                 )
             texts.append((float(timed.time_s), str(timed.text)))
         super().__init__(
@@ -407,8 +415,10 @@ def _read_keyframes(path: Union[str, Path]) -> tuple[_Keyframe, ...]:
         poses = []
         for entry in document["keyframes"]:
             time_s = float(entry["time_s"])
-            if time_s < 0:
-                raise ValueError(f"time_s must not be negative, not {time_s}")
+            if not math.isfinite(time_s) or time_s < 0:
+                raise ValueError(
+                    f"time_s must be finite and not negative, not {time_s!r}"
+                )
             joints = {
                 str(name): (float(p[0]), float(p[1]), float(p[2]))
                 for name, p in entry["joints"].items()

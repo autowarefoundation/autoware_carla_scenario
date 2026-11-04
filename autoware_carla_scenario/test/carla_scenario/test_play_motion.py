@@ -766,6 +766,12 @@ class TestPlayMotionAction:
         with pytest.raises(ValueError, match="fps"):
             PlayMotionAction("walker1", wave, fps=fps)
 
+    @pytest.mark.parametrize("duration_s", [math.nan, math.inf, -math.inf])
+    def test_a_duration_must_be_finite(self, wave: Path, duration_s: float) -> None:
+        # #1328: NaN passed `duration_s <= 0`, and a looping motion never ended.
+        with pytest.raises(ValueError, match="duration_s must be finite"):
+            PlayMotionAction("walker1", wave, loop=True, duration_s=duration_s)
+
     @pytest.mark.parametrize("fps", ["nan", "inf"])
     def test_a_file_s_rate_must_be_finite(self, tmp_path: Path, fps: str) -> None:
         bad = _write_motion(tmp_path / "bad.npz", [{}], extra={"fps": float(fps)})

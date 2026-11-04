@@ -8,6 +8,7 @@ is the map's with y flipped): W_IN1 runs east from x = -110 at y = -1.75.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -134,6 +135,15 @@ def test_many_props_share_the_library_and_the_ground() -> None:
             ground=lambda x, y: 2.0,
         )
     assert [p.transform.location.z for p in world.spawned] == pytest.approx([2.05] * 3)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize("name", ["shift_max", "speed", "length", "width"])
+def test_a_non_finite_size_or_speed_is_refused(name: str, value: float) -> None:
+    # #1328: NaN passed `< 0.0` and reached the placement and the speed.
+    kwargs: dict[str, Any] = {name: value}
+    with pytest.raises(ValueError, match=f"{name} must be finite"):
+        SpawnAction(name="cone", position=CarlaWorldPose(0.0, 0.0, 0.0), **kwargs)
 
 
 def test_what_cannot_be_added() -> None:

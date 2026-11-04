@@ -216,7 +216,8 @@ class TrajectoryRun(BaseAction):
 
     Raises:
         ValueError: If a timing is given for an untimed trajectory, the
-            initial distance offset or the speed is negative,
+            initial distance offset is negative or not finite, the speed is
+            negative,
             or *hidden_outside_trajectory* is asked for without ``POSITION``
             mode and a time reference.
     """
@@ -288,8 +289,12 @@ class TrajectoryRun(BaseAction):
                 f"trajectory {trajectory.name!r} has no vertex times, so a "
                 "time reference has nothing to apply to; pass time_reference=None"
             )
-        if initial_distance_offset < 0.0:
-            raise ValueError("initial_distance_offset must not be negative")
+        # NaN passes `< 0.0`.
+        if not math.isfinite(initial_distance_offset) or initial_distance_offset < 0.0:
+            raise ValueError(
+                "initial_distance_offset must be finite and not negative, "
+                f"not {initial_distance_offset!r}"
+            )
         if speed is not None and not speed >= 0.0:
             raise ValueError("speed must not be negative")
         # An if statement, not a conditional expression: Codon does not take

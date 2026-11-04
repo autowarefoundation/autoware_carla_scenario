@@ -93,7 +93,8 @@ class WalkStraightAction(BaseAction):
 
     Raises:
         ValueError: If *speed_ms*, a turn-back threshold or
-            *turn_back_within_m* is negative.  A negative speed would be read
+            *turn_back_within_m* is negative or not finite (``None`` turns a
+            threshold off).  A negative speed would be read
             by CARLA as a direction rather than refused, and a pedestrian
             walking backwards through a crossing is not what anyone wrote.
     """
@@ -129,14 +130,31 @@ class WalkStraightAction(BaseAction):
         turn_back_distance_m: Optional[float] = None,
         turn_back_within_m: float = DEFAULT_TURN_BACK_WITHIN_M,
     ) -> None:
-        if speed_ms < 0:
-            raise ValueError("speed_ms must not be negative")
-        if turn_back_ttc_s is not None and turn_back_ttc_s < 0:
-            raise ValueError("turn_back_ttc_s must not be negative")
-        if turn_back_distance_m is not None and turn_back_distance_m < 0:
-            raise ValueError("turn_back_distance_m must not be negative")
-        if turn_back_within_m < 0:
-            raise ValueError("turn_back_within_m must not be negative")
+        # NaN passes `< 0`: a NaN speed would reach WalkerControl, and a NaN
+        # threshold would never trigger.  ``None`` is how a threshold is off.
+        if not math.isfinite(speed_ms) or speed_ms < 0:
+            raise ValueError(
+                f"speed_ms must be finite and not negative, not {speed_ms!r}"
+            )
+        if turn_back_ttc_s is not None and (
+            not math.isfinite(turn_back_ttc_s) or turn_back_ttc_s < 0
+        ):
+            raise ValueError(
+                "turn_back_ttc_s must be finite and not negative, "
+                f"not {turn_back_ttc_s!r}"
+            )
+        if turn_back_distance_m is not None and (
+            not math.isfinite(turn_back_distance_m) or turn_back_distance_m < 0
+        ):
+            raise ValueError(
+                "turn_back_distance_m must be finite and not negative, "
+                f"not {turn_back_distance_m!r}"
+            )
+        if not math.isfinite(turn_back_within_m) or turn_back_within_m < 0:
+            raise ValueError(
+                "turn_back_within_m must be finite and not negative, "
+                f"not {turn_back_within_m!r}"
+            )
         turns_back = turn_back_ttc_s is not None or turn_back_distance_m is not None
         # An if statement, not a conditional expression: Codon does not take
         # a subclass for an Optional of its base there (docs/typecheck.md).
