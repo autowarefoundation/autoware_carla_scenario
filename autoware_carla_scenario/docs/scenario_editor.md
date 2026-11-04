@@ -581,7 +581,9 @@ Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 the **Route progress** condition is offered for triggers, assertions and
 waypoint conditions. Progress is clamped to the route, so the validator warns
 about a Route progress card whose target lies before the route's start or past
-its end: it holds from the first tick or never
+its end: it holds from the first tick the entity is on the map, or never. It
+also warns about a strict rule pointing off the route from a target on a bound
+(`<` the start, `>` the end), which never holds
 ([logical scenarios](logical_scenarios.md#route_progress-condition)). A
 **Spawn** card brings a hidden entity in (or, with no
 actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's

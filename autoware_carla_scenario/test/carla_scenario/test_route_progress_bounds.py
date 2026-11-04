@@ -4,7 +4,8 @@ An entity's route s is clamped to ``[0, length]``, so a target before the
 route's start or past its end is one the rule always or never meets.  The
 length is the map's, so only an anchor pinned to a bound -- the route's start
 or end, the first segment's start, the last segment's end, a junction that is
-the first or last segment -- is judged.
+the first or last segment -- is judged.  A target exactly on a bound is
+judged too, for a strict rule pointing off the route (#1389).
 """
 
 from __future__ import annotations
@@ -61,6 +62,12 @@ def _warnings(document: ScenarioDocument) -> list[str]:
         ({"anchor": "end", "value": 5, "rule": "less_than"}, "holds from the first"),
         ({"anchor": "segment:2:end", "value": 5}, "can never hold"),
         ({"anchor": "end", "value": 5, "rule": "equal_to"}, "can never hold"),
+        # On a bound, a strict rule pointing off the route never holds (#1389).
+        ({"anchor": "start", "value": 0, "rule": "less_than"}, "can never hold"),
+        ({"value": 0, "rule": "less_than"}, "can never hold"),
+        ({"anchor": "segment:0:start", "value": 0, "rule": "less_than"}, "never"),
+        ({"anchor": "end", "value": 0, "rule": "greater_than"}, "can never hold"),
+        ({"anchor": "segment:2:end", "value": 0, "rule": "greater_than"}, "never"),
     ],
 )
 def test_a_target_off_the_route_is_warned_about(
@@ -79,6 +86,19 @@ def test_a_target_off_the_route_is_warned_about(
         {"anchor": "start", "value": 1000},
         {"anchor": "end", "value": -2},
         {"anchor": "end", "value": 0},
+        # On a bound, every rule but a strict one pointing off the route can
+        # hold: the defaults, the strict rules pointing onto it, and "=".
+        {"anchor": "start", "value": 0, "rule": "greater_than_or_equal"},
+        {"anchor": "start", "value": 0, "rule": "greater_than"},
+        {"anchor": "start", "value": 0, "rule": "less_than_or_equal"},
+        {"anchor": "start", "value": 0, "rule": "equal_to"},
+        {"anchor": "end", "value": 0, "rule": "less_than_or_equal"},
+        {"anchor": "end", "value": 0, "rule": "less_than"},
+        {"anchor": "end", "value": 0, "rule": "greater_than_or_equal"},
+        {"anchor": "end", "value": 0, "rule": "equal_to"},
+        # Off a bound, the length is the map's.
+        {"anchor": "junction:0:entry", "value": 0, "rule": "less_than"},
+        {"anchor": "junction:0:exit", "value": 0, "rule": "greater_than"},
         # The length of the first segment is the map's: 40 m before the
         # junction may well be on the route.
         {"anchor": "junction:0:entry", "value": -40},
@@ -107,3 +127,17 @@ def test_an_anchor_the_pattern_lacks_is_only_the_error() -> None:
     report = validate_document(_document({"anchor": "junction:3:entry", "value": -5}))
     assert any("has 1 junction(s)" in i.message for i in report.errors)
     assert not [i for i in report.warnings if "clamped" in i.message]
+
+
+def test_a_strict_rule_off_a_bound_says_which_bound() -> None:
+    (start,) = _warnings(_document({"value": 0, "rule": "less_than"}))
+    assert "the target is the route's start" in start
+    assert '"less than" can never hold' in start
+    (end,) = _warnings(_document({"anchor": "end", "value": 0, "rule": "greater_than"}))
+    assert "the target is the route's end" in end
+    assert '"greater than" can never hold' in end
+
+
+def test_an_always_true_target_holds_once_the_entity_is_on_the_map() -> None:
+    (message,) = _warnings(_document({"value": -15}))
+    assert "holds from the first tick the entity is on the map" in message
