@@ -8,6 +8,7 @@ CARLA reports, to the Lanelet2 lanelet and regulatory element a policy reads.
 
 from __future__ import annotations
 
+import errno
 import json
 import sys
 import xml.etree.ElementTree as ElementTree
@@ -335,6 +336,94 @@ def test_a_set_replaced_meanwhile_is_kept_on_disk_until_a_set_holds_it(
     export_map(opendrive, "Town", maps, formats=("lanelet2",))
     assert set(_manifest(target)["formats"]) == {"osm", "commonroad", "lanelet2"}
     assert kept.is_dir()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError(errno.EACCES, "Permission denied"),
+        KeyboardInterrupt("killed while putting the old set back"),
+    ],
+)
+def test_an_old_set_that_cannot_be_put_back_stays_on_disk(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Any
+) -> None:
+    """Another run's smaller set goes in between this run's renames, and putting
+    the old set back fails too (or the run is killed doing it)."""
+    theirs = tmp_path / "theirs"
+    map_id = export_map(opendrive, "Town", theirs, formats=("commonroad",))
+    maps = tmp_path / "maps"
+    export_map(opendrive, "Town", maps, formats=("osm",))
+    target = maps / map_id
+    rename = Path.rename
+    injected: List[bool] = []
+
+    def failing_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set" and not injected:
+            injected.append(True)
+            rename(theirs / map_id, target)
+        elif Path(destination) == target and self.name == "old":
+            raise failure
+        return rename(self, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", failing_rename)
+        try:
+            export_map(opendrive, "Town", maps, formats=("lanelet2",))
+        except KeyboardInterrupt:
+            assert isinstance(failure, KeyboardInterrupt)
+    assert injected
+
+    # Killed, the run left the old set kept aside; otherwise it kept it aside,
+    # built again with its formats and put that in place. Either way osm is on
+    # disk with its manifest.
+    holding = [
+        directory
+        for directory in (target, *maps.glob(f".{map_id}.*/old"))
+        if "osm" in _manifest(directory)["formats"]
+    ]
+    assert holding, "the old set was lost"
+    assert (holding[0] / "openstreetmap.osm").is_file()
+    export_map(opendrive, "Town", maps, formats=("lanelet2",))
+    assert {"osm", "commonroad", "lanelet2"} <= set(_manifest(target)["formats"])
+
+
+def test_an_old_set_survives_a_full_disk_after_the_race(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reviewer's shape: no directory can be made once the race happened."""
+    import tempfile  # noqa: PLC0415
+
+    theirs = tmp_path / "theirs"
+    map_id = export_map(opendrive, "Town", theirs, formats=("commonroad",))
+    maps = tmp_path / "maps"
+    export_map(opendrive, "Town", maps, formats=("osm",))
+    target = maps / map_id
+    rename = Path.rename
+    mkdtemp = tempfile.mkdtemp
+    injected: List[bool] = []
+
+    def racing_rename(self: Path, destination: Path) -> Path:  # type: ignore[override]
+        if Path(destination) == target and self.name == "set" and not injected:
+            injected.append(True)
+            rename(theirs / map_id, target)
+        return rename(self, destination)
+
+    def full_mkdtemp(*args: Any, **kwargs: Any) -> str:
+        if injected:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return mkdtemp(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", racing_rename)
+        patch.setattr(tempfile, "mkdtemp", full_mkdtemp)
+        with pytest.raises(OSError, match="No space"):
+            export_map(opendrive, "Town", maps, formats=("lanelet2",))
+
+    [kept] = maps.glob(f".{map_id}.*/old")
+    assert set(_manifest(kept)["formats"]) == {"osm"}, "the old set was lost"
+    export_map(opendrive, "Town", maps, formats=("lanelet2",))
+    assert set(_manifest(target)["formats"]) == {"osm", "commonroad", "lanelet2"}
 
 
 def test_a_set_this_run_kept_aside_is_removed_once_in_place(

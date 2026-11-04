@@ -107,7 +107,8 @@ def export_map(
     written even if ``formats`` leaves it out); without, ``t4`` cannot be
     written. A complete set already holding every format is reused
     as it is. One lacking some is built again holding the formats it has and
-    those asked for: a set only ever grows, its id unchanged. A set is built in
+    those asked for, its id unchanged: a set only grows, except by a format
+    this version or its roadgen cannot write, which is dropped with a warning. A set is built in
     a scratch directory beside its destination and moved into place whole, so
     a reader never sees one half written.
     """
@@ -163,7 +164,6 @@ def export_map(
         formats = tuple(dict.fromkeys((*formats, *present)))
         with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
             out = Path(scratch) / "set"
-            aside = Path(scratch) / "old"
             formats = _build(
                 out, map_id, map_name, opendrive, formats, requested, provided, given
             )
@@ -180,7 +180,12 @@ def export_map(
                 return map_id
             if set(present) <= set(formats):
                 # Each rename moves a complete set: a reader never sees one half
-                # written (only, between the two, none).
+                # written (only, between the two, none). The old set is moved
+                # into a directory of its own, which nothing removes on its
+                # own: if it can be neither replaced nor put back, whatever
+                # goes wrong, it stays there for later runs to read.
+                hold = Path(tempfile.mkdtemp(dir=root, prefix=f".{map_id}."))
+                aside = hold / "old"
                 replaced = False
                 try:
                     if target.exists():
@@ -198,10 +203,17 @@ def export_map(
                         raise
                     last_error = error
                 finally:
-                    # However this ends, an old set moved aside is put back or
-                    # kept outside the scratch directory, never removed with it.
-                    if not replaced and aside.exists():
-                        kept.extend(_put_back(aside, target, map_id))
+                    if replaced:
+                        shutil.rmtree(hold, ignore_errors=True)
+                    else:
+                        _put_back(aside, target)
+                        if aside.exists():
+                            logger.warning(
+                                "map %s: kept the set it replaced in %s", map_id, hold
+                            )
+                            kept.append(hold)
+                        else:
+                            _remove_empty(hold)
                 if replaced:
                     logger.info(
                         "wrote map %s (%s) to %s", map_id, ", ".join(formats), target
@@ -222,21 +234,21 @@ def _held(root: Path, target: Path) -> Dict[str, Any]:
     return held
 
 
-def _put_back(aside: Path, target: Path, map_id: str) -> List[Path]:
-    """Return the old set at ``aside`` to ``target``, or keep it beside it.
+def _put_back(aside: Path, target: Path) -> None:
+    """Return the old set at ``aside`` to ``target`` if it is still there and
+    ``target`` is free; otherwise it stays, kept, where it is."""
+    if aside.exists():
+        try:
+            aside.rename(target)
+        except OSError:
+            pass
 
-    Kept, it is ``<map_dir>/.<map_id>.<random>/old``, where every later run
-    finds its formats; returns the directory kept, to remove once a set holding
-    them is in place.
-    """
+
+def _remove_empty(directory: Path) -> None:
     try:
-        aside.rename(target)
-        return []
+        directory.rmdir()
     except OSError:
-        keep = Path(tempfile.mkdtemp(dir=target.parent, prefix=f".{map_id}."))
-        aside.rename(keep / "old")
-        logger.warning("map %s: kept the set it replaced in %s", map_id, keep)
-        return [keep]
+        pass
 
 
 def _discard(kept: List[Path], formats: Tuple[str, ...]) -> None:
