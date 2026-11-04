@@ -21,6 +21,7 @@ TeraSim's ``utils/nade/avoidance.py``, on predicted futures:
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 
@@ -46,19 +47,45 @@ AVOID = "avoid"
 ACCEPT = "accept"
 
 
+def _check_probability(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is in [0, 1]."""
+    if not (0.0 <= value <= 1.0):  # NaN fails it too
+        raise ValueError(f"{name} must be in [0, 1], not {value}")
+
+
+def _check_non_negative(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is finite and >= 0."""
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(f"{name} must be finite and not negative, not {value}")
+
+
+def _check_positive(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is finite and > 0."""
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"{name} must be finite and positive, not {value}")
+
+
 @dataclass(frozen=True)
 class AvoidanceSettings:
     """TeraSim's avoidance numbers.
 
+    Each is refused when built outside its bounds (#1463): an
+    ``avoid_is_probability`` ``q`` above 1 would have every victim avoid and
+    still weight the run by ``p / q``.
+
     Attributes:
-        buffer: How much further apart (m) an avoid future must stay.
+        buffer: How much further apart (m) an avoid future must stay
+            (finite, >= 0).
         unavoidable_factor: What an unavoidable adversity's probability is
-            multiplied by.
-        unavoidable_magnitude: What its IS magnitude is multiplied by.
-        avoid_probability: The naturalistic probability that a victim avoids.
-        avoid_is_probability: The IS probability that it does.
-        avoid_duration: How long an avoiding victim brakes (s).
-        accept_duration: How long an accepting victim holds its speed (s).
+            multiplied by (in [0, 1]: it cuts a probability).
+        unavoidable_magnitude: What its IS magnitude is multiplied by
+            (finite, >= 0).
+        avoid_probability: The naturalistic probability that a victim avoids
+            (in [0, 1]).
+        avoid_is_probability: The IS probability that it does (in [0, 1]).
+        avoid_duration: How long an avoiding victim brakes (s; finite, > 0).
+        accept_duration: How long an accepting victim holds its speed (s;
+            finite, > 0).
     """
 
     buffer: float = 0.5
@@ -68,6 +95,15 @@ class AvoidanceSettings:
     avoid_is_probability: float = 0.2
     avoid_duration: float = 3.0
     accept_duration: float = 2.0
+
+    def __post_init__(self) -> None:
+        _check_non_negative("buffer", self.buffer)
+        _check_probability("unavoidable_factor", self.unavoidable_factor)
+        _check_non_negative("unavoidable_magnitude", self.unavoidable_magnitude)
+        _check_probability("avoid_probability", self.avoid_probability)
+        _check_probability("avoid_is_probability", self.avoid_is_probability)
+        _check_positive("avoid_duration", self.avoid_duration)
+        _check_positive("accept_duration", self.accept_duration)
 
 
 DEFAULT_AVOIDANCE = AvoidanceSettings()
@@ -136,7 +172,12 @@ def respond(
     can_avoid: bool,
     settings: AvoidanceSettings = DEFAULT_AVOIDANCE,
 ) -> Response:
-    """Draw the NPC victims' response to a sampled adversity."""
+    """Draw the NPC victims' response to a sampled adversity.
+
+    Its weight is ``p / q`` for an avoid, ``(1 - p) / (1 - q)`` for an
+    accept; both ``p`` and ``q`` are in [0, 1], as :class:`AvoidanceSettings`
+    refuses them outside it (#1463).
+    """
     if ego_is_victim:
         return Response("", 1.0)  # TeraSim's AV_neglected: the ego drives itself
     if not can_avoid:
