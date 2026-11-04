@@ -661,7 +661,8 @@ def expand_config(
             binding the parsers refuse (:func:`expand_sweep`) -- or when the
             run's ``seed``, or ``sweep.odd_sample``'s ``seed`` or ``count``,
             is not a whole number (a negative seed, a count below 1), checked
-            before any map is read.
+            before any map is read -- or when the Lanelet2 map a constraint or
+            route sweep needs is not named, is missing, or cannot be read.
     """
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
@@ -694,7 +695,18 @@ def expand_config(
     from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
     from .map_loader import load_map  # noqa: PLC0415
 
-    lanelet_map = load_map(resolve_map_paths(OmegaConf.select(cfg, "map")))
+    paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
+    # Refused as an invalid sweep is: a map that is missing or unreadable is
+    # an authoring error of this scenario, which every caller reports by name
+    # and goes on to the next one (#1444), not a crash.
+    try:
+        lanelet_map = load_map(paths)
+    except FileNotFoundError as exc:  # names the file, or says none is named
+        raise ValueError(str(exc)) from exc
+    except (OSError, RuntimeError) as exc:  # RuntimeError: Lanelet2's parser
+        raise ValueError(
+            f"Could not read the Lanelet2 map {paths.lanelet2_path}: {exc}"
+        ) from exc
     return expand_sweep(
         sweep,
         lanelet_map,

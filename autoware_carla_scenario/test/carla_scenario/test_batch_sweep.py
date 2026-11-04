@@ -385,6 +385,30 @@ def test_a_batch_reports_the_invalid_sweep_of_each_scenario(
     assert batch.configs == []
 
 
+# A missing Lanelet2 map is refused, named, for every scenario before anything
+# runs (#1444): load_map's FileNotFoundError used to escape as a traceback at
+# the first one.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_batch_reports_the_missing_map_of_each_scenario(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    missing = tmp_path / "missing.osm"
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["lane_change/left", "lane_change/right"],
+            [f"map.lanelet2_path={missing}"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: Lanelet2 file not found: {missing}" in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
 def test_a_batch_reports_the_invalid_controls_of_each_scenario(
     batch: _Batch, twin: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
