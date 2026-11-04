@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -52,8 +53,8 @@ class WaypointCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if distance <= 0:
-            raise ValueError("distance must be positive")
+        if not math.isfinite(distance) or distance <= 0:
+            raise ValueError("distance must be positive and finite")
         super().__init__(entity_name=entity_name, label=label)
         self._distance = distance
         self._check_type = check_type

@@ -376,6 +376,12 @@ def _within(value: float, low: Optional[float], high: Optional[float]) -> bool:
 
 
 def _check_range(what: str, low: Optional[float], high: Optional[float]) -> None:
+    # NaN passes `< 0` and `low > high`, and would match nothing (#1327);
+    # an absent bound is None, not an infinity.
+    if low is not None and not math.isfinite(low):
+        raise ValueError(f"min_{what}_m must be finite")
+    if high is not None and not math.isfinite(high):
+        raise ValueError(f"max_{what}_m must be finite")
     if low is not None and high is not None and low > high:
         raise ValueError(f"min_{what}_m ({low}) is above max_{what}_m ({high})")
 

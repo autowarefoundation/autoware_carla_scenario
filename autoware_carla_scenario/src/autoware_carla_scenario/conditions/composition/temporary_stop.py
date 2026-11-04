@@ -84,10 +84,10 @@ class TemporaryStopCondition(CompositionCondition):
     ) -> None:
         if not stop_positions:
             raise ValueError("stop_positions must not be empty")
-        if s_margin <= 0:
-            raise ValueError("s_margin must be positive")
-        if speed_threshold < 0:
-            raise ValueError("speed_threshold must be non-negative")
+        if not math.isfinite(s_margin) or s_margin <= 0:
+            raise ValueError("s_margin must be positive and finite")
+        if not math.isfinite(speed_threshold) or speed_threshold < 0:
+            raise ValueError("speed_threshold must be non-negative and finite")
         if not math.isfinite(stop_duration) or stop_duration <= 0:
             raise ValueError("stop_duration must be positive and finite")
 

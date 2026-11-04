@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -123,8 +124,8 @@ class EntityPositionDistanceCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
         super().__init__(entity_name=entity_name, label=label)
         self._at = TrajectoryVertex(position)
         self._target = None

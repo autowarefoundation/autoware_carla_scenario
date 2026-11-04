@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from ..failure import FailureCategory
@@ -92,10 +93,10 @@ class MetricCondition(BaseCondition):
             raise ValueError(
                 f"MetricCondition: {metric!r} is not a metric; known: {known}"
             )
-        if tolerance < 0:
-            raise ValueError("tolerance must be non-negative")
-        if max_ng_seconds < 0:
-            raise ValueError("max_ng_seconds must be non-negative")
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be non-negative and finite")
+        if not math.isfinite(max_ng_seconds) or max_ng_seconds < 0:
+            raise ValueError("max_ng_seconds must be non-negative and finite")
         self._metric = metric
         self._unit = BUILT_IN_METRICS[metric].unit
         self._comparison = ScalarComparisonRule(
