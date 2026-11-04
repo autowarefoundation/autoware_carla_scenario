@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -350,6 +351,13 @@ class CarlaServerManager:
 
     def _ping(self) -> bool:
         """Try to connect to the CARLA RPC port; return True on success."""
+        # A closed port is answered here, not by the CARLA client: on arm64
+        # its call on a refused connection can abort the process rather than
+        # raise (maps.opendrive._from_server checks the same way).
+        try:
+            socket.create_connection((self.host, self.port), timeout=2.0).close()
+        except OSError:
+            return False
         try:
             client = carla.Client(self.host, self.port)
             client.set_timeout(2.0)
