@@ -43,7 +43,13 @@ from .scripts import _expand_ranges as _expand_ranges
 from .scripts import _shell_path as _shell_path
 from .scripts import relative_batch_dir as relative_batch_dir
 from .scripts import sbatch_command as sbatch_command
-from .settings import SlurmSettings, require_sbatch, snapshot_environment
+from .settings import (
+    DEFAULT_MAX_ARRAY_SIZE,
+    SlurmSettings,
+    parse_max_array_size,
+    require_sbatch,
+    snapshot_environment,
+)
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -324,6 +330,25 @@ def _run_sbatch(command: list[str]) -> str:
     return job
 
 
+def max_array_size() -> int:
+    """The cluster's ``MaxArraySize`` (``scontrol show config``): an array
+    holds at most this many tasks.  SLURM's default, 1001, when ``scontrol``
+    cannot be asked or names none (#1347)."""
+    try:
+        completed = subprocess.run(
+            ["scontrol", "show", "config"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return DEFAULT_MAX_ARRAY_SIZE
+    if completed.returncode != 0:
+        return DEFAULT_MAX_ARRAY_SIZE
+    return parse_max_array_size(completed.stdout) or DEFAULT_MAX_ARRAY_SIZE
+
+
 def _write_script(path: Path, text: str) -> None:
     """Write the job script *path*.  Only the user's: it exports the recorded
     environment.  Created so, never readable by others even for a moment."""
@@ -343,12 +368,29 @@ def submit_cases(
     """Submit *case_indices* of the batch as one array; the submission's index.
 
     The cases are split into tasks of ``launcher.cases_per_task`` (in order),
-    which SLURM runs at most ``launcher.array_parallelism`` at a time.
+    which SLURM runs at most ``launcher.array_parallelism`` at a time.  Without
+    ``cases_per_task``, into no more tasks than the cluster's ``MaxArraySize``
+    (:func:`max_array_size`).
+
+    Raises:
+        RuntimeError: ``launcher.cases_per_task`` makes more tasks than
+            ``MaxArraySize`` allows (nothing is submitted), or sbatch refused
+            the array.
     """
     if not case_indices:
         raise ValueError("no case to submit")
+    limit = max_array_size()
+    size = settings.chunk_size(len(case_indices), limit)
+    chunks = _chunks(list(case_indices), size)
+    if len(chunks) > limit:
+        least = -(-len(case_indices) // limit)
+        raise RuntimeError(
+            f"{len(case_indices)} case(s) at launcher.cases_per_task={size} make "
+            f"{len(chunks)} array tasks, more than the cluster's MaxArraySize "
+            f"({limit}) allows: set launcher.cases_per_task to at least {least}, "
+            "or unset it to have the cases spread within the limit (docs/slurm.md)"
+        )
     index = layout.next_submission()
-    chunks = _chunks(list(case_indices), settings.chunk_size(len(case_indices)))
     script = layout.job_script(index)
     _write_script(script, job_script(layout, manifest, settings, index))
     layout.logs.mkdir(parents=True, exist_ok=True)
@@ -371,6 +413,18 @@ def submit_cases(
     submission["sbatch"] = command
     try:
         submission["job_id"] = _run_sbatch(command)
+    except RuntimeError as exc:
+        layout.submission(index).unlink(missing_ok=True)
+        if "array" not in str(exc).lower():
+            raise
+        # The limit scontrol did not tell (#1347): say what to change.
+        raise RuntimeError(
+            f"{exc}\n  The array has {len(chunks)} task(s) of up to {size} "
+            f"case(s); a cluster's MaxArraySize (`scontrol show config`, "
+            f"{DEFAULT_MAX_ARRAY_SIZE} by default) caps an array's tasks: set "
+            "launcher.cases_per_task so that fewer tasks run the cases "
+            "(docs/slurm.md)"
+        ) from exc
     except BaseException:
         layout.submission(index).unlink(missing_ok=True)
         raise
