@@ -875,6 +875,20 @@ def test_validator_refuses_a_bound_the_condition_refuses(
             {"adversities": [{"kind": "brake_check", "probability": 1.5}]},
             "probability",
         ),
+        # NadeSettings' bounds (#1458): a q above 1 is sampled every draw.
+        *[
+            ("adversarial_traffic", None, {name: value}, name)
+            for name, value in (
+                ("max_is_probability", 3.0),
+                ("max_is_probability", -0.1),
+                ("fixed_is_probability", 1.5),
+                ("fixed_is_probability", -0.5),
+                ("cooldown", -2.0),
+                ("control_radius", -5.0),
+                ("magnitude", -1.0),
+                ("max_controlled", -1),
+            )
+        ],
     ],
 )
 def test_validator_refuses_a_bound_the_action_refuses(

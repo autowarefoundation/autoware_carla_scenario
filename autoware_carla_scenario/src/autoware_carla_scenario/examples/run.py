@@ -115,6 +115,7 @@ from autoware_carla_scenario.registry import (
     BuildScenarioFn,
     get_conf_dirs,
     get_scenario_builder,
+    get_scenario_classes,
     get_scenario_registry,
     load_scenario_plugins,
     register_conf_dir,
@@ -1986,8 +1987,9 @@ def check_batch_configs(
     seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
     ``background_traffic`` (:func:`background_traffic_settings`),
     ``environment`` (:func:`environment_settings`), ``driver`` settings of an
-    ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`) and
-    ``odd_case``; and the server, traffic and Autoware launcher settings its
+    ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`), the
+    ``scenario`` settings its config class refuses
+    (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
     scenario is built or the map is resolved (#1430): a local one would refuse
@@ -2024,6 +2026,7 @@ def check_batch_configs(
             background_traffic_settings(cfg)
             environment_settings(cfg)
             _check_driver_settings(cfg)
+            _check_scenario_config(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
@@ -2399,6 +2402,31 @@ def _check_driver_settings(cfg: DictConfig) -> None:
     from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
 
     DriverClientConfig.from_mapping(_with_fog_density_scale(_to_dict(driver_cfg), cfg))
+
+
+def _check_scenario_config(cfg: DictConfig) -> None:
+    """Build the config of a scenario registered with
+    :func:`~autoware_carla_scenario.register_scenario`, as its builder does,
+    so its ``__post_init__`` refuses a value (``scenario.nade_is_probability``
+    above 1, #1458) before anything starts.  Nothing is built of a scenario
+    with a custom builder or a declarative one.
+
+    Raises:
+        ValueError: When the scenario's config class refuses a value.
+    """
+    scenario = cfg.get("scenario")
+    if not isinstance(scenario, DictConfig) or scenario.get("name") is None:
+        return
+    classes = get_scenario_classes(str(scenario.name))
+    if classes is None:
+        return
+    _, config_cls = classes
+    try:
+        config_cls(**_to_dict(scenario))
+    except TypeError:
+        # A key the class does not take: the build refuses it, with the
+        # scenario's own context.
+        return
 
 
 def build_scenario(

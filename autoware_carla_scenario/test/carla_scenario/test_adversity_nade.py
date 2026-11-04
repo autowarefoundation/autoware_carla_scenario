@@ -106,6 +106,76 @@ def test_the_is_probability(p: float, settings: NadeSettings, q: float) -> None:
     assert is_probability(p, settings) == pytest.approx(q)
 
 
+# -- bounds (#1458) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_is_probability", 1.5),
+        ("max_is_probability", 3.0),
+        ("max_is_probability", -0.1),
+        ("max_is_probability", math.nan),
+        ("fixed_is_probability", 1.5),
+        ("fixed_is_probability", -0.5),
+        ("fixed_is_probability", math.inf),
+        ("fixed_is_probability", math.nan),
+        ("cooldown", -2.0),
+        ("cooldown", math.inf),
+        ("cooldown", math.nan),
+        ("control_radius", -5.0),
+        ("control_radius", math.inf),
+        ("magnitude", -1.0),
+        ("magnitude", math.inf),
+        ("magnitude", math.nan),
+        ("horizon", 0.0),
+        ("horizon", -1.0),
+        ("horizon", math.inf),
+        ("resolution", 0.0),
+        ("resolution", -0.5),
+        ("resolution", math.nan),
+        ("max_controlled", -1),
+    ],
+)
+def test_a_setting_out_of_its_bounds_is_refused(field: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=f"^{field} must .*, not {value}$"):
+        NadeSettings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_is_probability", 0.0),
+        ("max_is_probability", 1.0),
+        ("fixed_is_probability", 1.0),
+        ("cooldown", 0.0),
+        ("control_radius", 0.0),
+        ("magnitude", 0.0),
+        ("horizon", 0.1),
+        ("resolution", 0.1),
+        ("max_controlled", 0),
+    ],
+)
+def test_a_setting_on_its_bounds_is_accepted(field: str, value: Any) -> None:
+    assert getattr(NadeSettings(**{field: value}), field) == value
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        NadeSettings(),
+        NadeSettings(max_is_probability=1.0, magnitude=1e6),
+        NadeSettings(fixed_is_probability=1.0),
+    ],
+)
+@pytest.mark.parametrize("p", [0.0, 1e-5, 0.5, 1.0])
+def test_the_is_probability_never_exceeds_1(p: float, settings: NadeSettings) -> None:
+    """A draw of random() is below a q above 1 every time, so the adversity
+    would be sampled always and still weighted by p / q (#1458)."""
+    for avoidable in (True, False):
+        assert 0.0 <= is_probability(p, settings, avoidable) <= 1.0
+
+
 # -- sampling -----------------------------------------------------------------
 
 

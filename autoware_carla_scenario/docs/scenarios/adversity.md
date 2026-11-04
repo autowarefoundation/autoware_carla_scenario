@@ -62,12 +62,15 @@ happened by `timeout_seconds`.
 | `scenario.ego_speed_kmh` | `null` | The ego's speed, held for the run; `null`: the TrafficManager's |
 | `scenario.red_light` | `false` | Every light red |
 | `scenario.timeout_seconds` | 30.0 | Fails when not carried out by then |
-| `scenario.nade_seconds` | 45.0 | NADE: the run's length |
-| `scenario.nade_probability` | 0.05 | NADE: each kind's naturalistic probability a tick |
-| `scenario.nade_is_probability` | 0.5 | NADE: the importance-sampling probability |
-| `scenario.nade_cooldown` | 2.0 | NADE: no adversity for this long after one (s) |
+| `scenario.nade_seconds` | 45.0 | NADE: the run's length (s; positive) |
+| `scenario.nade_probability` | 0.05 | NADE: each kind's naturalistic probability a tick, in [0, 1] |
+| `scenario.nade_is_probability` | 0.5 | NADE: the importance-sampling probability, in [0, 1] |
+| `scenario.nade_cooldown` | 2.0 | NADE: no adversity for this long after one (s; not negative) |
 | `scenario.nade_challenge_npcs` | `true` | NADE: an adversity may challenge another NPC |
 | `scenario.nade_seed` | 7 | NADE: the sampler's seed |
+
+A run refuses a `scenario.nade_*` value outside its bounds before anything
+starts, naming the key (#1458).
 
 ## Result
 

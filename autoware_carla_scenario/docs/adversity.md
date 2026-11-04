@@ -129,6 +129,15 @@ map. A crosswalk without one has no red light to run.
    for 3 s, or else accept it and hold their speed for 2 s. That response
    carries its own weight. An ego victim is never driven.
 
+`NadeSettings` refuses, when it is built, a value outside its bounds, naming
+the field and the value (#1458): `max_controlled` below 0; a negative or
+non-finite `control_radius`, `magnitude` or `cooldown`; a `horizon` or
+`resolution` that is not finite and positive; and a `max_is_probability` or
+`fixed_is_probability` outside [0, 1]. A `q` above 1 would sample the adversity on
+every draw yet still weight the run by `p / q`, under-weighting it in
+silence. The editor's Adversarial Traffic card declares the same bounds, so
+it reports such a value while the document is edited.
+
 ```python
 from autoware_carla_scenario import (
     AdversarialTrafficAction,
