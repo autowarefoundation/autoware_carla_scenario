@@ -440,6 +440,42 @@ def test_each_glob_listing_is_what_its_scenario_expands_to_alone(
     assert globbed == alone
 
 
+# Scenarios on one ODD go on from each other's draws in a batch, and so in
+# `scenario-expand` of the same glob (#1405): it used to draw each afresh.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_glob_listing_is_the_cases_the_batch_runs(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.examples.expand import main
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    overrides = ["+sweep.odd_sample.count=3"]
+    assert main(["scenario=cut_in/*", *overrides]) == 0
+    listings = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    expanded = [(listing["scenario"], listing["cases"]) for listing in listings]
+
+    names = ["cut_in/left", "cut_in/right"]
+    batch = run._expand_batch(names, overrides)
+    # The batch's cases carry the command line's overrides; the listing's
+    # cases are what is added to them.
+    assert expanded == [
+        (
+            name,
+            [[o for o in case if o not in overrides] for n, case in batch if n == name],
+        )
+        for name in names
+    ]
+
+    def draws(cases: list[list[str]]) -> set[tuple[str, ...]]:
+        return {
+            tuple(o for o in case if o.startswith("environment.")) for case in cases
+        }
+
+    # The second scenario does not draw the first one's settings again.
+    assert not draws(expanded[0][1]) & draws(expanded[1][1])
+
+
 def test_a_bad_scenario_in_a_glob_prints_no_listing(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
