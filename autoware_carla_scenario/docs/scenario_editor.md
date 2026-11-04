@@ -831,8 +831,9 @@ even to an id that already ends in it, so `new_scenario` is exported as
 Package installers compare distribution names with every run of `_`, `-` and
 `.` folded into one `-`, so an id that differs from another only in its
 underscores would be the *same* package -- installing one would silently
-uninstall the other. The validator reports these ids as errors on the `id`
-field, and export refuses them:
+uninstall the other. Export refuses these ids, writing nothing; the validator
+reports them as **warnings** on the `id` field, so the draft -- and a package
+exported with such an id before #1358 -- still compiles and runs:
 
 | Id | Would be packaged as | Use instead |
 | --- | --- | --- |
@@ -843,12 +844,42 @@ field, and export refuses them:
 A draft that already uses such an id still opens and saves; rename it before
 exporting.
 
-!!! note "Ids ending in `_scenario` before #1358"
+!!! warning "Ids ending in `_scenario` are exported under a new name since #1358"
     Earlier exports did not add the suffix to an id that already ended in
     `_scenario`, so `stop_line_scenario` and `stop_line` both became the
-    package `stop_line_scenario`. Such an id now exports as
-    `stop_line_scenario_scenario`; reinstall it under that name. Every other
-    id keeps exactly the package name it always had.
+    package `stop_line_scenario`. Re-exporting such an id -- the editor's
+    default `new_scenario` among them -- now gives it a package of its own.
+    For the id `new_scenario`:
+
+    | | Before | Now |
+    | --- | --- | --- |
+    | Distribution (`pip install ...`) | `new-scenario` | `new-scenario-scenario` |
+    | Import module and `src/` directory | `new_scenario` | `new_scenario_scenario` |
+    | Entry point in `autoware_carla_scenario.scenarios` | `new_scenario` | `new_scenario_scenario` |
+    | Export directory and wheelhouse directory | `new_scenario/`, `new_scenario_wheelhouse/` | `new_scenario_scenario/`, `new_scenario_scenario_wheelhouse/` |
+    | Document override variable | `NEW_SCENARIO_DOCUMENT_PATH` | `NEW_SCENARIO_SCENARIO_DOCUMENT_PATH` |
+
+    What selects and configures the scenario does **not** change: it is still
+    `scenario=new_scenario`, from the conf file `conf/scenario/new_scenario.yaml`
+    whose `scenario.name` is `new_scenario`, and the downloaded archive is still
+    `new_scenario-wheelhouse.zip`.
+
+    Because the distribution name changed, installing the re-export does not
+    replace the old one. Uninstall the old distribution first:
+
+    ```bash
+    .venv/bin/pip uninstall new-scenario     # or: uv pip uninstall new-scenario
+    .venv/bin/pip install --no-index --find-links new_scenario_scenario_wheelhouse new-scenario-scenario
+    ```
+
+    With both installed, both register a builder named `new_scenario` (the
+    one loaded last silently wins) and both put a `scenario/new_scenario.yaml`
+    on Hydra's search path (the one registered first wins), so a run can mix
+    one package's builder with the other's config, depending on the order the
+    entry points happen to load in.
+
+    Every id that does not end in `_scenario` keeps exactly the package name it
+    always had.
 
 ### What the wheelhouse is built from
 

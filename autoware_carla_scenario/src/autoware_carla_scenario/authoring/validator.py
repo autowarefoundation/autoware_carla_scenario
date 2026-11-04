@@ -70,6 +70,12 @@ RESERVED_PACKAGE_NAMES = frozenset({"autoware_carla_scenario"})
 #: The suffix an exported package always adds to the scenario id.
 PACKAGE_SUFFIX = "_scenario"
 
+#: Appended to a :func:`scenario_id_problem` reported as a validation warning.
+EXPORT_REFUSAL_NOTE = (
+    "The scenario still runs, but Export Wheelhouse refuses it until the id "
+    "is changed."
+)
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -1495,8 +1501,11 @@ def scenario_id_problem(scenario_id: str) -> Optional[str]:
     ``_``, which the model's pattern accepts, would give an id the package of
     the id without them, and one id would give the framework's own package;
     installing either would replace the package already there (#1358).  They
-    are refused here, not in the model, so a draft that already uses one still
-    opens and can be renamed.
+    are refused by :func:`~autoware_carla_scenario.authoring.package_export.export_package`
+    alone: :func:`validate_document` only warns, because it also gates every
+    run, and a package exported with such an id before #1358 has to keep
+    running.  The model's pattern still accepts them, so a draft that uses
+    one opens and can be renamed.
     """
     stem = "_".join(part for part in scenario_id.split("_") if part)
     package = stem + PACKAGE_SUFFIX
@@ -1600,9 +1609,11 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     """
     out = _Collector()
 
+    # A warning, not an error: an id the export refuses still runs, compiles
+    # and passes the tests of a package exported before #1358.
     id_problem = scenario_id_problem(document.id)
     if id_problem is not None:
-        out.error("id", id_problem)
+        out.warn("id", f"{id_problem} {EXPORT_REFUSAL_NOTE}")
 
     entity_ids: set[str] = set()
     for index, entity in enumerate(document.entities):

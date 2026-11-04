@@ -46,7 +46,7 @@ from .models import ScenarioDocument
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
-from .validator import PACKAGE_SUFFIX, validate_document
+from .validator import PACKAGE_SUFFIX, scenario_id_problem, validate_document
 from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
 
 logger = logging.getLogger(__name__)
@@ -149,8 +149,8 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
     :func:`~autoware_carla_scenario.authoring.validator.scenario_id_problem`
     accepts; it refuses ``foo__bar`` and ``foo_bar_``, which would be named
     after ``foo_bar``, and ``autoware_carla``, which would be named after the
-    framework.  :func:`export_package` validates the document first, so it
-    never exports one of those.
+    framework.  :func:`export_package` refuses those ids before writing
+    anything, so it never exports one of them.
     """
     scenario_id = document.id
     module_id = _sanitize_identifier(scenario_id)
@@ -654,7 +654,8 @@ def export_package(
         An :class:`ExportResult` describing what was produced.
 
     Raises:
-        PackageExportError: If the document is invalid, the framework cannot be
+        PackageExportError: If the document is invalid, its id cannot name a
+            package of its own (``scenario_id_problem``), the framework cannot be
             pinned immutably, the destination is occupied, or locking or
             verification failed.  Nothing is left at *destination* in that case.
     """
@@ -662,6 +663,10 @@ def export_package(
     if not report.ok:
         detail = "; ".join(f"{i.path}: {i.message}" for i in report.errors)
         raise PackageExportError(f"Cannot export an invalid scenario: {detail}")
+    # Only a warning to validate_document, which also gates every run.
+    id_problem = scenario_id_problem(document.id)
+    if id_problem is not None:
+        raise PackageExportError(f"Cannot export this scenario: {id_problem}")
 
     names = package_names(document)
     parent = Path(destination).expanduser().resolve()

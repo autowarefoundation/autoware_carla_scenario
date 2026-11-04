@@ -46,7 +46,9 @@ from autoware_carla_scenario.authoring.package_export import (
     package_names,
 )
 from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.compiler import compile_document
 from autoware_carla_scenario.authoring.validator import (
+    EXPORT_REFUSAL_NOTE,
     scenario_id_problem,
     validate_document,
 )
@@ -391,7 +393,7 @@ class TestGeneratedPackage:
 #: Scenario ids an export accepts, each with the Python package it is named
 #: after.  Before #1358 ``__`` and a trailing ``_`` were what the package-name
 #: sanitising rewrote, and so where the scenario id and the names derived from
-#: it could part (#1072); they are now refused instead (see below).
+#: it could part (#1072); export now refuses them instead (see below).
 _SCENARIO_IDS = [
     ("stop_line", "stop_line_scenario"),
     ("cut_in", "cut_in_scenario"),
@@ -417,31 +419,45 @@ _COLLIDING_IDS = [
 class TestPackageNameCollisions:
     """No two exportable ids share a package, nor take the framework's (#1358)."""
 
+    @staticmethod
+    def _id_issues(scenario_id: str) -> list[Any]:
+        report = validate_document(new_document(scenario_id))
+        return [issue for issue in report.issues if issue.path == "id"]
+
     @pytest.mark.parametrize(("scenario_id", "other", "phrase"), _COLLIDING_IDS)
-    def test_a_colliding_id_is_a_validation_error(
+    def test_a_colliding_id_is_a_validation_warning(
         self, scenario_id: str, other: str, phrase: str
     ) -> None:
-        # Without the check both would be packaged under the same name.
+        # Without the refusal both would be packaged under the same name.
         assert (
             package_names(new_document(scenario_id))["package_name"]
             == package_names(new_document(other))["package_name"]
         )
         assert scenario_id_problem(other) is None
-        errors = [
-            issue
-            for issue in validate_document(new_document(scenario_id)).issues
-            if issue.severity == "error" and issue.path == "id"
-        ]
-        assert len(errors) == 1
-        assert phrase in errors[0].message
-        assert f"`{other}_scenario`" in errors[0].message
+        issues = self._id_issues(scenario_id)
+        assert [issue.severity for issue in issues] == ["warning"]
+        assert phrase in issues[0].message
+        assert f"`{other}_scenario`" in issues[0].message
+        assert EXPORT_REFUSAL_NOTE in issues[0].message
+
+    @pytest.mark.parametrize(
+        "scenario_id", ["stop__line", "stop_line_", "autoware_carla"]
+    )
+    def test_a_refused_id_still_validates_and_compiles(self, scenario_id: str) -> None:
+        """A package exported before #1358 runs ``compile_document`` on every
+        run and in its own tests, so the id must not become an error."""
+        document = new_document(scenario_id)
+        assert validate_document(document).ok
+        assert compile_document(document) is not None
 
     @pytest.mark.parametrize(("scenario_id", "_other", "phrase"), _COLLIDING_IDS)
     def test_a_colliding_id_is_not_exported(
         self, tmp_path: Path, scenario_id: str, _other: str, phrase: str
     ) -> None:
-        with pytest.raises(PackageExportError, match=re.escape(phrase)):
+        with pytest.raises(PackageExportError, match=re.escape(phrase)) as caught:
             export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+        assert "Cannot export this scenario" in str(caught.value)
+        assert EXPORT_REFUSAL_NOTE not in str(caught.value)
         assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.parametrize(
@@ -454,22 +470,19 @@ class TestPackageNameCollisions:
         assert problem is not None
         assert "`autoware_carla_scenario`" in problem
         assert "framework's own name" in problem
-        assert any(
-            issue.path == "id" and issue.message == problem
-            for issue in validate_document(new_document(scenario_id)).issues
-        )
+        issues = self._id_issues(scenario_id)
+        assert [issue.severity for issue in issues] == ["warning"]
+        assert issues[0].message.startswith(problem)
         with pytest.raises(PackageExportError, match="framework's own name"):
             export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+        assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
     def test_an_accepted_id_has_its_own_package(
         self, scenario_id: str, package_name: str
     ) -> None:
         assert scenario_id_problem(scenario_id) is None
-        assert not any(
-            issue.path == "id"
-            for issue in validate_document(new_document(scenario_id)).issues
-        )
+        assert self._id_issues(scenario_id) == []
         assert package_names(new_document(scenario_id))["package_name"] == (
             package_name
         )
