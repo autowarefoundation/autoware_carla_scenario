@@ -2620,3 +2620,143 @@ def test_no_command_follows_ended(world: _World, dbc: Path) -> None:
     # A command merged after the end is not forwarded.
     bridge._on_input(steering, types.SimpleNamespace(name="Steer", fields={"S": 0.3}))
     assert [m["type"] for m in link.sent] == ["command", "ended"]
+
+
+# -- a peer sending what is not a message (#1367) ----------------------------------
+
+
+def test_a_line_reader_refuses_what_is_not_a_message_and_reads_on() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        for bad in (b"[" * 100000, b"{nope", b"\xff\xfe", b"[1]", b'{"x": 1}'):
+            a.sendall(bad + b"\n")
+            with pytest.raises(ValueError, match="not a message"):
+                reader.read(timeout=1.0)
+        # The bad line is dropped; the next one still reads.
+        a.sendall(b'{"type": "hello"}\n')
+        assert reader.read(timeout=1.0) == [{"type": "hello"}]
+        assert not reader.closed
+
+
+def test_a_line_reader_refuses_an_overlong_line_without_rescanning_it() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import MAX_LINE_BYTES, LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        stop = threading.Event()
+
+        def stream() -> None:
+            chunk = b"x" * 4096
+            while not stop.is_set():
+                try:
+                    a.sendall(chunk)
+                except OSError:
+                    return
+
+        sender = _start(stream)
+        started = time.monotonic()
+        with pytest.raises(ValueError, match="longer than"):
+            while True:
+                reader.read(timeout=0.2)
+        # One linear pass over the line, not a rescan per chunk.
+        assert time.monotonic() - started < 5.0
+        assert reader.closed
+        assert len(reader._buffer) <= MAX_LINE_BYTES
+        stop.set()
+        b.close()
+        sender.join(5.0)
+
+
+def test_a_line_reader_returns_while_a_peer_streams_a_line() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        stop = threading.Event()
+
+        def trickle() -> None:
+            while not stop.is_set():
+                a.sendall(b"x")
+                time.sleep(0.01)
+
+        sender = _start(trickle)
+        started = time.monotonic()
+        assert reader.read(timeout=0.2) == []
+        assert time.monotonic() - started < 1.0
+        stop.set()
+        sender.join(5.0)
+
+
+def _greeted(port: int) -> Any:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+    messages = LineReader(sock).read(timeout=5.0)
+    assert messages and messages[0]["type"] == "hello"
+    return sock
+
+
+@pytest.mark.parametrize("bad", ["nested", "overlong"])
+def test_a_run_sending_garbage_does_not_stop_the_link(bad: str) -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils.link import RunnerLink
+
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = RunnerLink("127.0.0.1:0", events)
+    link.start()
+    port = link.address[1]
+    try:
+        first = _greeted(port)
+        if bad == "nested":
+            first.sendall(b"[" * 100000 + b"\n")
+        else:
+            # More than a line may hold, and no newline: the link refuses it
+            # (and closes) rather than buffering it.
+            try:
+                for _ in range(400):
+                    first.sendall(b"x" * 8192)
+            except OSError:
+                pass
+        assert _until(lambda: not link.connected)
+        first.close()
+        # The next run is still greeted and heard.
+        second = _greeted(port)
+        with second:
+            second.sendall(b'{"type": "end"}\n')
+            seen: List[str] = []
+
+            def heard() -> bool:
+                while not events.empty():
+                    seen.append(events.get_nowait()[0])
+                return "end" in seen
+
+            assert _until(heard)
+    finally:
+        started = time.monotonic()
+        link.close()
+        assert time.monotonic() - started < 2.0
+
+
+def test_a_run_ends_on_a_broken_reply_from_the_bridge() -> None:
+    bridge = _ScriptedBridge([])
+    entity = _entity(bridge.port)
+    assert not entity.termination_requested
+    assert _until(lambda: bridge.conn is not None)
+    assert bridge.conn is not None
+    bridge.conn.sendall(b"[" * 100000 + b"\n")
+    assert _ticked(entity, lambda: entity.termination_requested)
+    assert "not a message" in entity.termination_reason

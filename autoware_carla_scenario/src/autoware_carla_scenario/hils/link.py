@@ -114,6 +114,14 @@ class RunnerLink:
                 continue
             except OSError:
                 return
+            try:
+                self._serve_one(conn, peer)
+            except Exception:
+                # Whatever one run does, the next is still served.
+                logger.exception("the link with a scenario run failed")
+
+    def _serve_one(self, conn: socket.socket, peer: Any) -> None:
+        try:
             logger.info(
                 "scenario run connected from %s",
                 format_address(str(peer[0]), int(peer[1])),
@@ -122,14 +130,13 @@ class RunnerLink:
                 self._conn = conn
             self.send({"type": "hello", "protocol": PROTOCOL_VERSION})
             self._events.put(("connect", {}))
-            try:
-                self._read(conn)
-            finally:
-                with self._lock:
-                    self._conn = None
-                conn.close()
-                logger.info("scenario run disconnected")
-                self._events.put(("gone", {}))
+            self._read(conn)
+        finally:
+            with self._lock:
+                self._conn = None
+            conn.close()
+            logger.info("scenario run disconnected")
+            self._events.put(("gone", {}))
 
     def _read(self, conn: socket.socket) -> None:
         reader = LineReader(conn)
