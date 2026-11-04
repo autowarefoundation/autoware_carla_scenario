@@ -730,6 +730,28 @@ class UiLayout(_Node):
 SIGNAL_STATE_NAMES: tuple[str, ...] = ("green", "yellow", "red", "off", "unknown")
 
 
+def _strip_signal_name(value: Any) -> Any:
+    """Return a signal name without surrounding whitespace.
+
+    Signal groups, phases and controllers are found by name at runtime, and
+    there the lookup is exact.  The validator compared names stripped, so a
+    hand-written ``"ns "`` passed it and then matched nothing: a phase naming
+    ``ns`` drove no light, and an action naming ``"go "`` found no phase.
+    Stripping here, as the document is read, is what makes the name the
+    validator accepted the one every consumer sees -- the same normalisation the
+    editor already applies to what it is typed.  Anything that is not a string
+    is left for pydantic to refuse.
+    """
+    return value.strip() if isinstance(value, str) else value
+
+
+def _strip_signal_names(value: Any) -> Any:
+    """:func:`_strip_signal_name` over a list of names."""
+    if isinstance(value, (list, tuple)):
+        return [_strip_signal_name(item) for item in value]
+    return value
+
+
 class SignalGroupRef(_Node):
     """Signals that move together, named once for every phase that drives them.
 
@@ -758,6 +780,13 @@ class SignalGroupRef(_Node):
     lanelet2_regulatory_element_ids: list[int] = Field(default_factory=list)
     conflicts_with: list[str] = Field(default_factory=list)
 
+    _strip_name = field_validator("name", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
+    _strip_conflicts = field_validator("conflicts_with", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_names(v))
+    )
+
 
 class SignalStateRef(_Node):
     """What one signal, or one group of them, shows for the duration of a phase.
@@ -782,6 +811,10 @@ class SignalStateRef(_Node):
     lanelet2_regulatory_element_id: Optional[int] = None
     state: str = "red"
 
+    _strip_group = field_validator("group", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
+
 
 class SignalPhaseRef(_Node):
     """One step of a junction's cycle.
@@ -800,6 +833,10 @@ class SignalPhaseRef(_Node):
     name: str
     duration_seconds: float = 10.0
     states: list[SignalStateRef] = Field(default_factory=list)
+
+    _strip_name = field_validator("name", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
 
 
 class SignalControllerRef(_Node):
@@ -834,6 +871,10 @@ class SignalControllerRef(_Node):
     phases: list[SignalPhaseRef] = Field(default_factory=list)
     delay_seconds: float = 0.0
     reference: Optional[str] = None
+
+    _strip_names = field_validator("name", "reference", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
 
 
 class MapRef(_Node):
