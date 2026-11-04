@@ -10,17 +10,21 @@ lanelet before when the line is nearer its lanelet's start than that) and
 ``ego.goal_lanelet_id`` (the lanelet past the line).
 
 The stop lines are not configured: they are read off the map with
-:func:`~autoware_carla_scenario.get_stop_line_poses_with_following`, from the
-spawn lanelet and up to three lanelets after it (``depth=3``), each projected
-onto the lanelet that owns it. Setup raises :class:`ValueError` if none is
-found.
+:func:`~autoware_carla_scenario.get_stop_line_poses_with_following`
+(``depth=3``): the spawn lanelet's own, or else those of the first step of
+its successors in the routing graph, up to three steps on, that has any.
+Each is projected onto the lanelet that owns it, as a
+:class:`~autoware_carla_scenario.Lanelet2Pose`. Setup raises
+:class:`ValueError` if none is found.
 
 The pass condition is a stop *followed by* a restart, both at once:
 
 * a latched (:class:`~autoware_carla_scenario.StickyCondition`)
   :class:`~autoware_carla_scenario.TemporaryStopCondition`: the ego has been
-  within ``s_margin`` metres of one of the stop lines, on its OpenDRIVE road,
-  below ``speed_threshold`` m/s for at least ``stop_duration`` seconds; **and**
+  within ``s_margin`` metres of one of the stop lines, along the lanelet that
+  owns it (carried onto the lanelets before and after it as far as the margin
+  reaches), below ``speed_threshold`` m/s for at least ``stop_duration``
+  seconds; **and**
 * a :class:`~autoware_carla_scenario.SpeedCondition`: the ego is now moving at
   ``restart_speed_kmh`` km/h or more.
 
@@ -74,12 +78,13 @@ class TemporaryStopScenario(BaseScenario):
 
     1. Snaps the Lanelet2 spawn pose to the CARLA road surface.
     2. Sets every traffic light to green.
-    3. Finds the stop lines on the spawn lanelet and up to three lanelets
-       after it (:func:`get_stop_line_poses_with_following`, ``depth=3``),
-       raising :class:`ValueError` if there are none.
+    3. Finds the stop lines: the spawn lanelet's own, or else those of the
+       first step of its successors, up to three steps on, that has any
+       (:func:`get_stop_line_poses_with_following`, ``depth=3``), raising
+       :class:`ValueError` if there are none.
     4. Registers the pass condition: a :class:`StickyCondition`-latched
-       :class:`TemporaryStopCondition` -- within ``s_margin`` m of a stop line,
-       below ``speed_threshold`` m/s for ``stop_duration`` s -- AND a
+       :class:`TemporaryStopCondition` -- within ``s_margin`` m of a stop line
+       along its lanelet, below ``speed_threshold`` m/s for ``stop_duration`` s -- AND a
        :class:`SpeedCondition` at ``restart_speed_kmh`` km/h or more. A stop
        alone does not pass; the ego has to restart after it.
     5. Registers a :class:`TimeoutCondition` of ``timeout_seconds`` as the
