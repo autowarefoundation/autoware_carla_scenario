@@ -335,7 +335,8 @@ class TestBuildAutowareLauncher:
                 "bridge_address:={bridge_address}",
             ],
             ros_domain_ids=[3, 4],
-            ignored_key=1,
+            # The command launcher's key: the group holds both types' keys.
+            command=["true"],
         )
         launcher = build_autoware_launcher(cfg)
 
@@ -363,6 +364,72 @@ class TestBuildAutowareLauncher:
 
         with pytest.raises(ValueError, match="Unknown autoware.launcher.type"):
             build_autoware_launcher(self._cfg(type="kubernetes"))
+
+    @pytest.mark.parametrize("kind", ["none", "docker", "command"])
+    @pytest.mark.parametrize("typo", ["stop_timout_s", "workspce"])
+    def test_an_unknown_key_is_refused(self, kind: str, typo: str) -> None:
+        """#1413: a key neither launcher reads is a typo, not a default."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[typo] = 60
+        with pytest.raises(
+            ValueError,
+            match=rf"^Unknown autoware\.launcher key\(s\): "
+            rf"\['autoware\.launcher\.{typo}'\]\. Known keys: .*'stop_timeout_s'",
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_the_shipped_launcher_keys_are_accepted(self) -> None:
+        """The shipped config holds the keys of both types; each type takes it."""
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.autoware_stack import (
+            CommandAutowareLauncher,
+            DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        conf = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "autoware_carla_scenario"
+            / "examples"
+            / "conf"
+        )
+        common = [
+            "ego.entity=autoware",
+            "autoware.launcher.launch=[autoware_launch,x.launch.xml]",
+            "autoware.launcher.command=[ros2,launch]",
+            "autoware.launcher.stop_timeout_s=7",
+            "+autoware.launcher.docker=podman",
+            "+autoware.launcher.container_prefix=acs-test",
+        ]
+        with initialize_config_dir(config_dir=str(conf), version_base=None):
+            docker = compose(
+                config_name="config",
+                overrides=[*common, "autoware.launcher.type=docker"],
+            )
+            command = compose(
+                config_name="config",
+                overrides=[*common, "autoware.launcher.type=command"],
+            )
+            none = compose(config_name="config", overrides=common)
+
+        docker_launcher = build_autoware_launcher(docker)
+        assert isinstance(docker_launcher, DockerAutowareLauncher)
+        assert docker_launcher.config.stop_timeout_s == 7.0
+        assert docker_launcher.config.docker == "podman"
+        assert docker_launcher.config.container_prefix == "acs-test"
+        command_launcher = build_autoware_launcher(command)
+        assert isinstance(command_launcher, CommandAutowareLauncher)
+        assert tuple(command_launcher.argv) == ("ros2", "launch")
+        assert build_autoware_launcher(none) is None
 
 
 # ---------------------------------------------------------------------------

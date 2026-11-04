@@ -139,6 +139,17 @@ The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
 refused when the ego is built, with an error naming it: `+autoware.timout_s=30`
 fails the run rather than leaving the default timeout in place.
 
+`autoware.launcher` is checked the same way. It holds the keys of both launcher
+types at once (the shipped config does), and each type reads its own: `type`,
+`command` and every `DockerAutowareConfig` field (`workspace`, `launch`,
+`devcontainer`, `image`, `workspace_mount`, `build`, `rosdep`,
+`bridge_parameters`, `colcon_args`, `mounts`, `env`, `ros_domain_ids`, `gpus`,
+`user`, `docker_args`, `docker`, `stop_timeout_s`, `container_prefix`; the
+`command` launcher reads `env`, `stop_timeout_s` and `bridge_parameters` of
+these). A key neither type reads is refused whatever the type, naming it:
+`+autoware.launcher.stop_timout_s=60` fails the run, and a batch or a sweep
+before its first scenario starts.
+
 ### Settings
 
 | Setting | Default | Meaning |
