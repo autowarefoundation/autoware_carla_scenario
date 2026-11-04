@@ -1744,6 +1744,70 @@ def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) 
             )
 
 
+def check_scenario_maps(
+    configs: list[DictConfig], labels: list[str] | None = None
+) -> None:
+    """Refuse a case whose declarative scenario names a map of its own that
+    the composed config is not on (#1424).
+
+    An exported scenario package whose document names its map by
+    ``map.source`` or ``map.directory`` ships that map as a group of its own,
+    ``map=<id>_map``
+    (:func:`~autoware_carla_scenario.authoring.hydra_config.own_map_group`).
+    The ``map`` group is composed after the ``scenario`` one, so a run that
+    leaves the override out composes the default group, whose keys win over
+    the ones the scenario's config writes: the run would load another map's
+    Lanelet2 and OpenDRIVE, and every lanelet id the document names would be
+    one of that map's.  The composed ``map`` is therefore compared with the
+    document's, the document the package registered with its builder
+    (:func:`~autoware_carla_scenario.registry.register_scenario_document`),
+    as :func:`~autoware_carla_scenario.authoring.hydra_config.own_map_mismatch`
+    compares them.  A scenario with no registered document, or one on a
+    built-in group, is not checked; neither is one whose document cannot be
+    loaded, which its builder refuses with its own message.
+
+    Args:
+        configs: The cases' configs.
+        labels: The cases' names, for the message; none for a single run.
+
+    Raises:
+        RunConfigError: naming the scenario, what differs and the
+            ``map=<id>_map`` to run it with.
+    """
+    from autoware_carla_scenario.authoring.hydra_config import (  # noqa: PLC0415
+        own_map_mismatch,
+        run_map_group,
+    )
+    from autoware_carla_scenario.registry import (  # noqa: PLC0415
+        get_scenario_document,
+    )
+
+    names = labels if labels is not None else []
+    for i, cfg in enumerate(configs):
+        scenario_name = (cfg.get("scenario") or {}).get("name")
+        if not scenario_name:
+            continue
+        try:
+            document = get_scenario_document(str(scenario_name))
+        except Exception:  # noqa: BLE001 - the builder refuses it, by name
+            logger.debug(
+                "scenario %s: its document did not load", scenario_name, exc_info=True
+            )
+            continue
+        if document is None:
+            continue
+        mismatch = own_map_mismatch(document, cfg.get("map"))
+        if mismatch is None:
+            continue
+        prefix = f"{names[i]}: " if i < len(names) else ""
+        group = run_map_group(document)
+        raise RunConfigError(
+            f"{prefix}scenario {document.id!r} runs on the map its document "
+            f"names, but {mismatch}.  Run it with map={group}, the map group "
+            "its package ships"
+        )
+
+
 def check_batch_configs(
     configs: list[DictConfig], labels: list[str] | None = None
 ) -> None:
@@ -1752,7 +1816,8 @@ def check_batch_configs(
     no Autoware, no Rerun or T4 writer) and needing no map.
 
     First that the cases share a map (:func:`check_batch_map`, which names
-    them by *labels*).
+    them by *labels*), and that a declarative scenario's case is on the map
+    its document names (:func:`check_scenario_maps`).
 
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout and
@@ -1767,6 +1832,7 @@ def check_batch_configs(
         RunConfigError: naming the key of the first value refused.
     """
     check_batch_map(configs, labels)
+    check_scenario_maps(configs, labels)
     queue_settings: set[str] = set()
     try:
         _check_batch_writer_settings(configs)
@@ -1924,6 +1990,8 @@ def run_batch(
     # the queue is built on the first case's (#1241).
     try:
         check_batch_map(configs, labels)
+        # And that each case is on the map its document names, if it has one.
+        check_scenario_maps(configs, labels)
     except RunConfigError as exc:
         print(f"Error: {exc}")  # noqa: T201
         sys.exit(1)

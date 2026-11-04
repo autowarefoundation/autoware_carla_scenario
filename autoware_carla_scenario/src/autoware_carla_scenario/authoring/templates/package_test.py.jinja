@@ -41,8 +41,14 @@ def test_scenario_compiles() -> None:
 
 def test_package_registers_its_conf_dir() -> None:
     """``register()`` makes the scenario selectable by name."""
-    from autoware_carla_scenario import get_scenario_builder, get_conf_dirs
+    from autoware_carla_scenario import (
+        get_conf_dirs,
+        get_scenario_builder,
+        get_scenario_document,
+    )
 
     {{ package_name }}.register()
     assert get_scenario_builder("{{ scenario_id }}") is not None
+    document = get_scenario_document("{{ scenario_id }}")
+    assert document is not None and document.id == "{{ scenario_id }}"
     assert {{ package_name }}.CONF_DIR in get_conf_dirs()

@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autoware_carla_scenario import register_conf_dir, register_scenario_builder
+from autoware_carla_scenario import (
+    register_conf_dir,
+    register_scenario_builder,
+    register_scenario_document,
+)
 
 __all__ = ["CONF_DIR", "DOCUMENT_PATH", "PACKAGE_DIR", "register"]
 
@@ -29,14 +33,16 @@ CONF_DIR = PACKAGE_DIR / "conf"
 
 
 def register() -> None:
-    """Register this package's scenario and config directory.
+    """Register this package's scenario, its document and config directory.
 
     Called by the framework CLI through the
     ``autoware_carla_scenario.scenarios`` entry point.  The builder is imported
     here rather than at module scope so that merely enumerating entry points
-    stays free of the CARLA import.
+    stays free of the CARLA import.  The document is registered so that a run
+    can check its map against the document's before anything starts.
     """
-    from .scenario import build_scenario
+    from .scenario import build_scenario, load_document
 
     register_scenario_builder("{{ scenario_id }}", build_scenario)
+    register_scenario_document("{{ scenario_id }}", load_document)
     register_conf_dir(CONF_DIR)

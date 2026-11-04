@@ -518,6 +518,126 @@ class TestExportedMapGroup:
         assert cfg.map.lanelet2_path
 
 
+@pytest.fixture
+def scenario_registry(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The scenario registry, restored after the test: an exported ``cut_in``
+    package registers over the built-in ``cut_in``."""
+    from autoware_carla_scenario import registry
+
+    for name in ("_SCENARIO_REGISTRY", "_SCENARIO_CLASSES", "_SCENARIO_DOCUMENTS"):
+        monkeypatch.setattr(registry, name, dict(getattr(registry, name)))
+    monkeypatch.setattr(registry, "_CONF_DIRS", list(registry._CONF_DIRS))
+    return registry
+
+
+class TestRunOnTheDocumentsMap:
+    """A run of a scenario on a source or directory map that composes another
+    map group is refused before anything starts, naming ``map=<id>_map``
+    (#1424)."""
+
+    @staticmethod
+    def _check(cfg: Any) -> None:
+        from autoware_carla_scenario.examples.run import check_run_config
+
+        check_run_config(cfg)
+
+    @pytest.mark.parametrize("kind", ["source", "directory"])
+    def test_the_default_map_group_is_refused(
+        self, tmp_path: Path, kind: str, scenario_registry: Any
+    ) -> None:
+        from autoware_carla_scenario.examples.run import RunConfigError
+
+        document = _document_on_own_map(kind)
+        package = export_package(document, tmp_path, **OFFLINE).root
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+
+        # The default group (nishishinjuku) wins over the scenario's map keys.
+        cfg = _compose_exported(package)
+        assert cfg.map.name == "NishishinjukuMap"
+        with pytest.raises(RunConfigError, match=r"map=cut_in_map") as raised:
+            self._check(cfg)
+        assert "map.name is 'NishishinjukuMap'" in str(raised.value)
+
+        self._check(_compose_exported(package, "map=cut_in_map"))
+
+    def test_another_revision_of_the_map_is_refused(
+        self, tmp_path: Path, scenario_registry: Any
+    ) -> None:
+        """A group on the same CARLA map, from another source, is another map."""
+        from autoware_carla_scenario.examples.run import RunConfigError
+
+        document = _document_on_own_map("source")
+        document.map.source = _MAP_SOURCE.replace("5058c66", "0000000")
+        package = export_package(document, tmp_path, **OFFLINE).root
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+
+        with pytest.raises(RunConfigError, match=r"map\.source.*map=cut_in_map"):
+            self._check(_compose_exported(package, "map=town10hd_opt"))
+        self._check(_compose_exported(package, "map=cut_in_map"))
+
+    def test_a_local_copy_of_the_same_map_is_accepted(
+        self, tmp_path: Path, scenario_registry: Any
+    ) -> None:
+        """Explicit files and a directory are how a run points at its own copy."""
+        document = _document_on_own_map("source")
+        package = export_package(document, tmp_path, **OFFLINE).root
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+
+        self._check(
+            _compose_exported(
+                package,
+                "map=cut_in_map",
+                "map.lanelet2_path=/copy/lanelet2_map.osm",
+                "map.xodr_path=/copy/Town10HD_Opt.xodr",
+            )
+        )
+        self._check(_compose_exported(package, "map=cut_in_map", "map.directory=/copy"))
+
+    def test_a_document_on_a_built_in_group_is_not_checked(
+        self, package: Path, scenario_registry: Any
+    ) -> None:
+        document = new_document()
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        self._check(_compose_exported(package))
+        # Its group is the map; a run choosing another is the run's choice.
+        self._check(_compose_exported(package, "map=town10hd_opt"))
+
+    def test_the_exported_package_registers_its_document(
+        self, tmp_path: Path, scenario_registry: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What ``register()`` puts in the registry is what the run checks."""
+        from autoware_carla_scenario.examples.run import RunConfigError
+
+        package = export_package(_document_on_own_map("source"), tmp_path, **OFFLINE)
+        monkeypatch.syspath_prepend(str(package.root / "src"))
+        import importlib
+
+        try:
+            importlib.import_module("cut_in_scenario").register()
+            document = scenario_registry.get_scenario_document("cut_in")
+            assert document is not None and document.map.source == _MAP_SOURCE
+            with pytest.raises(RunConfigError, match=r"map=cut_in_map"):
+                self._check(_compose_exported(package.root))
+            self._check(_compose_exported(package.root, "map=cut_in_map"))
+        finally:
+            for module in [m for m in sys.modules if m.startswith("cut_in_scenario")]:
+                del sys.modules[module]
+
+    def test_a_batch_names_the_case(
+        self, tmp_path: Path, scenario_registry: Any
+    ) -> None:
+        from autoware_carla_scenario.examples.run import (
+            RunConfigError,
+            check_batch_configs,
+        )
+
+        document = _document_on_own_map("directory")
+        package = export_package(document, tmp_path, **OFFLINE).root
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        with pytest.raises(RunConfigError, match=r"^case-a: .*map=cut_in_map"):
+            check_batch_configs([_compose_exported(package)], ["case-a"])
+
+
 #: Valid scenario ids, each with the Python package its export is named after.
 #: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
 #: so they are where the scenario id and the names derived from it could part.

@@ -998,13 +998,32 @@ map:
   no_3d_model_lanelet_ids: []
 ```
 
-It sets every `map` key, the ones the document leaves empty as `null`. Running
-the scenario with a built-in group instead -- or with none, which selects the
-default, `nishishinjuku` -- runs it on that group's map: the framework composes
-the `map` group after the `scenario` one, so the group's name, Lanelet2 and
-OpenDRIVE paths and exclusion list win over the `map` keys the scenario's own
-config writes (and a scenario config cannot select another group, as Hydra
-refuses an `override /map` from a group composed before it).
+It sets every `map` key, the ones the document leaves empty as `null`. A run
+that selects a built-in group instead -- or none, which selects the default,
+`nishishinjuku` -- would put that group's map under the scenario: the framework
+composes the `map` group after the `scenario` one, so the group's name, Lanelet2
+and OpenDRIVE paths and exclusion list win over the `map` keys the scenario's
+own config writes (and a scenario config cannot select another group, as Hydra
+refuses an `override /map` from a group composed before it). So the run refuses
+it before anything starts -- a single run, a batch (naming the case) and a
+lanelet sweep alike -- and names the group to run with:
+
+```text
+Error: scenario 'cut_in' runs on the map its document names, but map.name is
+'NishishinjukuMap', not the document's 'Town10HD_Opt'.  Run it with
+map=cut_in_map, the map group its package ships
+```
+
+The package's `register()` registers its document with its builder
+(`register_scenario_document`), and the run compares the composed `map` with
+it: the CARLA map (`map.name`) must be the document's, and so must where the map
+comes from -- `map.source`, unless a `map.directory` is set, which no built-in
+group sets and so is the run's own local copy of the map. A source other than
+the document's is another map, or another revision whose lanelet ids are not the
+ones the document names: move the pin in the document and export again.
+`map.lanelet2_path` and `map.xodr_path` are not compared, since an explicit file
+is how a run points at its own copy of the same map
+(`map=cut_in_map map.xodr_path=/tmp/patched.xodr`).
 
 The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
 even when the document names its own `.xodr`: that file is what the run reads

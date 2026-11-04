@@ -410,6 +410,7 @@ The `scenario` command also exposes Python-level helpers in
 |--------|-------------|
 | `register_scenario(name, scenario_cls, config_cls)` | Register a built-in-style scenario class under a Hydra `scenario.name`. |
 | `register_scenario_builder(name, builder)` | Register a custom builder when the constructor signature differs. |
+| `register_scenario_document(name, loader)` / `get_scenario_document(name)` | Register (after its builder) how to load the Scenario IR document a declarative scenario runs, and load it; a run checks its map against the document's before anything starts. |
 | `get_scenario_registry()` | Return a copy of the registry. |
 | `build_ego_and_spawn(cfg)` | Build `(EgoConfig, Lanelet2Pose, GroundProjectionConfig)` from a resolved Hydra config. |
 | `build_scenario(cfg, *, build_scenario_fn=None)` | Look up the registered builder and instantiate the scenario. |

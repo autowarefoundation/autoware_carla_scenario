@@ -325,7 +325,11 @@ its own, `conf/map/<id>_map.yaml` inside the package, setting every `map` key
 (the paths the document leaves empty as `null`, `overwrite_xodr: false`, its own
 `no_3d_model_lanelet_ids`), and runs with `map=<id>_map`. Selecting a built-in
 group instead would put that group's map under the scenario: the `map` group is
-composed after the scenario's config, and its explicit paths win over a source
+composed after the scenario's config, and its explicit paths win over a source.
+A run that does -- including one that leaves `map=` out and gets the default
+group -- is refused before anything starts, naming `map=<id>_map`: its
+`map.name`, or its `map.source` when no `map.directory` is set, is not the
+document's
 ([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
 
 The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
