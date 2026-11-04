@@ -19,8 +19,25 @@ from .runner import RAW_OUTPUT_LOG
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache: cleared by the Update button.
+# Module-level cache: cleared by the Update button.  Touched on the event
+# loop only, never from a worker thread.
 _cache: dict[str, Any] = {}
+
+
+def _stamp(directory: Path, session_type: str) -> tuple[Any, ...]:
+    """What a cached page of the session in *directory* is kept for: a
+    batch's :func:`~autoware_carla_scenario.ui.cases.batch_stamp` (a SLURM
+    batch resubmitted and collected again changes it), nothing for the
+    others, whose results a run writes once."""
+    return cases.batch_stamp(directory) if session_type == "batch" else ()
+
+
+def _cached(cache_key: str, stamp: tuple[Any, ...]) -> tuple[bool, Any]:
+    """``(True, value)`` when *cache_key* holds a value cached at *stamp*."""
+    entry = _cache.get(cache_key)
+    if entry is not None and entry[0] == stamp:
+        return True, entry[1]
+    return False, None
 
 
 # The built-in Hydra configs (``examples/conf``), resolved here rather than
@@ -282,8 +299,10 @@ def load_session(
         return items
 
     cache_key = f"session:{base_path}:{session_type}:{date}:{time}"
-    if cache_key in _cache:
-        return _cache[cache_key]  # type: ignore[return-value]
+    stamp = _stamp(directory, session_type)
+    hit, value = _cached(cache_key, stamp)
+    if hit:
+        return value  # type: ignore[no-any-return]
 
     final = True
 
@@ -374,9 +393,10 @@ def load_session(
                     )
                 )
 
-    # A SLURM batch still running is read again each time.
+    # A SLURM batch still running is read again each time; a final one is
+    # kept until its files change (a resubmission, a new collect).
     if session_type != "batch" or final:
-        _cache[cache_key] = items
+        _cache[cache_key] = (stamp, items)
     return items
 
 
@@ -473,8 +493,10 @@ def load_scenario(
     if directory is None or index < 0:
         return None
     cache_key = f"scenario:{base_path}:{session_type}:{date}:{time}:{index}"
-    if cache_key in _cache:
-        return _cache[cache_key]  # type: ignore[return-value]
+    stamp = _stamp(directory, session_type)
+    hit, value = _cached(cache_key, stamp)
+    if hit:
+        return value  # type: ignore[no-any-return]
 
     data: dict[str, Any] | None = None
     overrides: list[str] = []
@@ -528,7 +550,7 @@ def load_scenario(
             raw_log=raw_log,
         )
         if cacheable:
-            _cache[cache_key] = result
+            _cache[cache_key] = (stamp, result)
         return result
 
     # Build condition tree
@@ -572,5 +594,5 @@ def load_scenario(
         trajectory_path=trajectory_path,
     )
     if cacheable:
-        _cache[cache_key] = result
+        _cache[cache_key] = (stamp, result)
     return result

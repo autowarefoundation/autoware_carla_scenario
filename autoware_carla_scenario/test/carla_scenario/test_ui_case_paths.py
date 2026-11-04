@@ -40,6 +40,7 @@ def test_cases_still_exports_every_name() -> None:
         "CaseFiles",
         "batch_case_files",
         "batch_entries",
+        "batch_stamp",
         "case_files",
         "contained",
         "job_dir",
