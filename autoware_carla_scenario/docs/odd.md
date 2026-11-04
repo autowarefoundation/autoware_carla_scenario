@@ -1198,8 +1198,13 @@ environment:
       "vehicle.mini.*": weather/mini.yaml   # a blueprint pattern
 ```
 
-Each vehicle's file is read over the run's default rules. An
-`EnvironmentAction` that sets the road's water gives each vehicle the grip of
+Each vehicle's file is read over the run's default rules. `default` and
+every `vehicles` entry name one file each -- a path or an `https://` URL, as
+`environment.rules` itself does; a pinned `{url, sha256}` is for `extends`
+alone, so a file to pin goes in one that `extends` it. Anything else (a
+number, a mapping, a list, an unknown key) is refused before the batch runs
+(`openodd.RulesError`, naming the key; `weather_rules.check_weather_rules`).
+An `EnvironmentAction` that sets the road's water gives each vehicle the grip of
 its own rules, all at the same `tire_friction_quantile` (a case draws one),
 and a vehicle spawned later its own too; the ODD's `tire_friction` probe
 reads the ego's. `tire_friction`, the grip named outright, is every

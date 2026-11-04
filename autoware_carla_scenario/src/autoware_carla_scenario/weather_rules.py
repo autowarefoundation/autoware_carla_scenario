@@ -56,6 +56,7 @@ __all__ = [
     "QUANTITIES",
     "WEATHER_INPUTS",
     "RulesError",
+    "check_weather_rules",
     "default_rules",
     "rule_values",
     "use_weather_rules",
@@ -126,6 +127,49 @@ def _backend() -> "CarlaBackend":
     return CARLA_BACKEND
 
 
+def check_weather_rules(
+    spec: Any,
+) -> tuple[Union[str, Path, None], list[tuple[str, Union[str, Path]]]]:
+    """*spec*'s rule files, its form checked but no file read: the default
+    rules' (``None``: the packaged ones alone) and every ``vehicles`` entry's
+    ``(pattern, file)``, in order.  What :func:`use_weather_rules` reads, and
+    what the runner refuses a batch for before it runs.
+
+    *spec* is ``None``, a file (a ``str`` path or ``https://`` URL, or a
+    :class:`~pathlib.Path`), or a mapping of ``default`` (``None`` or a
+    file) and ``vehicles`` (``None`` or a mapping of pattern to file).
+
+    Raises:
+        RulesError: When *spec*, its ``default`` or a ``vehicles`` entry is
+            not of that form, or it names a field other than those two.
+    """
+    if spec is None or isinstance(spec, (str, Path)):
+        return spec, []
+    if not isinstance(spec, Mapping):
+        raise RulesError(
+            f"environment.rules: expected a file or {{default, vehicles}}, got {spec!r}"
+        )
+    unknown = sorted(set(map(str, spec)) - {"default", "vehicles"})
+    if unknown:
+        raise RulesError(f"environment.rules: unknown fields {unknown}")
+    default = spec.get("default")
+    if default is not None and not isinstance(default, (str, Path)):
+        # Not str() of it: a number, or a pinned {url, sha256} (which only
+        # ``extends`` takes), would be read as a path that does not exist.
+        raise RulesError(f"environment.rules.default: expected a file, got {default!r}")
+    vehicles = spec.get("vehicles")
+    if vehicles is None:
+        vehicles = {}
+    elif not isinstance(vehicles, Mapping):
+        raise RulesError("environment.rules.vehicles: expected pattern -> file")
+    entries: list[tuple[str, Union[str, Path]]] = []
+    for pattern, location in vehicles.items():
+        if not isinstance(location, (str, Path)):
+            raise RulesError(f"environment.rules.vehicles.{pattern}: expected a file")
+        entries.append((str(pattern), location))
+    return default, entries
+
+
 def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) -> None:
     """Follow *spec*'s rules from now on: ``None`` the default ones, a file
     (a path or an ``https://`` URL) merged over them, or ``{default,
@@ -134,34 +178,19 @@ def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) ->
 
     Raises:
         RulesError: When a file cannot be read, its rules are not well formed,
-            or *spec* is neither a file nor ``{default, vehicles}``.
+            or *spec* is neither a file nor ``{default, vehicles}`` of files
+            (:func:`check_weather_rules`).
     """
     backend = _backend()
-    default: Union[str, Path, None]
-    vehicles: Mapping[Any, Any]
-    if spec is None or isinstance(spec, (str, Path)):
-        default, vehicles = spec, {}
-    elif isinstance(spec, Mapping):
-        unknown = sorted(set(map(str, spec)) - {"default", "vehicles"})
-        if unknown:
-            raise RulesError(f"environment.rules: unknown fields {unknown}")
-        default = spec.get("default")
-        vehicles = spec.get("vehicles") or {}
-        if not isinstance(vehicles, Mapping):
-            raise RulesError("environment.rules.vehicles: expected pattern -> file")
-    else:
-        raise RulesError(
-            f"environment.rules: expected a file or {{default, vehicles}}, got {spec!r}"
-        )
+    # Its form first, so a malformed spec changes nothing.
+    default, vehicles = check_weather_rules(spec)
     _VEHICLE_RULES.clear()
     followed = backend.use_rules(None if default is None else str(default))
     base = followed if followed is not None else default_rules()
-    for pattern, location in vehicles.items():
-        if not isinstance(location, (str, Path)):
-            raise RulesError(f"environment.rules.vehicles.{pattern}: expected a file")
+    for pattern, location in vehicles:
         rules = base.read_over(str(location))
         rules.check_inputs(WEATHER_INPUTS)
-        _VEHICLE_RULES.append((str(pattern), rules))
+        _VEHICLE_RULES.append((pattern, rules))
     if default is not None or _VEHICLE_RULES:
         logger.info(
             "Following the weather rules of %s",
