@@ -338,6 +338,13 @@ its run raised (CARLA went away, a spawn failed), timed out
 FAILED verdict is final and is not retried, as in a batch. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
 at most `1 + server.cooldown_max_retries` times, as in a batch.
+A retry runs in the case's job directory, and before it starts the sweeper
+removes what the failed attempt wrote there (its result, coverage file,
+trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
+takes the same file stem, so the viewer and the coverage merge read the
+retry's outputs alone. Only the outputs the case's own attempts wrote are
+removed; Hydra's job log and anything already in the directory before the
+case started (one `hydra.sweep.dir=` names again) are kept.
 
 A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it

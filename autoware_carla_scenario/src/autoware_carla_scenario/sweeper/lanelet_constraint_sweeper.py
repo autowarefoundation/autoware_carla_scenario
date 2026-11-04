@@ -53,17 +53,19 @@ import time
 from pathlib import Path
 from typing import Any
 
+from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
 from hydra.core.utils import JobReturn, JobStatus, configure_log
 from hydra.errors import CompactHydraException
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import HydraContext
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError
+from ..run_outputs import RUN_DIR_SUFFIXES, RUN_FILE_SUFFIXES, remove_run_outputs
 from ..ui.case_paths import last_result_path
 from .expand import (
     _config_seed,
@@ -115,9 +117,11 @@ def _read_verdict(output_dir: Path) -> bool | None:
     its job's output directory: the last run's
     (:func:`..ui.case_paths.last_result_path`).  A retry
     (``server.cooldown_max_retries``) runs the case again in the same job
-    directory, after an attempt that may have left a result of its own, and
-    takes the next stem (``X-1`` after ``X``); its verdict is the one that
-    counts, not the stale ``X``'s the viewer shows first.
+    directory; the sweeper removes the failed attempt's outputs first (#1373),
+    so the retry takes the same stem, but a directory that held a run before
+    the case started (one ``hydra.sweep.dir`` names again) keeps it, and the
+    case takes the next stem (``X-1`` after ``X``): its verdict is the one
+    that counts.
 
     Returns:
         ``True`` if the scenario passed, ``False`` if it ran and failed, or
@@ -135,6 +139,35 @@ def _read_verdict(output_dir: Path) -> bool | None:
     if not isinstance(data, dict):
         return None
     return bool(data.get("passed", True))
+
+
+#: Every suffix of a run output (:mod:`..run_outputs`), longest first, so
+#: that ``X.sensors.rrd`` reads as stem ``X``, not ``X.sensors``.
+_RUN_SUFFIXES: tuple[str, ...] = tuple(
+    sorted(RUN_FILE_SUFFIXES + RUN_DIR_SUFFIXES, key=len, reverse=True)
+)
+
+
+def _run_output_stems(directory: Path, job_log: str | None) -> set[str]:
+    """The stems of the runs that left an output (:mod:`..run_outputs`) in
+    *directory*: what ``scenario_runner._run_file_stem`` skips over.
+
+    *job_log* is the file name of Hydra's job log (``<job name>.log``), which
+    is not a run's CARLA recorder log though it ends as one does.
+    """
+    try:
+        names = [path.name for path in directory.iterdir()]
+    except OSError:
+        return set()
+    stems: set[str] = set()
+    for name in names:
+        if name == job_log:
+            continue
+        for suffix in _RUN_SUFFIXES:
+            if name.endswith(suffix) and len(name) > len(suffix):
+                stems.add(name[: -len(suffix)])
+                break
+    return stems
 
 
 def _get_job_output_dir(ret: JobReturn) -> str | None:
@@ -341,6 +374,51 @@ class LaneletConstraintSweeper(Sweeper):
             config=config,
         )
 
+    def _job_output_dir(
+        self, batch: tuple[str, ...], idx: int
+    ) -> tuple[Path, str | None] | None:
+        """Where job *idx* runs *batch*, and the file name of its Hydra job log.
+
+        The directory is the one Hydra's launcher gives the job
+        (``hydra.sweep.dir``/``hydra.sweep.subdir`` of its config, with
+        ``hydra.job.num`` = *idx*), computed as ``BasicLauncher.launch`` and
+        ``run_job`` compute it.  ``None``, logged, when it cannot be: the
+        retry then runs beside what the failed attempt left.
+        """
+        assert self.config is not None
+        try:
+            if self.hydra_context is None:
+                raise RuntimeError("the sweeper was not set up")
+            sweep_config = self.hydra_context.config_loader.load_sweep_config(
+                self.config, list(batch)
+            )
+            with open_dict(sweep_config):
+                sweep_config.hydra.job.id = idx
+                sweep_config.hydra.job.num = idx
+            hydra_config = HydraConfig.instance()
+            previous = hydra_config.cfg
+            # As run_job does: hydra.sweep.subdir may read ${hydra:...}.
+            hydra_config.set_config(sweep_config)
+            try:
+                directory = str(OmegaConf.select(sweep_config, "hydra.sweep.dir"))
+                subdir = OmegaConf.select(sweep_config, "hydra.sweep.subdir")
+                if subdir is not None:
+                    directory = os.path.join(directory, str(subdir))
+                job_name = OmegaConf.select(sweep_config, "hydra.job.name")
+            finally:
+                hydra_config.cfg = previous
+        except Exception as exc:  # noqa: BLE001 - the case runs anyway
+            logger.warning(
+                "Cannot tell the output directory of job %d (%s: %s); a retry "
+                "of it keeps what the failed attempt left there.",
+                idx,
+                type(exc).__name__,
+                exc,
+            )
+            return None
+        job_log = f"{job_name}.log" if job_name is not None else None
+        return Path(os.path.abspath(directory)), job_log
+
     def sweep(self, arguments: list[str]) -> Any:
         """Execute the constraint-based sweep.
 
@@ -510,6 +588,16 @@ class LaneletConstraintSweeper(Sweeper):
 
             succeeded = False
             exit_code: int | None = None
+            # The job's directory and the stems already in it before its
+            # first attempt (none, unless hydra.sweep.dir names a directory
+            # an earlier sweep wrote in): a retry removes only what the
+            # failed attempts of this job left (#1373).
+            job_dir = self._job_output_dir(batch, idx) if max_attempts > 1 else None
+            stems_before = (
+                _run_output_stems(job_dir[0], job_dir[1])
+                if job_dir is not None
+                else set()
+            )
             for attempt in range(max_attempts):
                 # Cooldown in the parent process (no CARLA state, SIGSEGV-safe).
                 # Skip cooldown before the very first job of this run.
@@ -520,6 +608,28 @@ class LaneletConstraintSweeper(Sweeper):
                         if attempt == 0
                         else "CARLA cooldown (retry)",
                     )
+
+                if attempt > 0 and job_dir is not None:
+                    # As the queue and the SLURM worker do before a retry:
+                    # what the failed attempt wrote (a result, a coverage
+                    # file, a trajectory log ...) makes way for the retry's,
+                    # which then takes the same stem.  Left behind, the
+                    # viewer, which shows a job's first stem, and the
+                    # coverage merge, which reads every coverage file, would
+                    # read the failed attempt's (#1373).
+                    directory, job_log = job_dir
+                    for stem in sorted(
+                        _run_output_stems(directory, job_log) - stems_before
+                    ):
+                        logger.info(
+                            "[%d/%d] Removing the outputs of the failed "
+                            "attempt %s in %s before the retry.",
+                            idx + 1,
+                            idx_offset + len(batches),
+                            stem,
+                            directory,
+                        )
+                        remove_run_outputs(directory, stem)
 
                 logger.info(
                     "[%d/%d] Launching (attempt %d/%d): %s",
