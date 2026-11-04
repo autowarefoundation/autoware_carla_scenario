@@ -173,11 +173,16 @@ driver:
 ```
 
 Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
-are refused. Its `image_width`, `image_height` and `fps` must be positive (and
-`fps` finite), its `fov` in (0, 180) degrees -- CARLA renders the pinhole of
-the horizontal `fov` -- and its mount (`position_x/y/z`, `roll`, `pitch`,
-`yaw`) finite. A camera out of these bounds is refused as the config is read,
-not when it attaches after the ego spawned.
+are refused. Its `image_width` and `image_height` must be positive whole
+numbers, its `fps` positive and finite, its `fov` in (0, 180) degrees -- CARLA
+renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
+`roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
+config is read, not when it attaches after the ego spawned.
+
+A whole number is an integer as YAML writes one: `960`, not `960.0`, which the
+policy's `CameraSpec` resolution (an integer field) and CARLA's `image_size_x`
+do not take. `960.0`, `960.5`, a boolean and a string are refused, naming the
+field, as the `driver` config schema refuses them.
 
 ### A camera with a lens of its own: `driver.cameras[].lens`
 
@@ -470,7 +475,8 @@ driver:
 ```
 
 LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
-`channels`, `range_m` and `points_per_second` positive, `lower_fov_deg` below
+`channels` and `points_per_second` positive whole numbers (`64`, not `64.0`,
+which CARLA takes as integers), `range_m` positive, `lower_fov_deg` below
 `upper_fov_deg`, `weather_noise` not negative, `noise_seed` a whole number
 (`3` or `3.0`; not `1.9`, a boolean or a string) not negative,
 `fog_density_scale` positive.

@@ -29,7 +29,7 @@ import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import check_seed, resolve_seed
-from .base import sensor_tick_s
+from .base import check_whole_number, sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -90,12 +90,14 @@ class CarlaLidarSensorConfig:
     yaw: float = 0.0
 
     def __post_init__(self) -> None:
+        # The mapping is not coerced, so an int field may hold a float (a NaN
+        # too), a bool or a string; CARLA takes these attributes as integers
+        # and would be handed "64.5" (#1472).
+        check_whole_number("LiDAR channels", self.channels)
+        check_whole_number("LiDAR points_per_second", self.points_per_second)
         # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
-        # below, so the numbers are refused unless finite first (#1391).  The
-        # mapping is not coerced, so an int field may hold a float NaN too.
+        # below, so the numbers are refused unless finite first (#1391).
         for key, value in (
-            ("channels", float(self.channels)),
-            ("points_per_second", float(self.points_per_second)),
             ("range_m", self.range_m),
             ("upper_fov_deg", self.upper_fov_deg),
             ("lower_fov_deg", self.lower_fov_deg),

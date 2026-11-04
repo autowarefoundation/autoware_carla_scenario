@@ -189,9 +189,6 @@ def test_camera_logical_ids_must_be_unique() -> None:
         {"fps": float("inf")},
         {"image_width": 0},
         {"image_height": -1},
-        {"image_width": float("nan")},
-        {"image_height": float("nan")},
-        {"image_width": float("inf")},
     ],
 )
 def test_camera_refuses_a_non_positive_or_non_finite_size_or_fps(
@@ -202,6 +199,31 @@ def test_camera_refuses_a_non_positive_or_non_finite_size_or_fps(
         DriverClientConfig.from_mapping(
             {"cameras": [{"logical_id": "front", **values}]}
         )
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize(
+    "value", [960.0, 960.5, float("nan"), float("inf"), True, "960"]
+)
+def test_camera_refuses_a_size_that_is_no_int(key: str, value: Any) -> None:
+    """The egodriver contract's resolution is an integer field, which refused
+    even 960.0 with a TypeError as the session started, after the ego spawned
+    (#1472); as the Hydra schema does, the config refuses it as it is read."""
+    match = rf"^camera 'front': {key} must be a whole number"
+    with pytest.raises(ValueError, match=match):
+        DriverCameraConfig(logical_id="front", **{key: value})
+    with pytest.raises(ValueError, match=match):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", key: value}]}
+        )
+
+
+def test_shipped_driver_cameras_have_int_sizes() -> None:
+    for preset in ("default", "vision_pilot"):
+        config = DriverClientConfig.from_mapping(_composed([f"driver={preset}"]).driver)
+        for camera in config.cameras:
+            assert type(camera.image_width) is int
+            assert type(camera.image_height) is int
 
 
 @pytest.mark.parametrize("fov", [0.0, -30.0, 180.0, 270.0, float("nan"), float("inf")])

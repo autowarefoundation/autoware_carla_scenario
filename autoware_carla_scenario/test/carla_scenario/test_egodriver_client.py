@@ -165,6 +165,19 @@ def test_start_session_sends_the_camera_rig(policy: _StubPolicy) -> None:
     assert intrinsics.opencv_pinhole_param.principal_point_x == pytest.approx(480.0)
 
 
+def test_camera_specs_take_the_configured_size_as_ints(policy: _StubPolicy) -> None:
+    """protobuf's integer resolution refuses a float, even 960.0, with a
+    TypeError; a whole number is all the config lets through (#1472)."""
+    client = _client(policy)
+    (camera,) = client._camera_specs()  # noqa: SLF001
+    assert (camera.intrinsics.resolution_w, camera.intrinsics.resolution_h) == (
+        960,
+        604,
+    )
+    with pytest.raises(ValueError, match="image_width must be a whole number"):
+        DriverClientConfig.from_mapping({"cameras": [{"image_width": 960.0}]})
+
+
 def test_a_camera_with_a_lens_is_advertised_as_its_ftheta_lens(
     policy: _StubPolicy,
 ) -> None:

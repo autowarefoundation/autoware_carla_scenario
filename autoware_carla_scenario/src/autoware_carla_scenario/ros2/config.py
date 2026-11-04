@@ -204,9 +204,10 @@ class Ros2CameraConfig:
         logical_id: The camera's name in logs.
 
     Raises:
-        ValueError: If the topic is empty, the image size or fps is not
-            positive and finite, the ``fov`` is outside (0, 180) degrees, or
-            the mount is not finite.
+        ValueError: If the topic is empty, the image size is not a positive
+            whole number (an ``int``, not ``960.0``), the fps is not positive
+            and finite, the ``fov`` is outside (0, 180) degrees, or the mount
+            is not finite.
     """
 
     topic: str = ""
@@ -227,10 +228,11 @@ class Ros2CameraConfig:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
         owner = f"camera {self.logical_id!r}"
-        # A float size is taken, as a driver camera's (DriverCameraConfig);
-        # a bool or a string is not.
-        _check_number(owner, "image_width", self.image_width)
-        _check_number(owner, "image_height", self.image_height)
+        # A whole number, as a driver camera's (DriverCameraConfig): CARLA's
+        # image_size_x is an integer, so a float, even 960.0, is refused
+        # (#1472), as are a bool and a string.
+        _check_whole_number(owner, "image_width", self.image_width)
+        _check_whole_number(owner, "image_height", self.image_height)
         for key, value in (
             ("fov", self.fov),
             ("fps", self.fps),
@@ -248,14 +250,7 @@ class Ros2CameraConfig:
                 )
         # As a driver camera's (DriverCameraConfig): a bad size or fov would
         # only fail as the camera attaches, after the ego has spawned (#1399).
-        # The mapping is not coerced, so an int field may hold a float NaN too.
-        if (
-            not math.isfinite(float(self.image_width))
-            or not math.isfinite(float(self.image_height))
-            or self.image_width <= 0
-            or self.image_height <= 0
-            or self.fps <= 0.0
-        ):
+        if self.image_width <= 0 or self.image_height <= 0 or self.fps <= 0.0:
             raise ValueError(
                 f"camera {self.logical_id!r}: image size and fps must be positive "
                 f"and finite, got {self.image_width}x{self.image_height} "

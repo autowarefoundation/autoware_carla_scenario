@@ -189,12 +189,32 @@ def test_a_camera_accepts_a_fov_inside_0_to_180(fov: float) -> None:
 
 
 @pytest.mark.parametrize("key", ["image_width", "image_height"])
-@pytest.mark.parametrize("value", [math.nan, math.inf, 0, -1])
+@pytest.mark.parametrize("value", [0, -1])
 def test_a_camera_refuses_a_bad_image_size(key: str, value: Any) -> None:
     with pytest.raises(
         ValueError, match="image size and fps must be positive and finite"
     ):
         Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [960.0, 960.5, math.nan, math.inf, True, "960"])
+def test_a_camera_refuses_a_size_that_is_no_int(key: str, value: Any) -> None:
+    """CARLA's image_size_x is an integer: 960.0 reached it as "960.0", as a
+    driver camera's refused it only once the session started (#1472)."""
+    match = rf"^camera 'camera': {key} must be a whole number"
+    with pytest.raises(ValueError, match=match):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+    with pytest.raises(ValueError, match=match):
+        Ros2EgoConfig.from_mapping({"cameras": [{"topic": _CAMERA_TOPIC, key: value}]})
+
+
+def test_a_camera_hands_carla_an_int_size() -> None:
+    sensor = Ros2CameraConfig(
+        topic=_CAMERA_TOPIC, image_width=1280, image_height=720
+    ).to_sensor_config()
+    assert str(sensor.image_width) == "1280"
+    assert str(sensor.image_height) == "720"
 
 
 @pytest.mark.parametrize(
@@ -205,9 +225,9 @@ def test_a_camera_refuses_a_bad_image_size(key: str, value: Any) -> None:
         ("fov", 180.0, r"fov must be in \(0, 180\) degrees"),
         ("fov", 270.0, r"fov must be in \(0, 180\) degrees"),
         ("fov", math.nan, "fov must be finite"),
-        ("image_width", math.nan, "image size and fps must be positive and finite"),
-        ("image_height", math.nan, "image size and fps must be positive and finite"),
-        ("image_width", math.inf, "image size and fps must be positive and finite"),
+        ("image_width", math.nan, "image_width must be a whole number"),
+        ("image_height", math.nan, "image_height must be a whole number"),
+        ("image_width", math.inf, "image_width must be a whole number"),
         ("image_height", 0, "image size and fps must be positive and finite"),
     ],
 )
@@ -397,8 +417,6 @@ def test_a_source_takes_an_int_for_a_float() -> None:
 @pytest.mark.parametrize(
     "key",
     [
-        "image_width",
-        "image_height",
         "fov",
         "fps",
         "position_x",
