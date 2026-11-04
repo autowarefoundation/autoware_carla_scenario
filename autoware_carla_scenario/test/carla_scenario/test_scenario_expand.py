@@ -553,17 +553,61 @@ def test_a_bad_scenario_in_a_glob_prints_no_listing(
     "scenario", ["intersection_passing/straight_3npc", "intersection_passing/str*"]
 )
 def test_the_cli_refuses_a_sweep_that_expands_to_no_case(
-    capsys: pytest.CaptureFixture[str], scenario: str
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
 ) -> None:
-    from autoware_carla_scenario.examples.expand import main
+    from autoware_carla_scenario.examples import expand as expand_cli
 
-    code = main([f"scenario={scenario}", "+sweep.odd_sample.count=0"])
+    # A sweep matching nothing on the map: odd_sample.count=0 is refused for
+    # its count now (#1437).
+    monkeypatch.setattr(expand_cli, "expand_config", lambda *_, **__: [])
+    code = expand_cli.main([f"scenario={scenario}", "+sweep.odd_sample.count=1"])
     captured = capsys.readouterr()
     assert code == 1
     assert (
         "Error: intersection_passing/straight_3npc: the sweep expands to no case "
         "(its constraints, route or ODD sample match nothing on this map)"
     ) in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+# A seed or an ODD sample count that is no whole number is refused, named,
+# as an invalid sweep is, rather than truncated (1.9 as seed 1, 2.7 as 2
+# cases) or raised as a traceback (seed=abc) (#1437).
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (["seed=abc"], "seed must be a whole number, got 'abc'"),
+        (["seed=1.9"], "seed must be a whole number, got 1.9"),
+        (["seed=true"], "seed must be a whole number, got True"),
+        (["seed=-1"], "seed must not be negative, got -1"),
+        (
+            ["+sweep.odd_sample.count=2.7"],
+            "sweep.odd_sample.count must be a whole number of at least 1, got 2.7",
+        ),
+        (
+            ["+sweep.odd_sample.count=0"],
+            "sweep.odd_sample.count must be a whole number of at least 1, got 0",
+        ),
+        (
+            ["+sweep.odd_sample.count=2", "+sweep.odd_sample.seed=-2"],
+            "sweep.odd_sample.seed must not be negative, got -2",
+        ),
+    ],
+)
+def test_the_cli_refuses_a_seed_or_count_that_is_no_whole_number(
+    capsys: pytest.CaptureFixture[str], overrides: list[str], message: str
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    name = "intersection_passing/straight_3npc"
+    code = main([f"scenario={name}", *overrides])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert f"Error: {name}: {message}" in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""
 

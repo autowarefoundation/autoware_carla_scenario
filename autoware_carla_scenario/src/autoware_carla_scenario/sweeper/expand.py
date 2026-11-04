@@ -658,11 +658,16 @@ def expand_config(
         ValueError: When the sweep itself is invalid -- a ``case_index`` out
             of range, a route search beside constraints, more than one
             constraint key, an empty constraints section, or a constraint or
-            binding the parsers refuse (:func:`expand_sweep`).
+            binding the parsers refuse (:func:`expand_sweep`) -- or when the
+            run's ``seed``, or ``sweep.odd_sample``'s ``seed`` or ``count``,
+            is not a whole number (a negative seed, a count below 1), checked
+            before any map is read.
     """
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
     controls = scenario_controls(cfg)
+    # And the run's seed, which every case runs with (a run refuses it too).
+    seed = _config_seed(cfg)
     sweep_cfg = OmegaConf.select(cfg, "sweep")
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
@@ -674,7 +679,12 @@ def expand_config(
 
     check_constraint_keys(sweep)
     odd = OmegaConf.select(cfg, "odd")
-    seed = _config_seed(cfg)
+    # Before any map is read, as the constraint keys are.
+    odd_sample = sweep.get("odd_sample")
+    if isinstance(odd_sample, Mapping):
+        from ..odd.sampler import check_sample_settings  # noqa: PLC0415
+
+        check_sample_settings(odd_sample)
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.
         return expand_sweep(
@@ -698,9 +708,15 @@ def expand_config(
 
 def _config_seed(cfg: DictConfig) -> int | None:
     """The run's seed, the config's top-level ``seed``; ``None`` when it has none
-    (:mod:`autoware_carla_scenario.seed`)."""
-    value = OmegaConf.select(cfg, "seed")
-    return None if value is None else int(value)
+    (:mod:`autoware_carla_scenario.seed`).
+
+    Raises:
+        ValueError: When it is not a non-negative whole number
+            (:func:`~autoware_carla_scenario.odd.sampler.seed_setting`).
+    """
+    from ..odd.sampler import seed_setting  # noqa: PLC0415 -- imports openodd
+
+    return seed_setting("seed", OmegaConf.select(cfg, "seed"))
 
 
 def scenario_controls(cfg: DictConfig) -> dict[str, Any]:

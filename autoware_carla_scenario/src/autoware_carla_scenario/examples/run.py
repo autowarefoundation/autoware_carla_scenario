@@ -75,7 +75,13 @@ from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT, tick_multiple
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
-from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
+from autoware_carla_scenario.odd.sampler import (
+    ODD_CASE_KEY,
+    OddCase,
+    check_sample_settings,
+    decode_case,
+    seed_setting,
+)
 from autoware_carla_scenario.prepare.pool import BackendPool
 from autoware_carla_scenario.rerun import (
     RerunConversion,
@@ -1837,7 +1843,8 @@ def check_batch_configs(
     its document names (:func:`check_scenario_maps`).
 
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
-    reads them (:func:`_check_batch_writer_settings`); each case's timeout and
+    reads them (:func:`_check_batch_writer_settings`); each case's timeout,
+    seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``) and
     ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
@@ -1871,6 +1878,7 @@ def check_batch_configs(
     for i, cfg in enumerate(configs):
         try:
             run_timeout_seconds(cfg)
+            _check_seeds(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
@@ -2205,9 +2213,28 @@ def config_seed(cfg: DictConfig) -> int | None:
     actions, ``background_traffic`` and the driver policy that name no seed of
     their own; and the cases a sweep draws from the ODD.  A config that predates
     the key (an exported scenario package's) leaves the scenario its own seed.
+
+    Raises:
+        ValueError: When it is not a non-negative whole number
+            (:func:`~autoware_carla_scenario.odd.sampler.seed_setting`):
+            ``1.9`` and ``true`` are not seed 1.
     """
-    value = cfg.get("seed")
-    return None if value is None else int(value)
+    return seed_setting("seed", cfg.get("seed"))
+
+
+def _check_seeds(cfg: DictConfig) -> None:
+    """Refuse the run's ``seed`` and its sweep's ``odd_sample`` ``seed`` and
+    ``count`` unless each is a whole number (a seed not negative, a count at
+    least 1), naming the key, as expanding the sweep and building the scenario
+    would refuse them.
+
+    Raises:
+        ValueError: naming the key of the value refused.
+    """
+    config_seed(cfg)
+    odd_sample = OmegaConf.select(cfg, "sweep.odd_sample")
+    if isinstance(odd_sample, DictConfig):
+        check_sample_settings(odd_sample)
 
 
 def build_scenario(
