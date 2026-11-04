@@ -1320,7 +1320,7 @@ the ODD and the knobs leave no case for is given up on, with a warning.
 
 `coverage_from` paths are relative to the directory the sweep is started
 from. Coverage is read when the sweep is expanded: to resume a sweep
-(`sweep.resume_from`) into the same cases, read the same coverage -- point
+(`--resume-from`) into the same cases, read the same coverage -- point
 `coverage_from` at the earlier runs, not at the sweep's own output.
 
 From Python:
