@@ -443,9 +443,7 @@ def search_from_config(
     return sampler, search, count
 
 
-def with_tire_friction(
-    samples: Iterable[OddSample], seed: Union[int, str] = 0
-) -> list[OddSample]:
+def with_tire_friction(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
     """*samples*, each with where its grip is in the range its weather leaves.
 
     Each case gets ``environment.tire_friction_quantile=<q>``, *q* uniform in
@@ -462,9 +460,7 @@ def with_tire_friction(
     )
 
 
-def with_visibility(
-    samples: Iterable[OddSample], seed: Union[int, str] = 0
-) -> list[OddSample]:
+def with_visibility(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
     """*samples*, each with where its visibility is in the range its weather leaves.
 
     Each case gets ``environment.visibility_quantile=<q>``, *q* uniform in
@@ -483,7 +479,7 @@ def with_visibility(
 
 def _with_quantile(
     samples: Iterable[OddSample],
-    seed: Union[int, str],
+    seed: int,
     key: str,
     name: str,
     *fixed: str,
