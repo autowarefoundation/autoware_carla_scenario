@@ -119,7 +119,11 @@ resubmit checks the submissions before it once more, and refuses should one
 be in flight or queued, so of two resubmits at once the later one submits
 nothing. A record whose sbatch fails is removed. One left with no job id by a
 submitter that was killed stops counting as in flight 600 s
-(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. A record that cannot be read
+(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. `wait` follows a
+submission only once it has a job id: on one still in flight it asks `squeue`
+nothing, collects nothing and exits non-zero, saying to try again once sbatch
+has returned, and on one left with no job id it says the record is stale.
+A record that cannot be read
 (empty, or not a JSON object) refuses a resubmit for as long after the file
 was last modified, then is ignored with a warning. The other readers skip
 such a record with a warning naming it: `status` lists it as unreadable,
