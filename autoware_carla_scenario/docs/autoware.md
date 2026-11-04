@@ -191,8 +191,9 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 `sweep.job_timeout_seconds` (120 s by default, and when `null`; `+` adds it
 to a sweep YAML that does not set it; 0 for no timeout) is a whole job's
-budget, in whole seconds -- a fraction, a negative value, NaN or infinity is
-refused before any job starts --
+budget, in whole seconds -- a fraction, a negative value, NaN, infinity or a
+value above 2147483647 (what `signal.alarm` takes) is refused, with exit
+status 2, before any job starts --
 starting Autoware, localizing, routing, engaging and the scenario itself --
 so raise it: launching Autoware alone can take most of two minutes. A job the
 sweeper kills at that limit leaves its container behind, and the next job's

@@ -89,6 +89,10 @@ logger = logging.getLogger(__name__)
 # ``sweep.job_timeout_seconds`` in the scenario YAML.
 _DEFAULT_JOB_TIMEOUT = 120
 
+#: The largest ``sweep.job_timeout_seconds``: ``signal.alarm`` takes a C
+#: ``int`` and raises ``OverflowError`` above it (about 68 years).
+_MAX_JOB_TIMEOUT = 2**31 - 1
+
 #: The exit status of a refused run (docs/usage.md, "Exit Codes").
 _REFUSED_EXIT_CODE = 2
 
@@ -123,16 +127,18 @@ def _job_timeout_seconds(value: Any) -> int:
     *value* must be a whole number (``900`` or ``900.0``): a fraction would
     be truncated, and ``0.5`` would become 0, no timeout at all.  A negative,
     NaN or infinite value is refused too, rather than silently disabling the
-    timeout or failing in the middle of the sweep.
+    timeout, and so is one above :data:`_MAX_JOB_TIMEOUT`, which
+    ``signal.alarm`` cannot take, rather than failing after the first fork.
 
     Raises:
-        ValueError: *value* is not a whole number of seconds >= 0.
+        ValueError: *value* is not a whole number of seconds from 0 to
+            :data:`_MAX_JOB_TIMEOUT`.
     """
     if value is None:
         return _DEFAULT_JOB_TIMEOUT
     message = (
-        "LaneletConstraintSweeper: sweep.job_timeout_seconds must be a whole "
-        f"number of seconds >= 0 (0 for no timeout), got {value!r}."
+        "sweep.job_timeout_seconds must be a whole number of seconds from 0 "
+        f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {value!r}"
     )
     if isinstance(value, bool):
         raise ValueError(message)
@@ -140,7 +146,11 @@ def _job_timeout_seconds(value: Any) -> int:
         seconds = float(value)
     except (TypeError, ValueError):
         raise ValueError(message) from None
-    if not math.isfinite(seconds) or seconds < 0 or seconds != math.floor(seconds):
+    if (
+        not math.isfinite(seconds)
+        or not 0 <= seconds <= _MAX_JOB_TIMEOUT
+        or seconds != math.floor(seconds)
+    ):
         raise ValueError(message)
     return int(seconds)
 
@@ -526,8 +536,13 @@ class LaneletConstraintSweeper(Sweeper):
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
         check_constraint_keys(sweep_dict)
-        # Checked here, before any map is fetched or case runs.
-        job_timeout = _job_timeout_seconds(sweep_dict.get("job_timeout_seconds"))
+        # Checked here, before any map is fetched or case runs, and refused
+        # as step 0 refuses a config value: exit 2, naming the key.
+        try:
+            job_timeout = _job_timeout_seconds(sweep_dict.get("job_timeout_seconds"))
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(_REFUSED_EXIT_CODE)
 
         # -- 2. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)

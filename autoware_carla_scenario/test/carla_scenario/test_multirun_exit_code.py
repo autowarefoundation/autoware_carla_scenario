@@ -478,7 +478,9 @@ def test_lanelet_sweeper_refuses_a_bad_config_value_before_any_case(
     assert output.count(message) == 1, output
 
 
-@pytest.mark.parametrize("value", ["0.5", "-1", "nan", "inf", "90.5", "abc"])
+@pytest.mark.parametrize(
+    "value", ["0.5", "-1", "nan", "inf", "90.5", "abc", "1e10", "2147483648"]
+)
 def test_lanelet_sweeper_refuses_a_bad_job_timeout_before_any_case(
     tmp_path: Path, value: str
 ) -> None:
@@ -492,8 +494,9 @@ def test_lanelet_sweeper_refuses_a_bad_job_timeout_before_any_case(
         f"+sweep.job_timeout_seconds={value}",
     )
     output = proc.stdout + proc.stderr
-    assert proc.returncode != 0, output
-    assert "sweep.job_timeout_seconds must be a whole number" in output, output
+    assert proc.returncode == 2, output
+    assert "Error: sweep.job_timeout_seconds must be a whole number" in output, output
+    assert "Traceback" not in output, output
     assert "Launching" not in output, output
     assert "succeeded" not in output, output
 
@@ -517,7 +520,7 @@ def test_lanelet_sweeper_runs_with_a_valid_or_null_job_timeout(
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, 120), (0, 0), (30, 30), (30.0, 30), ("45", 45)],
+    [(None, 120), (0, 0), (30, 30), (30.0, 30), ("45", 45), (2**31 - 1, 2**31 - 1)],
 )
 def test_job_timeout_seconds_reads_a_whole_number_or_the_default(
     value: Any, expected: int
@@ -532,7 +535,8 @@ def test_job_timeout_seconds_reads_a_whole_number_or_the_default(
 
 
 @pytest.mark.parametrize(
-    "value", [0.5, 90.5, -1, -0.5, float("nan"), float("inf"), True, "abc", [1]]
+    "value",
+    [0.5, 90.5, -1, -0.5, float("nan"), float("inf"), True, "abc", [1], 2**31, 1e10],
 )
 def test_job_timeout_seconds_refuses_what_is_not_a_whole_number_of_seconds(
     value: Any,

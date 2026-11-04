@@ -394,8 +394,9 @@ yourself, which it reused), which no case stops.
 A sweep whose config sets a value its runs would refuse (a `t4scene.step_s`
 that is not a multiple of the tick, a negative `server.cooldown_max_retries`,
 an unknown `server.world_reset` or `traffic.backend`, a
-`scenario.timeout_seconds` that is not positive, ...) exits 2 before the map is
-fetched or any case runs, naming the key, rather than have every case refuse
+`scenario.timeout_seconds` that is not positive, a
+`sweep.job_timeout_seconds` that is not a whole number of seconds, ...) exits
+2 before the map is fetched or any case runs, naming the key, rather than have every case refuse
 it in turn. So does one asking for an extra (`rerun`, `t4`) that is not
 installed. A value only a case's own overrides set (its ODD draw, a
 binding) is refused by that case, which ends the sweep with 2 as a refused
@@ -778,7 +779,8 @@ reported as `[FAILED] <path>: ...` and the others are still converted. It exits
 0 when every recording was written, 1 when any conversion failed or was
 skipped, and 2 when the converter is not installed. `--jobs N` converts N logs
 at a time (all cores by default); an N below 1 is refused, with exit status 2,
-before any path is converted.
+before any path is converted -- `--jobs 0` included, which earlier versions
+passed on to the converter.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets
