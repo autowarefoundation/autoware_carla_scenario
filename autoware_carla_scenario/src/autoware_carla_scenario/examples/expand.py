@@ -25,24 +25,32 @@ Scenarios that draw from one ODD (``sweep.odd_sample``) go on from each
 other's draws, as in a batch, so a scenario's listing in a glob can differ
 from its listing alone: each is the cases the batch run of the same glob runs.
 
+As for ``scenario`` (and Hydra), the last ``scenario=`` wins when it is
+given more than once.
+
 The exit status is 0 when every scenario expanded, 1 when the ``controls:`` of
-one are invalid or its sweep expands to no case (its constraints, route or
-ODD sample match nothing on the map; a scenario without a sweep is one case),
-and 2 when the command line does not compose: no
+one are invalid, its sweep is invalid (``Error: <name>: <why>``: a
+``sweep.case_index`` past its cases, a constraint or binding that does not
+parse, constraints for more than one key, ...) or its sweep expands to no case
+(its constraints, route or ODD sample match nothing on the map; a scenario
+without a sweep is one case), and 2 when the command line does not compose: no
 ``scenario=``, no config matches it, or an override names a key a config does
 not have (the message suggests the closest config or key; ``+key=value`` adds
 a new one). Every scenario's problems are reported, and the higher status wins.
-``HYDRA_FULL_ERROR=1`` shows the traceback of such an error.
+``HYDRA_FULL_ERROR=1`` shows the traceback of a command line that does not
+compose or of an invalid sweep.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 
 from ..registry import load_scenario_plugins
 from ..sweeper.expand import EMPTY_SWEEP_MESSAGE, expand_config
+from .argv import _extract_scenario_override
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,16 +63,15 @@ def main(argv: list[str] | None = None) -> int:
         stream=sys.stderr,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    scenario = next(
-        (a.split("=", 1)[1] for a in args if a.startswith("scenario=")), None
-    )
+    # Parsed as `scenario` parses it: the last `scenario=` wins, as in Hydra,
+    # and none of them is passed on as an override.
+    scenario, overrides = _extract_scenario_override(["scenario-expand", *args])
     if not scenario:
         print(
             "usage: scenario-expand scenario=<name> [hydra overrides...]",
             file=sys.stderr,
         )
         return 2
-    overrides = [a for a in args if not a.startswith("scenario=")]
 
     load_scenario_plugins()
     # Composed the way a glob batch run composes each scenario, so the
@@ -99,6 +106,15 @@ def main(argv: list[str] | None = None) -> int:
             # An authoring error: one line per problem, with its config path.
             for line in format_diagnostics(exc.diagnostics, name):
                 print(line, file=sys.stderr)
+            status = max(status, 1)
+            continue
+        except ValueError as exc:
+            # An invalid sweep (a case_index past its cases, a constraint or
+            # binding that does not parse, ...): expand_config's documented
+            # refusal. HYDRA_FULL_ERROR=1 raises it, traceback and all.
+            if os.environ.get("HYDRA_FULL_ERROR") == "1":
+                raise
+            print(f"Error: {name}: {exc}", file=sys.stderr)
             status = max(status, 1)
             continue
         if not cases:

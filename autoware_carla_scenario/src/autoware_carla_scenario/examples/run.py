@@ -1322,10 +1322,14 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
     one aims at what the earlier ones left uncovered (``strategy: coverage``)
     and does not draw their values again.
 
-    Exits 1 before anything runs when a scenario's sweep expands to no case,
-    naming each such scenario, as the lanelet sweeper refuses one (#1407): a
+    Exits 1 before anything runs when a scenario's ``controls:`` are invalid,
+    its sweep is invalid (a ``sweep.case_index`` past its cases, a constraint
+    or binding that does not parse, ...: the ``ValueError`` expand_config
+    refuses it with) or its sweep expands to no case, as the lanelet sweeper
+    refuses one (#1407): every such scenario is reported, each named, since a
     batch missing a scenario it was asked for must not look like a complete
-    one. A scenario without a sweep is one case, never refused."""
+    one. A scenario without a sweep is one case, never refused.
+    ``HYDRA_FULL_ERROR=1`` raises an invalid sweep's error instead."""
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
     from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..sweeper.expand import (  # noqa: PLC0415 -- loads Lanelet2
@@ -1335,23 +1339,28 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
 
     drawn = OddDraws()
     cases: list[BatchCase] = []
-    empty: list[str] = []
+    # Each refused scenario's lines, in order: all of them are reported.
+    errors: list[str] = []
     for name in scenario_names:
+        # Composed outside the try: a ValueError there is no sweep's.
+        cfg = _compose_config(name, overrides)
         try:
-            expanded = expand_config(
-                _compose_config(name, overrides), overrides, drawn=drawn
-            )
+            expanded = expand_config(cfg, overrides, drawn=drawn)
         except ControlsError as exc:
-            for line in format_diagnostics(exc.diagnostics, name):
-                print(line, file=sys.stderr)  # noqa: T201
-            sys.exit(1)
+            errors.extend(format_diagnostics(exc.diagnostics, name))
+            continue
+        except ValueError as exc:
+            if os.environ.get("HYDRA_FULL_ERROR") == "1":
+                raise
+            errors.append(f"Error: {name}: {exc}")
+            continue
         logger.info("%s: %d case(s)", name, len(expanded))
         if not expanded:
-            empty.append(name)
+            errors.append(f"Error: {name}: {EMPTY_SWEEP_MESSAGE}")
         cases.extend((name, case) for case in expanded)
-    if empty:
-        for name in empty:
-            print(f"Error: {name}: {EMPTY_SWEEP_MESSAGE}", file=sys.stderr)  # noqa: T201
+    if errors:
+        for line in errors:
+            print(line, file=sys.stderr)  # noqa: T201
         sys.exit(1)
     return cases
 

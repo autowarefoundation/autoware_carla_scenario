@@ -655,6 +655,10 @@ def expand_config(
         ControlsError: When the config's ``controls`` are invalid, whether or
             not it has a sweep -- as ``scenario-check`` refuses them
             (:func:`scenario_controls`).
+        ValueError: When the sweep itself is invalid -- a ``case_index`` out
+            of range, a route search beside constraints, more than one
+            constraint key, an empty constraints section, or a constraint or
+            binding the parsers refuse (:func:`expand_sweep`).
     """
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
