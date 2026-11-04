@@ -21,6 +21,9 @@ one such JSON object per line (JSON Lines), in the order a batch runs them
 (sorted by name), each headed by its own ``"scenario"``. A single scenario is
 the one-line case of that. Every matched scenario is composed and expanded
 before anything is printed, so stdout is either every listing or nothing.
+Scenarios that draw from one ODD (``sweep.odd_sample``) go on from each
+other's draws, as in a batch, so a scenario's listing in a glob can differ
+from its listing alone: each is the cases the batch run of the same glob runs.
 
 The exit status is 0 when every scenario expanded, 1 when the ``controls:`` of
 one are invalid, and 2 when the command line does not compose: no
@@ -65,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     # Composed the way a glob batch run composes each scenario, so the
     # expansion sees the same config (package conf dirs included).
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
+    from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..scenario_glob import is_scenario_glob  # noqa: PLC0415
     from .compose_errors import compose_or_report, resolve_scenarios  # noqa: PLC0415
 
@@ -77,13 +81,18 @@ def main(argv: list[str] | None = None) -> int:
         names = [scenario]
     listings: list[dict[str, object]] = []
     status = 0
+    # One record of the ODD draws for the whole glob, as a batch keeps: a
+    # later scenario on the same ODD goes on from the earlier ones' draws, so
+    # each listing is the cases the batch would run for it. A scenario that
+    # fails draws nothing, and a failure prints no listing at all.
+    drawn = OddDraws()
     for name in names:
         cfg = compose_or_report(name, overrides, named=globbed)
         if cfg is None:
             status = 2
             continue
         try:
-            cases = expand_config(cfg)
+            cases = expand_config(cfg, drawn=drawn)
         except ControlsError as exc:
             # An authoring error: one line per problem, with its config path.
             for line in format_diagnostics(exc.diagnostics, name):
