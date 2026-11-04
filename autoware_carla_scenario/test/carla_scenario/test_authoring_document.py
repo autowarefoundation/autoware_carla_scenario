@@ -37,6 +37,7 @@ from autoware_carla_scenario.authoring.registry import (
     FieldSpec,
     SelectOption,
     action_specs,
+    get_action_spec,
 )
 from autoware_carla_scenario.authoring.starter import blank_document, new_document
 from autoware_carla_scenario.authoring.validator import validate_document
@@ -473,6 +474,104 @@ class TestValidation:
         report = validate_document(document)
         assert report.ok
         assert any("searches one lanelet" in i.message for i in report.warnings)
+
+
+class TestBoolFields:
+    """A ``bool`` field holds true or false, never a misspelling of one (#1459).
+
+    The compiler used to read anything outside the truthy spellings as
+    ``False`` with nothing said, so ``freeze: ture`` turned a signal's freeze
+    off, and ``lane_changes: keep`` stored ``False`` instead of the run's.
+    """
+
+    BAD = ["ture", "enabled", "2", "t", "y", "keep", 2, -1, 1.0, [True], {}]
+    TRUE = [True, 1, "1", "true", "True", " TRUE ", "on", "On", "yes", "YES"]
+    FALSE = [False, 0, "0", "false", "False", " FALSE ", "off", "Off", "no", "NO"]
+
+    @staticmethod
+    def _signal(freeze: object) -> ScenarioDocument:
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                id="lights",
+                type="traffic_signal",
+                params={"state": "red", "target": "all", "freeze": freeze},
+            )
+        )
+        return document
+
+    @staticmethod
+    def _freeze_errors(document: ScenarioDocument) -> list[str]:
+        return [
+            i.message
+            for i in validate_document(document).errors
+            if i.path.endswith(".freeze")
+        ]
+
+    @pytest.mark.parametrize("value", BAD)
+    def test_a_misspelt_bool_is_an_error(self, value: object) -> None:
+        spec = get_action_spec("traffic_signal")
+        assert spec is not None
+        label = next(f.label for f in spec.fields if f.name == "freeze")
+        assert self._freeze_errors(self._signal(value)) == [
+            f"{label} must be true or false, got {value!r}."
+        ]
+
+    @pytest.mark.parametrize("value", [*TRUE, *FALSE, None, "", "  "])
+    def test_every_bool_spelling_validates(self, value: object) -> None:
+        assert self._freeze_errors(self._signal(value)) == []
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(v, True) for v in TRUE] + [(v, False) for v in FALSE],
+    )
+    def test_the_compiler_reads_what_the_validator_accepts(
+        self, value: object, expected: bool
+    ) -> None:
+        fields = (FieldSpec("flag", "Flag", "bool", not expected),)
+        assert coerce_params(fields, {"flag": value}) == {"flag": expected}
+
+    @pytest.mark.parametrize("value", BAD)
+    def test_the_compiler_refuses_what_the_validator_refuses(
+        self, value: object
+    ) -> None:
+        """Never the quiet ``False`` it used to be."""
+        fields = (FieldSpec("flag", "Flag", "bool", True),)
+        with pytest.raises(ValueError, match="must be true or false"):
+            coerce_params(fields, {"flag": value})
+
+    def test_a_blank_bool_compiles_to_its_default(self) -> None:
+        fields = (
+            FieldSpec("freeze", "Freeze", "bool", True),
+            FieldSpec("keep", "Keep", "bool", None, required=False),
+        )
+        assert coerce_params(fields, {"freeze": "", "keep": " "}) == {
+            "freeze": True,
+            "keep": None,
+        }
+
+    def test_a_misspelt_signal_freeze_does_not_compile(self) -> None:
+        with pytest.raises(CompilationError, match="must be true or false"):
+            compile_document(self._signal("ture"))
+
+    @pytest.mark.parametrize("value", ["keep", "unset", "default"])
+    def test_keep_the_run_s_is_written_blank_not_as_a_word(self, value: str) -> None:
+        """A nullable bool's unset value is ``None`` or blank, as the editor
+        stores it; a word is an error, not the ``False`` it used to compile to."""
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                id="traffic",
+                type="traffic_parameters",
+                params={"lane_changes": value, "follow_visibility": None},
+            )
+        )
+        errors = [
+            i.path
+            for i in validate_document(document).errors
+            if i.path.endswith((".lane_changes", ".follow_visibility"))
+        ]
+        assert len(errors) == 1 and errors[0].endswith(".lane_changes")
 
 
 class TestEgoGoal:

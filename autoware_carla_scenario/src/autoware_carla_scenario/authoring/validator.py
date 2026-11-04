@@ -52,6 +52,7 @@ from .registry import (
     get_binding_spec,
     get_condition_spec,
     get_constraint_spec,
+    read_bool,
 )
 
 __all__ = ["Issue", "Severity", "ValidationReport", "validate_document"]
@@ -200,6 +201,16 @@ def _check_field(
             )
         else:
             _check_bounds(out, path, spec, float(str(value).strip()), object_id)
+    elif spec.kind == "bool":
+        # The compiler reads it with the same read_bool, so a spelling it
+        # would not take as true or false is refused here, not compiled to
+        # a quiet False (#1459).
+        if read_bool(value) is None:
+            out.error(
+                f"{path}.{spec.name}",
+                f"{spec.label} must be true or false, got {value!r}.",
+                object_id,
+            )
     elif spec.kind == "select":
         allowed = {o.value for o in spec.options}
         if str(value) not in allowed:

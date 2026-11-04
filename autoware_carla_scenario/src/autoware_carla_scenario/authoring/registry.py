@@ -67,6 +67,8 @@ __all__ = [
     "rule_symbol",
     "TRAFFIC_LIGHT_STATES",
     "TRUTHY_VALUES",
+    "FALSY_VALUES",
+    "read_bool",
     "action_specs",
     "binding_specs",
     "condition_specs",
@@ -159,6 +161,37 @@ SEARCHABLE_LANELET_KINDS: frozenset[str] = frozenset({"lanelet"})
 #: document may spell a ``bool`` field with.  One set, so form parsing and
 #: document coercion cannot drift on what counts as true.
 TRUTHY_VALUES = frozenset({"1", "true", "on", "yes"})
+
+#: The strings that spell false, the counterpart of :data:`TRUTHY_VALUES`.
+#: A ``bool`` field holds a real bool or one of these two sets' spellings and
+#: nothing else: anything outside both (``"ture"``, ``"enabled"``, ``"2"``) is
+#: a validation error, never a quiet ``False`` (#1459).
+FALSY_VALUES = frozenset({"0", "false", "off", "no"})
+
+
+def read_bool(value: Any) -> Optional[bool]:
+    """Return the bool *value* spells, or ``None`` when it spells neither.
+
+    A real bool is itself; a string or an int is read by its stripped,
+    lower-cased text against :data:`TRUTHY_VALUES` and :data:`FALSY_VALUES`.
+    Anything else -- a float, a list, a mapping, an unknown word -- spells
+    neither.  Blank values are the caller's to handle first: for a nullable
+    bool they mean "unset", which this cannot say.
+
+    The validator, the compiler and the editor's form parser all read a
+    ``bool`` field through this, so what one accepts the others do too.
+    """
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, (str, int)):
+        return None
+    text = str(value).strip().lower()
+    if text in TRUTHY_VALUES:
+        return True
+    if text in FALSY_VALUES:
+        return False
+    return None
+
 
 #: An OmegaConf interpolation such as ``${map.no_3d_model_lanelet_ids}``.  A
 #: field whose kind ends in ``_or_ref`` keeps one of these verbatim so the
