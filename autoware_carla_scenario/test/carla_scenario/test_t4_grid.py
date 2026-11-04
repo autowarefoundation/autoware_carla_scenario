@@ -116,8 +116,14 @@ def test_step_frames_matches_the_original(step_s: float) -> None:
 
 
 @pytest.mark.parametrize("step_s", [math.nan, math.inf, -math.inf])
-def test_step_frames_raises_as_the_original_on_non_finite(step_s: float) -> None:
-    assert _outcome(step_frames, step_s) == _outcome(_original_step_frames, step_s)
+def test_step_frames_refuses_a_non_finite_step(step_s: float) -> None:
+    # The original raised OverflowError for an infinite step (from ``round``);
+    # the shared tick check refuses every non-finite step with its message (#1384).
+    with pytest.raises(
+        ValueError,
+        match=rf"^step_s={step_s} is not a positive multiple of the 0\.05 s tick$",
+    ):
+        step_frames(step_s)
 
 
 def test_step_frames_returns_an_int() -> None:
