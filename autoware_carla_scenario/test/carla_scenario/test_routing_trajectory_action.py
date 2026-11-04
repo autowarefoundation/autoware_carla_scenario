@@ -256,6 +256,7 @@ class TestConstruction:
             "turn_back_ttc_s",
             "turn_back_distance_m",
             "turn_back_within_m",
+            "speed",
         ],
     )
     def test_a_non_finite_parameter_is_refused(self, name: str, value: float) -> None:
@@ -264,6 +265,15 @@ class TestConstruction:
         kwargs: dict[str, Any] = {name: value}
         with pytest.raises(ValueError, match=f"{name} must be finite"):
             _route("npc1", _line(), **kwargs)
+
+    def test_a_negative_speed_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="speed must be finite and not negative"):
+            _route("npc1", _line(), speed=-1.0)
+
+    @pytest.mark.parametrize("value", [None, 0.0, 5.0])
+    def test_a_finite_or_absent_speed_is_taken(self, value: Optional[float]) -> None:
+        # #1333: ``None`` keeps the entity's own speed; only inf and NaN go.
+        _route("npc1", _line(), speed=value)
 
     def test_it_reissues_every_tick(self) -> None:
         assert _route("npc1", _line()).reissues_while_running
