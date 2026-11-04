@@ -350,8 +350,14 @@ def _set_up(
     module: ModuleType,
     scenario_cls: Any,
     config: Any,
+    *,
+    goal_ego: bool = False,
 ) -> Any:
-    """Run ``setup()`` with stand-ins for what needs a live CARLA world."""
+    """Run ``setup()`` with stand-ins for what needs a live CARLA world.
+
+    With *goal_ego*, the ego is one that plans its own route and the
+    scenario's own ``derive_goal_from_route`` runs.
+    """
     from autoware_carla_scenario import EgoConfig, Lanelet2Pose  # noqa: PLC0415
     from autoware_carla_scenario.conditions.always_true import (  # noqa: PLC0415
         AlwaysTrueCondition,
@@ -369,8 +375,22 @@ def _set_up(
     scenario = scenario_cls(
         EgoConfig(SpawnPointIndex(0)), Lanelet2Pose(lanelet_id=242, s=25.0), config
     )
-    monkeypatch.setattr(scenario, "derive_goal_from_route", lambda ids: None)
-    monkeypatch.setattr(scenario, "_setup_ego_spawn", lambda: None)
+    if goal_ego:
+        # An ego that plans its own route, as `entity=autoware` is.  The spawn
+        # snap needs the world, so it is stood in for by the one thing it asks
+        # of the goal: `register_route_to_goal` calls require_goal(), which
+        # refuses such an ego with no goal (#1377).
+        from autoware_carla_scenario.entity.ego import EgoVehicle  # noqa: PLC0415
+
+        monkeypatch.setattr(
+            scenario,
+            "ego_type",
+            type("_RoutingEgo", (EgoVehicle,), {"requires_goal": True}),
+        )
+        monkeypatch.setattr(scenario, "_setup_ego_spawn", scenario.require_goal)
+    else:
+        monkeypatch.setattr(scenario, "derive_goal_from_route", lambda ids: None)
+        monkeypatch.setattr(scenario, "_setup_ego_spawn", lambda: None)
     scenario.setup()
     return scenario
 
@@ -444,4 +464,54 @@ class TestOneGoalLanelet:
             _assert_goals_pass_condition(scenario, goals)
         finally:
             for name in [m for m in sys.modules if m.split(".")[0] == "one_goal_pkg"]:
+                del sys.modules[name]
+
+
+class TestGoalFromRoute:
+    """A scenario-new package names its goal, as the template does (#1377).
+
+    Run with an ego that plans its own route and no stand-in for
+    ``derive_goal_from_route``: without the call, ``setup()`` refuses it.
+    """
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_the_template_derives_its_goal(
+        self, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        module, configs = _import_from(
+            _TEMPLATE_SRC,
+            "my_scenario_package.reach_goal",
+            "my_scenario_package.configs",
+        )
+        scenario = _set_up(
+            monkeypatch,
+            module,
+            module.ReachGoalScenario,
+            configs.ReachGoalConfig(goal_lanelet_ids=goals),
+            goal_ego=True,
+        )
+        assert scenario.goal_pose is not None
+        assert scenario.goal_pose.lanelet_id == goals[-1]
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_a_scaffolded_scenario_derives_its_goal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        result = create_scenario_package("goal_ego_pkg", output_dir=tmp_path)
+        module, configs = _import_from(
+            result.root / "src", "goal_ego_pkg.goal_ego", "goal_ego_pkg.configs"
+        )
+        try:
+            scenario = _set_up(
+                monkeypatch,
+                module,
+                getattr(module, result.names["scenario_class"]),
+                getattr(configs, result.names["config_class"])(goal_lanelet_ids=goals),
+                goal_ego=True,
+            )
+            assert scenario.goal_pose is not None
+            assert scenario.goal_pose.lanelet_id == goals[-1]
+            assert scenario.require_goal() is scenario.goal_pose
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "goal_ego_pkg"]:
                 del sys.modules[name]
