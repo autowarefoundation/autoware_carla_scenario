@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
 
 from ..coordinate.poses import CarlaWorldPose
 from ..entity_role import EntityRole
@@ -127,6 +127,11 @@ class EntityExistenceCondition(BaseCondition):
             yet brought in) is not there either -- how far it is from the ego,
             or that it stands still, says nothing of the scene.
     """
+
+    #: It only ever reports a failure (``passed=False``): a
+    #: :class:`PersistentCondition` around it never fires
+    #: (:func:`~autoware_carla_scenario.conditions.base.reports_only_failure`).
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
 
     # Declared for the static check (docs/typecheck.md).
     _entity_name: str

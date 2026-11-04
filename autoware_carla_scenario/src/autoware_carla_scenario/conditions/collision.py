@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import math
 import threading
-from typing import Any, Optional, Union
+from typing import Any, ClassVar, Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -96,6 +96,11 @@ class CollisionCondition(BaseCondition):
 
     # Minimum interval between ego vehicle search attempts (seconds).
     _ATTACH_RETRY_INTERVAL: float = 1.0
+
+    #: It only ever reports a failure (``passed=False``): a
+    #: :class:`PersistentCondition` around it never fires
+    #: (:func:`~autoware_carla_scenario.conditions.base.reports_only_failure`).
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
 
     # Declared for the static check (docs/typecheck.md).
     _min_impulse: float

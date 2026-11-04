@@ -492,7 +492,7 @@ classDiagram
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
-| **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
+| **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks (a persistent condition counts only passing ticks, so it never fires around a condition that only reports a failure -- the collision, off-road, existence and timeout ones -- and warns when built around one: [Usage](usage.md#output-files)) |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
 
 > **A collision with map geometry is a collision.** CARLA gives no actor for

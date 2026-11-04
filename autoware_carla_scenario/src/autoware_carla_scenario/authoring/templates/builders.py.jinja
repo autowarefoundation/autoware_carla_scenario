@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
 {% for b in builders %}
@@ -51,6 +52,17 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
 ONCE_ACTIONS: frozenset[str] = frozenset(
     {
 {% for b in builders if b.node == "Action" and b.once %}
+        "{{ b.type_id }}",
+{% endfor %}
+    }
+)
+
+#: The condition types that only ever report a failure (their class sets
+#: ``REPORTS_ONLY_FAILURE``): a persistent block counts only passing results,
+#: so it never fires around one of them.
+FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
+    {
+{% for b in builders if b.failure_only %}
         "{{ b.type_id }}",
 {% endfor %}
     }

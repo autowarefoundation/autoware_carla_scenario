@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
     "build_and_condition",
@@ -160,6 +161,18 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
         "spawn",
         "turn",
         "vehicle_parameters",
+    }
+)
+
+#: The condition types that only ever report a failure (their class sets
+#: ``REPORTS_ONLY_FAILURE``): a persistent block counts only passing results,
+#: so it never fires around one of them.
+FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
+    {
+        "entity_existence",
+        "off_road_fraction",
+        "collision",
+        "timeout",
     }
 )
 

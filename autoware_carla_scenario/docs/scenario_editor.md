@@ -408,7 +408,10 @@ contradict each other: on the nishishinjuku map lanelets 183 and 184 are lanes
 does not exist.
 Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 `AndCondition`, `OrCondition`, `NotCondition`, `StickyCondition` and
-`PersistentCondition`.
+`PersistentCondition`. The validator warns on a `Persistent` card whose child is
+a Collision, Off the road, Exists or Timeout card: those only ever report
+a failure, and `Persistent` counts only the ticks its child passes, so it would
+never fire. Put such a child under a `NOT` first.
 
 ## Fixed or searched: every lanelet, one question
 
