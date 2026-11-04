@@ -548,9 +548,14 @@ class EditorService:
         """Apply one signal group's form.
 
         A rename carries: every phase state naming the old name is rewritten,
-        as is every ``conflicts_with`` entry pointing at it.  Leaving them to
-        the validator would turn a rename into a screenful of errors about
-        edits nobody made.
+        as is every ``conflicts_with`` entry pointing at it -- the renamed
+        group's own included, so a self-reference stays one for the validator
+        to report.  Leaving them to the validator would turn a rename into a
+        screenful of errors about edits nobody made.  While another group is
+        still called the old name, the references still resolve to it, so they
+        are left alone: the editor never makes two groups share a name, but a
+        document written by hand may, and renaming one of them must not carry
+        off what the other was driving.
         """
         from .forms import parse_int_list  # noqa: PLC0415
 
@@ -561,7 +566,12 @@ class EditorService:
                 _refuse_taken_name(
                     "signal group", new_name, document.map.signal_groups, group
                 )
-                self._rename_signal_group(document, group.name, new_name)
+                old_name = group.name
+                if not any(
+                    other is not group and other.name == old_name
+                    for other in document.map.signal_groups
+                ):
+                    self._rename_signal_group(document, old_name, new_name)
                 group.name = new_name
         if "lanelet2_regulatory_element_ids" in form:
             parsed = parse_int_list(form["lanelet2_regulatory_element_ids"])
@@ -594,11 +604,16 @@ class EditorService:
 
         The states go with it because a state whose group is gone sets nothing:
         leaving them behind would be a phase that reads as driving a movement
-        this map no longer has.
+        this map no longer has.  While another group is still called the same
+        thing, the name still resolves, so its states and conflicts are kept:
+        as with a controller, a hand-written duplicate is the validator's to
+        report, not this delete's to guess which of the two they meant.
         """
         group = self._signal_group(document, index)
         name = group.name
         document.map.signal_groups.pop(index)
+        if any(other.name == name for other in document.map.signal_groups):
+            return
         for other in document.map.signal_groups:
             other.conflicts_with = [n for n in other.conflicts_with if n != name]
         for controller in document.map.traffic_signal_controllers:
