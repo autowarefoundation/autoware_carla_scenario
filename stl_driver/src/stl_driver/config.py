@@ -371,6 +371,8 @@ class Limits:
         return peak
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.gate_magnitude_m):
+            raise ValueError(f"gate_magnitude_m must be finite, got {self.gate_magnitude_m}")
         if self.gate_magnitude_m <= self.stop_line_margin_m:
             raise ValueError(
                 "gate_magnitude_m must exceed stop_line_margin_m, or ordinary "
@@ -627,7 +629,7 @@ class STLDriverConfig:
         return self.limits.progress_fraction * average * self.horizon.duration_s
 
     def __post_init__(self) -> None:
-        if self.cruise_speed_mps <= 0.0:
+        if not math.isfinite(self.cruise_speed_mps) or self.cruise_speed_mps <= 0.0:
             raise ValueError(f"cruise_speed_mps must be positive, got {self.cruise_speed_mps}")
         if not math.isfinite(self.route_table_ds_m) or self.route_table_ds_m <= 0.0:
             raise ValueError(f"route_table_ds_m must be positive, got {self.route_table_ds_m}")

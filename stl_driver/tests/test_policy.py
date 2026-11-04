@@ -25,7 +25,7 @@ from carla_driver_interface.protocol import (
 from carla_driver_interface.protocol import Pose as PoseProto
 from carla_driver_interface.protocol import Quat as QuatProto
 
-from stl_driver.config import STLDriverConfig
+from stl_driver.config import Limits, STLDriverConfig
 from stl_driver.policy import EgoPolicy, _RolloutMemory
 from tests.conftest import curved_route, straight_route
 
@@ -389,6 +389,23 @@ def test_it_is_constructible_with_a_cruise_speed_or_without():
     """`--policy-arg cruise_speed_mps=...` upstream, or nothing."""
     assert EgoPolicy().config.cruise_speed_mps == STLDriverConfig().cruise_speed_mps
     assert EgoPolicy(cruise_speed_mps=5.0).config.cruise_speed_mps == 5.0
+
+
+@pytest.mark.parametrize("speed", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0])
+def test_a_cruise_speed_that_is_not_finite_and_positive_is_refused(speed):
+    """NaN and inf pass a bare `<= 0` check, and every drive then fails in
+    `frenet.build_route_table` instead of at construction."""
+    with pytest.raises(ValueError, match="cruise_speed_mps must be positive"):
+        STLDriverConfig(cruise_speed_mps=speed)
+    with pytest.raises(ValueError, match="cruise_speed_mps must be positive"):
+        EgoPolicy(cruise_speed_mps=speed)
+
+
+@pytest.mark.parametrize("magnitude", [float("nan"), float("inf")])
+def test_a_gate_magnitude_that_is_not_finite_is_refused(magnitude):
+    """NaN compares false against `stop_line_margin_m` and would slip through."""
+    with pytest.raises(ValueError, match="gate_magnitude_m must be finite"):
+        Limits(gate_magnitude_m=magnitude)
 
 
 def test_an_explicit_config_is_respected():

@@ -63,9 +63,11 @@ def validate_rules(rules: tuple[Rule, ...], n_steps: int) -> None:
     for rule in rules:
         for interval in _intervals(rule.formula):
             assert_interval_fits(interval, n_steps, what=f"rule {rule.name!r}")
-        if rule.weight <= 0.0:
+        if not math.isfinite(rule.weight) or rule.weight <= 0.0:
             raise ValueError(f"rule {rule.name!r} has non-positive weight {rule.weight}")
-        if rule.margin <= 0.0:
+        # An infinite margin is allowed on purpose: it leaves the rule
+        # unsaturated (see `RuleSet._saturate`). Only NaN is refused.
+        if math.isnan(rule.margin) or rule.margin <= 0.0:
             raise ValueError(f"rule {rule.name!r} has non-positive margin {rule.margin}")
 
 

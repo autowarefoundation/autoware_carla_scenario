@@ -370,6 +370,44 @@ def test_a_rule_whose_interval_overflows_the_horizon_is_rejected():
         validate_rules((bad,), T)
 
 
+def _rule(weight: float, margin: float):
+    from stl_driver.ruleset import Rule
+    from stl_driver.signals import Col, column
+
+    return Rule("probe", column("speed", Col.SPEED) > 0.0, weight=weight, margin=margin)
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), 0.0])
+def test_a_weight_that_is_not_finite_and_positive_is_rejected(weight):
+    from stl_driver.ruleset import validate_rules
+
+    with pytest.raises(ValueError, match="non-positive weight"):
+        validate_rules((_rule(weight, 1.0),), T)
+
+
+@pytest.mark.parametrize("margin", [float("nan"), 0.0])
+def test_a_margin_that_is_nan_or_not_positive_is_rejected(margin):
+    from stl_driver.ruleset import validate_rules
+
+    with pytest.raises(ValueError, match="non-positive margin"):
+        validate_rules((_rule(1.0, margin),), T)
+
+
+def test_an_infinite_margin_is_accepted_as_unsaturated():
+    """`RuleSet._saturate` reads an infinite margin as "do not saturate"."""
+    from stl_driver.ruleset import validate_rules
+
+    validate_rules((_rule(1.0, math.inf),), T)
+
+
+@pytest.mark.parametrize("temperature", [float("nan"), float("inf"), 0.0])
+def test_a_smoothing_temperature_that_is_not_finite_and_positive_is_rejected(temperature):
+    from stl_driver.stl_backend import smooth
+
+    with pytest.raises(ValueError, match="temperature must be positive"):
+        smooth(temperature)
+
+
 def test_margins_and_weights_are_positive_and_finite(rules):
     assert all(rule.weight > 0.0 for rule in rules.rules)
     assert all(rule.margin > 0.0 for rule in rules.rules)
