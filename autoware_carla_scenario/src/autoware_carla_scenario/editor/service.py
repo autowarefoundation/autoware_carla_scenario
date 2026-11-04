@@ -1007,15 +1007,21 @@ class EditorService:
     def create_draft_for_map(self, uri: str, title: str = "") -> Draft:
         """Create a draft whose map is the one *uri* names.
 
+        The map is fetched before anything is stored, so a URI that names no
+        map, or a repository that cannot be reached, leaves no blank draft
+        behind (#1429).
+
         Raises:
-            EditorError: If the map could not be fetched.
+            EditorError: If the map could not be fetched.  No draft is created.
         """
-        draft = self.create_draft(kind="blank", title=title)
-        self.use_map(draft.document, uri)
+        document = blank_document(title=title)
+        if title:
+            document.title = title
+        self.use_map(document, uri)
         if not title:
-            draft.document.title = f"New scenario on {draft.document.map.name}"
-        draft.title = draft.document.title
-        return self.save(draft)
+            document.title = f"New scenario on {document.map.name}"
+        document.sync_layout()
+        return self.store.create(document, title=document.title)
 
     # ------------------------------------------------------------------
     # Entities

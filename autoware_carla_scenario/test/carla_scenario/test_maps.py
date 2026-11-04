@@ -1966,6 +1966,41 @@ class TestEditorMapLibrary:
         )
         draft_id = str(response.headers["location"]).rsplit("/", 1)[-1]
         assert _stored(drafts, draft_id).map.name == "TownA"
+        assert [d.id for d in drafts.list()] == [draft_id]
+        assert drafts.get(draft_id).title == "New scenario on TownA"  # type: ignore[union-attr]
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("git+file:///nonexistent/repo@main#maps/T", id="unreachable"),
+            pytest.param(None, id="no-map-there"),
+        ],
+    )
+    def test_a_map_that_cannot_be_fetched_creates_no_draft(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        origin_repo: Path,
+        uri: str | None,
+    ) -> None:
+        """A failed fetch leaves no orphan blank draft behind (#1429).
+
+        The library is shown again with the reason, as ``/map/use`` shows it
+        inline, rather than the generic not-found page.
+        """
+        if uri is None:
+            uri = _uri(origin_repo, "docs")
+        repo = f"file://{origin_repo}@main"
+        response = editor.post(
+            "/maps/new", data={"uri": uri, "repo": repo}, follow_redirects=False
+        )
+
+        assert response.status_code == 200
+        assert "No scenario was created" in response.text
+        assert "Map library" in response.text
+        assert repo in response.text
+        assert drafts.list() == []
 
 
 class TestEditorWithoutOpenDrive:
