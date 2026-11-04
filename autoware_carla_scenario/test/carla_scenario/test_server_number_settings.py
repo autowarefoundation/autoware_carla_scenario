@@ -165,12 +165,11 @@ def test_the_sweeper_refuses_a_fractional_cooldown_max_retries(
     )
     sweeper.launcher = MagicMock()
     with (
-        patch.object(mod, "resolve_map_paths") as resolve,
-        patch.object(mod, "load_map"),
+        patch.object(mod, "load_sweep_map") as load,
         patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
         pytest.raises(SystemExit) as exited,
     ):
         sweeper.sweep([])
     assert exited.value.code == 2
     assert "cooldown_max_retries must be a whole number" in capsys.readouterr().err
-    resolve.assert_not_called()
+    load.assert_not_called()
