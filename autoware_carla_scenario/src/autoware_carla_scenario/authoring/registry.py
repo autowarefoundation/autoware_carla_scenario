@@ -2448,6 +2448,7 @@ register_action_spec(
                 kind="int",
                 default=5,
                 help="The nearest this many vehicles around the ego.",
+                minimum=0,
             ),
             FieldSpec(
                 name="control_radius",
@@ -2455,6 +2456,7 @@ register_action_spec(
                 kind="number",
                 default=50.0,
                 unit="m",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="magnitude",
@@ -2462,12 +2464,15 @@ register_action_spec(
                 kind="number",
                 default=20.0,
                 help="q = clip(p x magnitude, 0, the most q).",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="max_is_probability",
                 label="Most q",
                 kind="number",
                 default=0.05,
+                minimum=0.0,
+                maximum=1.0,
             ),
             FieldSpec(
                 name="fixed_is_probability",
@@ -2475,6 +2480,8 @@ register_action_spec(
                 kind="number",
                 default=0.0,
                 help="Above 0, every adversity's q, in place of the clip.",
+                minimum=0.0,
+                maximum=1.0,
             ),
             FieldSpec(
                 name="cooldown",
@@ -2483,6 +2490,7 @@ register_action_spec(
                 default=5.5,
                 unit="s",
                 help="After an adversity, how long before the next.",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="challenge_npcs",

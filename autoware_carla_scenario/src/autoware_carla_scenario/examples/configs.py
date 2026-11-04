@@ -17,6 +17,7 @@ This module defines only the *example-specific* scenario configs and the root
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -446,6 +447,31 @@ class AdversityConfig:
 
     #: ``nade``: the sampler's seed.
     nade_seed: int = 7
+
+    def __post_init__(self) -> None:
+        """Refuse a NADE number outside its bounds, naming its key (#1458).
+
+        As :class:`~autoware_carla_scenario.NadeSettings` and
+        :class:`~autoware_carla_scenario.NadeAdversity` would once the
+        scenario is set up, but when the config is built: a run checks it
+        before anything starts (``examples.run.check_batch_configs``).
+        """
+        for key, value in (
+            ("nade_probability", self.nade_probability),
+            ("nade_is_probability", self.nade_is_probability),
+        ):
+            if not (0.0 <= value <= 1.0):  # NaN fails it too
+                raise ValueError(f"scenario.{key} must be in [0, 1], not {value}")
+        if not math.isfinite(self.nade_cooldown) or self.nade_cooldown < 0.0:
+            raise ValueError(
+                "scenario.nade_cooldown must be finite and not negative, "
+                f"not {self.nade_cooldown}"
+            )
+        if not math.isfinite(self.nade_seconds) or self.nade_seconds <= 0.0:
+            raise ValueError(
+                "scenario.nade_seconds must be finite and positive, "
+                f"not {self.nade_seconds}"
+            )
 
 
 @dataclass
