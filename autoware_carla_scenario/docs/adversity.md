@@ -138,6 +138,15 @@ every draw yet still weight the run by `p / q`, under-weighting it in
 silence. The editor's Adversarial Traffic card declares the same bounds, so
 it reports such a value while the document is edited.
 
+`AvoidanceSettings` (the `avoidance` of `NadeSettings`) refuses its own in
+the same way (#1463): an `avoid_probability`, `avoid_is_probability` or
+`unavoidable_factor` outside [0, 1]; a negative or non-finite `buffer` or
+`unavoidable_magnitude`; and an `avoid_duration` or `accept_duration` that
+is not finite and positive. An `avoid_is_probability` above 1 would have
+every victim avoid yet still weight the run by `p / q`. Neither the editor
+nor a scenario's `scenario.*` keys set these: they stay TeraSim's unless
+built in code.
+
 ```python
 from autoware_carla_scenario import (
     AdversarialTrafficAction,

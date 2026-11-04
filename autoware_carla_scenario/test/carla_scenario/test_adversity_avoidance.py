@@ -6,6 +6,8 @@ y = -1.75) eastbound.
 
 from __future__ import annotations
 
+import math
+import random
 from types import SimpleNamespace
 from typing import Any
 
@@ -118,6 +120,79 @@ def test_an_unavoidable_adversity_s_magnitude_is_multiplied() -> None:
     settings = NadeSettings()
     assert is_probability(1e-5, settings) == pytest.approx(2e-4)
     assert is_probability(1e-5, settings, avoidable=False) == pytest.approx(8e-3)
+
+
+# -- bounds (#1463) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("avoid_is_probability", 1.5),
+        ("avoid_is_probability", -0.1),
+        ("avoid_is_probability", math.inf),
+        ("avoid_is_probability", math.nan),
+        ("avoid_probability", 1.01),
+        ("avoid_probability", -0.5),
+        ("avoid_probability", math.nan),
+        ("unavoidable_factor", 2.0),
+        ("unavoidable_factor", -3e-4),
+        ("unavoidable_factor", math.nan),
+        ("unavoidable_magnitude", -40.0),
+        ("unavoidable_magnitude", math.inf),
+        ("unavoidable_magnitude", math.nan),
+        ("buffer", -0.5),
+        ("buffer", math.inf),
+        ("buffer", math.nan),
+        ("avoid_duration", 0.0),
+        ("avoid_duration", -3.0),
+        ("avoid_duration", math.inf),
+        ("accept_duration", 0.0),
+        ("accept_duration", -2.0),
+        ("accept_duration", math.nan),
+    ],
+)
+def test_a_setting_out_of_its_bounds_is_refused(field: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=f"^{field} must .*, not {value}$"):
+        AvoidanceSettings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("avoid_is_probability", 0.0),
+        ("avoid_is_probability", 1.0),
+        ("avoid_probability", 0.0),
+        ("avoid_probability", 1.0),
+        ("unavoidable_factor", 0.0),
+        ("unavoidable_factor", 1.0),
+        ("unavoidable_magnitude", 0.0),
+        ("buffer", 0.0),
+        ("avoid_duration", 0.1),
+        ("accept_duration", 0.1),
+    ],
+)
+def test_a_setting_on_its_bounds_is_accepted(field: str, value: Any) -> None:
+    assert getattr(AvoidanceSettings(**{field: value}), field) == value
+
+
+def test_a_nade_setting_refuses_an_avoid_is_probability_above_1() -> None:
+    with pytest.raises(ValueError, match="^avoid_is_probability must be in"):
+        NadeSettings(avoidance=AvoidanceSettings(avoid_is_probability=1.5))
+
+
+@pytest.mark.parametrize("q", [0.0, 0.2, 0.5, 1.0])
+@pytest.mark.parametrize("p", [0.0, 0.5, 0.99, 1.0])
+def test_the_response_s_weight_averages_to_1(p: float, q: float) -> None:
+    """The weight is p / q or (1 - p) / (1 - q), so its mean is 1 for a q
+    that can draw both responses; one above 1 would draw avoid every time
+    and still weight it by p / q (#1463)."""
+    if (q == 0.0 and p > 0.0) or (q == 1.0 and p < 1.0):
+        pytest.skip("q never draws a response p can")
+    settings = AvoidanceSettings(avoid_probability=p, avoid_is_probability=q)
+    rng = random.Random(7)
+    weights = [respond(rng, False, True, settings).weight for _ in range(20000)]
+    assert sum(weights) / len(weights) == pytest.approx(1.0, abs=0.1)
 
 
 # -- in NADE --------------------------------------------------------------------

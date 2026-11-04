@@ -49,6 +49,9 @@ from .avoidance import (
     AVOID,
     DEFAULT_AVOIDANCE,
     AvoidanceSettings,
+    _check_non_negative,
+    _check_positive,
+    _check_probability,
     accept_command,
     avoid_command,
     avoidable,
@@ -93,24 +96,6 @@ class NadeAdversity:
     kind: AdversityKind
     location: AdversityLocation
     probability: float
-
-
-def _check_probability(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is in [0, 1]."""
-    if not (0.0 <= value <= 1.0):  # NaN fails it too
-        raise ValueError(f"{name} must be in [0, 1], not {value}")
-
-
-def _check_non_negative(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and >= 0."""
-    if not math.isfinite(value) or value < 0.0:
-        raise ValueError(f"{name} must be finite and not negative, not {value}")
-
-
-def _check_positive(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and > 0."""
-    if not math.isfinite(value) or value <= 0.0:
-        raise ValueError(f"{name} must be finite and positive, not {value}")
 
 
 @dataclass(frozen=True)
