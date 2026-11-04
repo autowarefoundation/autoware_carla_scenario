@@ -63,7 +63,9 @@ the world in synchronous mode, paced to wall-clock 10 Hz, without waiting for a
 command).
 
 `ego.entity=ros2` without `server.max_tick_rate_hz` logs a warning: unpaced, the
-simulation outruns the nodes and their sources look stale.
+simulation outruns the nodes and their sources look stale. The rate must be a finite
+number above 0 or `null`; anything else (`0`, a negative rate, `nan`) is refused
+before the run starts.
 
 Published stamps and the freshness of commands are both in simulation time, the time
 CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.

@@ -833,7 +833,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             ],
             rerun=rerun,
         )
-        cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
+        cooldown = run._cooldown_seconds(first_cfg)
 
         task.update(state="running")
         with queue:
