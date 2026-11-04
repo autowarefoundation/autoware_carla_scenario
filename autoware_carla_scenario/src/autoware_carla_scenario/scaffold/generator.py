@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import importlib.metadata
 import keyword
 import re
 import sys
@@ -179,6 +180,118 @@ def _reserved_scenario_names() -> frozenset[str]:
     return frozenset(name for name in reserved if name == name.lower())
 
 
+#: The framework's distribution name, which a scaffolded package depends on.
+_FRAMEWORK_DISTRIBUTION = "autoware-carla-scenario"
+
+#: Import names of the framework's direct run-time dependencies, kept as a
+#: floor under what :func:`_dependency_import_names` reads off the installed
+#: metadata (which is absent when the framework runs from a bare source tree).
+#: A scaffolded package of one of these names would shadow it once installed.
+_DEPENDENCY_IMPORT_NAMES: frozenset[str] = frozenset(
+    {
+        "autoware_lanelet2_extension_python",  # simple-lanelet2
+        "carla_driver_interface",
+        "cv2",  # opencv-python-headless
+        "dotenv",  # python-dotenv
+        "fastapi",
+        "google",  # protobuf
+        "grpc",  # grpcio
+        "hydra",  # hydra-core
+        "jinja2",
+        "lanelet2",  # simple-lanelet2
+        "multipart",  # python-multipart
+        "mypy",
+        "numpy",
+        "omegaconf",
+        "openodd",  # openodd-py
+        "orjson",
+        "packaging",
+        "pydantic",
+        "pytest",
+        "pyxodr",
+        "tomli",
+        "tqdm",
+        "typesafe_carla",
+        "uvicorn",
+        "yaml",  # pyyaml
+    }
+)
+
+
+def _normalise_distribution(name: str) -> str:
+    """Return *name* normalised as PEP 503 does (``A_b.c`` -> ``a-b-c``)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+@functools.cache
+def _dependency_import_names() -> frozenset[str]:
+    """Return the import names of the framework's direct run-time dependencies.
+
+    Read off the installed metadata (the framework's ``Requires-Dist`` without
+    the extras, mapped to import names through
+    :func:`importlib.metadata.packages_distributions`) and joined with
+    :data:`_DEPENDENCY_IMPORT_NAMES`, so a dependency added later is covered
+    without editing the list and a bare source tree still refuses the known
+    ones.
+    """
+    from packaging.requirements import Requirement  # noqa: PLC0415
+
+    names = set(_DEPENDENCY_IMPORT_NAMES)
+    try:
+        requires = importlib.metadata.requires(_FRAMEWORK_DISTRIBUTION) or []
+    except importlib.metadata.PackageNotFoundError:
+        return frozenset(names)
+    dependencies: set[str] = set()
+    for spec in requires:
+        requirement = Requirement(spec)
+        if requirement.marker is not None and "extra" in str(requirement.marker):
+            # An optional extra is not installed with the framework.
+            continue
+        dependencies.add(_normalise_distribution(requirement.name))
+    for (
+        import_name,
+        distributions,
+    ) in importlib.metadata.packages_distributions().items():
+        if import_name.isidentifier() and any(
+            _normalise_distribution(dist) in dependencies for dist in distributions
+        ):
+            names.add(import_name)
+    return frozenset(names)
+
+
+def _check_package_name(package_name: str) -> None:
+    """Refuse a package name that would clash once the package is installed.
+
+    A package named after the framework depends on itself and replaces the
+    installed framework on ``uv pip install -e``; one named after a stdlib
+    module or a dependency of the framework shadows it (#1451).
+    """
+    framework_import = _FRAMEWORK_DISTRIBUTION.replace("-", "_")
+    if _normalise_distribution(package_name) == _normalise_distribution(
+        _FRAMEWORK_DISTRIBUTION
+    ):
+        msg = (
+            f"package name {package_name!r} is reserved: it is the framework's "
+            f"own ({framework_import!r} / {_FRAMEWORK_DISTRIBUTION!r}), so the "
+            f"package would depend on itself and replace the installed "
+            f"framework. Pass a different name."
+        )
+        raise ValueError(msg)
+    if package_name in sys.stdlib_module_names:
+        msg = (
+            f"package name {package_name!r} is reserved: it would shadow the "
+            f"standard library module {package_name!r}. Pass a different name."
+        )
+        raise ValueError(msg)
+    if package_name in _dependency_import_names():
+        msg = (
+            f"package name {package_name!r} is reserved: it would shadow "
+            f"{package_name!r}, which {framework_import} depends on. Pass a "
+            f"different name."
+        )
+        raise ValueError(msg)
+
+
 # ---------------------------------------------------------------------------
 # Name handling
 # ---------------------------------------------------------------------------
@@ -223,6 +336,10 @@ def resolve_names(
     Returns a dict with ``package_name`` (import/snake), ``distribution_name``
     (hyphen), ``scenario_name`` (snake), ``scenario_class`` /  ``config_class``
     (Pascal), ``description``, and ``requires_python``.
+
+    The package name is the only source of the import and distribution names,
+    so every package ``scenario-new`` writes goes through the refusal of a
+    name that would clash once installed (see :func:`_check_package_name`).
     """
     from ..authoring.package_export import _requires_python  # noqa: PLC0415
 
@@ -233,6 +350,7 @@ def resolve_names(
         # Python identifier need not be.
         msg = f"package name {package_name!r} must be ASCII."
         raise ValueError(msg)
+    _check_package_name(package_name)
 
     if scenario_name is None:
         # Default: strip a trailing package-ish suffix so

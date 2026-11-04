@@ -70,6 +70,68 @@ class TestResolveNames:
             resolve_names(bad)
 
 
+class TestReservedPackageNames:
+    """A package may not take a name that clashes once installed (#1451)."""
+
+    @pytest.mark.parametrize(
+        "package",
+        [
+            "autoware-carla-scenario",
+            "autoware_carla_scenario",
+            "AutowareCarlaScenario",
+            "autoware.carla.scenario",
+        ],
+    )
+    def test_framework_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="framework's own"):
+            resolve_names(package)
+
+    @pytest.mark.parametrize("package", ["json", "typing", "Typing", "asyncio"])
+    def test_stdlib_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="standard library module"):
+            resolve_names(package)
+
+    @pytest.mark.parametrize(
+        "package", ["openodd", "lanelet2", "typesafe_carla", "omegaconf", "hydra"]
+    )
+    def test_dependency_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="which autoware_carla_scenario depends"):
+            resolve_names(package)
+
+    def test_dependencies_are_read_off_the_metadata(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _DEPENDENCY_IMPORT_NAMES,
+            _dependency_import_names,
+        )
+
+        # The installed metadata covers every name of the documented floor.
+        names = _dependency_import_names()
+        assert names >= _DEPENDENCY_IMPORT_NAMES
+        # ... and an optional extra (``sumo``'s ``traci``) is not a dependency.
+        assert "traci" not in names
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["autoware-carla-scenario", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "Error: package name 'autoware_carla_scenario' is reserved"
+        )
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "package", ["my_json_pkg", "openodd_scenarios_pkg", "carla_pkg", "lanes"]
+    )
+    def test_ordinary_names_still_work(self, tmp_path: Path, package: str) -> None:
+        result = create_scenario_package(package, output_dir=tmp_path)
+        assert result.names["package_name"] == package
+        assert (result.root / "pyproject.toml").is_file()
+
+
 class TestReservedScenarioNames:
     """A scenario module may not take the name of another generated file (#761)."""
 
