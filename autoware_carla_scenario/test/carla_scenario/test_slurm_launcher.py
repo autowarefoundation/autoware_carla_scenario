@@ -2263,11 +2263,66 @@ def _stale_lock(path: Path, token: str = "dead-task") -> None:
     os.utime(path, (old, old))
 
 
+def _takeover_mutex(path: Path, generation: int) -> Path:
+    """Generation *generation* of the takeover mutex of the lock at *path*."""
+    st = path.stat()
+    return path.with_name(
+        f"{path.name}.takeover.{st.st_ino}-{st.st_mtime_ns}.{generation}"
+    )
+
+
+def _herd(path: Path, waiters: int, worker: Any) -> tuple[int, list[str]]:
+    """*waiters* tasks taking the lock at *path* at once: the most that held
+    it together, and their tokens."""
+    import threading
+
+    order = threading.Lock()
+    holding: list[str] = []
+    most = [0]
+    tokens: list[str] = []
+    go = threading.Barrier(waiters, timeout=10)
+
+    def hold() -> None:
+        go.wait()
+        with worker._exclusive_file(path, stale_after=60.0):
+            name = threading.current_thread().name
+            with order:
+                holding.append(name)
+                most[0] = max(most[0], len(holding))
+            tokens.append(path.read_text())
+            time.sleep(0.02)
+            with order:
+                holding.remove(name)
+
+    threads = [threading.Thread(target=hold, name=f"t{i}") for i in range(waiters)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+    assert not any(thread.is_alive() for thread in threads)
+    return most[0], tokens
+
+
+def _count_removals(monkeypatch: pytest.MonkeyPatch, worker: Any) -> list[str]:
+    """The tokens of the locks taken over as stale, as they are."""
+    real = worker._remove_stale
+    removed: list[str] = []
+
+    def remove(lock: Path, stale: Any) -> bool:
+        done = bool(real(lock, stale))
+        if done:
+            removed.append(stale[3])
+        return done
+
+    monkeypatch.setattr(worker, "_remove_stale", remove)
+    return removed
+
+
 def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#1360: A and B both judge the lock stale before either takes it over;
-    B takes over only once A holds a fresh lock, and holds the takeover
+    B takes over only once A holds a fresh lock, and holds its takeover
     mutex while a third task C polls.  B leaves A's lock alone, and no two
     tasks hold the lock at once."""
     import threading
@@ -2275,17 +2330,14 @@ def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
     from autoware_carla_scenario.slurm import worker
 
     path = tmp_path / "start.lock.excl"
-    mutex = tmp_path / "start.lock.excl.takeover"
     _stale_lock(path)
     real_take_over = worker._take_over
-    real_release = worker._release_lock
-    real_remove = worker._remove_stale
+    real_create = worker._create_lock
     judged = threading.Barrier(2, timeout=10)
     a_holds = threading.Event()
     c_polls = threading.Event()
     b_done = threading.Event()
     arrivals: list[str] = []
-    removed: list[str] = []
     order = threading.Lock()
     local = threading.local()
 
@@ -2305,18 +2357,15 @@ def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
         finally:
             b_done.set()
 
-    def release(lock: Path, token: str) -> None:
-        if lock == mutex and arrivals[1:] == [threading.current_thread().name]:
+    def create(lock: Path, token: str) -> bool:
+        made = bool(real_create(lock, token))
+        if made and ".takeover." in lock.name and arrivals[1:] == ["b"]:
             time.sleep(0.3)  # B mid-takeover, holding the mutex: C polls
-        real_release(lock, token)
-
-    def remove(lock: Path, stale: Any) -> None:
-        removed.append(stale[3])
-        real_remove(lock, stale)
+        return made
 
     monkeypatch.setattr(worker, "_take_over", take_over)
-    monkeypatch.setattr(worker, "_release_lock", release)
-    monkeypatch.setattr(worker, "_remove_stale", remove)
+    monkeypatch.setattr(worker, "_create_lock", create)
+    removed = _count_removals(monkeypatch, worker)
     holding: list[str] = []
     most = [0]
     tokens: dict[str, str] = {}
@@ -2352,7 +2401,7 @@ def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
     assert most[0] == 1
     assert sorted(tokens) == ["a", "b", "c"] and len(set(tokens.values())) == 3
     assert removed == ["dead-task"]  # the stale lock, and nothing else
-    assert list(tmp_path.iterdir()) == []  # nothing left aside
+    assert list(tmp_path.iterdir()) == []  # no mutex left
 
 
 def test_a_takeover_waits_for_a_live_mutex_and_clears_a_stale_one(
@@ -2363,8 +2412,8 @@ def test_a_takeover_waits_for_a_live_mutex_and_clears_a_stale_one(
     from autoware_carla_scenario.slurm import worker
 
     path = tmp_path / "start.lock.excl"
-    mutex = tmp_path / "start.lock.excl.takeover"
     _stale_lock(path)
+    mutex = _takeover_mutex(path, 1)
     mutex.write_text("other-host:1:taking-over")  # another waiter's, live
     acquired = threading.Event()
 
@@ -2377,11 +2426,54 @@ def test_a_takeover_waits_for_a_live_mutex_and_clears_a_stale_one(
     assert not acquired.wait(0.5)
     assert path.read_text() == "dead-task"
     assert mutex.read_text() == "other-host:1:taking-over"
-    # Its holder was killed: stale after a while, and removed.
+    # Its holder was killed: stale after a while, and superseded.
     old = time.time() - 3600
     os.utime(mutex, (old, old))
     assert acquired.wait(10)
     thread.join(10)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_herd_on_the_mutex_of_a_killed_waiter_takes_the_lock_over_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1360: a waiter killed holding the takeover mutex; the waiters behind
+    it all find the mutex stale at the same moment, and only one of them
+    takes the lock over."""
+    from autoware_carla_scenario.slurm import worker
+
+    monkeypatch.setattr(worker, "_TAKEOVER_STALE_AFTER", 0.5)
+    path = tmp_path / "start.lock.excl"
+    _stale_lock(path)
+    _takeover_mutex(path, 1).write_text("killed-host:1:waiter")  # fresh
+    removed = _count_removals(monkeypatch, worker)
+    most, tokens = _herd(path, 6, worker)
+    assert most == 1
+    assert len(set(tokens)) == 6 and "dead-task" not in tokens
+    assert removed == ["dead-task"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_resubmission_into_a_stale_lock_and_aged_mutexes_takes_it_over_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1360: scancel during a takeover left a stale lock and its mutex, a
+    generation already superseded once; a resubmission's tasks all arrive
+    to find them an hour old."""
+    from autoware_carla_scenario.slurm import worker
+
+    path = tmp_path / "start.lock.excl"
+    _stale_lock(path)
+    old = time.time() - 3600
+    for generation in (1, 2):
+        mutex = _takeover_mutex(path, generation)
+        mutex.write_text(f"killed-host:{generation}:waiter")
+        os.utime(mutex, (old, old))
+    removed = _count_removals(monkeypatch, worker)
+    most, tokens = _herd(path, 8, worker)
+    assert most == 1
+    assert len(set(tokens)) == 8
+    assert removed == ["dead-task"]
     assert list(tmp_path.iterdir()) == []
 
 

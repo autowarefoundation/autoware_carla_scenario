@@ -397,81 +397,88 @@ def _release_lock(path: Path, token: str) -> None:
             os.unlink(path)
 
 
-_LOST_LOCK = "A live lock %s was taken over: two tasks may hold it"
+def _remove_stale(path: Path, stale: _LockId) -> bool:
+    """Unlink *path* if it is still the lock judged stale as *stale*; whether
+    it was.
 
-
-def _remove_stale(path: Path, stale: _LockId) -> None:
-    """Remove the file at *path* if it is still the one judged stale as
-    *stale*: renamed aside (atomic) and removed if what was moved is it.
-
-    Should the move have caught another file -- only possible when two
-    waiters hold the takeover mutex, or a holder judged dead released its
-    lock after all (see :func:`_take_over`) -- it is put back where it was
-    (``os.link``, which fails rather than replace one made meanwhile; a
-    rename back where the file system has no hard links).
+    Nothing is renamed or put back: a lock other than *stale* is left where
+    it is.  Between the check and the unlink *path* can only change if the
+    holder of *stale* is alive after all, or another waiter removes *stale*
+    meanwhile, which :func:`_take_over` rules out but for a waiter that
+    stalled past :data:`_TAKEOVER_STALE_AFTER`.
     """
-    aside = _lock_sibling(path, "stale")
-    try:
-        os.rename(path, aside)
-    except FileNotFoundError:
-        return
-    try:
-        moved = _lock_identity(aside)
-        if moved is not None and moved[0] != stale:
-            try:
-                os.link(aside, path)
-            except FileExistsError:
-                logger.warning(_LOST_LOCK, path)
-            except OSError:  # no hard links on this file system
-                if path.exists():
-                    logger.warning(_LOST_LOCK, path)
-                else:
-                    os.rename(aside, path)
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(aside)
-
-
-def _take_over(path: Path, clock: _ServerClock, stale_after: float, token: str) -> bool:
-    """Remove the lock at *path* if it is stale, holding its takeover mutex
-    (``<path>.takeover``, an ``O_EXCL`` file); whether this waiter held it.
-
-    Takeovers are mutually exclusive, and a lock is judged stale again under
-    the mutex, so a live lock is never touched: of waiters A and B that both
-    judged lock L1 stale, A takes the mutex, finds L1 still stale, removes
-    it and releases the mutex; when B gets the mutex, *path* is free or holds
-    a fresh lock L2 (A's or another's), which B leaves alone.  A waiter that
-    finds the mutex held leaves the lock to its holder and polls again.  A
-    holder of a lock removes only its own (:func:`_release_lock`), so while a
-    stale lock's holder is dead, nothing but the mutex holder changes *path*
-    between its judgement and the removal; and the removal checks that what
-    it moved aside is the lock judged stale (:func:`_remove_stale`).
-
-    A mutex left by a waiter killed while holding it is stale after
-    :data:`_TAKEOVER_STALE_AFTER` seconds (by the server's clock) and removed
-    the same way, outside the mutex.  Two waiters may then hold it at once
-    (one removed the stale mutex M1, another made M2, a third moved M2 aside
-    and put it back, or a holder stalled for that long), which is harmless
-    on its own: each judges the lock stale again before removing it, and
-    removes it only if it moved that very lock aside.  What remains is one
-    holder moving a fresh L2 aside that another holder's takeover let a task
-    create in between, which is put back at once; only a task polling in
-    that moment could then hold the lock with L2's holder.  That takes a
-    waiter killed inside the mutex, a takeover of that mutex racing another,
-    and a poll in one file operation's time.
-    """
-    mutex = path.with_name(path.name + ".takeover")
-    if not _create_lock(mutex, token):
-        seen = _lock_identity(mutex)
-        if seen is not None and clock.stale(seen[1], _TAKEOVER_STALE_AFTER):
-            _remove_stale(mutex, seen[0])  # its holder was killed
+    seen = _lock_identity(path)
+    if seen is None or seen[0] != stale:
         return False
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(path)
+    return True
+
+
+def _take_over(
+    path: Path, stale: _LockId, clock: _ServerClock, stale_after: float, token: str
+) -> bool:
+    """Remove the lock at *path* judged stale as *stale*, if it still is it,
+    one waiter at a time; whether this waiter took part (and need not wait
+    before trying the lock again).
+
+    The waiters taking over one stale lock share a mutex keyed to its
+    identity and made of generations: ``<path>.takeover.<ino>-<mtime>.<g>``,
+    created with ``O_EXCL``.  A waiter creates generation 1, or generation
+    g+1 once it has seen generation g and found it stale (its creator was
+    killed: :data:`_TAKEOVER_STALE_AFTER` seconds by the server's clock).
+    Creating never removes anything, so exactly one waiter wins each
+    generation, and a waiter that finds the newest generation live leaves
+    the takeover to its creator.  The winner of generation g checks again
+    that *path* is still *stale* and stale, that no generation g+1 exists,
+    and only then unlinks it (:func:`_remove_stale`); then it removes
+    generations 1 to g.  So:
+
+    - Of the waiters that judged lock L1 stale together, one removes it;
+      the others find generation g live, or, once it is removed, win a
+      generation of their own, find *path* free or holding a fresh lock L2
+      (another identity), and leave it alone.  A live lock is never renamed,
+      put back or removed by a waiter.
+    - A waiter killed while holding generation g leaves it and L1: after
+      :data:`_TAKEOVER_STALE_AFTER` seconds one waiter wins g+1 and removes
+      both; the waiters that arrive together find generation g stale at once
+      and still only one of them wins g+1.  A mutex of a lock already removed
+      only leads its winner to find the lock gone.
+
+    What remains is a holder alive past its staleness: the holder of L1 if
+    it held it past *stale_after* (which the stagger's spacing + 60 s rules
+    out but for a stalled node), or the winner of generation g if it stalled
+    for :data:`_TAKEOVER_STALE_AFTER` seconds right between its last check
+    of *path* and its unlink while the winner of g+1 removed L1 and a task
+    made L2.  Only then may two tasks hold the lock.
+    """
+    prefix = f"{path.name}.takeover.{stale[1]}-{stale[2]}."
+    generation = 1
+    while True:
+        mutex = path.with_name(f"{prefix}{generation}")
+        if _create_lock(mutex, token):
+            break
+        seen = _lock_identity(mutex)
+        if seen is None:
+            continue  # removed by a winner that found L1 gone: try it again
+        if not clock.stale(seen[1], _TAKEOVER_STALE_AFTER):
+            return False  # its winner is taking the lock over
+        generation += 1
     try:
         seen = _lock_identity(path)
-        if seen is not None and clock.stale(seen[1], stale_after):
-            _remove_stale(path, seen[0])
+        if (
+            seen is not None
+            and seen[0] == stale
+            and clock.stale(seen[1], stale_after)
+            and not path.with_name(f"{prefix}{generation + 1}").exists()
+        ):
+            _remove_stale(path, stale)
     finally:
-        _release_lock(mutex, token)
+        # The lock judged stale is gone (or this generation was superseded,
+        # whose winner removes them all): its mutex goes too.
+        for old in range(generation, 0, -1):
+            with contextlib.suppress(OSError):
+                os.unlink(path.with_name(f"{prefix}{old}"))
     return True
 
 
@@ -496,7 +503,7 @@ def _exclusive_file(path: Path, stale_after: float) -> Iterator[None]:
         if seen is None:
             continue  # released: try again at once
         if clock.stale(seen[1], stale_after) and _take_over(
-            path, clock, stale_after, token
+            path, seen[0], clock, stale_after, token
         ):
             continue
         time.sleep(0.05)
