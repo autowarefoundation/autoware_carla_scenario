@@ -172,6 +172,13 @@ driver:
     throttle_deadband: 0.3      # vehicle interface: least throttle to pull away
 ```
 
+Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
+are refused. Its `image_width`, `image_height` and `fps` must be positive (and
+`fps` finite), its `fov` in (0, 180) degrees -- CARLA renders the pinhole of
+the horizontal `fov` -- and its mount (`position_x/y/z`, `roll`, `pitch`,
+`yaw`) finite. A camera out of these bounds is refused as the config is read,
+not when it attaches after the ego spawned.
+
 ### A camera with a lens of its own: `driver.cameras[].lens`
 
 A camera's frames are CARLA's pinhole of its `fov` unless it says otherwise. A
@@ -461,6 +468,11 @@ driver:
   lidars:
     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
 ```
+
+LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
+`channels`, `range_m` and `points_per_second` positive, `lower_fov_deg` below
+`upper_fov_deg`, `weather_noise` and `noise_seed` not negative,
+`fog_density_scale` positive.
 
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (`precipitation`) and fog (`fog_density`, beyond `fog_distance`) put on it, read when the
