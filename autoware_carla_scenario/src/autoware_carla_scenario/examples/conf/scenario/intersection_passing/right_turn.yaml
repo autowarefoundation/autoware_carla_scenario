@@ -8,6 +8,7 @@
 scenario:
   name: intersection_passing
   expected_route_lanelet_ids: [502, 193]
+  pass_on_last_lanelet: false
   # A swept case may turn at a stop sign, where the ego waits before it goes.
   timeout_seconds: 20.0
   turn_direction: right

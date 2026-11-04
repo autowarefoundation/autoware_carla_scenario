@@ -503,6 +503,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
         parse_binding(key, b_cfg)
         for key, b_cfg in (sweep.get("bindings") or {}).items()
     ]
+    excluded = _excluded_overrides(sweep)
     cases: list[list[str]] = []
     for lid in matched_ids:
         # Key -> (value, who wrote it).  The pick is only the target key's
@@ -539,10 +540,36 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
                     lid,
                 )
         else:
+            hit = next(
+                (
+                    key
+                    for key, (value, _) in values.items()
+                    if value in excluded.get(key, ())
+                ),
+                None,
+            )
+            if hit is not None:
+                logger.info(
+                    "Lanelet %d's case ends with %s=%s, which sweep.exclude "
+                    "names; skipping this lanelet.",
+                    lid,
+                    hit,
+                    values[hit][0],
+                )
+                continue
             cases.append([f"{key}={value}" for key, (value, _) in values.items()])
     if not cases:
         logger.warning("All lanelets were skipped due to binding failures.")
     return cases
+
+
+def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
+    """``sweep.exclude``, each key's values rendered as the case's overrides
+    hold them (:func:`_override_value`), so a case is checked on what it runs."""
+    return {
+        str(key): frozenset(_override_value(v) for v in (values or ()))
+        for key, values in (sweep.get("exclude") or {}).items()
+    }
 
 
 def expand_route(

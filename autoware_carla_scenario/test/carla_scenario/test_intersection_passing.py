@@ -224,6 +224,57 @@ def test_the_indicator_is_judged_until_the_ego_is_in_the_junction(
     assert not any(_fired(no_indicator, 1.0 + t / 10) for t in range(30))
 
 
+def test_an_approach_faster_than_the_grace_fails_entering_the_junction_unsignalled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 5 m at 40 km/h is 0.45 s: in the junction before the 0.5 s grace is up.
+    turn = _Turn(monkeypatch, turn_direction="right", turn_indicator_before_m=5.0)
+    no_indicator = turn.failure("no_right_indicator")
+    into_junction = turn.failure("no_right_indicator_into_junction")
+    assert turn.near is not None and turn.inside is not None
+
+    turn.near.on = True
+    assert not _fired(no_indicator, 0.0) and not _fired(into_junction, 0.0)
+    assert not _fired(no_indicator, 0.4) and not _fired(into_junction, 0.4)
+    turn.near.on = False
+    turn.inside.on = True
+    assert not _fired(no_indicator, 0.5)
+    assert _fired(into_junction, 0.5)
+
+
+def test_signalling_on_the_approach_enters_the_junction_unfailed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = _Turn(monkeypatch, turn_direction="right", turn_indicator_before_m=5.0)
+    into_junction = turn.failure("no_right_indicator_into_junction")
+    assert turn.near is not None and turn.inside is not None
+    assert turn.signalling is not None
+
+    # Signalled on the approach, and cancelled in the junction.
+    turn.near.on = turn.signalling.on = True
+    assert not _fired(into_junction, 0.0)
+    turn.near.on = turn.signalling.on = False
+    turn.inside.on = True
+    assert not any(_fired(into_junction, 0.1 + t / 10) for t in range(20))
+
+
+def test_a_signal_before_the_approach_does_not_count_for_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = _Turn(monkeypatch, turn_direction="right", turn_indicator_before_m=5.0)
+    into_junction = turn.failure("no_right_indicator_into_junction")
+    assert turn.near is not None and turn.inside is not None
+    assert turn.signalling is not None
+
+    turn.signalling.on = True
+    assert not _fired(into_junction, 0.0)
+    turn.signalling.on = False
+    turn.near.on = True
+    assert not _fired(into_junction, 0.1)
+    turn.inside.on = True
+    assert _fired(into_junction, 0.2)
+
+
 def test_steering_back_too_often_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     turn = _Turn(monkeypatch, turn_direction="right", max_steering_reversals=5)
 
@@ -265,6 +316,20 @@ def test_a_turn_is_passed_on_the_road_after_the_junction(
     assert _Turn(monkeypatch, junction=True, turn_direction="left").passes() == [
         "ego_on_road_road207_sticky"
     ]
+
+
+def test_a_turn_can_be_passed_on_its_last_lanelet_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The road is any of its lanes, the oncoming one too: the last lanelet is
+    # the lane the turn comes out on.
+    turn = _Turn(
+        monkeypatch, junction=True, turn_direction="left", pass_on_last_lanelet=True
+    )
+
+    assert turn.passes() == ["ego_on_road_road207_sticky AND ego_on_lanelet_207_sticky"]
+    assert turn.inside is not None
+    assert turn.inside.args[1] == Lanelet2Pose(lanelet_id=207, s=0.0)
 
 
 #: Each lanelet's road: 208 continues 207's.

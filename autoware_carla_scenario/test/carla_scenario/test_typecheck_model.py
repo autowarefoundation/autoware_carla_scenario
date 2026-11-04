@@ -111,7 +111,7 @@ _MODEL = model_dir() / "autoware_carla_scenario"
 #: Python members the model leaves out on purpose, by class.  Each is a
 #: free-form mapping (dict[str, Any]), which has no Codon type.
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
-    "SweepConfig": {"constraints", "bindings", "odd_sample"},
+    "SweepConfig": {"constraints", "bindings", "exclude", "odd_sample"},
     # A mapping of AutowareBridgeConfig's fields, or None (run.py builds the bridge).
     "DriverConfig": {"bridge"},
     # A condition's details (scenario_runner fills them, outside the check).

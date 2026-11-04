@@ -311,6 +311,32 @@ sweep:
     scenario.spawn_overrides.npc1.lanelet_id: {type: stop_line_approach, offset: 300}
 ```
 
+A constraint sees the pick, not where a walk-back puts the spawn. Use
+`sweep.exclude` to drop a case by the values it ends up with once its bindings
+are applied. Each key lists the values a case may not hold there. For example,
+this keeps a spawn walked back from a junction off the lanelets CARLA does not
+draw:
+
+```yaml
+sweep:
+  exclude:
+    ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
+```
+
+A `route_through` binding gives the pick and the `depth` lanelets after it.
+Where the graph forks, it follows the lowest id. With `through_junction: true`
+it keeps going while the route's last lanelet is still in a junction, so a turn
+whose junction is several lanelets long ends on the lane it comes out on:
+
+```yaml
+sweep:
+  bindings:
+    scenario.expected_route_lanelet_ids:
+      type: route_through
+      depth: 1
+      through_junction: true
+```
+
 ```bash
 # Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`
 # satisfies the scenario's `sweep.constraints`.

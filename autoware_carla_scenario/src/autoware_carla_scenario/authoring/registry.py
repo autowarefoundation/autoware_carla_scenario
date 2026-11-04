@@ -5390,6 +5390,14 @@ register_binding_spec(
                 help="1 is the lanelet after the pick; where the road forks, "
                 "the lowest id.",
             ),
+            FieldSpec(
+                name="through_junction",
+                label="Out of the junction",
+                kind="bool",
+                default=False,
+                help="Go on past the steps while still in a junction, to the "
+                "first lanelet out of it.",
+            ),
         ),
         # A lanelet slot takes one id: the route's last lanelet.
         fixed=(("last_only", True),),

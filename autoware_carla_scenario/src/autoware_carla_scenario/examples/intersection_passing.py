@@ -241,6 +241,20 @@ class IntersectionPassingScenario(BaseScenario):
             for rid in road_ids
         ]
 
+        # The road alone is any of its lanes, either way: the route's last
+        # lanelet itself is the lane the turn has to come out on.
+        if cfg.pass_on_last_lanelet:
+            last = int(cfg.expected_route_lanelet_ids[-1])
+            sticky_conditions.append(
+                StickyCondition(
+                    EntityLanePositionCondition(
+                        EGO_ROLE_NAME,
+                        Lanelet2Pose(lanelet_id=last, s=0.0),
+                        label=f"ego_on_lanelet_{last}",
+                    )
+                )
+            )
+
         if len(sticky_conditions) == 1:
             # A turn's route is often its junction and the road after it alone.
             self.register_pass_condition(sticky_conditions[0])
@@ -310,6 +324,24 @@ class IntersectionPassingScenario(BaseScenario):
                     ),
                     cfg.turn_indicator_grace_seconds,
                     label=f"no_{cfg.turn_direction}_indicator",
+                ),
+                category=FailureCategory.SIGNALLING,
+            )
+            # An approach shorter than the grace -- 5 m at 40 km/h is 0.45 s --
+            # never fails the check above: the ego is in the junction first.
+            # So it also fails on entering the junction without having shown
+            # the indicator anywhere on the approach.
+            signalled_on_approach = StickyCondition(
+                AndCondition([near_junction, signalling]),
+                label=f"ego_signalled_{cfg.turn_direction}",
+            )
+            self.register_fail_condition(
+                AndCondition(
+                    [
+                        in_junction,
+                        NotCondition(signalled_on_approach, holds_when_pending=True),
+                    ],
+                    label=f"no_{cfg.turn_direction}_indicator_into_junction",
                 ),
                 category=FailureCategory.SIGNALLING,
             )
