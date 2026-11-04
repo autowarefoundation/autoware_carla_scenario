@@ -2832,6 +2832,10 @@ whether its revision is pinned.</p>
 <p>See <a href="../maps/">HD Maps from a Git Repository</a>. Two things are worth knowing here:
 a map Autoware's own setup already downloaded is used as it sits, and OpenDRIVE
 is not needed to author a scenario -- lanelets are.</p>
+<p>A scenario on a map from the library (or a <strong>Map directory</strong>) is exported with a
+map group of its own, <code>conf/map/&lt;id&gt;_map.yaml</code> in the package, and run with
+<code>map=&lt;id&gt;_map</code> -- see
+<a href="#running-an-authored-scenario">Running an authored scenario</a>.</p>
 <h2 id="where-it-happens-the-places-panel">Where it happens: the places panel<a class="headerlink" href="#where-it-happens-the-places-panel" title="Permanent link">&para;</a></h2>
 <p>One map carries every lanelet the scenario names -- each entity's spawn, the
 ego's goal, and the lanelet every condition watches. The canvas says <em>what</em>
@@ -3720,6 +3724,9 @@ is not a successful export.</p>
 <a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/conf/scenario/cut_in.yaml</span>
 <a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </code></pre></div>
+<p>A scenario whose map is a source or a directory also lists
+<code>map_config: src/cut_in_scenario/conf/map/cut_in_map.yaml</code>, the map group it
+runs with (<a href="#running-an-authored-scenario">Running an authored scenario</a>).</p>
 <p>Anything that could not be determined is <code>null</code> with a note, never a plausible
 guess.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
@@ -3792,6 +3799,37 @@ uses (see <a href="../architecture/">Architecture</a>) -- installed from its whe
 <a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
 </code></pre></div>
+<p><code>map=nishishinjuku</code> is the starter's map, the scenario's <strong>Hydra map group</strong>. A
+scenario whose map is named by a source (picked from the Map library) or a
+<strong>Map directory</strong> is on no built-in group, so its package ships one of its own,
+<code>src/&lt;package&gt;/conf/map/&lt;id&gt;_map.yaml</code>, and is run with it -- the export log,
+the package's README and the Scenario inspector all name it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>cut_in_map
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># @package _global_</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Town10HD_Opt</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@&lt;commit&gt;#autoware_maps/Town10HD_Opt</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">  </span><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">  </span><span class="nt">projector_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">  </span><span class="nt">overwrite_xodr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">  </span><span class="nt">no_3d_model_lanelet_ids</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</code></pre></div>
+<p>It sets every <code>map</code> key, the ones the document leaves empty as <code>null</code>. Running
+the scenario with a built-in group instead -- or with none, which selects the
+default, <code>nishishinjuku</code> -- runs it on that group's map: the framework composes
+the <code>map</code> group after the <code>scenario</code> one, so the group's name, Lanelet2 and
+OpenDRIVE paths and exclusion list win over the <code>map</code> keys the scenario's own
+config writes (and a scenario config cannot select another group, as Hydra
+refuses an <code>override /map</code> from a group composed before it).</p>
+<p>The group never installs an OpenDRIVE into CARLA (<code>overwrite_xodr: false</code>),
+even when the document names its own <code>.xodr</code>: that file is what the run reads
+the road geometry from, and replacing the simulator's road network is an
+opt-in only the built-in <code>nishishinjuku</code> group makes, for CARLA assets that ship
+without one. A map whose CARLA assets need it installed is run with
+<code>map.overwrite_xodr=true</code> on the command line.</p>
 <p>The CARLA client needs no separate install: <code>typesafe-carla</code> is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything
 else, with its CPython package prebuilt, so nothing has to be compiled on the
@@ -3842,7 +3880,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 09:26:08 UTC"><span class="timeago" datetime="2026-11-04T09:26:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 09:26:08 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 16:05:05 UTC"><span class="timeago" datetime="2026-11-04T16:05:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 16:05:05 UTC">2026-11-04</span>
   </span>
 
     
