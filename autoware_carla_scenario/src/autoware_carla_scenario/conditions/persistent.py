@@ -28,10 +28,14 @@ def _warn_if_failure_only(condition: BaseCondition) -> None:
     logger.warning(
         "PersistentCondition: its child %r (%s) only ever reports a failure "
         "(passed=False), and a PersistentCondition counts only passing "
-        "results, so it never fires. Register the child on its own, or wrap "
-        "it in NotCondition(child), which turns its failure into a pass the "
-        "PersistentCondition counts; to require that a state has not held for "
-        "a while, wrap the condition for that state in "
+        "results, so it never fires. A child that keeps its failure once it "
+        "has fired (a collision, a timeout) has nothing to wait out: register "
+        "it on its own (NotCondition(child) would only delay the failure). A "
+        "child that re-checks every tick (off the road, an entity's "
+        "existence) can be wrapped in NotCondition(child), which turns its "
+        "failure into a pass, so the PersistentCondition fires once the "
+        "failure has held for the duration. To require that a state has not "
+        "held for a while, wrap the condition for that state in "
         "NotCondition(..., holds_when_pending=True), as the cut-in example does",
         condition.label,
         type(condition).__name__,
@@ -49,9 +53,15 @@ class PersistentCondition(BaseCondition):
 
     So it never fires around a condition that only ever reports a failure
     (:func:`~.base.reports_only_failure`: a collision, off-road, existence or
-    timeout condition), and says so in a warning when it is built.  Wrap such
-    a child in a plain :class:`~.not_condition.NotCondition`, which turns its
-    failure into a pass.
+    timeout condition), and says so in a warning when it is built.  A child
+    that keeps its failure once it has fired (a collision, a timeout) is
+    registered on its own: under a :class:`~.not_condition.NotCondition` the
+    persistent condition would only fire *duration* later.  A child that
+    re-checks every tick (off the road, an entity's existence) goes under a
+    plain :class:`~.not_condition.NotCondition`, which turns its failure into
+    a pass, so the persistent condition fires once the failure has held for
+    *duration*.  Only a direct child is recognised: one under a sticky, AND or
+    OR condition is not.
 
     Args:
         condition: The child condition to monitor.

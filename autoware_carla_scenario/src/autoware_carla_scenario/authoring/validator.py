@@ -484,11 +484,14 @@ def _check_persistent_child(out: _Collector, path: str, node: ConditionNode) -> 
             path,
             f"Persistent never fires around {title}: that condition only ever "
             "reports a failure, and Persistent counts only the ticks its child "
-            "passes. Use the condition on its own, or put it under a NOT "
-            "(which turns its failure into a pass Persistent counts); to say "
-            "a state has not held for a while, put the condition for that "
-            "state under a NOT with *Holds while the child does not* "
-            "(holds_when_pending), as the cut-in example does.",
+            "passes. A Collision or Timeout keeps its failure once it has "
+            "fired, so there is nothing to wait out: use it on its own (under "
+            "a NOT it would only fail the run later). Off the road and Exists "
+            "re-check every tick: under a NOT, which turns their failure into "
+            "a pass, Persistent fires once the failure has held for its "
+            "duration. To say a state has not held for a while, put the "
+            "condition for that state under a NOT with *Holds while the child "
+            "does not* (holds_when_pending), as the cut-in example does.",
             node.id,
         )
 

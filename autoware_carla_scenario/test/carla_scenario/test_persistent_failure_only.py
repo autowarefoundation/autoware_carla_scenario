@@ -109,6 +109,10 @@ class TestPersistentWarns:
         assert "never fires" in message
         assert "NotCondition(child)" in message
         assert "holds_when_pending=True" in message
+        # A latching child is registered on its own; NOT only delays it.
+        assert "register it on its own" in message
+        assert "only delay the failure" in message
+        assert "re-checks every tick" in message
 
     @pytest.mark.parametrize(
         "child",
@@ -135,8 +139,10 @@ class TestSemanticsUnchanged:
         for tick in range(60):
             assert condition.check(world, elapsed=tick * 0.05) is None
 
-    def test_a_plain_not_makes_the_failure_count(self) -> None:
-        """The remedy the warning names: the NOT turns the failure into a pass."""
+    def test_a_plain_not_only_delays_a_latching_child(self) -> None:
+        """A timeout keeps failing once past its limit: under a NOT, the
+        persistent condition fires *duration* later, which is why the warning
+        says to register such a child on its own."""
         condition = PersistentCondition(
             NotCondition(TimeoutCondition(1.0, label="t")), 0.5
         )
@@ -146,6 +152,34 @@ class TestSemanticsUnchanged:
         result = condition.check(world, elapsed=1.5)
         assert result is not None
         assert result.passed is True
+
+    def test_a_plain_not_makes_a_rechecking_failure_count(self) -> None:
+        """The remedy for a child that checks again every tick: the persistent
+        condition fires only once the failure has held for the duration."""
+        failing = {0.1, 0.2, 0.4, 0.5, 0.6, 0.7}
+
+        class _Rechecking(BaseCondition):
+            REPORTS_ONLY_FAILURE = True
+
+            def __init__(self) -> None:
+                super().__init__(label="rechecking")
+
+            def check(self, world: object, elapsed: float) -> Optional[ScenarioResult]:
+                if round(elapsed, 2) in failing:
+                    return ScenarioResult(
+                        passed=False, message="off", elapsed_seconds=elapsed
+                    )
+                return None
+
+        condition = PersistentCondition(NotCondition(_Rechecking()), 0.25)
+        world = MagicMock()
+        fired = [
+            round(t / 10, 2)
+            for t in range(9)
+            if condition.check(world, elapsed=t / 10) is not None
+        ]
+        # 0.1-0.2 is too short and the gap at 0.3 resets it; 0.4-0.7 holds.
+        assert fired == [0.7]
 
 
 def _document(child: ConditionNode) -> ScenarioDocument:
@@ -189,6 +223,9 @@ class TestValidatorWarns:
         assert "Collision" in issue.message
         assert "NOT" in issue.message
         assert "holds_when_pending" in issue.message
+        assert "use it on its own" in issue.message
+        assert "only fail the run later" in issue.message
+        assert "re-check every tick" in issue.message
 
     def test_not_when_the_child_is_under_a_not(self) -> None:
         document = _document(

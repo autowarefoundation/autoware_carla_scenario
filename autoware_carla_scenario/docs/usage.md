@@ -1097,12 +1097,23 @@ nothing, and the run's failure is `other`: give it a category.
 > `REPORTS_ONLY_FAILURE`). So `PersistentCondition(OffRoadFractionCondition(...), 0.5)`
 > -- "off the road for 0.5 s" -- never fires, and never fails the run.
 > Building one logs a warning, and the scenario editor's validator warns on
-> the Persistent card. Register such a condition on its own, or wrap it in a
-> plain `NotCondition(child)`, which turns its failure into a pass the
-> persistent condition counts (a NOT says no category: give it one). To say a
-> state has *not* held for a while, wrap the condition for that state in
-> `NotCondition(..., holds_when_pending=True)`, as the
-> [cut-in example](scenarios/cut_in.md#staying-on-the-lanes-ahead) does.
+> the Persistent card. What to write instead depends on the condition:
+>
+> - `CollisionCondition` and `TimeoutCondition` keep their failure once they
+>   have fired (a collision is cached, a timeout stays past its limit), so
+>   there is nothing to wait out: register them on their own.
+>   `PersistentCondition(NotCondition(child), d)` would only fail the run `d`
+>   later, not say that anything held for `d`.
+> - `OffRoadFractionCondition` and `EntityExistenceCondition` check again on
+>   every tick, so a plain `NotCondition(child)` turns their failure into a
+>   pass the persistent condition counts, and it fires once the failure has
+>   held for the duration (a NOT says no category: give it one).
+> - To say a state has *not* held for a while, wrap the condition for that
+>   state in `NotCondition(..., holds_when_pending=True)`, as the
+>   [cut-in example](scenarios/cut_in.md#staying-on-the-lanes-ahead) does.
+>
+> Only a direct child is recognised: a failure-only condition under a sticky,
+> AND or OR condition inside the persistent one draws no warning.
 
 `detail` tells a `progress` failure apart by how the ego ended the run:
 `never_moved` (it never drove 1 m), `stalled` (it had stood
