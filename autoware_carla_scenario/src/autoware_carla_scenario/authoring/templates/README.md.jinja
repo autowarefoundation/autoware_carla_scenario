@@ -24,7 +24,8 @@ uv run scenario scenario={{ scenario_id }} map={{ map_group }}
 the scenario names its map by `map.source` or `map.directory`, which no
 built-in group describes. Run it with that group. The framework composes the
 `map` group after the scenario, so any other one -- including the default,
-`nishishinjuku` -- would replace this scenario's map with its own.
+`nishishinjuku` -- would replace this scenario's map with its own; a run that
+selects one is refused before anything starts, naming `map={{ map_group }}`.
 
 {% endif %}
 `--locked` is deliberate: if `uv.lock` and `pyproject.toml` ever disagree, the

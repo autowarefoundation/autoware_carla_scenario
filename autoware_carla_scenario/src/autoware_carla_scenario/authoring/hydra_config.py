@@ -48,7 +48,9 @@ map.  A document that names its map by ``source`` or ``directory`` describes a
 map no built-in group does, so an export ships it as a map group of its own
 (:func:`build_map_group_config`, ``conf/map/<own_map_group>.yaml``) that sets
 every ``map`` key, and the package is run with ``map=<own_map_group>``
-(:func:`run_map_group`).
+(:func:`run_map_group`).  A run that composes another map group anyway --
+the default one, when ``map=<own_map_group>`` is left out -- is refused before
+anything starts (:func:`own_map_mismatch`).
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ __all__ = [
     "dump_map_group_config",
     "dump_scenario_config",
     "own_map_group",
+    "own_map_mismatch",
     "param_override_key",
     "run_map_group",
     "slot_lanelet_key",
@@ -245,6 +248,90 @@ def own_map_group(document: ScenarioDocument) -> str | None:
 def run_map_group(document: ScenarioDocument) -> str:
     """Return the ``map=<group>`` a run of *document* selects."""
     return own_map_group(document) or document.map.group
+
+
+def _map_value(map_config: Any, key: str) -> str | None:
+    """``map.<key>`` of a composed ``map`` node (or a dict), stripped; ``None``
+    when unset or empty -- as :func:`~...maps.config.resolve_map_paths` reads it."""
+    if map_config is None:
+        return None
+    try:
+        value = map_config.get(key)
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
+def own_map_mismatch(document: ScenarioDocument, map_config: Any) -> str | None:
+    """Say how the run's composed *map_config* is not *document*'s own map.
+
+    ``None`` when it is, and for a document on a built-in group, which has no
+    own map group (:func:`own_map_group`): the group it names is the map.
+
+    The document's map group is composed after the scenario, so a run that
+    leaves ``map=<own_map_group>`` out composes the default group instead, and
+    that group's keys win over the ones the scenario's config writes.  Two
+    things identify the map a run is on, and both are compared with the
+    document:
+
+    * ``map.name``, the CARLA world.  Every map group sets it, so a group
+      describing another map -- the default one -- always differs here.
+    * Where the map comes from: ``map.directory``, which wins over
+      ``map.source`` (:func:`~...maps.config.resolve_map_paths`), else
+      ``map.source``.  A directory the document does not name is accepted: no
+      built-in group sets one, so it is the run's own local copy of the map
+      (``map.directory=...``, as ``resolve_map_paths`` documents).  A source
+      that is not the document's is another map, or another revision of it,
+      whose lanelet ids are not the ones the document names; two spellings
+      of one source are the same (:func:`_same_source`).
+
+    ``map.lanelet2_path`` and ``map.xodr_path`` are not compared: an explicit
+    file wins over the source by design, which is how a run points at a local
+    or patched copy of the same map (``map.xodr_path=/tmp/patched.xodr``),
+    and a group that sets them for another map sets that map's name as well.
+
+    Returns:
+        What differs, naming the keys, or ``None``.
+    """
+    if own_map_group(document) is None:
+        return None
+    map_ref = document.map
+    want_name = (map_ref.name or "").strip() or None
+    name = _map_value(map_config, "name")
+    if want_name is not None and name != want_name:
+        return f"map.name is {name!r}, not the document's {want_name!r}"
+    want_directory = (map_ref.directory or "").strip() or None
+    want_source = (map_ref.source or "").strip() or None
+    directory = _map_value(map_config, "directory")
+    source = _map_value(map_config, "source")
+    if directory is not None:
+        # The document's own, or the run's local copy of its map.
+        return None
+    if want_directory is not None:
+        return (
+            f"map.directory is unset (map.source {source!r}), not the "
+            f"document's {want_directory!r}"
+        )
+    if not _same_source(source, want_source):
+        return f"map.source is {source!r}, not the document's {want_source!r}"
+    return None
+
+
+def _same_source(source: str | None, want: str | None) -> bool:
+    """Whether two ``map.source`` values name the same map: compared as
+    :class:`~...maps.source.MapSource` parses them, so two spellings of one
+    source (``git+...@<ref>#<path>``, a browser URL, a trailing slash) agree;
+    as text when either does not parse."""
+    if source is None or want is None:
+        return source == want
+    from ..maps.source import MapSource, MapSourceError  # noqa: PLC0415
+
+    try:
+        return MapSource.parse(source) == MapSource.parse(want)
+    except MapSourceError:
+        return source == want
 
 
 def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:

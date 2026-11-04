@@ -165,8 +165,9 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each("ScenarioQueue ScenarioRunner", _RUNNER),
         **_each(
             "BuildScenarioFn ScenarioBuilder get_conf_dirs get_scenario_builder "
-            "get_scenario_classes get_scenario_registry load_scenario_plugins "
-            "register_conf_dir register_scenario register_scenario_builder "
+            "get_scenario_classes get_scenario_document get_scenario_registry "
+            "load_scenario_plugins register_conf_dir register_scenario "
+            "register_scenario_builder register_scenario_document "
             "unregister_conf_dir unregister_scenario",
             _REGISTRY,
         ),

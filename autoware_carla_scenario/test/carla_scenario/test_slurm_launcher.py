@@ -997,6 +997,69 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     assert released == [False]
 
 
+def test_the_worker_refuses_a_case_off_its_documents_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1424: a case whose scenario's document names a map of its own, composed
+    on another map group, fails its task naming ``map=<id>_map``, before
+    anything is built -- for a manifest the submitting process did not check."""
+    from autoware_carla_scenario import registry
+    from autoware_carla_scenario.authoring.starter import new_document
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    document = new_document()
+    document.map.source = (
+        "git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+        "@5058c6683a1077a99aa5fdca5e6ecff9d71fcfb1#autoware_maps/Town10HD_Opt"
+    )
+    document.map.name = "Town10HD_Opt"
+    name = str(run._compose_config(_CONCRETE, []).scenario.name)
+    monkeypatch.setitem(registry._SCENARIO_DOCUMENTS, name, lambda: document)
+
+    layout = _batch_on_disk(tmp_path, cases=1)
+    manifest = layout.read_manifest()
+    manifest["cases"][0].update(
+        scenario=_CONCRETE, overrides=[], stem="S", scenario_class="X"
+    )
+    write_json(layout.manifest, manifest)
+    released: list[bool] = []
+    slot = SimpleNamespace(
+        rpc=31500,
+        to_dict=dict,
+        release=lambda keep_lock=False: released.append(keep_lock),
+    )
+
+    def no_watchdog(*_args: object) -> None:
+        raise OSError("no watchdog here")
+
+    def built(*_args: object, **_kw: object) -> None:
+        raise AssertionError("built the scenario")
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    monkeypatch.setattr(worker, "acquire_slot", lambda *_a, **_k: slot)
+    monkeypatch.setattr(worker, "CarlaWatchdog", no_watchdog)
+    monkeypatch.setattr(worker, "worker_overrides", lambda _cfg, _slot: {})
+    monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    monkeypatch.setattr(run, "build_scenario", built)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 0, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    status = layout.read_task(0, 0)
+    assert status is not None and status["state"] == "failed"
+    assert "RunConfigError: s#1: " in status["error"]
+    assert "map=cut_in_map" in status["error"]
+    assert released == [False]
+
+
 def test_launcher_local_runs_the_batch_here_unchanged(
     fake_slurm: SimpleNamespace,
 ) -> None:

@@ -778,6 +778,11 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             # (the submitting process already did, for a batch it checked).
             timeouts.append(run_timeout_seconds(cfg))
             configs.append(cfg)
+        # A declarative case on another map than its document names, as the
+        # submitting process refused it (#1424); refused again, beside
+        # check_batch_map, for a manifest it did not check -- and before
+        # anything is built.
+        run.check_scenario_maps(configs, [str(case["label"]) for case in cases])
         scenarios = []
         for i, (case, cfg) in enumerate(zip(cases, configs), 1):
             logger.info("Building scenario [%d/%d]: %s", i, len(cases), case["label"])

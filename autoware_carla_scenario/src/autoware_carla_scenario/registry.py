@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
+    from .authoring.models import ScenarioDocument
     from .coordinate import GroundProjectionConfig, Lanelet2Pose
     from .scenario_base import BaseScenario, EgoConfig
     from omegaconf import DictConfig
@@ -50,10 +51,12 @@ __all__ = [
     "BuildScenarioFn",
     "register_scenario",
     "register_scenario_builder",
+    "register_scenario_document",
     "unregister_scenario",
     "get_scenario_registry",
     "get_scenario_builder",
     "get_scenario_classes",
+    "get_scenario_document",
     "register_conf_dir",
     "unregister_conf_dir",
     "get_conf_dirs",
@@ -73,6 +76,9 @@ ScenarioBuilder = Callable[
     "BaseScenario",
 ]
 
+#: Callable that loads the Scenario IR document a declarative scenario runs.
+ScenarioDocumentLoader = Callable[[], "ScenarioDocument"]
+
 #: Callable that replaces the entire ``build_scenario`` logic.
 #: Signature: ``(cfg) -> (ego, scenario)``
 BuildScenarioFn = Callable[["DictConfig"], "tuple[EgoConfig, BaseScenario]"]
@@ -88,6 +94,12 @@ _SCENARIO_REGISTRY: dict[str, ScenarioBuilder] = {}
 #: (:mod:`autoware_carla_scenario.typecheck`), which compiles the scenario the
 #: way its builder constructs it.  A custom builder has no entry.
 _SCENARIO_CLASSES: dict[str, tuple[type[BaseScenario], type]] = {}
+
+#: The documents of declarative scenarios (an exported scenario package's), by
+#: name: what a run checks its composed config against before anything starts
+#: (``examples.run.check_scenario_maps``).  A scenario written in Python has
+#: none.
+_SCENARIO_DOCUMENTS: dict[str, ScenarioDocumentLoader] = {}
 
 
 def register_scenario(
@@ -126,6 +138,7 @@ def register_scenario(
 
     _SCENARIO_REGISTRY[name] = _builder
     _SCENARIO_CLASSES[name] = (scenario_cls, config_cls)
+    _SCENARIO_DOCUMENTS.pop(name, None)
 
 
 def register_scenario_builder(name: str, builder: ScenarioBuilder) -> None:
@@ -137,6 +150,36 @@ def register_scenario_builder(name: str, builder: ScenarioBuilder) -> None:
     """
     _SCENARIO_REGISTRY[name] = builder
     _SCENARIO_CLASSES.pop(name, None)
+    _SCENARIO_DOCUMENTS.pop(name, None)
+
+
+def register_scenario_document(name: str, loader: ScenarioDocumentLoader) -> None:
+    """Register how to load the document the scenario *name* runs.
+
+    For a declarative scenario -- one whose builder runs a Scenario IR
+    document, as an exported scenario package's does -- called after its
+    builder is registered (registering a builder drops the document of the
+    one it replaces).  The run loads it before anything starts to check the
+    composed config against it: a document naming its own map refuses a run
+    on another (``examples.run.check_scenario_maps``).
+
+    The loader is called on every :func:`get_scenario_document`, with no
+    caching here: each lookup reads the document as it is then.
+    """
+    _SCENARIO_DOCUMENTS[name] = loader
+
+
+def get_scenario_document(name: str) -> ScenarioDocument | None:
+    """Return the document registered for the scenario *name*, loaded.
+
+    ``None`` when the scenario registered none (:func:`register_scenario_document`).
+
+    Raises:
+        Whatever the loader raises: a document that cannot be loaded, which
+        the scenario's builder would refuse as well.
+    """
+    loader = _SCENARIO_DOCUMENTS.get(name)
+    return None if loader is None else loader()
 
 
 def get_scenario_registry() -> dict[str, ScenarioBuilder]:
@@ -176,6 +219,7 @@ def unregister_scenario(name: str) -> None:
     """
     _SCENARIO_REGISTRY.pop(name, None)
     _SCENARIO_CLASSES.pop(name, None)
+    _SCENARIO_DOCUMENTS.pop(name, None)
 
 
 # ---------------------------------------------------------------------------
