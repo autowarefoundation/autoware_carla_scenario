@@ -32,7 +32,7 @@
       <div class="ed-panel-body">
         <div class="ed-notice ed-notice-bad">
           {{ ic.icon('alert', 15) }}
-          <div><div class="ed-notice-title">That repository could not be read</div>{{ error }}</div>
+          <div><div class="ed-notice-title">{{ error_title|default("That repository could not be read") }}</div>{{ error }}</div>
         </div>
       </div>
     {% elif entries %}
@@ -64,6 +64,7 @@
           {% else %}
             <form method="post" action="/maps/new">
               <input type="hidden" name="uri" value="{{ entry.uri }}">
+              <input type="hidden" name="repo" value="{{ repo }}">
               <button class="ed-btn-primary ed-btn-sm" type="submit">
                 {{ ic.icon('plus', 13) }} New scenario
               </button>
