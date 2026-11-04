@@ -205,7 +205,10 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
     * ``stop_time_s`` -- when it first came to a stop (below 0.5 km/h after
       having moved), if it did.
 
-    Empty when the log has no ego. Kept until the log changes.
+    Empty when the log has no ego or cannot be read. A line that is not
+    JSON (a killed run's last tick, cut off mid-line) or a record that cannot
+    be used is skipped, as ``rerun_metrics.metric_records`` skips it: the
+    metrics of every good tick are kept. Kept until the log changes.
     """
     try:
         stamp = trajectory.stat().st_mtime
@@ -214,71 +217,95 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
     cached = _metrics_cache.get(str(trajectory))
     if cached is not None and cached[0] == stamp:
         return cached[1]
-    extents: dict[int, tuple[float, float]] = {}
-    # Each box's offset from its actor's origin (none in older logs).
-    centers: dict[int, tuple[float, float]] = {}
-    ego: int | None = None
-    drive = DriveMetrics()
+    reader = _TrajectoryMetrics()
     try:
-        with trajectory.open(encoding="utf-8") as stream:
+        with trajectory.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 if '"tick"' not in line and '"actor"' not in line:
                     continue
-                record = json.loads(line)
-                if record.get("type") == "actor":
-                    extent = record.get("extent") or [0.0, 0.0]
-                    extents[int(record["id"])] = (float(extent[0]), float(extent[1]))
-                    center = record.get("center") or [0.0, 0.0]
-                    centers[int(record["id"])] = (float(center[0]), float(center[1]))
-                    if str(record.get("role", "")).lower() == "ego":
-                        ego = int(record["id"])
+                try:
+                    reader.read(json.loads(line))
+                except (ValueError, TypeError, IndexError, KeyError, AttributeError):
                     continue
-                # The text test above lets through any record whose label or
-                # role reads "tick" or "actor" (a spawn's, a despawn's, ...):
-                # only ticks carry poses.
-                if record.get("type") != "tick":
-                    continue
-                control = record.get("control") or {}
-                if ego is None and control:
-                    ego = int(next(iter(control)))
-                if ego is None:
-                    continue
-                states = {int(a[0]): a for a in record.get("actors") or []}
-                me = states.get(ego)
-                if me is None:
-                    continue
-                t = float(record["t"])
-                speed = math.hypot(float(me[7]), float(me[8])) * 3.6
-                ego_box = _box(
-                    me[1],
-                    me[2],
-                    me[6],
-                    extents.get(ego, (2.4, 1.0)),
-                    centers.get(ego, (0.0, 0.0)),
-                )
-                for other, state in states.items():
-                    # A road user parked under the map (hidden) is out of
-                    # the scene.
-                    if other == ego or float(state[3]) < _HIDDEN_BELOW_M:
-                        continue
-                    drive.gap(
-                        _box_distance(
-                            ego_box,
-                            _box(
-                                state[1],
-                                state[2],
-                                state[6],
-                                extents.get(other, (0.3, 0.3)),
-                                centers.get(other, (0.0, 0.0)),
-                            ),
-                        )
-                    )
-                drive.tick(t, float(me[1]), float(me[2]), speed)
-    except (OSError, ValueError, KeyError, IndexError, TypeError):
+    except OSError:
         return {}
-    metrics = drive.to_dict()
+    metrics = reader.drive.to_dict()
     _metrics_cache[str(trajectory)] = (stamp, metrics)
     return metrics
+
+
+class _TrajectoryMetrics:
+    """``case_metrics``'s pass over a trajectory log, a record at a time."""
+
+    def __init__(self) -> None:
+        self.extents: dict[int, tuple[float, float]] = {}
+        # Each box's offset from its actor's origin (none in older logs).
+        self.centers: dict[int, tuple[float, float]] = {}
+        self.ego: int | None = None
+        self.drive = DriveMetrics()
+
+    def read(self, record: Any) -> None:
+        """Take in one *record*; raises ``TypeError``, ``ValueError``,
+        ``IndexError``, ``KeyError`` or ``AttributeError`` for one it cannot
+        use, before changing anything."""
+        if record.get("type") == "actor":
+            extent = record.get("extent") or [0.0, 0.0]
+            center = record.get("center") or [0.0, 0.0]
+            actor = int(record["id"])
+            box = (float(extent[0]), float(extent[1]))
+            offset = (float(center[0]), float(center[1]))
+            self.extents[actor] = box
+            self.centers[actor] = offset
+            if str(record.get("role", "")).lower() == "ego":
+                self.ego = actor
+            return
+        # The text test in case_metrics lets through any record whose label
+        # or role reads "tick" or "actor" (a spawn's, a despawn's, ...): only
+        # ticks carry poses.
+        if record.get("type") != "tick":
+            return
+        ego = self.ego
+        control = record.get("control") or {}
+        if ego is None and control:
+            ego = int(next(iter(control)))
+            self.ego = ego
+        if ego is None:
+            return
+        states = {int(a[0]): a for a in record.get("actors") or []}
+        me = states.get(ego)
+        if me is None:
+            return
+        t = float(record["t"])
+        x, y = float(me[1]), float(me[2])
+        speed = math.hypot(float(me[7]), float(me[8])) * 3.6
+        ego_box = _box(
+            me[1],
+            me[2],
+            me[6],
+            self.extents.get(ego, (2.4, 1.0)),
+            self.centers.get(ego, (0.0, 0.0)),
+        )
+        # Every gap first, so a tick that breaks halfway adds none of them.
+        gaps: list[float] = []
+        for other, state in states.items():
+            # A road user parked under the map (hidden) is out of the scene.
+            if other == ego or float(state[3]) < _HIDDEN_BELOW_M:
+                continue
+            gaps.append(
+                _box_distance(
+                    ego_box,
+                    _box(
+                        state[1],
+                        state[2],
+                        state[6],
+                        self.extents.get(other, (0.3, 0.3)),
+                        self.centers.get(other, (0.0, 0.0)),
+                    ),
+                )
+            )
+        for gap in gaps:
+            self.drive.gap(gap)
+        self.drive.tick(t, x, y, speed)
 
 
 # ── A session's cases ───────────────────────────────────────────────────────
