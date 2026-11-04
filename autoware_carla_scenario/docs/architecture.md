@@ -1128,7 +1128,7 @@ The `_build_condition_tree()` function in `scanner.py` recursively parses:
 
 ### Caching Strategy
 
-The scanner uses a module-level dictionary cache (`_cache`) keyed by path and session identifiers. The cache is cleared explicitly via the `/api/refresh` endpoint (triggered by the "Update" button in the UI). This avoids repeated filesystem scans while keeping results fresh on demand.
+The scanner uses a module-level dictionary cache (`_cache`) keyed by path and session identifiers. The cache is cleared explicitly via the `/api/refresh` endpoint (triggered by the "Update" button in the UI). A batch's session and case pages are also kept only while the batch's files stay the same (`cases.batch_stamp`: the times of `batch_results.json`, the SLURM manifest, `collected.json`, and the `slurm/submissions/` and `slurm/results/` directories), so a SLURM batch resubmitted and collected again shows its new results on a reload; until it is collected again, its summary is older than its last submission or case outcome, and its cases are read from `slurm/results/` instead. This avoids repeated filesystem scans while keeping results fresh on demand.
 
 ---
 

@@ -52,6 +52,7 @@ __all__ = [
     "CaseFiles",
     "batch_case_files",
     "batch_entries",
+    "batch_stamp",
     "case_files",
     "contained",
     "job_dir",
@@ -169,32 +170,83 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     return entries
 
 
+def _stat(path: Path) -> tuple[int, int]:
+    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
+    try:
+        info = path.stat()
+    except OSError:
+        return (0, -1)
+    return (info.st_mtime_ns, info.st_size)
+
+
+def batch_stamp(directory: Path) -> tuple[tuple[int, int], ...]:
+    """What a batch's entries and case files are read from, cheaply: the
+    modification time and size of its ``batch_results.json``, of a SLURM
+    batch's manifest and ``collected.json``, and of the directories its
+    submissions and case outcomes are written to, and of *directory* itself.
+
+    A few ``stat`` calls, whatever the size of the batch: the launcher writes
+    every record by renaming a new file over it (``slurm.manifest.write_json``)
+    and a task removes a case's old outcome before it runs it again, so a
+    record added, replaced or removed changes its directory's time.  The
+    viewer's caches of a batch (:func:`batch_case_files`, and the session and
+    case pages' in ``ui.scanner``) are kept while this stays the same.
+    """
+    slurm = directory / "slurm"
+    return (
+        _stat(directory / "batch_results.json"),
+        _stat(slurm / "manifest.json"),
+        _stat(slurm / "collected.json"),
+        _stat(slurm / "submissions"),
+        _stat(slurm / "results"),
+        _stat(directory),
+    )
+
+
+def _summary_is_current(directory: Path) -> bool:
+    """Whether a batch's ``batch_results.json`` is its latest summary: not
+    older than a SLURM batch's last submission or case outcome.
+
+    A resubmission (``scenario-slurm resubmit``, the viewer's "Resubmit")
+    leaves the summary of the earlier collect in place until its own collect
+    rewrites it; until then the summary is stale, and the cases are read from
+    what the tasks record (``slurm/results``).  A local batch has no
+    ``slurm/``, so its summary is always current.
+    """
+    slurm = directory / "slurm"
+    summary = _stat(directory / "batch_results.json")[0]
+    collected = _stat(slurm / "collected.json")
+    if collected[1] >= 0:
+        # A collect writes the summary, then collected.json.
+        summary = min(summary, collected[0])
+    latest = max(_stat(slurm / "submissions")[0], _stat(slurm / "results")[0])
+    return latest <= summary
+
+
 def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:
     """A batch's entries: its ``batch_results.json``, or, for a SLURM batch
-    not collected yet, what its tasks have recorded so far; and whether they
-    are final (the summary). ``None`` when *directory* holds no batch."""
+    not collected yet or submitted again since it was collected, what its
+    tasks have recorded so far; and whether they are final (the summary).
+    ``None`` when *directory* holds no batch."""
     entries = _read_json(directory / "batch_results.json")
-    if isinstance(entries, list):
+    if isinstance(entries, list) and _summary_is_current(directory):
         return entries, True
     slurm = _slurm_entries(directory)
-    return (slurm, False) if slurm is not None else None
+    if slurm is not None:
+        return slurm, False
+    return (entries, True) if isinstance(entries, list) else None
 
 
-_batch_cache: dict[str, tuple[tuple[float, ...], list[CaseFiles | None]]] = {}
+_batch_cache: dict[str, tuple[tuple[tuple[int, int], ...], list[CaseFiles | None]]] = {}
 
 
 def batch_case_files(directory: Path) -> list[CaseFiles | None]:
     """The files of each case of the batch in *directory*, in the order of its
     ``batch_results.json`` (``None`` for a case whose files are not found).
 
-    Kept until ``batch_results.json``, the manifest or the directory change.
+    Kept until the batch's :func:`batch_stamp` changes.
     """
-    summary = directory / "batch_results.json"
-    stamp = (
-        _mtime(summary),
-        _mtime(directory / "slurm" / "manifest.json"),
-        _mtime(directory),
-    )
+    stamp = batch_stamp(directory)
     key = str(directory)
     cached = _batch_cache.get(key)
     if cached is not None and cached[0] == stamp:
