@@ -102,6 +102,9 @@ uv run scenario traffic.options.port=8101
 `traffic_manager.port` — where the port lived before this group existed, and what
 exported scenario packages still set — keeps deciding the port when
 `traffic.options.port` is left unset.
+Either must be a TCP port, an integer within 1-65535: `0`, `70000` or
+`true` is refused, naming the key, before CARLA is started (a batch's and a
+sweep's cases before any runs), as the SUMO backend's `tm_port` is.
 
 ## Traffic parameters
 

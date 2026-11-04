@@ -49,7 +49,7 @@ the dataset stops, it never fails the scenario.
 |-----------|------|---------|-------------|
 | `t4.enabled` | bool | `false` | Write each run as `{ScenarioName}.t4/` |
 | `t4.max_distance_m` | float or null | `100.0` | Annotate the vehicles and pedestrians within this distance of the ego, a positive, finite distance (another value is refused); `null` annotates all of them. An actor parked out of the world (a hidden spawn, a trajectory entity before its start) is never annotated; revealed, it is annotated from the frame it appears |
-| `t4.workers` | int | `4` | Threads writing the files, counting the boxes' points and encoding the recorder's own camera frames |
+| `t4.workers` | int | `4` | Threads writing the files, counting the boxes' points and encoding the recorder's own camera frames; a positive integer (`true` or `2.5`, even `2.0`, is refused rather than read as a count) |
 | `driver.lidars`, `driver.cameras` | list | | The sensors and their mounts |
 | `driver.policy_timestep_s` | float | `0.1` | Seconds from one key frame to the next |
 | `driver.image_quality` | int | `90` | The JPEG quality of the camera frames |

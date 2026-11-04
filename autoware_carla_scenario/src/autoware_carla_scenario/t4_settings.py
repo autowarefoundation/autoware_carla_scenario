@@ -109,8 +109,11 @@ class T4Settings:
             raise ValueError(_bad_max_distance(distance))
         if not 1 <= self.jpeg_quality <= 100:
             raise ValueError("driver.image_quality must be 1-100")
-        if self.workers < 1:
-            raise ValueError("t4.workers must be positive")
+        # A bool is an int to Python and a float would be cut to one
+        # (``true`` -> 1, ``2.9`` -> 2): neither is a thread count.
+        workers = self.workers
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise ValueError(f"t4.workers must be a positive integer, not {workers!r}")
 
     @property
     def interval_ticks(self) -> int:
@@ -130,7 +133,9 @@ class T4Settings:
                 raise ValueError(_bad_max_distance(distance))
             values["max_distance_m"] = None if distance is None else float(distance)
         if config.get("workers") is not None:
-            values["workers"] = int(config["workers"])
+            # As given: __post_init__ refuses a bool or a float, which int()
+            # would turn into a count nobody asked for.
+            values["workers"] = config["workers"]
         return cls(
             lidars=tuple(driver.lidars),
             cameras=tuple(
