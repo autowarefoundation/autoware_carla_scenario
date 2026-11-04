@@ -64,7 +64,6 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
-from ..maps import resolve_map_paths
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_DIR_SUFFIXES, RUN_FILE_SUFFIXES, remove_run_outputs
 from ..ui.case_paths import last_result_path
@@ -73,6 +72,7 @@ from .expand import (
     _config_seed,
     check_constraint_keys,
     expand_sweep,
+    load_sweep_map,
     scenario_controls,
 )
 from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
@@ -81,7 +81,6 @@ from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     _launch_isolated,
     _raise_interrupted,
 )
-from .map_loader import load_map
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +486,10 @@ class LaneletConstraintSweeper(Sweeper):
                 datasets without the extra, or when a case is refused;
                 with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
                 sweep is interrupted.
+            ValueError: At once, before any case runs, when the sweep is
+                invalid -- among others, when its Lanelet2 map is not named,
+                is missing, or cannot be resolved, fetched or read
+                (:func:`.expand.load_sweep_map`), the message naming it.
         """
         self._current_case = None
         try:
@@ -545,18 +548,17 @@ class LaneletConstraintSweeper(Sweeper):
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(_REFUSED_EXIT_CODE)
 
-        # -- 2. Resolve map paths ------------------------------------------
+        # -- 2-3. Resolve map paths and load the Lanelet2 map --------------
         # A map named by `map.source` is cloned (or found already downloaded)
         # here, so a sweep runs against a published HD map without anyone
         # having to name a local file for it first; `map.directory` names a
-        # map on this machine and is read in place.
-        paths = resolve_map_paths(OmegaConf.select(cfg, "map"))
-
-        # -- 3. Load the Lanelet2 map (lightweight) ------------------------
-        try:
-            lanelet_map = load_map(paths)
-        except FileNotFoundError as exc:
-            raise ValueError(f"LaneletConstraintSweeper: {exc}") from exc
+        # map on this machine and is read in place.  A map that cannot be
+        # resolved, fetched or read is refused as an invalid sweep, a
+        # ValueError naming it, as scenario-expand and a batch refuse it
+        # (#1447).
+        lanelet_map = load_sweep_map(
+            OmegaConf.select(cfg, "map"), prefix="LaneletConstraintSweeper: "
+        )
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         batches: list[tuple[str, ...]] = [
