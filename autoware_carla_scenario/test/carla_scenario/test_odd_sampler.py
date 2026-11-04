@@ -779,6 +779,40 @@ def test_a_case_that_names_its_grip_draws_no_quantile_for_it() -> None:
     assert added.overrides[1].startswith("environment.tire_friction_quantile=")
 
 
+def test_an_int_seed_draws_the_grip_and_visibility_it_always_has() -> None:
+    # Pinned: a sweep with an int seed reproduces the quantiles it drew before
+    # the seed was read as a whole number (#1442).
+    from autoware_carla_scenario.odd.sampler import (
+        OddSample,
+        with_tire_friction,
+        with_visibility,
+    )
+
+    drawn = [OddSample(0, ["environment.rain=80"], {}, {})]
+
+    (grip,) = with_tire_friction(drawn, seed=4)
+    (sight,) = with_visibility(drawn, seed=4)
+
+    assert grip.overrides[-1] == "environment.tire_friction_quantile=0.185"
+    assert sight.overrides[-1] == "environment.visibility_quantile=0.04"
+
+
+@pytest.mark.parametrize("seed", [4.0, "4", " 4 "])
+def test_a_seed_that_names_4_expands_to_the_cases_4_does(seed: Any) -> None:
+    # The grip and the visibility were drawn from the seed as text, so 4.0
+    # drew the ODD cases 4 does but other quantiles (#1442).
+    def cfg(value: Any) -> Any:
+        return OmegaConf.create(
+            {"odd": "default", "sweep": {"odd_sample": {"count": 4, "seed": value}}}
+        )
+
+    expected = expand_config(cfg(4))
+
+    assert any("environment.tire_friction_quantile=" in o for o in expected[0])
+    assert any("environment.visibility_quantile=" in o for o in expected[0])
+    assert expand_config(cfg(seed)) == expected
+
+
 @pytest.mark.parametrize(
     "name, key, unit",
     [
