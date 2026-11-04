@@ -388,6 +388,43 @@ def test_validator_refuses_an_action_on_lanelet_0(
             },
             "edge_to_edge",
         ),
+        # A bool spelled in text is read as the compiler reads it (#1462).
+        (
+            {
+                "type": "entity_distance",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "entity",
+                    "signed": "yes",
+                },
+            },
+            "signed",
+        ),
+        (
+            {
+                "type": "entity_distance",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "lane",
+                    "edge_to_edge": "On",
+                },
+            },
+            "edge_to_edge",
+        ),
+        (
+            {
+                "type": "ttc",
+                "params": {
+                    "source": "car",
+                    "target": "ped",
+                    "measure": "lane",
+                    "edge_to_edge": "1",
+                },
+            },
+            "edge_to_edge",
+        ),
     ],
 )
 @pytest.mark.usefixtures("unchecked")

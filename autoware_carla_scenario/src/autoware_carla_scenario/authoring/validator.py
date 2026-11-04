@@ -1162,9 +1162,11 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
             "or a route pose.",
             node.id,
         )
+    # A bool is read as the compiler reads it, so "yes" or "on" is checked as
+    # True is (#1462).
     if (
         node.type == "entity_distance"
-        and params.get("signed") is True
+        and read_bool(params.get("signed")) is True
         and str(params.get("measure", "entity")) != "lane"
     ):
         out.error(
@@ -1189,7 +1191,7 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     if (
         node.type in ("entity_distance", "ttc")
         and in_lane
-        and params.get("edge_to_edge") is True
+        and read_bool(params.get("edge_to_edge")) is True
     ):
         out.error(
             f"{path}.edge_to_edge",
