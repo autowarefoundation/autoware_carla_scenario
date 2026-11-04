@@ -340,15 +340,31 @@ def max_array_size() -> int:
         completed = subprocess.run(
             ["scontrol", "show", "config"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=60,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("scontrol show config failed (%s): MaxArraySize 1001", exc)
         return DEFAULT_MAX_ARRAY_SIZE
-    if completed.returncode != 0:
+    limit = None
+    if completed.returncode == 0:
+        limit = parse_max_array_size(completed.stdout)
+    if limit is None:
+        logger.debug(
+            "scontrol show config (exit %d) named no MaxArraySize: 1001",
+            completed.returncode,
+        )
         return DEFAULT_MAX_ARRAY_SIZE
-    return parse_max_array_size(completed.stdout) or DEFAULT_MAX_ARRAY_SIZE
+    return limit
+
+
+def _array_refused(message: str) -> bool:
+    """Whether sbatch's *message* refuses an array's size (SLURM's "Invalid
+    job array specification", or one naming MaxArraySize)."""
+    lowered = message.lower()
+    return "invalid job array" in lowered or "maxarraysize" in lowered
 
 
 def _write_script(path: Path, text: str) -> None:
@@ -417,7 +433,7 @@ def submit_cases(
         submission["job_id"] = _run_sbatch(command)
     except RuntimeError as exc:
         layout.submission(index).unlink(missing_ok=True)
-        if "array" not in str(exc).lower():
+        if not _array_refused(str(exc)):
             raise
         # The limit scontrol did not tell (#1347): say what to change.
         raise RuntimeError(

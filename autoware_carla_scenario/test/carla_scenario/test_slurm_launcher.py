@@ -1591,8 +1591,10 @@ def _scontrol_on_path(
         ("echo 'MaxJobCount = 10000'", 1001),
         ("echo 'slurm_load_ctl_conf error' >&2; exit 1", 1001),
         (None, 1001),
+        ("printf 'ClusterName = \\377\\nMaxArraySize = 300\\n'", 300),
+        ("printf 'MaxArraySize = \\377\\n'", 1001),
     ],
-    ids=["reported", "unnamed", "failing", "missing"],
+    ids=["reported", "unnamed", "failing", "missing", "not-utf8", "garbled"],
 )
 def test_max_array_size_asks_scontrol_and_falls_back_to_slurm_s_default(
     tmp_path: Path,
@@ -1684,19 +1686,34 @@ def test_submit_refuses_a_cases_per_task_that_exceeds_max_array_size(
     assert BatchLayout(tmp_path / "batch").submissions() == [0]
 
 
+@pytest.mark.parametrize(
+    ("error", "hint"),
+    [
+        (
+            "sbatch failed (1): sbatch: error: Batch job submission failed: "
+            "Invalid job array specification",
+            True,
+        ),
+        ("sbatch failed (1): sbatch: error: array size exceeds MaxArraySize", True),
+        (
+            "sbatch failed (1): sbatch: error: Unable to open file "
+            "/scratch/array_runs/job.sh",
+            False,
+        ),
+    ],
+    ids=["invalid-array", "max-array-size", "unrelated-path"],
+)
 def test_an_array_sbatch_refuses_names_cases_per_task(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str, hint: bool
 ) -> None:
-    """#1347: should sbatch refuse the array all the same, say what to set."""
+    """#1347: should sbatch refuse the array all the same, say what to set;
+    any other refusal is raised as it was."""
     from autoware_carla_scenario.slurm import submit
 
     layout = _batch_on_disk(tmp_path, cases=5)
 
     def run_sbatch(_command: list[str]) -> str:
-        raise RuntimeError(
-            "sbatch failed (1): sbatch: error: Batch job submission failed: "
-            "Invalid job array specification"
-        )
+        raise RuntimeError(error)
 
     monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
     monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
@@ -1706,8 +1723,8 @@ def test_an_array_sbatch_refuses_names_cases_per_task(
             layout, layout.read_manifest(), SlurmSettings(), list(range(5))
         )
     message = str(raised.value)
-    assert "Invalid job array specification" in message
-    assert "MaxArraySize" in message and "launcher.cases_per_task" in message
+    assert message.startswith(error)
+    assert ("launcher.cases_per_task" in message) is hint
     assert layout.submissions() == [0]
 
 
