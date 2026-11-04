@@ -4637,7 +4637,8 @@ one warns that it is ignored and says the above.</p>
 <p>In the parameter tables below, <strong>Default</strong> is the value a key takes when the
 scenario's YAML omits it (the dataclass default in <code>examples/configs.py</code>), and
 <strong>Shipped</strong> is the value the shipped config (<code>examples/conf/scenario/...</code>) sets,
-or — when it leaves the key unset, so the default applies.</p>
+or — when it ships the default. Every shipped config lists every key of its
+config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of them without <code>+</code>.</p>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
 <p>Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.</p>
 <table>
@@ -4725,7 +4726,7 @@ or — when it leaves the key unset, so the default applies.</p>
 <td><code>scenario.speed_check_delay_seconds</code></td>
 <td>float</td>
 <td><code>0.3</code></td>
-<td><code>0.3</code> (<code>straight</code>, <code>straight_3npc</code>)</td>
+<td>—</td>
 <td>Grace period before speed check starts</td>
 </tr>
 <tr>
@@ -4767,7 +4768,7 @@ or — when it leaves the key unset, so the default applies.</p>
 <td><code>scenario.npc_vehicles</code></td>
 <td>list</td>
 <td><code>[]</code></td>
-<td>3 vehicles (<code>straight_3npc</code>)</td>
+<td>3 vehicles (<code>straight_3npc</code>), else —</td>
 <td>NPC vehicle configurations (see below)</td>
 </tr>
 </tbody>
@@ -6131,7 +6132,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 00:50:29 UTC"><span class="timeago" datetime="2026-11-04T00:50:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 00:50:29 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 01:11:04 UTC"><span class="timeago" datetime="2026-11-04T01:11:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 01:11:04 UTC">2026-11-04</span>
   </span>
 
     
