@@ -295,9 +295,9 @@ even for an entity behind the start. Past the end (`end` with a positive
 `value`), it never holds, and a waypoint waiting on it never departs. A
 target exactly on a bound never holds with a strict rule pointing off the
 route either: `less_than` with `start` and `value: 0`, `greater_than` with
-`end` and `value: 0`. The other rules there can hold, the defaults
-`greater_than_or_equal` from `start` and `less_than_or_equal` to `end` among
-them. The validator **warns** about such a target where the
+`end` and `value: 0`. The other rules there can hold, the default
+`greater_than_or_equal` from `start`, and `less_than_or_equal` to `end`, among
+them. The validator **warns** about either kind of target where the
 pattern pins its anchor to a bound -- `start`, `end`, `segment:0:start`, the
 last segment's `end`, a junction that is the first or last segment -- and
 says nothing of other anchors, whose distance from a bound is the map's. An

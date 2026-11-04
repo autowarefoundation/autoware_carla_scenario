@@ -133,11 +133,16 @@ def test_a_strict_rule_off_a_bound_says_which_bound() -> None:
     (start,) = _warnings(_document({"value": 0, "rule": "less_than"}))
     assert "the target is the route's start" in start
     assert '"less than" can never hold' in start
+    assert 'Use "less than or equal" (or a positive distance) instead.' in start
+    assert "Give a distance" not in start
     (end,) = _warnings(_document({"anchor": "end", "value": 0, "rule": "greater_than"}))
     assert "the target is the route's end" in end
     assert '"greater than" can never hold' in end
+    assert 'Use "greater than or equal" (or a negative distance) instead.' in end
+    assert "Give a distance" not in end
 
 
 def test_an_always_true_target_holds_once_the_entity_is_on_the_map() -> None:
     (message,) = _warnings(_document({"value": -15}))
     assert "holds from the first tick the entity is on the map" in message
+    assert message.endswith("Give a distance that puts the target on the route.")

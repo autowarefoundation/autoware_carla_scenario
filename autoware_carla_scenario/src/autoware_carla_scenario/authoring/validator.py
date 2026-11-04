@@ -1851,12 +1851,12 @@ def _check_route_progress_bounds(
     behind the start; to ``end + 5 m`` it never holds, and a waypoint waiting
     on it never departs.  A target exactly on a bound with a strict rule
     pointing off the route never holds either (#1389): ``<`` the start, ``>``
-    the end.  The other rules there -- the defaults ``>=`` the start and ``<=``
-    the end, ``>`` the start, ``<`` the end, ``=`` either -- can all hold.
-    Only an anchor pinned to a bound (:func:`_route_bound`) is judged, the
-    length being the map's.  A warning, not an error, as for the other conditions that never fire
-    (:func:`_check_persistent_child`, :func:`_check_equal_tolerance`): the
-    document builds and runs as it did.
+    the end.  The other rules there -- the default ``>=`` the start, and
+    ``<=`` the end, ``>`` the start, ``<`` the end, ``=`` either -- can all
+    hold.  Only an anchor pinned to a bound (:func:`_route_bound`) is judged,
+    the length being the map's.  A warning, not an error, as for the other
+    conditions that never fire (:func:`_check_persistent_child`,
+    :func:`_check_equal_tolerance`): the document builds and runs as it did.
     """
     params = node.params
     value = _number(params, "value")
@@ -1864,6 +1864,7 @@ def _check_route_progress_bounds(
         return
     bound = _route_bound(params.get("anchor"), route)
     rule = str(params.get("rule") or "greater_than_or_equal")
+    hint = "Give a distance that puts the target on the route."
     if bound == "start" and value < 0:
         where = f"{-value:g} m before the route's start"
         below = True
@@ -1873,9 +1874,11 @@ def _check_route_progress_bounds(
     elif bound == "start" and value == 0 and rule == "less_than":
         where = "the route's start"
         below = True
+        hint = 'Use "less than or equal" (or a positive distance) instead.'
     elif bound == "end" and value == 0 and rule == "greater_than":
         where = "the route's end"
         below = False
+        hint = 'Use "greater than or equal" (or a negative distance) instead.'
     else:
         return
     rising = rule in ("greater_than", "greater_than_or_equal")
@@ -1906,8 +1909,7 @@ def _check_route_progress_bounds(
     out.warn(
         node.id,
         f"Route progress: the target is {where}. Progress is clamped to the "
-        f"route, from 0 to its length, so {verdict}. Give a distance that "
-        "puts the target on the route.",
+        f"route, from 0 to its length, so {verdict}. {hint}",
         node.id,
     )
 
