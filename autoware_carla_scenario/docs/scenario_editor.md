@@ -1006,6 +1006,13 @@ OpenDRIVE paths and exclusion list win over the `map` keys the scenario's own
 config writes (and a scenario config cannot select another group, as Hydra
 refuses an `override /map` from a group composed before it).
 
+The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
+even when the document names its own `.xodr`: that file is what the run reads
+the road geometry from, and replacing the simulator's road network is an
+opt-in only the built-in `nishishinjuku` group makes, for CARLA assets that ship
+without one. A map whose CARLA assets need it installed is run with
+`map.overwrite_xodr=true` on the command line.
+
 The CARLA client needs no separate install: `typesafe-carla` is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything
 else, with its CPython package prebuilt, so nothing has to be compiled on the

@@ -229,10 +229,12 @@ def own_map_group(document: ScenarioDocument) -> str | None:
 
     Only a document that names its map by ``source`` or ``directory`` gets one
     (see the module docstring); one on a built-in group runs on that group and
-    ships none.  The name is derived from the document's id, which is already
-    unique among the scenarios a run can select, and its ``_map`` suffix keeps
-    it apart from the built-in groups, named after the map they describe -- a
-    scenario called ``town10hd_opt`` must not shadow that group.
+    ships none.  The name is derived from the document's id -- by convention
+    unique among installed scenario packages, though nothing enforces it: two
+    packages shipping the same id collide on their ``conf/scenario`` files and
+    on this group alike -- and its ``_map`` suffix keeps it apart from the
+    built-in groups, named after the map they describe: a scenario called
+    ``town10hd_opt`` must not shadow that group.
     """
     map_ref = document.map
     if not (map_ref.source or map_ref.directory):
@@ -265,9 +267,11 @@ def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:
             "lanelet2_path": map_ref.lanelet2_path or None,
             "xodr_path": map_ref.xodr_path or None,
             "projector_type": None,
-            # Installing an OpenDRIVE into CARLA is the Nishishinjuku group's
-            # opt-in, for assets that ship without one; a published map's roads
-            # are CARLA's own.
+            # Never on by default: installing an OpenDRIVE replaces the road
+            # network of the CARLA installation itself, an opt-in only the
+            # Nishishinjuku group makes, for assets that ship without one.  A
+            # document's xodr_path is what the run reads geometry from; a run
+            # that does want it installed asks with map.overwrite_xodr=true.
             "overwrite_xodr": False,
             "no_3d_model_lanelet_ids": list(map_ref.no_3d_model_lanelet_ids),
         }

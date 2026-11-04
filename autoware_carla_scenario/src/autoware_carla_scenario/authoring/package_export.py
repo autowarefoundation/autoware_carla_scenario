@@ -325,10 +325,9 @@ def _write_package_tree(
     # A map named by source or directory is no built-in group's: the package
     # carries the group that selects it (hydra_config's module docstring).
     map_files: dict[str, str] = {}
-    map_group = own_map_group(document)
     map_config = dump_map_group_config(document)
-    if map_group is not None and map_config is not None:
-        map_rel = f"src/{package_name}/conf/map/{map_group}.yaml"
+    if map_config is not None:
+        map_rel = f"src/{package_name}/conf/map/{run_map_group(document)}.yaml"
         map_path = root / map_rel
         map_path.parent.mkdir(parents=True, exist_ok=True)
         map_path.write_text(map_config, encoding="utf-8")

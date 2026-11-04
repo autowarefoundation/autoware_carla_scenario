@@ -479,6 +479,18 @@ class TestExportedMapGroup:
             assert resolved.directory == "/maps/Town10HD_Opt"
             assert resolved.source is None
 
+    def test_installing_an_opendrive_is_left_to_the_run(self, tmp_path: Path) -> None:
+        """The group never installs one; a run can still ask for it."""
+        document = _document_on_own_map("source")
+        document.map.xodr_path = "/maps/Town10HD_Opt.xodr"
+        package = export_package(document, tmp_path, **OFFLINE).root
+
+        cfg = _compose_exported(package, "map=cut_in_map")
+        assert cfg.map.xodr_path == "/maps/Town10HD_Opt.xodr"
+        assert cfg.map.overwrite_xodr is False
+        asked = _compose_exported(package, "map=cut_in_map", "map.overwrite_xodr=true")
+        assert asked.map.overwrite_xodr is True
+
     def test_the_package_says_to_run_it_with_its_own_group(
         self, tmp_path: Path
     ) -> None:

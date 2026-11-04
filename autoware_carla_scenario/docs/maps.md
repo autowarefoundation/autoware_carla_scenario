@@ -328,6 +328,13 @@ group instead would put that group's map under the scenario: the `map` group is
 composed after the scenario's config, and its explicit paths win over a source
 ([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
 
+The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
+even when the document names its own `.xodr`: that file is what the run reads
+the road geometry from, and replacing the simulator's road network is an
+opt-in only the built-in `nishishinjuku` group makes, for CARLA assets that ship
+without one. A map whose CARLA assets need it installed is run with
+`map.overwrite_xodr=true` on the command line.
+
 ## Troubleshooting
 
 | Symptom | Cause |
