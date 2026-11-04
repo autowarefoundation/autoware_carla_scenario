@@ -1383,3 +1383,112 @@ class TestSignalGroupValidation:
     def test_a_group_name_on_a_map_with_none_says_so(self) -> None:
         document = self._document([], self._phase("p", ns="green"))
         assert any("This map declares none" in m for m in self._messages(document))
+
+    # -- names are read without surrounding whitespace (issue #1457) --------
+    #
+    # The validator compares names stripped and the runtime compares them
+    # exactly, so a stray space used to pass the one and match nothing in the
+    # other.  The document now strips them as it is read, so both see one form.
+
+    @staticmethod
+    def _hand_written(
+        document: ScenarioDocument, signals: dict[str, object]
+    ) -> ScenarioDocument:
+        """*document* re-read with a hand-written ``map`` signal section."""
+        raw = document.model_dump(mode="json")
+        raw["map"].update(signals)
+        return ScenarioDocument.model_validate(raw)
+
+    def test_a_group_name_with_surrounding_whitespace_is_read_without_it(
+        self,
+    ) -> None:
+        """A group ``"ns "`` and a phase naming ``ns`` are the same group."""
+        document = self._hand_written(
+            new_document(),
+            {
+                "signal_groups": [
+                    {
+                        "name": "ns ",
+                        "lanelet2_regulatory_element_ids": [1001, 1003],
+                        "conflicts_with": [" ew"],
+                    },
+                    {"name": "\tew", "lanelet2_regulatory_element_ids": [1002]},
+                ],
+                "traffic_signal_controllers": [
+                    {
+                        "name": " crossing ",
+                        "phases": [
+                            {
+                                "name": "go ",
+                                "duration_seconds": 5.0,
+                                "states": [
+                                    {"group": "ns", "state": "green"},
+                                    {"group": " ew ", "state": "red"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+        groups = document.map.signal_groups
+        assert [g.name for g in groups] == ["ns", "ew"]
+        assert groups[0].conflicts_with == ["ew"]
+        (controller,) = document.map.traffic_signal_controllers
+        assert controller.name == "crossing"
+        assert controller.phases[0].name == "go"
+        assert [s.group for s in controller.phases[0].states] == ["ns", "ew"]
+
+    def test_a_reference_with_surrounding_whitespace_is_read_without_it(
+        self,
+    ) -> None:
+        controller = SignalControllerRef(
+            name="second", reference=" first ", delay_seconds=3.0
+        )
+        assert controller.reference == "first"
+
+    def test_an_edited_name_is_stripped_too(self) -> None:
+        """The editor assigns names, and assignment is validated the same way."""
+        group = SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001])
+        group.name = " ns "
+        assert group.name == "ns"
+
+    def test_a_blank_name_is_still_refused(self) -> None:
+        """Stripping does not turn a blank into a name."""
+        document = self._document(
+            [SignalGroupRef(name=" ", lanelet2_regulatory_element_ids=[1001])],
+            SignalPhaseRef(name="  "),
+        )
+        messages = self._messages(document)
+        assert any("A signal group needs a name" in m for m in messages)
+        assert any("A phase needs a name" in m for m in messages)
+
+    def test_padded_controller_and_phase_in_a_card_compile_to_the_bare_names(
+        self,
+    ) -> None:
+        """The card's params reach the builder in the form the validator checked."""
+        document = self._document(
+            self._crossing_groups(), self._phase("go", ns="green", ew="red")
+        )
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing ", "signal_phase": "go "},
+            )
+        )
+        document.assertions.pass_conditions = [
+            ConditionNode(
+                type="traffic_signal_controller",
+                params={"controller": " crossing", "signal_phase": "\tgo"},
+            )
+        ]
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+        compiled = compile_document(document)
+        expected = {"controller": "crossing", "signal_phase": "go"}
+        assert compiled.actions[-1].params == expected
+        assert compiled.pass_conditions[0].params == expected

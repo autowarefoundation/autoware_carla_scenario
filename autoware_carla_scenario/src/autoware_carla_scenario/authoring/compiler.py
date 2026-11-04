@@ -61,6 +61,9 @@ __all__ = [
 #: leaves one definition of the name.
 EGO_ROLE = str(EGO_ROLE_NAME)
 
+#: Field kinds that name a signal controller or one of its phases.
+_SIGNAL_NAME_KINDS: tuple[str, ...] = ("signal_controller", "signal_phase")
+
 
 class CompilationError(Exception):
     """Raised when a document cannot be compiled.
@@ -113,6 +116,11 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         return parse_route_vertices(value)
     if spec.kind == "record_list":
         return [coerce_params(spec.item_fields, row) for row in value]
+    if spec.kind in _SIGNAL_NAME_KINDS:
+        # Matched exactly at runtime, and compared stripped by the validator
+        # and by the signal models' own names, so a stray space must not
+        # survive to the lookup (issue #1457).
+        return str(value).strip()
     return value
 
 

@@ -862,6 +862,13 @@ controller or phase that does not exist — all while the document is being
 edited, because a misspelt phase name is invisible at runtime: the junction
 cycles normally and the scenario just waits forever.
 
+Signal group, controller and phase names are read without surrounding
+whitespace, wherever they are written: a group's `name` and `conflicts_with`, a
+phase state's `group`, a controller's `name` and `reference`, a phase's `name`,
+and an action's or condition's `controller` and `signal_phase`. A hand-written
+`"ns "` is the group `ns`, so a name the validator accepts is the name the
+running controller is found by.
+
 ---
 
 ## Result Viewer
