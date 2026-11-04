@@ -66,6 +66,14 @@ def tick_multiple(seconds: float, key: str) -> int:
 # trajectory follower, the ego observation and the ROS 2 command arbiter keep.
 US_PER_S: int = 1_000_000
 
+# The highest ``ROS_DOMAIN_ID`` ROS 2 can use: the DDS (RTPS) port of a domain
+# above it is past 65535 ("The ROS_DOMAIN_ID", ROS 2 documentation,
+# https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html).
+# On Linux that page advises 0 to 101, below the kernel's ephemeral ports.
+# Both the docker launcher's ``ros_domain_ids`` and the ROS 2 ego's
+# ``domain_id`` are refused above it.
+MAX_ROS_DOMAIN_ID: int = 232
+
 # When a lane change counts as completed.
 #
 # The traffic backend's lane change returns as soon as the command is issued

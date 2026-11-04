@@ -198,6 +198,19 @@ ros2:
   control: {}     # trajectory-follower gains, as driver.control
 ```
 
+The settings are checked as the config is read -- by `check_run_config`, before a
+batch's first scenario starts, as well as when the entity is built -- and a bad one is
+refused naming its key (`ros2: domain_id must be ...`), not once the ego has spawned
+and joined the domain:
+
+* `domain_id` is a whole number (not a bool or a string) from 0 to 232, the
+  `ROS_DOMAIN_ID` range ROS 2 can use, the bound the docker launcher's
+  `ros_domain_ids` share ([autoware.md](autoware.md)).
+* A source's `priority` is a whole number (not a bool, a float or a quoted `"10"`).
+* `stale_s`, `pair_window_s`, `steering_sign`, `speed_horizon_s`, `jerk_mps3`,
+  `rear_axle_offset_m` and a camera's numeric fields are numbers, an int or a float
+  (not a bool or a quoted string), and finite, within the bounds above.
+
 ## The Open AD Kit safety-island demo
 
 `ros2=visionpilot_safety_island` is the bench side of the Open AD Kit CES 2027 demo

@@ -328,3 +328,124 @@ def test_pair_window_s_defaults_to_measured_and_takes_null_or_seconds() -> None:
         CommandSourceConfig.from_mapping({**base, "pair_window_s": 0.03}).pair_window_s
         == 0.03
     )
+
+
+# ---------------------------------------------------------------------------
+# Value types and the domain (#1468): refused as the config is built, naming
+# the key, not once the ego has spawned and joined the domain
+# ---------------------------------------------------------------------------
+
+
+def _source(**overrides: Any) -> dict[str, Any]:
+    return {"name": "planner", "kind": "trajectory", "topic": "/t", **overrides}
+
+
+@pytest.mark.parametrize("domain_id", [0, 1, 101, 232])
+def test_domain_id_takes_a_ros_domain_id(domain_id: int) -> None:
+    assert Ros2EgoConfig(domain_id=domain_id).domain_id == domain_id
+
+
+@pytest.mark.parametrize("domain_id", [-1, 233, 300, True, False, "7", 1.0, None])
+def test_domain_id_refuses_what_is_no_ros_domain_id(domain_id: Any) -> None:
+    with pytest.raises(ValueError, match=r"^domain_id must be a ROS domain id"):
+        Ros2EgoConfig.from_mapping({"domain_id": domain_id})
+
+
+def test_domain_id_shares_the_docker_launcher_s_bound() -> None:
+    from autoware_carla_scenario.autoware_stack import docker
+    from autoware_carla_scenario.constants import MAX_ROS_DOMAIN_ID
+
+    assert MAX_ROS_DOMAIN_ID == 232
+    assert docker.MAX_ROS_DOMAIN_ID is MAX_ROS_DOMAIN_ID
+
+
+@pytest.mark.parametrize("priority", [-5, 0, 10])
+def test_priority_takes_an_int(priority: int) -> None:
+    assert CommandSourceConfig.from_mapping(_source(priority=priority)).priority == (
+        priority
+    )
+
+
+@pytest.mark.parametrize("priority", ["10", True, 10.0, math.nan, None])
+def test_priority_refuses_what_is_no_int(priority: Any) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^command source 'planner': priority must be a whole number",
+    ):
+        CommandSourceConfig.from_mapping(_source(priority=priority))
+
+
+@pytest.mark.parametrize(
+    "key", ["stale_s", "steering_sign", "speed_horizon_s", "jerk_mps3", "pair_window_s"]
+)
+@pytest.mark.parametrize("value", ["0.3", True, [0.3]])
+def test_a_source_refuses_a_number_that_is_no_number(key: str, value: Any) -> None:
+    with pytest.raises(
+        ValueError, match=rf"^command source 'planner': {key} must be a number"
+    ):
+        CommandSourceConfig.from_mapping(_source(**{key: value}))
+
+
+def test_a_source_takes_an_int_for_a_float() -> None:
+    source = CommandSourceConfig.from_mapping(
+        _source(stale_s=1, steering_sign=-1, speed_horizon_s=2, jerk_mps3=5)
+    )
+    assert source.stale_us == 1_000_000
+    assert source.steering_sign == -1
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "image_width",
+        "image_height",
+        "fov",
+        "fps",
+        "position_x",
+        "position_y",
+        "position_z",
+        "roll",
+        "pitch",
+        "yaw",
+    ],
+)
+@pytest.mark.parametrize("value", ["1", True])
+def test_a_camera_refuses_a_number_that_is_no_number(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=rf"^camera 'camera': {key} must be a number"):
+        Ros2CameraConfig.from_mapping({"topic": "/c", key: value})
+
+
+@pytest.mark.parametrize("value", ["0.5", True])
+def test_rear_axle_offset_m_refuses_what_is_no_number(value: Any) -> None:
+    with pytest.raises(ValueError, match=r"^rear_axle_offset_m must be a number"):
+        Ros2EgoConfig.from_mapping({"rear_axle_offset_m": value})
+
+
+def test_shipped_ros2_configs_build() -> None:
+    for overrides in (["ego.entity=ros2"], ["ros2=visionpilot_safety_island"]):
+        Ros2EgoConfig.from_mapping(_to_dict(_composed(overrides).ros2))
+
+
+def test_the_run_check_refuses_a_bad_ros2_setting_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    run.check_run_config(_composed(["ros2=visionpilot_safety_island"]))
+
+    cfg = _composed(["ego.entity=ros2", "ros2.domain_id=233"])
+    with pytest.raises(run.RunConfigError, match=r"^ros2: domain_id must be"):
+        run.check_run_config(cfg)
+
+    cfg = _composed(["ros2=visionpilot_safety_island"])
+    cfg.ros2.sources[1].priority = "10"
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^ros2: command source 'safety_island': priority must be",
+    ):
+        run.check_run_config(cfg)
+
+    cfg = _composed(["ego.entity=ros2", "+ros2.control.no_such_gain=1"])
+    with pytest.raises(run.RunConfigError, match=r"^ros2: "):
+        run.check_run_config(cfg)
+
+    # Another ego reads no ros2 settings.
+    run.check_run_config(_composed(["ros2.domain_id=233"]))
