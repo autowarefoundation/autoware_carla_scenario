@@ -237,7 +237,8 @@ def build_network(
             ],
             cwd=tmp,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if proc.returncode != 0 or not (tmp / f"{prefix}.net.xml").is_file():
@@ -304,7 +305,14 @@ def _random_trips(
         *options,
     ]
     env = dict(os.environ, SUMO_HOME=str(sumo_home()))
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
+    proc = subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
             f"randomTrips.py{what} failed ({proc.returncode}): "

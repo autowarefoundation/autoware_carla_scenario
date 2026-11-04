@@ -144,7 +144,8 @@ def _git(repo: Path, *args: str) -> Optional[str]:
         result = subprocess.run(  # noqa: S603
             ["git", "-C", str(repo), *args],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=30,
         )

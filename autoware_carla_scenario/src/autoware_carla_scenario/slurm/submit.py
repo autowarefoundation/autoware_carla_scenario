@@ -311,7 +311,9 @@ def _run_sbatch(command: list[str]) -> str:
     """Run *command* (an ``sbatch --parsable``); the job id it printed."""
     command = [require_sbatch(), *command[1:]]
     logger.info("Submitting: %s", shlex.join(command))
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        command, capture_output=True, encoding="utf-8", errors="replace", check=False
+    )
     if completed.returncode != 0:
         raise RuntimeError(
             f"sbatch failed ({completed.returncode}): "
@@ -447,7 +449,8 @@ def squeue_states(job: str) -> dict[int, str] | None:
         completed = subprocess.run(
             ["squeue", "-h", "-r", "-j", str(job), "-o", "%i %T"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=60,
         )
@@ -555,7 +558,11 @@ def cancel_jobs(jobs: Sequence[str]) -> bool:
         return True
     try:
         completed = subprocess.run(
-            ["scancel", *jobs], capture_output=True, text=True, check=False
+            ["scancel", *jobs],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     except OSError as exc:
         print(f"[slurm] could not run scancel: {exc}", file=sys.stderr)  # noqa: T201

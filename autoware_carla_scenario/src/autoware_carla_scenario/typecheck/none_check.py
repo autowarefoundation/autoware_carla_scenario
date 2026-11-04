@@ -1114,7 +1114,8 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             proc = subprocess.run(
                 [*command, *given],
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 check=False,
                 cwd=cwd,

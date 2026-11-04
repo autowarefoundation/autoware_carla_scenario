@@ -273,8 +273,11 @@ class DockerBackend:
             if self.ready(timeout_s=5.0):
                 return
             time.sleep(2.0)
-        tail = self._tail()
-        self.close()
+        try:
+            tail = self._tail()
+        finally:
+            # A failure to read the log must not leave the container running.
+            self.close()
         raise BackendError(
             f"backend '{self.name}' ({settings.image}) did not answer within "
             f"{settings.startup_timeout_s:.0f} s:\n{tail}"
@@ -292,7 +295,8 @@ class DockerBackend:
                 self._container,
             ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         return state.returncode == 0 and state.stdout.strip() == "true"
@@ -303,7 +307,10 @@ class DockerBackend:
         logs = subprocess.run(
             [self._settings.docker, "logs", "--tail", "40", self._container],
             capture_output=True,
-            text=True,
+            # The backend's own output, any bytes: replace what is not UTF-8
+            # rather than fail to report the error it explains (#1346).
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         return (logs.stdout + logs.stderr).strip()
@@ -313,7 +320,12 @@ def _docker(argv: list[str], what: str, timeout: Optional[float] = 120.0) -> str
     """Run a docker command, its stdout; :class:`BackendError` if it fails."""
     try:
         done = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, check=False
+            argv,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
         )
     except FileNotFoundError:
         raise BackendError(f"could not {what}: no '{argv[0]}' on this host") from None

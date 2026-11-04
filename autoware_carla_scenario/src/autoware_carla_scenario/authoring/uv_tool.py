@@ -48,7 +48,8 @@ def uv_version() -> Optional[str]:
         result = subprocess.run(  # noqa: S603
             [executable, "--version"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=30,
         )
@@ -95,7 +96,8 @@ def run_uv(
         [executable, *args],
         cwd=str(cwd),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         timeout=timeout,
         env=environment,
