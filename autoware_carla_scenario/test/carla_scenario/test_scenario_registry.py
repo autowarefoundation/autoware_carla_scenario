@@ -431,6 +431,98 @@ class TestBuildAutowareLauncher:
         assert tuple(command_launcher.argv) == ("ros2", "launch")
         assert build_autoware_launcher(none) is None
 
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    @pytest.mark.parametrize(
+        "value", [float("nan"), float("inf"), -5, 0, "abc", None, True]
+    )
+    def test_a_stop_timeout_that_is_not_positive_and_finite_is_refused(
+        self, kind: str, value: object
+    ) -> None:
+        """#1450: a NaN never escalates a stack that ignores SIGINT, a negative
+        one skips its grace, and a string used to fail only at stop time."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+            stop_timeout_s=value,
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"^autoware\.launcher\.stop_timeout_s must be a finite number > 0",
+        ):
+            build_autoware_launcher(cfg)
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            # The range is DockerAutowareConfig's, prefixed with the group.
+            ([-3, 999], r"must be ROS domain ids, whole numbers from 0 to 232, got -3"),
+            ([3, 233], r"must be ROS domain ids, whole numbers from 0 to 232, got 233"),
+            # The types are build_autoware_launcher's: no raw TypeError.
+            (7, r"must be a list of ROS domain ids"),
+            ("7", r"must be a list of ROS domain ids"),
+            ([3, True], r"must be a list of ROS domain ids"),
+            ([3, 4.5], r"must be a list of ROS domain ids"),
+            ([3, "4"], r"must be a list of ROS domain ids"),
+        ],
+    )
+    def test_a_ros_domain_id_that_is_not_one_is_refused(
+        self, value: object, message: str
+    ) -> None:
+        """#1450: refused up front, not by the stack's DDS in the container."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type="docker",
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            ros_domain_ids=value,
+        )
+        with pytest.raises(
+            ValueError, match=rf"^autoware\.launcher\.ros_domain_ids {message}"
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_the_ros_domain_id_range_and_null_are_taken(self) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launch = ["autoware_launch", "x.launch.xml"]
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=launch,
+                ros_domain_ids=[0, 232],
+                stop_timeout_s=1,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.ros_domain_ids == (0, 232)
+        assert launcher.config.stop_timeout_s == 1.0
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=launch,
+                ros_domain_ids=None,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.ros_domain_ids == ()
+
+    def test_a_config_refusal_names_the_group(self) -> None:
+        """DockerAutowareConfig's own refusals are prefixed with the group."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        with pytest.raises(
+            ValueError, match=r"^autoware\.launcher\.launch is required"
+        ):
+            build_autoware_launcher(self._cfg(type="docker", workspace="/nowhere"))
+
 
 # ---------------------------------------------------------------------------
 # Tests for build_ego_and_spawn helper

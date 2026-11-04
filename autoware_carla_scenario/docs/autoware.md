@@ -150,6 +150,25 @@ these). A key neither type reads is refused whatever the type, naming it:
 `+autoware.launcher.stop_timout_s=60` fails the run, and a batch or a sweep
 before its first scenario starts.
 
+The values the launcher's type reads are checked there too, naming the key:
+
+- `stop_timeout_s` must be a finite number of seconds above 0 (an int or a
+  float; not a boolean, a string or null), as the bridge's timeouts must. A
+  NaN never times out, so a stack that ignores `SIGINT` would never be sent
+  `SIGTERM` and the batch would hang; 0 or less would skip the grace the stack
+  is given to shut down.
+- the docker launcher's `ros_domain_ids` must be a list (or null, for none)
+  of whole numbers from 0 to 232, the domain ids ROS 2 can use: above 232 a
+  domain's DDS ports are past 65535 (see
+  [The ROS_DOMAIN_ID](https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html)).
+  On Linux, that page advises 0 to 101, below the kernel's ephemeral ports.
+
+`+autoware.launcher.stop_timeout_s=nan` or
+`'autoware.launcher.ros_domain_ids=[-3,999]'` fails the run the same way.
+`DockerAutowareConfig`, `CommandAutowareLauncher` and `ProcessGroup` refuse
+such a `stop_timeout_s`, and `DockerAutowareConfig` such a domain id, with a
+`ValueError` when they are built from Python.
+
 ### Settings
 
 | Setting | Default | Meaning |
@@ -165,11 +184,11 @@ before its first scenario starts.
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
 | `env` | `{}` | Variables set in the container, over the dev container's own |
-| `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling; empty keeps the dev container's |
+| `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling, each 0 to 232; empty keeps the dev container's |
 | `gpus` | `all` | Docker's `--gpus`; `null` for none |
 | `user` | `null` | Docker's `--user`; by default the image maps `aw` to your `HOST_UID`/`HOST_GID` |
 | `docker_args` | `[]` | Further `docker run` arguments |
-| `stop_timeout_s` | `20.0` | How long stopping waits after each signal |
+| `stop_timeout_s` | `20.0` | How long stopping waits after each signal, in seconds above 0 |
 
 `ros_domain_ids` moves each scenario's stack to another ROS domain, so it does
 not discover what is left of the last one before those participants time out:

@@ -58,6 +58,7 @@ from .launcher import (
     AutowareEpisode,
     AutowareStackError,
     ProcessGroup,
+    _check_stop_timeout_s,
     episode_log_path,
     fill_placeholders,
 )
@@ -91,6 +92,13 @@ _INTERFACE_PACKAGE = "autoware_carla_interface"
 #: Where the ``scenario_bridge`` node's package is mounted in a stack's
 #: container: the directory put on ``PYTHONPATH``.
 _BRIDGE_PYTHON_ROOT = "/opt/autoware_carla_scenario/python"
+
+
+#: The highest ``ROS_DOMAIN_ID`` ROS 2 can use: the DDS (RTPS) port of a
+#: domain above it is past 65535 ("The ROS_DOMAIN_ID", ROS 2 documentation,
+#: https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html).
+#: On Linux that page advises 0 to 101, below the kernel's ephemeral ports.
+_MAX_ROS_DOMAIN_ID = 232
 
 
 def _label_value() -> str:
@@ -131,15 +139,24 @@ class DockerAutowareConfig:
         ros_domain_ids: ``ROS_DOMAIN_ID`` for each scenario in turn, cycling;
             empty keeps the dev container's.  Moving to another domain keeps a
             stack from discovering what is left of the last one before its
-            participants time out.
+            participants time out.  Each is an ``int`` from 0 to 232, the
+            range ROS 2 can use (0 to 101 is safe on Linux; see
+            :data:`_MAX_ROS_DOMAIN_ID`).
         gpus: Docker's ``--gpus`` value; ``None`` for no GPU.
         user: Docker's ``--user`` value.  ``None`` leaves it to the image, which
             maps its ``aw`` user to ``HOST_UID``/``HOST_GID`` (set to this
             user's ids) so the files a build writes stay this user's.
         docker_args: Further ``docker run`` arguments.
         docker: The Docker CLI.
-        stop_timeout_s: How long stopping waits after each signal.
+        stop_timeout_s: How long stopping waits after each signal, positive
+            and finite.
         container_prefix: Container names start with this.
+
+    Raises:
+        ValueError: Naming the field, when ``build`` is not a
+            :data:`BuildPolicy`, ``launch`` is empty, ``stop_timeout_s`` is not
+            positive and finite, or a ``ros_domain_ids`` entry is a boolean or
+            outside 0 to 232.
     """
 
     workspace: Path
@@ -179,6 +196,17 @@ class DockerAutowareConfig:
                 "launch is required: the ros2 launch package, file and arguments "
                 "that start Autoware in scenario mode"
             )
+        # Checked here: an id out of range would only be refused inside the
+        # container, by the stack's DDS, once a scenario has started.
+        for domain_id in self.ros_domain_ids:
+            if isinstance(domain_id, bool) or not (
+                0 <= domain_id <= _MAX_ROS_DOMAIN_ID
+            ):
+                raise ValueError(
+                    "ros_domain_ids must be ROS domain ids, whole numbers from 0 "
+                    f"to {_MAX_ROS_DOMAIN_ID}, got {domain_id}"
+                )
+        _check_stop_timeout_s(self.stop_timeout_s)
 
 
 class DockerAutowareLauncher:

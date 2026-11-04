@@ -29,6 +29,7 @@ the framework says to it is on its command line (and over the bridge).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import signal
@@ -205,6 +206,25 @@ def _dying_with_parent(argv: Sequence[str]) -> list[str]:
     return [sys.executable, "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
 
 
+def _check_stop_timeout_s(stop_timeout_s: float) -> None:
+    """Refuse a *stop_timeout_s* that is not positive and finite.
+
+    A NaN fails every comparison, so ``Popen.wait(timeout=nan)`` never times
+    out: a stack that ignores the stop signal would never be sent the next,
+    and the run would wait for it forever.  A negative or zero wait skips the
+    grace a stack is given to shut its nodes down.  The message names the
+    field; a caller prefixes the group it came from
+    (``autoware.launcher.``).
+
+    Raises:
+        ValueError: ``stop_timeout_s must be positive and finite, got ...``.
+    """
+    if not math.isfinite(stop_timeout_s) or stop_timeout_s <= 0.0:
+        raise ValueError(
+            f"stop_timeout_s must be positive and finite, got {stop_timeout_s}"
+        )
+
+
 def _signal_group(pgid: int, sig: signal.Signals) -> None:
     try:
         os.killpg(pgid, sig)
@@ -249,7 +269,12 @@ class ProcessGroup:
         env: The child's environment; ``None`` inherits this process's.
         log_path: Where its stdout and stderr go; ``None`` discards them.
         stop_signal: The first signal :meth:`stop` sends.
-        stop_timeout_s: How long :meth:`stop` waits after each signal.
+        stop_timeout_s: How long :meth:`stop` waits after each signal,
+            positive and finite.
+
+    Raises:
+        ValueError: If *stop_timeout_s* is not positive and finite.
+        AutowareStackError: If the command could not be started.
     """
 
     _stop_signal: signal.Signals
@@ -267,6 +292,7 @@ class ProcessGroup:
         stop_signal: signal.Signals = signal.SIGINT,
         stop_timeout_s: float = 20.0,
     ) -> None:
+        _check_stop_timeout_s(stop_timeout_s)
         self._stop_signal = stop_signal
         self._stop_timeout_s = stop_timeout_s
         self._log = None
@@ -366,10 +392,15 @@ class CommandAutowareLauncher:
         log_dir: Where each stack's output goes, as
             ``autoware-<index>-<name>.log``; ``None`` discards it.  A
             ``log_dir`` passed to :meth:`prepare` replaces it.
-        stop_timeout_s: How long stopping waits after each signal.
+        stop_timeout_s: How long stopping waits after each signal, positive
+            and finite.
         bridge_parameters: ROS parameters of the ``scenario_bridge`` node
             besides its address (``auto_engage``, ``initialize_localization``,
             ``require_localization_initialized``, ...).
+
+    Raises:
+        ValueError: Naming the field, when ``stop_timeout_s`` is not positive
+            and finite.
     """
 
     argv: Sequence[str]
@@ -382,6 +413,10 @@ class CommandAutowareLauncher:
 
     _process: Optional[ProcessGroup] = field(default=None, init=False, repr=False)
     _episodes: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Checked here, not when the first stack is stopped.
+        _check_stop_timeout_s(self.stop_timeout_s)
 
     def prepare(self, log_dir: Optional[Path] = None) -> None:
         if log_dir is not None:
