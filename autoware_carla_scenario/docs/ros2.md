@@ -96,9 +96,11 @@ server built without it, the entity publishes them as well:
 A camera in `cameras` takes the rendering and mount fields of a
 [driver camera](driver_interface.md) (`image_width`, `image_height`, `fov`, `fps`,
 `position_x/y/z`, `roll`, `pitch`, `yaw`, in CARLA's convention), plus its `topic` and
-`frame_id`. Its frames go out from the sensor's own thread as they are rendered, the
-way CARLA's own interface publishes them, and under the names a node already
-subscribes to:
+`frame_id`, and the same bounds: `image_width`, `image_height` and `fps` positive and
+finite, `fov` in (0, 180) degrees, and the mount finite. A camera out of these bounds is
+refused as the config is read, not when it attaches after the ego spawned. Its frames go
+out from the sensor's own thread as they are rendered, the way CARLA's own interface
+publishes them, and under the names a node already subscribes to:
 
 ```yaml
 ros2:
