@@ -3889,6 +3889,12 @@ element or neither, an unknown state, and any action or condition naming a
 controller or phase that does not exist — all while the document is being
 edited, because a misspelt phase name is invisible at runtime: the junction
 cycles normally and the scenario just waits forever.</p>
+<p>Signal group, controller and phase names are read without surrounding
+whitespace, wherever they are written: a group's <code>name</code> and <code>conflicts_with</code>, a
+phase state's <code>group</code>, a controller's <code>name</code> and <code>reference</code>, a phase's <code>name</code>,
+and an action's or condition's <code>controller</code> and <code>signal_phase</code>. A hand-written
+<code>"ns "</code> is the group <code>ns</code>, so a name the validator accepts is the name the
+running controller is found by.</p>
 <hr />
 <h2 id="result-viewer">Result Viewer<a class="headerlink" href="#result-viewer" title="Permanent link">&para;</a></h2>
 <p>The result viewer is a web application for browsing, inspecting, and triggering scenario test results.</p>
@@ -4610,7 +4616,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 14:05:34 UTC"><span class="timeago" datetime="2026-11-04T14:05:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 14:05:34 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 21:38:29 UTC"><span class="timeago" datetime="2026-11-04T21:38:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 21:38:29 UTC">2026-11-04</span>
   </span>
 
     
