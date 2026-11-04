@@ -117,6 +117,24 @@ def launcher_requested_in_argv(argv: Iterable[str]) -> str | None:
     return selected
 
 
+#: SLURM's default ``MaxArraySize``: an array's task ids run from 0 to one less
+#: than it, so an array of at most this many tasks (``--array=0-1000``).
+DEFAULT_MAX_ARRAY_SIZE = 1001
+
+
+def parse_max_array_size(config: str) -> int | None:
+    """``MaxArraySize`` in *config* (what ``scontrol show config`` prints), or
+    ``None`` when it names none, or none of at least 1."""
+    for line in config.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "MaxArraySize":
+            text = value.strip()
+            if text.isdigit() and int(text) >= 1:
+                return int(text)
+            return None
+    return None
+
+
 def require_sbatch() -> str:
     """The path of ``sbatch``.
 
@@ -360,10 +378,20 @@ class SlurmSettings:
         data = {**self.to_dict(), **{k: v for k, v in changes.items() if v is not None}}
         return SlurmSettings.from_mapping(data)
 
-    def chunk_size(self, cases: int) -> int:
-        """How many cases one task runs, for a batch of *cases*."""
+    def chunk_size(self, cases: int, max_tasks: int = DEFAULT_MAX_ARRAY_SIZE) -> int:
+        """How many cases one task runs, for a batch of *cases*.
+
+        Without ``cases_per_task``, never fewer than it takes to keep the
+        array within *max_tasks* tasks (SLURM's ``MaxArraySize``, #1347).
+        ``cases_per_task`` is taken as it is, whatever the array's size.
+        """
         if self.cases_per_task is not None:
             return self.cases_per_task
-        if self.array_parallelism is None or cases <= 0:
+        if cases <= 0:
             return 1
-        return max(1, math.ceil(cases / self.array_parallelism))
+        size = 1
+        if self.array_parallelism is not None:
+            size = max(1, math.ceil(cases / self.array_parallelism))
+        if max_tasks >= 1:
+            size = max(size, math.ceil(cases / max_tasks))
+        return size

@@ -1547,6 +1547,187 @@ def _batch_on_disk(tmp_path: Path, cases: int = 3) -> BatchLayout:
     return layout
 
 
+def test_settings_keep_the_array_within_max_array_size() -> None:
+    """#1347: one case a task made an array SLURM's MaxArraySize refused."""
+    from autoware_carla_scenario.slurm.settings import (
+        DEFAULT_MAX_ARRAY_SIZE,
+        parse_max_array_size,
+    )
+
+    assert DEFAULT_MAX_ARRAY_SIZE == 1001
+    # Up to the limit, one case a task as before; past it, fewer tasks.
+    assert SlurmSettings().chunk_size(1001) == 1
+    assert SlurmSettings().chunk_size(1002) == 2
+    assert SlurmSettings().chunk_size(2500) == 3
+    assert SlurmSettings().chunk_size(2500, max_tasks=100) == 25
+    assert SlurmSettings(array_parallelism=2000).chunk_size(5000) == 5
+    assert SlurmSettings(array_parallelism=10).chunk_size(5000) == 500
+    # cases_per_task is taken as it is.
+    assert SlurmSettings(cases_per_task=1).chunk_size(5000) == 1
+    config = "Configuration data as of ...\nMaxArraySize            = 40001\n"
+    assert parse_max_array_size(config) == 40001
+    assert parse_max_array_size("MaxJobCount = 10000\n") is None
+    assert parse_max_array_size("MaxArraySize = (null)\n") is None
+    assert parse_max_array_size("MaxArraySize = 0\n") is None
+
+
+def _scontrol_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str | None
+) -> None:
+    """PATH holds only an ``scontrol`` running *script* (none for ``None``)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if script is not None:
+        scontrol = bin_dir / "scontrol"
+        scontrol.write_text(f"#!/bin/sh\n{script}\n")
+        scontrol.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        ("echo 'MaxArraySize            = 300'", 300),
+        ("echo 'MaxJobCount = 10000'", 1001),
+        ("echo 'slurm_load_ctl_conf error' >&2; exit 1", 1001),
+        (None, 1001),
+        ("printf 'ClusterName = \\377\\nMaxArraySize = 300\\n'", 300),
+        ("printf 'MaxArraySize = \\377\\n'", 1001),
+    ],
+    ids=["reported", "unnamed", "failing", "missing", "not-utf8", "garbled"],
+)
+def test_max_array_size_asks_scontrol_and_falls_back_to_slurm_s_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script: str | None,
+    expected: int,
+) -> None:
+    from autoware_carla_scenario.slurm import submit
+
+    _scontrol_on_path(tmp_path, monkeypatch, script)
+    assert submit.max_array_size() == expected
+
+
+def _submit_many(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cases: int,
+    settings: SlurmSettings,
+    limit: int | None,
+) -> tuple[BatchLayout, list[list[str]]]:
+    """Submit *cases* cases of a batch on disk, sbatch faked; its commands."""
+    from autoware_carla_scenario.slurm import submit
+
+    layout = _batch_on_disk(tmp_path, cases=cases)
+    commands: list[list[str]] = []
+
+    def run_sbatch(command: list[str]) -> str:
+        commands.append(command)
+        return "88"
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    if limit is not None:
+        monkeypatch.setattr(submit, "max_array_size", lambda: limit)
+    submit.submit_cases(layout, layout.read_manifest(), settings, list(range(cases)))
+    return layout, commands
+
+
+@pytest.mark.parametrize(
+    ("cases", "limit", "tasks"),
+    [(2500, None, 834), (2500, 300, 278), (1001, None, 1001), (3, None, 3)],
+    ids=["default-limit", "scontrol-limit", "at-the-limit", "small"],
+)
+def test_submit_spreads_a_large_batch_within_max_array_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cases: int,
+    limit: int | None,
+    tasks: int,
+) -> None:
+    """#1347: every case once, in no more tasks than MaxArraySize."""
+    if limit is None:  # scontrol fails: SLURM's default, 1001
+        _scontrol_on_path(tmp_path, monkeypatch, "exit 1")
+    layout, commands = _submit_many(
+        tmp_path,
+        monkeypatch,
+        cases,
+        SlurmSettings(wait=False, collect_job=False),
+        limit,
+    )
+    submission = layout.read_submission(1)
+    chunks = submission["chunks"]
+    assert len(chunks) == tasks <= (limit or 1001)
+    assert [case for chunk in chunks for case in chunk] == list(range(cases))
+    if cases <= (limit or 1001):
+        assert all(len(chunk) == 1 for chunk in chunks)
+    assert f"--array=0-{tasks - 1}" in commands[0]
+    assert f"in {tasks} task(s)" in capsys.readouterr().out
+
+
+def test_submit_refuses_a_cases_per_task_that_exceeds_max_array_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1347: a cases_per_task set too small is named before sbatch runs."""
+    layout = None
+    with pytest.raises(RuntimeError) as raised:
+        layout, _ = _submit_many(
+            tmp_path,
+            monkeypatch,
+            2500,
+            SlurmSettings(cases_per_task=2, wait=False, collect_job=False),
+            1001,
+        )
+    message = str(raised.value)
+    assert "MaxArraySize (1001)" in message
+    assert "launcher.cases_per_task to at least 3" in message
+    assert layout is None
+    assert BatchLayout(tmp_path / "batch").submissions() == [0]
+
+
+@pytest.mark.parametrize(
+    ("error", "hint"),
+    [
+        (
+            "sbatch failed (1): sbatch: error: Batch job submission failed: "
+            "Invalid job array specification",
+            True,
+        ),
+        ("sbatch failed (1): sbatch: error: array size exceeds MaxArraySize", True),
+        (
+            "sbatch failed (1): sbatch: error: Unable to open file "
+            "/scratch/array_runs/job.sh",
+            False,
+        ),
+    ],
+    ids=["invalid-array", "max-array-size", "unrelated-path"],
+)
+def test_an_array_sbatch_refuses_names_cases_per_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str, hint: bool
+) -> None:
+    """#1347: should sbatch refuse the array all the same, say what to set;
+    any other refusal is raised as it was."""
+    from autoware_carla_scenario.slurm import submit
+
+    layout = _batch_on_disk(tmp_path, cases=5)
+
+    def run_sbatch(_command: list[str]) -> str:
+        raise RuntimeError(error)
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
+    with pytest.raises(RuntimeError) as raised:
+        submit.submit_cases(
+            layout, layout.read_manifest(), SlurmSettings(), list(range(5))
+        )
+    message = str(raised.value)
+    assert message.startswith(error)
+    assert ("launcher.cases_per_task" in message) is hint
+    assert layout.submissions() == [0]
+
+
 def test_resubmit_refuses_when_squeue_cannot_tell_unless_forced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

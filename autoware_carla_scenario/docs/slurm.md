@@ -124,7 +124,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `time` | `null` | `sbatch --time`; the task is sent SIGTERM `signal_grace_seconds` before it runs out |
 | `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU) |
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
-| `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap) |
+| `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
 | `extra_sbatch_args` | `[]` | further `sbatch` arguments |
 | `export` | `null` | `sbatch --export`; `null`: `ALL`, or `NONE` with `remote_cwd` |
@@ -147,6 +147,19 @@ command line (`launcher.mem=12G`), or in a config.
 `cases_per_task` trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
 and how many a lost task takes with it.
+
+### Array size
+
+SLURM caps an array's size: its task ids run from 0 to one less than the
+cluster's `MaxArraySize` (`scontrol show config`; 1001 by default), so an
+array holds at most `MaxArraySize` tasks. Without `cases_per_task` the launcher
+reads `MaxArraySize` from `scontrol show config` (1001 when `scontrol` cannot
+be asked or names none) and puts as many cases in a task as it takes to stay
+within it: 2500 cases on the default limit run in 834 tasks of up to 3 cases.
+A `cases_per_task` you set is taken as it is; should it make more tasks than
+`MaxArraySize`, nothing is submitted and the error says the `cases_per_task`
+that fits. Should sbatch still refuse the array (a limit `scontrol` did not
+report), its error says to set `launcher.cases_per_task`.
 
 ### The job's environment
 
