@@ -26,6 +26,7 @@
       {% if run.case %}
         {% if run.case.outcome == "pass" %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>
         {% elif run.case.outcome == "fail" %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">FAIL</span>
+        {% elif run.case.pending %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">PENDING</span>
         {% else %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">{{ run.case.outcome | upper }}</span>{% endif %}
         <span class="text-xs text-gray-500 truncate" title="{{ run.case.message }}">{{ run.case.message }}</span>
       {% endif %}
