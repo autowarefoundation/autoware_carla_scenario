@@ -409,6 +409,43 @@ def test_a_batch_reports_the_missing_map_of_each_scenario(
     assert batch.configs == []
 
 
+# A map that cannot be resolved or fetched is refused the same way (#1444).
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize("fetched", [False, True])
+def test_a_batch_reports_the_unresolvable_map_of_each_scenario(
+    batch: _Batch,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fetched: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.maps import MapCacheError
+
+    missing = tmp_path / "no_map"
+    if fetched:
+
+        def _unreachable(_map_cfg: object) -> None:
+            raise MapCacheError("could not clone the map repository")
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.maps.resolve_map_paths", _unreachable
+        )
+        overrides: list[str] = []
+        message = "could not clone the map repository"
+    else:
+        overrides = [f"+map.directory={missing}"]
+        message = f"Map directory {missing} does not exist"
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(["lane_change/left", "lane_change/right"], overrides, expand=True)
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: {message}" in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
 def test_a_batch_reports_the_invalid_controls_of_each_scenario(
     batch: _Batch, twin: str, capsys: pytest.CaptureFixture[str]
 ) -> None:

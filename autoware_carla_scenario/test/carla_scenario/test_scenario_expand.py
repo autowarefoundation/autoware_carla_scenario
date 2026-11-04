@@ -683,6 +683,46 @@ def test_the_cli_reports_a_missing_map_of_each_scenario(
     assert captured.out == ""
 
 
+# A map that cannot be resolved -- a `map.directory` that does not exist, a
+# `map.source` that cannot be fetched -- is refused the same way (#1444).
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_map_directory_that_does_not_exist(
+    capsys: pytest.CaptureFixture[str], tmp_path
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    missing = tmp_path / "no_map"
+    code = main(["scenario=lane_change/*", f"+map.directory={missing}"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: Map directory {missing} does not exist" in (
+            captured.err
+        )
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_map_that_cannot_be_fetched(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+    from autoware_carla_scenario.maps import MapCacheError
+
+    def _unreachable(_map_cfg):
+        raise MapCacheError("could not clone the map repository")
+
+    monkeypatch.setattr("autoware_carla_scenario.maps.resolve_map_paths", _unreachable)
+    code = main(["scenario=lane_change/*"])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: could not clone the map repository" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
 @pytest.mark.usefixtures("at_repo_root")
 def test_hydra_full_error_raises_a_missing_map(
     monkeypatch: pytest.MonkeyPatch, tmp_path

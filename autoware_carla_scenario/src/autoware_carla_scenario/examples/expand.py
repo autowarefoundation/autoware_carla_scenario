@@ -33,8 +33,8 @@ another map than its document names (an exported scenario on a map of its own
 run without ``map=<id>_map``, refused before any map is read), the
 ``controls:`` of one are invalid, its sweep is invalid (``Error: <name>: <why>``: a
 ``sweep.case_index`` past its cases, a constraint or binding that does not
-parse, constraints for more than one key, a Lanelet2 map that is missing or
-unreadable, ...) or its sweep expands to no case
+parse, constraints for more than one key, a Lanelet2 map that is missing,
+unreadable or cannot be resolved, ...) or its sweep expands to no case
 (its constraints, route or ODD sample match nothing on the map; a scenario
 without a sweep is one case), and 2 when the command line does not compose: no
 ``scenario=``, no config matches it, or an override names a key a config does
@@ -122,8 +122,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         except ValueError as exc:
             # An invalid sweep (a case_index past its cases, a constraint or
-            # binding that does not parse, a missing map, ...): expand_config's documented
-            # refusal. HYDRA_FULL_ERROR=1 raises it, traceback and all.
+            # binding that does not parse, a map that is missing or cannot be
+            # resolved, ...): expand_config's documented refusal.
+            # HYDRA_FULL_ERROR=1 raises it, traceback and all.
             if os.environ.get("HYDRA_FULL_ERROR") == "1":
                 raise
             print(f"Error: {name}: {exc}", file=sys.stderr)
