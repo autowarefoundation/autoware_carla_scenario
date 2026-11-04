@@ -271,3 +271,15 @@ class TestEntityCountCondition:
     def test_a_negative_count_is_refused(self) -> None:
         with pytest.raises(ValueError, match="count"):
             EntityCountCondition(EntityFilter(), count=-1, label="x")
+
+    @pytest.mark.parametrize("count", [0.5, 1.9, True, False, math.nan, math.inf])
+    def test_a_count_that_is_not_a_whole_number_is_refused(self, count: Any) -> None:
+        # int() would compare against 0.5 as 0, so ">= 0.5" always held (#1474).
+        with pytest.raises(ValueError, match="count"):
+            EntityCountCondition(EntityFilter(), count=count, label="x")
+
+    def test_a_whole_float_count_is_read_as_an_int(self) -> None:
+        whole: Any = 2.0
+        condition = EntityCountCondition(EntityFilter(), count=whole, label="x")
+        count = condition.get_details()["count"]
+        assert count == 2 and type(count) is int
