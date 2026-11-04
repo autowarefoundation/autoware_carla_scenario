@@ -16,6 +16,7 @@ a traffic backend that models their sight.
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
@@ -61,12 +62,52 @@ _RAIN_PRESETS: tuple[tuple[float, float, float, float], ...] = (
 )
 
 
+#: The weather fields given as a share, 0-100: CARLA's own range for them.
+_PERCENT_FIELDS: tuple[str, ...] = (
+    "cloudiness",
+    "precipitation",
+    "precipitation_deposits",
+    "wetness",
+    "wind_intensity",
+    "fog_density",
+)
+#: The arguments that must be greater than 0.
+_POSITIVE_ARGUMENTS: tuple[str, ...] = ("tire_friction", "visibility_m")
+#: The arguments that are quantiles, 0-1.
+_QUANTILE_ARGUMENTS: tuple[str, ...] = ("tire_friction_quantile", "visibility_quantile")
+
+
+def _refusal(name: str, value: float) -> str:
+    """Why :class:`EnvironmentAction` refuses *value* for its argument *name*,
+    or ``""`` when it takes it.
+
+    Every value must be finite; the weather fields of :data:`_PERCENT_FIELDS`
+    within [0, 100], *tire_friction* and *visibility_m* positive, the
+    quantiles within [0, 1].  *rain* is clamped to [0, 100], not refused.
+    """
+    if not math.isfinite(value):
+        return f"must be finite, got {value}"
+    if name in _PERCENT_FIELDS and not (0.0 <= value <= 100.0):
+        return f"must be within [0, 100], got {value}"
+    if name in _POSITIVE_ARGUMENTS and not value > 0.0:
+        return f"must be positive, got {value}"
+    if name in _QUANTILE_ARGUMENTS and not (0.0 <= value <= 1.0):
+        return f"must be within [0, 1], got {value}"
+    return ""
+
+
 def rain_weather(rain: float) -> dict[str, float]:
     """The weather fields of rain at intensity *rain* (0-100), as CARLA's presets set them.
 
     ``precipitation`` is *rain*; ``cloudiness``, ``precipitation_deposits`` and
-    ``wetness`` are interpolated linearly between CARLA's rain presets.
+    ``wetness`` are interpolated linearly between CARLA's rain presets.  A
+    *rain* outside 0-100 is clamped to it.
+
+    Raises:
+        ValueError: *rain* is not finite (NaN or infinite).
     """
+    if not math.isfinite(rain):
+        raise ValueError(f"rain must be finite, got {rain}")
     level = min(max(float(rain), 0.0), 100.0)
     for (p0, c0, d0, w0), (p1, c1, d1, w1) in zip(_RAIN_PRESETS, _RAIN_PRESETS[1:]):
         if level <= p1:
@@ -491,6 +532,15 @@ class EnvironmentAction(BaseAction):
         timing: Tick phase.
         label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
+
+    Raises:
+        ValueError: A numeric argument is not finite (NaN or infinite); a
+            weather field given as 0-100 (*cloudiness*, *precipitation*,
+            *precipitation_deposits*, *wetness*, *wind_intensity*,
+            *fog_density*) is outside it; *tire_friction* or *visibility_m*
+            is not positive; a quantile is outside [0, 1]; or *rain* and
+            *precipitation* are both given.  The message names the
+            argument.  *rain* outside 0-100 is clamped, not refused.
     """
 
     _settings: dict[str, float]
@@ -529,26 +579,26 @@ class EnvironmentAction(BaseAction):
                 "EnvironmentAction: give rain or precipitation, not both "
                 "(rain sets the precipitation)"
             )
-        if tire_friction is not None and not tire_friction > 0.0:
-            raise ValueError(
-                f"EnvironmentAction: tire_friction must be positive, got {tire_friction}"
-            )
-        if tire_friction_quantile is not None and not (
-            0.0 <= tire_friction_quantile <= 1.0
+        for name, value in (
+            ("cloudiness", cloudiness),
+            ("precipitation", precipitation),
+            ("precipitation_deposits", precipitation_deposits),
+            ("wetness", wetness),
+            ("wind_intensity", wind_intensity),
+            ("fog_density", fog_density),
+            ("fog_distance", fog_distance),
+            ("sun_altitude_angle", sun_altitude_angle),
+            ("sun_azimuth_angle", sun_azimuth_angle),
+            ("rain", rain),
+            ("tire_friction", tire_friction),
+            ("tire_friction_quantile", tire_friction_quantile),
+            ("visibility_m", visibility_m),
+            ("visibility_quantile", visibility_quantile),
         ):
-            raise ValueError(
-                "EnvironmentAction: tire_friction_quantile must be within [0, 1], "
-                f"got {tire_friction_quantile}"
-            )
-        if visibility_m is not None and not visibility_m > 0.0:
-            raise ValueError(
-                f"EnvironmentAction: visibility_m must be positive, got {visibility_m}"
-            )
-        if visibility_quantile is not None and not (0.0 <= visibility_quantile <= 1.0):
-            raise ValueError(
-                "EnvironmentAction: visibility_quantile must be within [0, 1], "
-                f"got {visibility_quantile}"
-            )
+            if value is not None:
+                refusal = _refusal(name, value)
+                if refusal != "":
+                    raise ValueError(f"EnvironmentAction: {name} {refusal}")
         self._tire_friction = tire_friction
         self._tire_friction_quantile = tire_friction_quantile
         self._visibility_m = visibility_m

@@ -956,6 +956,14 @@ still reads back as its bucket. `rain` and `precipitation` cannot both be set
 (the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
 under a clear sky whatever the map's own weather.
 
+Every `environment.*` value must be a finite number: NaN or infinity fails
+the run at its start, naming the key (`environment.rain must be finite, got
+nan`). `cloudiness`, `precipitation`, `precipitation_deposits`, `wetness`,
+`wind_intensity` and `fog_density` must be within 0-100, `tire_friction` and
+`visibility_m` positive, and the two quantiles within 0-1; `rain` outside 0-100
+is clamped to it. `EnvironmentAction` refuses the same values with a
+`ValueError` naming its argument.
+
 Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
 CARLA 0.10 server on the UE 5.8 engine (the `ue58-dev` tree) multiplies it by `carla.Weather.FogDensityScale`,
 whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.

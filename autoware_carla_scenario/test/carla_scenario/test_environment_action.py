@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import math
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import typesafe_carla.carla as carla
@@ -19,6 +20,7 @@ from autoware_carla_scenario import BaseScenario, EnvironmentAction
 from autoware_carla_scenario.actions.environment import (
     apply_tire_friction,
     follow_tire_friction,
+    rain_weather,
     tire_friction,
     tire_friction_range,
 )
@@ -150,6 +152,112 @@ class TestRain:
         positional: list = [None] * 11
         with pytest.raises(TypeError):
             EnvironmentAction(*positional, 50.0)  # type: ignore[call-arg]
+
+
+#: Every numeric argument of EnvironmentAction.
+_NUMERIC_ARGUMENTS = (
+    "cloudiness",
+    "precipitation",
+    "precipitation_deposits",
+    "wetness",
+    "wind_intensity",
+    "fog_density",
+    "fog_distance",
+    "sun_altitude_angle",
+    "sun_azimuth_angle",
+    "rain",
+    "tire_friction",
+    "tire_friction_quantile",
+    "visibility_m",
+    "visibility_quantile",
+)
+_PERCENT_ARGUMENTS = (
+    "cloudiness",
+    "precipitation",
+    "precipitation_deposits",
+    "wetness",
+    "wind_intensity",
+    "fog_density",
+)
+
+
+def _given(name: str, value: float) -> dict[str, Any]:
+    """*name* set to *value*, as keyword arguments."""
+    return {name: value}
+
+
+class TestRefusedValues:
+    """A value CARLA or the weather rules cannot use fails at construction,
+    naming the argument, not later inside the run (#1322)."""
+
+    @pytest.mark.parametrize("name", _NUMERIC_ARGUMENTS)
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_a_non_finite_value_is_refused(self, name: str, value: float) -> None:
+        with pytest.raises(ValueError, match=rf"{name} must be finite"):
+            EnvironmentAction(**_given(name, value))
+
+    @pytest.mark.parametrize("name", _PERCENT_ARGUMENTS)
+    @pytest.mark.parametrize("value", [-0.1, 100.1])
+    def test_a_share_outside_0_100_is_refused(self, name: str, value: float) -> None:
+        with pytest.raises(ValueError, match=rf"{name} must be within \[0, 100\]"):
+            EnvironmentAction(**_given(name, value))
+
+    @pytest.mark.parametrize("name", _PERCENT_ARGUMENTS)
+    def test_the_ends_of_0_100_are_taken(self, name: str) -> None:
+        assert EnvironmentAction(**_given(name, 0.0)).settings[name] == 0.0
+        assert EnvironmentAction(**_given(name, 100.0)).settings[name] == 100.0
+
+    def test_unbounded_fields_take_any_finite_value(self) -> None:
+        settings = EnvironmentAction(
+            fog_distance=-5.0, sun_altitude_angle=-90.0, sun_azimuth_angle=720.0
+        ).settings
+        assert settings == {
+            "fog_distance": -5.0,
+            "sun_altitude_angle": -90.0,
+            "sun_azimuth_angle": 720.0,
+        }
+
+    def test_rain_weather_refuses_nan_rather_than_reaching_unreachable(self) -> None:
+        with pytest.raises(ValueError, match="rain must be finite"):
+            rain_weather(math.nan)
+
+
+class TestTheEnvironmentConfig:
+    """``examples/run.py``'s ``environment`` config names the key it refuses."""
+
+    @staticmethod
+    def _add(environment: dict) -> list:
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples.run import add_environment
+
+        registered: list = []
+        scenario = SimpleNamespace(register_init=registered.append)
+        add_environment(OmegaConf.create({"environment": environment}), scenario)  # type: ignore[arg-type]
+        return registered
+
+    @pytest.mark.parametrize(
+        "key", ["rain", "wetness", "fog_density", "tire_friction", "visibility_m"]
+    )
+    @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+    def test_a_non_finite_value_names_the_key(self, key: str, value: str) -> None:
+        with pytest.raises(ValueError, match=rf"environment\.{key} must be finite"):
+            self._add({key: float(value)})
+
+    def test_a_share_out_of_range_names_the_key(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"environment\.cloudiness must be within \[0, 100\]"
+        ):
+            self._add({"cloudiness": 150})
+
+    def test_a_value_that_is_not_a_number_names_the_key(self) -> None:
+        with pytest.raises(ValueError, match=r"environment\.wetness must be a number"):
+            self._add({"wetness": "soaked"})
+
+    def test_finite_values_are_taken(self) -> None:
+        (action,) = self._add({"rain": 150, "wetness": 40, "tire_friction": 0.8})
+        assert action.settings["precipitation"] == 100.0
+        assert action.settings["wetness"] == 40.0
 
 
 class _Vehicle:
