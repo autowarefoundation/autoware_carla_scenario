@@ -78,6 +78,72 @@ def test_a_run_appends_the_extra_overrides(
     assert not runner.is_running()
 
 
+# ── A grouped run's own multirun directory (#1359) ─────────────────────────
+
+
+def test_a_multirun_dir_is_never_shared(tmp_path: Path) -> None:
+    now = datetime(2026, 3, 13, 12, 0, 0)
+    made = [runner._reserve_multirun_dir(tmp_path, now) for _ in range(3)]
+    # The first keeps the name it always had; the others are numbered, as a
+    # batch's output directory is.
+    assert made == [
+        "multirun/2026-03-13/12-00-00",
+        "multirun/2026-03-13/12-00-00-1",
+        "multirun/2026-03-13/12-00-00-2",
+    ]
+    assert all((tmp_path / name).is_dir() for name in made)
+    # A directory a CLI sweep made in the same second is never reused either.
+    (tmp_path / "multirun/2026-03-13/12-00-00-3/0").mkdir(parents=True)
+    assert runner._reserve_multirun_dir(tmp_path, now) == (
+        "multirun/2026-03-13/12-00-00-4"
+    )
+
+
+def test_grouped_runs_in_one_second_get_their_own_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> _Frozen:  # type: ignore[override]
+            return cls(2026, 3, 13, 12, 0, 0)
+
+    commands: list[list[str]] = []
+
+    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "out", "")
+
+    monkeypatch.setattr(runner, "datetime", _Frozen)
+    monkeypatch.setattr(runner, "_run_job", run)
+    runner._run_worker([["scenario=a"]], tmp_path, [], True)
+    runner._run_worker([["scenario=b"]], tmp_path, [], True)
+    assert [cmd[-1] for cmd in commands] == [
+        "hydra.run.dir=multirun/2026-03-13/12-00-00/0",
+        "hydra.run.dir=multirun/2026-03-13/12-00-00-1/0",
+    ]
+    for session in ("12-00-00", "12-00-00-1"):
+        log = tmp_path / "multirun/2026-03-13" / session / "0" / runner.RAW_OUTPUT_LOG
+        assert log.read_text(encoding="utf-8") == "out"
+
+
+def test_the_scanner_lists_a_numbered_multirun_dir(tmp_path: Path) -> None:
+    from autoware_carla_scenario.ui import scanner
+
+    now = datetime(2026, 3, 13, 12, 0, 0)
+    for _ in range(2):
+        job = tmp_path / runner._reserve_multirun_dir(tmp_path, now) / "0"
+        job.mkdir()
+        (job / "Demo_result.json").write_text(
+            '{"passed": true, "scenario": "Demo"}', encoding="utf-8"
+        )
+    scanner.clear_cache()
+    sessions = scanner.scan_sessions(tmp_path)
+    assert sorted((s.session_type, s.time) for s in sessions) == [
+        ("multirun", "12-00-00"),
+        ("multirun", "12-00-00-1"),
+    ]
+
+
 # ── Starting a run (#664) ──────────────────────────────────────────────────
 
 

@@ -246,11 +246,12 @@ def _run_worker(
     cwd = str(base_path) if base_path else None
 
     try:
-        # When grouping as multirun, create a shared timestamped directory.
+        # When grouping as multirun, create a shared timestamped directory,
+        # this run's alone (#1359).
         multirun_dir: str | None = None
         if group_as_multirun and total > 0:
             now = datetime.now()  # noqa: DTZ005
-            multirun_dir = _multirun_dir(now)
+            multirun_dir = _reserve_multirun_dir(Path(cwd) if cwd else Path.cwd(), now)
             logger.info("Grouping %d jobs under %s", total, multirun_dir)
 
         stopped = False
@@ -398,6 +399,33 @@ def _multirun_dir(now: datetime) -> str:
     date = f"{now.year:04d}-{now.month:02d}-{now.day:02d}"
     time = f"{now.hour:02d}-{now.minute:02d}-{now.second:02d}"
     return f"multirun/{date}/{time}"
+
+
+def _reserve_multirun_dir(base: Path, now: datetime) -> str:
+    """Create a ``multirun/{date}/{time}`` of *now* under *base* that is this
+    run's alone, and return it relative to *base*.
+
+    Created with ``mkdir``, which fails when it exists, so a run started in
+    the same second as another (a CLI sweep, another viewer's run) never
+    shares it (#1359): the first gets :func:`_multirun_dir`'s ``{time}``, the
+    next ``{time}-1``, then ``{time}-2``, and so on, as a batch's output
+    directory does (``examples/run.py``'s ``_reserve_output_dir``).
+    """
+    name = _multirun_dir(now)
+    (base / name).parent.mkdir(parents=True, exist_ok=True)
+    suffix = 0
+    while True:
+        candidate = name if suffix == 0 else f"{name}-{suffix}"
+        try:
+            (base / candidate).mkdir()
+        except OSError:
+            # FileExistsError, which Codon does not name: anything else
+            # (permissions, a full disk) is raised.
+            if not (base / candidate).exists():
+                raise
+            suffix += 1
+            continue
+        return candidate
 
 
 def _save_raw_output(
