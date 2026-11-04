@@ -1799,6 +1799,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#array-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Array size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-jobs-environment" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2159,6 +2170,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#array-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Array size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-jobs-environment" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2363,7 +2385,7 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 <tr>
 <td><code>cases_per_task</code></td>
 <td><code>null</code></td>
-<td>cases a task runs on its CARLA; <code>null</code>: the cases spread evenly over <code>array_parallelism</code> tasks (one case a task without a cap)</td>
+<td>cases a task runs on its CARLA; <code>null</code>: the cases spread evenly over <code>array_parallelism</code> tasks (one case a task without a cap), in no more tasks than the cluster's <code>MaxArraySize</code> (<a href="#array-size">Array size</a>)</td>
 </tr>
 <tr>
 <td><code>job_name</code></td>
@@ -2460,6 +2482,17 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 <p><code>cases_per_task</code> trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
 and how many a lost task takes with it.</p>
+<h3 id="array-size">Array size<a class="headerlink" href="#array-size" title="Permanent link">&para;</a></h3>
+<p>SLURM caps an array's size: its task ids run from 0 to one less than the
+cluster's <code>MaxArraySize</code> (<code>scontrol show config</code>; 1001 by default), so an
+array holds at most <code>MaxArraySize</code> tasks. Without <code>cases_per_task</code> the launcher
+reads <code>MaxArraySize</code> from <code>scontrol show config</code> (1001 when <code>scontrol</code> cannot
+be asked or names none) and puts as many cases in a task as it takes to stay
+within it: 2500 cases on the default limit run in 834 tasks of up to 3 cases.
+A <code>cases_per_task</code> you set is taken as it is; should it make more tasks than
+<code>MaxArraySize</code>, nothing is submitted and the error says the <code>cases_per_task</code>
+that fits. Should sbatch still refuse the array (a limit <code>scontrol</code> did not
+report), its error says to set <code>launcher.cases_per_task</code>.</p>
 <h3 id="the-jobs-environment">The job's environment<a class="headerlink" href="#the-jobs-environment" title="Permanent link">&para;</a></h3>
 <p>A task runs with the Python the batch was submitted from (<code>sys.executable</code>,
 or <code>launcher.python</code>) and its environment:</p>
@@ -2665,7 +2698,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 08:36:29 UTC"><span class="timeago" datetime="2026-11-03T08:36:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 08:36:29 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 04:41:49 UTC"><span class="timeago" datetime="2026-11-04T04:41:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 04:41:49 UTC">2026-11-04</span>
   </span>
 
     
