@@ -31,7 +31,8 @@ Left turn::
 
     uv run scenario scenario=intersection_passing/left_turn
 
-With pytest — see ``test/carla_scenario/test_examples.py``.
+Its route and turn checks are tested with CARLA stubbed, in
+``test/carla_scenario/test_intersection_passing.py``.
 """
 
 from __future__ import annotations

@@ -24,7 +24,8 @@ Right lane change::
 
     uv run scenario scenario=lane_change/right
 
-With pytest — see ``test/carla_scenario/test_examples.py``.
+Its shipped configs and target-lane conditions are tested without CARLA, in
+``test/carla_scenario/test_lane_change_example.py``.
 """
 
 from __future__ import annotations

@@ -11,6 +11,9 @@ composed as a run composes it.
 Values that name a scenario of the reader's own -- a package or a tutorial
 scenario that is not shipped -- or that stand for any name are listed in
 ``_NOT_SHIPPED``, each with the reason.
+
+The examples' docstrings also point at the tests that exercise them; each
+``test/...py`` they name exists (#1315).
 """
 
 from __future__ import annotations
@@ -112,3 +115,23 @@ def test_a_documented_scenario_composes(value: str) -> None:
             run._compose_config(name, [])
         except Exception as exc:  # noqa: BLE001 - reported with where it is named
             pytest.fail(f"scenario={value} ({where}): {name} does not compose: {exc}")
+
+
+_TEST_PATH = re.compile(r"``(test/[\w/]+\.py)``")
+
+
+def test_every_test_an_example_names_exists() -> None:
+    """A ``test/...py`` an example's docstring points at is in the package."""
+    named = [
+        (where, match.group(1))
+        for where, text in _sources()
+        if where.startswith("autoware_carla_scenario/src/")
+        for match in _TEST_PATH.finditer(text)
+    ]
+    assert named  # the extraction finds the pointers it is meant to check
+    missing = [
+        f"{where}: {path}"
+        for where, path in named
+        if not (_PACKAGE_ROOT / path).is_file()
+    ]
+    assert missing == []
