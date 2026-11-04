@@ -646,15 +646,17 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     raise ValueError(msg)
 
 
-def _legacy_traffic_manager_options(cfg: DictConfig) -> dict[str, int]:
+def _legacy_traffic_manager_options(cfg: DictConfig) -> dict[str, Any]:
     """Return the TrafficManager options a config predating the group states.
 
     Only ``traffic_manager.port`` was ever settable that way, and a config that
-    does not set it means the framework default.
+    does not set it means the framework default.  The port is passed on as
+    given, so :class:`TrafficManagerBackendConfig` refuses a bool, a float or
+    a string rather than this turning ``true`` into port 1 (#1423).
     """
     legacy = cfg.get("traffic_manager")
     port = None if legacy is None else legacy.get("port")
-    return {} if port is None else {"port": int(port)}
+    return {} if port is None else {"port": port}
 
 
 def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:

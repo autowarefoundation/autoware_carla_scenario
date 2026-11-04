@@ -98,6 +98,19 @@ def test_a_legacy_config_without_the_traffic_group_is_refused_too() -> None:
         run.check_run_config(cfg)
 
 
+@pytest.mark.parametrize("port", ["true", "8100.0"])
+def test_a_legacy_port_reaches_the_backend_as_given(port: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    # Built directly, without the run check: the legacy options must not
+    # turn ``true`` into port 1 or ``8100.0`` into 8100 on the way.
+    cfg = _shipped([f"traffic_manager.port={port}"])
+    OmegaConf.set_struct(cfg, False)
+    del cfg["traffic"]
+    with pytest.raises(ValueError, match="port"):
+        run.build_traffic_backend(cfg)
+
+
 def test_a_batch_is_refused_for_a_port_before_any_case_runs() -> None:
     from autoware_carla_scenario.examples import run
 
