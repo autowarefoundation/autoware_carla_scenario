@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -111,6 +112,37 @@ class SweepFailedError(CompactHydraException):
     a :class:`~hydra.errors.CompactHydraException`, it is printed without a
     traceback.
     """
+
+
+def _job_timeout_seconds(value: Any) -> int:
+    """``sweep.job_timeout_seconds``, checked: the hard timeout per job, in
+    whole seconds, :data:`_DEFAULT_JOB_TIMEOUT` when *value* is unset
+    (``None``, as ``job_timeout_seconds: null`` reads), 0 for none.
+
+    A case is stopped by ``signal.alarm``, which counts whole seconds, so
+    *value* must be a whole number (``900`` or ``900.0``): a fraction would
+    be truncated, and ``0.5`` would become 0, no timeout at all.  A negative,
+    NaN or infinite value is refused too, rather than silently disabling the
+    timeout or failing in the middle of the sweep.
+
+    Raises:
+        ValueError: *value* is not a whole number of seconds >= 0.
+    """
+    if value is None:
+        return _DEFAULT_JOB_TIMEOUT
+    message = (
+        "LaneletConstraintSweeper: sweep.job_timeout_seconds must be a whole "
+        f"number of seconds >= 0 (0 for no timeout), got {value!r}."
+    )
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(message) from None
+    if not math.isfinite(seconds) or seconds < 0 or seconds != math.floor(seconds):
+        raise ValueError(message)
+    return int(seconds)
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
@@ -494,6 +526,8 @@ class LaneletConstraintSweeper(Sweeper):
         sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
         assert isinstance(sweep_dict, dict)
         check_constraint_keys(sweep_dict)
+        # Checked here, before any map is fetched or case runs.
+        job_timeout = _job_timeout_seconds(sweep_dict.get("job_timeout_seconds"))
 
         # -- 2. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)
@@ -531,10 +565,8 @@ class LaneletConstraintSweeper(Sweeper):
             [b[0] if b else "" for b in batches],
         )
 
-        # -- 7. Resolve per-job timeout, cooldown, retry count, and resume ---
-        job_timeout: int = int(
-            sweep_dict.get("job_timeout_seconds", _DEFAULT_JOB_TIMEOUT)
-        )
+        # -- 7. Resolve cooldown, retry count, and resume ---
+        # (job_timeout: read and checked at step 1.)
         cooldown: float = float(
             OmegaConf.select(cfg, "server.cooldown_seconds", default=0.0)
         )

@@ -609,7 +609,9 @@ class SweepConfig:
 
     #: Hard timeout (seconds) per job.  If a single scenario run exceeds
     #: this duration (e.g. CARLA hangs), it is forcefully interrupted and
-    #: the sweep continues with the next lanelet.  0 disables the timeout.
+    #: the sweep continues with the next lanelet.  0 disables the timeout;
+    #: ``null`` is the default.  Whole seconds: a fraction, a negative value,
+    #: NaN or infinity is refused before any case runs.
     job_timeout_seconds: int = 120
 
     #: 1-indexed job number to resume from.  Jobs before this index are

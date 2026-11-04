@@ -776,7 +776,9 @@ The command takes several paths and converts each on its own: a path that does
 not exist, or cannot be converted (a directory it cannot read or write to), is
 reported as `[FAILED] <path>: ...` and the others are still converted. It exits
 0 when every recording was written, 1 when any conversion failed or was
-skipped, and 2 when the converter is not installed.
+skipped, and 2 when the converter is not installed. `--jobs N` converts N logs
+at a time (all cores by default); an N below 1 is refused, with exit status 2,
+before any path is converted.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets

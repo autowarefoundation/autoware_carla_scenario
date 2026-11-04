@@ -671,6 +671,27 @@ def test_the_command_line_reports_a_path_that_does_not_exist(
     assert f"[FAILED] {missing}: FileNotFoundError:" in out
 
 
+@pytest.mark.parametrize("jobs", ["-1", "0"])
+def test_the_command_line_refuses_jobs_below_one(
+    tmp_path: Path,
+    no_sdk_cli: _FakeModule,
+    capsys: pytest.CaptureFixture[str],
+    jobs: str,
+) -> None:
+    """#1418: ``--jobs -1`` reached the converter, whose OverflowError ended
+    the run with a traceback before any PATH was converted."""
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "A.trajectory.jsonl").write_text("{}\n")
+    with pytest.raises(SystemExit) as exited:
+        main(["--jobs", jobs, str(good)])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert f"argument --jobs: must be at least 1, got {jobs}" in err
+    assert "Traceback" not in err
+    assert not (good / "A.rrd").exists()
+
+
 def test_a_bad_path_does_not_stop_the_others(
     tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
 ) -> None:
