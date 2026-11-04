@@ -91,3 +91,86 @@ def test_a_batch_is_refused_for_a_bad_server_number_before_any_case_runs() -> No
     bad = _shipped(["server.cooldown_seconds=nan"])
     with pytest.raises(run.RunConfigError, match=r"^bad: server\.cooldown_seconds"):
         run.check_batch_configs([good, bad], ["good", "bad"])
+
+
+# ``server.cooldown_max_retries`` and ``server.reload_every`` are whole
+# numbers, 0 or more: int() alone ran 1.9 and true as 1 retry or reload (#1445).
+@pytest.mark.parametrize("key", ["cooldown_max_retries", "reload_every"])
+@pytest.mark.parametrize("value", ["1.9", "2.5", "true", "false", "abc", "nan"])
+def test_a_server_count_that_is_no_whole_number_is_refused(
+    key: str, value: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped([f"server.{key}={value}"])
+    with pytest.raises(
+        run.RunConfigError, match=rf"^server\.{key} must be a whole number"
+    ):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize("key", ["cooldown_max_retries", "reload_every"])
+def test_a_negative_server_count_is_refused(key: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped([f"server.{key}=-1"])
+    with pytest.raises(run.RunConfigError, match=rf"^server\.{key} must be >= 0"):
+        run.check_run_config(cfg)
+
+
+def test_a_null_cooldown_max_retries_is_refused() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped(["server.cooldown_max_retries=null"])
+    with pytest.raises(
+        run.RunConfigError, match=r"^server\.cooldown_max_retries must be a whole"
+    ):
+        run.check_run_config(cfg)
+
+
+def test_whole_float_server_counts_are_those_counts() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped(
+        [
+            "server.cooldown_max_retries=2.0",
+            "server.world_reset=soft",
+            "server.reload_every=3.0",
+        ]
+    )
+    run.check_run_config(cfg)
+    retries = run.cooldown_max_retries(cfg)
+    assert retries == 2 and isinstance(retries, int)
+    assert run._queue_retries(cfg) == 2
+    world_reset, reload_every = run.world_reset_settings(cfg)
+    assert (world_reset, reload_every) == ("soft", 3)
+    assert isinstance(reload_every, int)
+    # null reloads only when a soft reset cannot be done, as 0 does.
+    assert run.world_reset_settings(_shipped(["server.reload_every=null"]))[1] == 0
+
+
+def test_the_sweeper_refuses_a_fractional_cooldown_max_retries(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Before any map is fetched or case forked, as a negative one is."""
+    from unittest.mock import MagicMock, patch
+
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+    sweeper = mod.LaneletConstraintSweeper()
+    sweeper.config = OmegaConf.create(
+        {"sweep": {}, "server": {"cooldown_max_retries": 1.9}}
+    )
+    sweeper.launcher = MagicMock()
+    with (
+        patch.object(mod, "resolve_map_paths") as resolve,
+        patch.object(mod, "load_map"),
+        patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
+        pytest.raises(SystemExit) as exited,
+    ):
+        sweeper.sweep([])
+    assert exited.value.code == 2
+    assert "cooldown_max_retries must be a whole number" in capsys.readouterr().err
+    resolve.assert_not_called()

@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from ..constants import tick_multiple
+from ..seed import check_seed
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
@@ -510,6 +511,11 @@ class DriverClientConfig:
             raise ValueError(
                 f"driver.t4_scene_history_s must not be negative, got {self.t4_scene_history_s}"
             )
+        seed = self.random_seed
+        if seed is not None:
+            # A whole number, not negative, as the run's seed: not 1.9 or
+            # True, which the session would be handed as 1.
+            check_seed("driver.random_seed", seed)
         self._check_numbers()
 
     def _check_numbers(self) -> None:

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
-from ..seed import resolve_seed
+from ..seed import check_seed, resolve_seed
 from .base import sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
@@ -112,18 +112,20 @@ class CarlaLidarSensorConfig:
             if not math.isfinite(value):
                 raise ValueError(f"LiDAR {key} must be finite, got {value}")
         seed = self.noise_seed
-        if seed is not None and not math.isfinite(float(seed)):
-            raise ValueError(f"LiDAR noise_seed must be finite, got {seed}")
+        if seed is not None:
+            # A whole number, not negative: not 1.9 or True, which int()
+            # would seed as 1.
+            check_seed("LiDAR noise_seed", seed)
         if self.channels < 1:
             raise ValueError("LiDAR channels must be positive")
         if self.range_m <= 0.0 or self.points_per_second <= 0:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
-        if self.weather_noise < 0.0 or (
-            self.noise_seed is not None and self.noise_seed < 0
-        ):
-            raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
+        if self.weather_noise < 0.0:
+            raise ValueError(
+                f"LiDAR weather_noise must not be negative, got {self.weather_noise}"
+            )
         if self.fog_density_scale <= 0.0:
             raise ValueError("LiDAR fog_density_scale must be positive")
 

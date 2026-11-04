@@ -254,6 +254,31 @@ class TestTheEnvironmentConfig:
         with pytest.raises(ValueError, match=r"environment\.wetness must be a number"):
             self._add({"wetness": "soaked"})
 
+    @pytest.mark.parametrize("value", [True, False, "15", "0.5"])
+    def test_a_boolean_or_a_string_is_no_number(self, value: object) -> None:
+        # float() read true as 1 and "15" as 15 (#1445).
+        with pytest.raises(
+            ValueError, match=r"^environment\.cloudiness must be a number"
+        ):
+            self._add({"cloudiness": value})
+
+    @pytest.mark.parametrize(
+        "override",
+        ["environment.cloudiness=true", "environment.cloudiness='15'"],
+    )
+    def test_a_run_is_refused_for_it_before_anything_is_built(
+        self, override: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        from .test_video_removed import _shipped
+
+        cfg = _shipped([override])
+        with pytest.raises(
+            run.RunConfigError, match=r"^environment\.cloudiness must be a number"
+        ):
+            run.check_run_config(cfg)
+
     def test_finite_values_are_taken(self) -> None:
         (action,) = self._add({"rain": 150, "wetness": 40, "tire_friction": 0.8})
         assert action.settings["precipitation"] == 100.0

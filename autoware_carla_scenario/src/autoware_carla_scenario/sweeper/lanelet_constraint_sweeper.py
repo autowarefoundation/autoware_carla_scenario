@@ -355,7 +355,9 @@ def _refuse_before_forking(cfg: DictConfig) -> None:
     sweep of *cfg* would be refused before it starts: for a config value its
     run refuses (:func:`examples.run.check_run_config`: the queue's server,
     traffic and Autoware launcher settings, the run timeout, the seeds
-    (``seed``, ``sweep.odd_sample.seed`` and ``.count``), ``odd_case``,
+    (``seed``, ``sweep.odd_sample.seed`` and ``.count``), the
+    ``background_traffic`` and ``environment`` settings, a ``carla_driver``
+    ego's ``driver`` settings, ``odd_case``,
     ``rerun.lidar_max_points``, the ``t4`` and ``driver`` settings and the
     ``t4scene`` settings), or for an extra it asks for that is not installed
     (:func:`examples.run.check_run_extras`).  Builds nothing that starts, and
@@ -586,16 +588,14 @@ class LaneletConstraintSweeper(Sweeper):
         cooldown: float = float(
             OmegaConf.select(cfg, "server.cooldown_seconds", default=0.0)
         )
-        max_retries: int = int(
-            OmegaConf.select(cfg, "server.cooldown_max_retries", default=0)
-        )
-        # Refused at step 0 already (check_run_config); kept for a caller
-        # that reaches here without it.
-        if max_retries < 0:
-            raise ValueError(
-                "LaneletConstraintSweeper: server.cooldown_max_retries must be "
-                f">= 0, got {max_retries}."
-            )
+        # Refused at step 0 already (check_run_config); read as the run
+        # reads it, for a caller that reaches here without it.
+        from ..examples.run import cooldown_max_retries  # noqa: PLC0415
+
+        try:
+            max_retries = cooldown_max_retries(cfg)
+        except ValueError as exc:
+            raise ValueError(f"LaneletConstraintSweeper: {exc}.") from None
         max_attempts = 1 + max_retries
         resume_from: int = int(
             sweep_dict.get("resume_from", 0) or os.environ.get("SWEEP_RESUME_FROM", "0")
