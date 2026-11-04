@@ -742,8 +742,9 @@ uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
   +sweep.odd_sample.count=3 +sweep.odd_sample.strategy=coverage
 ```
 
-`scenario-expand` on the same glob lists those same cases, each scenario's
-going on from the earlier ones' draws as in the batch.
+`scenario-expand` on the same glob lists those same cases (without the
+arguments the batch adds), each scenario going on from the earlier ones'
+draws, as in the batch.
 
 The same seed, ODD, knobs, coverage and scenarios, in the same order, give
 the same cases, on any machine (openodd's sampler draws from ChaCha8 seeded

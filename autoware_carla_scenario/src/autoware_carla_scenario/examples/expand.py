@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     # One record of the ODD draws for the whole glob, as a batch keeps: a
     # later scenario on the same ODD goes on from the earlier ones' draws, so
     # each listing is the cases the batch would run for it. A scenario that
-    # fails leaves nothing printed, so what it drew does not matter.
+    # fails draws nothing, and a failure prints no listing at all.
     drawn = OddDraws()
     for name in names:
         cfg = compose_or_report(name, overrides, named=globbed)
