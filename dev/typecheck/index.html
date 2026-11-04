@@ -4770,7 +4770,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 270 of the package's 393
 modules (69%; about 81,800 of
-141,400 lines) are <code>CHECKED</code>: the kinematics, the
+141,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6141,7 +6141,7 @@ the first:</p>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
-<li><code>slurm.manifest</code>: imports more of os than its shim declares (<code>os.fdopen()</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
+<li><code>slurm.manifest</code>: imports errno, and more of os than its shim declares (<code>os.fdopen()</code>, <code>os.link()</code>, <code>os.stat()</code>, <code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
 <li><code>slurm.worker</code>: imports socket, traceback, errno, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
