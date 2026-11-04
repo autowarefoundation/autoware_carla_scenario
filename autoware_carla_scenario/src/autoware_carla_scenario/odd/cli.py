@@ -17,7 +17,9 @@ CARLA server) and checks it against the ODD (:mod:`.route`).  Scenario
 configs are named as ``scenario=`` names them (globs too); arguments with an
 ``=`` are Hydra overrides for every one of them.  The exit status is 0 when no
 route leaves the ODD, 1 when one does, and 2 when a route could not be
-planned (no goal, no path, no map) or the ODD could not be read.
+planned (no goal, no path, no map; or an exported scenario composed on another
+map than its document names, refused before any map is read: run it with
+``map=<id>_map``) or the ODD could not be read.
 """
 
 from __future__ import annotations
@@ -284,6 +286,10 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
     for name in names:
         try:
             cfg = run._compose_config(name, overrides)
+            # Before the route is planned on any map: a scenario composed on
+            # another map than its document names would plan its lanelet ids
+            # on that one (#1428).  Not planned, naming map=<id>_map.
+            run.check_scenario_maps([cfg])
             route = run.build_planned_route(cfg, name)
             paths = resolve_map_paths(cfg.map)
             key = (paths.lanelet2_path, paths.xodr_path, paths.projector_type)

@@ -28,8 +28,10 @@ from its listing alone: each is the cases the batch run of the same glob runs.
 As for ``scenario`` (and Hydra), the last ``scenario=`` wins when it is
 given more than once.
 
-The exit status is 0 when every scenario expanded, 1 when the ``controls:`` of
-one are invalid, its sweep is invalid (``Error: <name>: <why>``: a
+The exit status is 0 when every scenario expanded, 1 when one is composed on
+another map than its document names (an exported scenario on a map of its own
+run without ``map=<id>_map``, refused before any map is read), the
+``controls:`` of one are invalid, its sweep is invalid (``Error: <name>: <why>``: a
 ``sweep.case_index`` past its cases, a constraint or binding that does not
 parse, constraints for more than one key, ...) or its sweep expands to no case
 (its constraints, route or ODD sample match nothing on the map; a scenario
@@ -76,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     load_scenario_plugins()
     # Composed the way a glob batch run composes each scenario, so the
     # expansion sees the same config (package conf dirs included).
+    from ..authoring.hydra_config import scenario_map_refusal  # noqa: PLC0415
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
     from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..scenario_glob import is_scenario_glob  # noqa: PLC0415
@@ -99,6 +102,14 @@ def main(argv: list[str] | None = None) -> int:
         cfg = compose_or_report(name, overrides, named=globbed)
         if cfg is None:
             status = 2
+            continue
+        # Before the sweep resolves, fetches or searches any map: a scenario
+        # composed on another map than its document names would list that
+        # map's cases (#1428).
+        refusal = scenario_map_refusal(cfg)
+        if refusal is not None:
+            print(f"Error: {name}: {refusal}", file=sys.stderr)
+            status = max(status, 1)
             continue
         try:
             cases = expand_config(cfg, drawn=drawn)

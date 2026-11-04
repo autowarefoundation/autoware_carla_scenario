@@ -1006,7 +1006,10 @@ and OpenDRIVE paths and exclusion list win over the `map` keys the scenario's
 own config writes (and a scenario config cannot select another group, as Hydra
 refuses an `override /map` from a group composed before it). So the run refuses
 it before anything starts -- a single run, a batch (naming the case) and a
-lanelet sweep alike -- and names the group to run with:
+lanelet sweep alike -- and names the group to run with. So do the paths that
+search the map without running: a `--multirun` batch and `scenario-expand`
+before their sweep reads any map (`Error: <name>: ...`, exit 1), the viewer's
+**Run** of a sweep, and `scenario-odd route` (the scenario is not planned):
 
 ```text
 Error: scenario 'cut_in' runs on the map its document names, but map.name is

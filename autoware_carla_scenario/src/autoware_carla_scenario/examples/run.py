@@ -1344,7 +1344,12 @@ def _has_sweep(cfg: DictConfig) -> bool:
     )
 
 
-def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[BatchCase]:
+def _expand_batch(
+    scenario_names: list[str],
+    overrides: list[str],
+    *,
+    documents: dict[str, Any] | None = None,
+) -> list[BatchCase]:
     """Every concrete case of *scenario_names*, in order: each scenario's sweep
     expanded the way the lanelet sweeper expands it (``sweep.constraints``,
     ``sweep.route``, ``sweep.odd_sample``), a scenario without one as itself.
@@ -1353,14 +1358,19 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
     one aims at what the earlier ones left uncovered (``strategy: coverage``)
     and does not draw their values again.
 
-    Exits 1 before anything runs when a scenario's ``controls:`` are invalid,
+    Exits 1 before anything runs when a scenario's config sets a value its
+    runs would refuse, or it is composed on another map than its document
+    names (:func:`check_batch_configs`, checked before its sweep reads any
+    map), its ``controls:`` are invalid,
     its sweep is invalid (a ``sweep.case_index`` past its cases, a constraint
     or binding that does not parse, ...: the ``ValueError`` expand_config
     refuses it with) or its sweep expands to no case, as the lanelet sweeper
     refuses one (#1407): every such scenario is reported, each named, since a
     batch missing a scenario it was asked for must not look like a complete
     one. A scenario without a sweep is one case, never refused.
-    ``HYDRA_FULL_ERROR=1`` raises an invalid sweep's error instead."""
+    ``HYDRA_FULL_ERROR=1`` raises an invalid sweep's error, or a refused
+    config value's, instead.  *documents* are the scenario documents already
+    loaded, by name (:func:`check_scenario_maps`), filled here."""
     from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
     from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..sweeper.expand import (  # noqa: PLC0415 -- loads Lanelet2
@@ -1375,6 +1385,23 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
     for name in scenario_names:
         # Composed outside the try: a ValueError there is no sweep's.
         cfg = _compose_config(name, overrides)
+        try:
+            # Before the sweep resolves, fetches or searches any map, as the
+            # lanelet sweeper checks its config before it expands it: one
+            # composed on another map than its document names would be
+            # searched on that one (#1428), and a value every case would
+            # refuse is refused once its map is read (#1430).  What only a
+            # case's own overrides set is checked once the cases are composed
+            # (run_batch).
+            check_batch_configs([cfg], [name], documents=documents)
+        except RunConfigError as exc:
+            if os.environ.get("HYDRA_FULL_ERROR") == "1":
+                raise
+            message = str(exc)
+            if not message.startswith(f"{name}: "):
+                message = f"{name}: {message}"
+            errors.append(f"Error: {message}")
+            continue
         try:
             expanded = expand_config(cfg, overrides, drawn=drawn)
         except ControlsError as exc:
@@ -1745,7 +1772,10 @@ def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) 
 
 
 def check_scenario_maps(
-    configs: list[DictConfig], labels: list[str] | None = None
+    configs: list[DictConfig],
+    labels: list[str] | None = None,
+    *,
+    documents: dict[str, Any] | None = None,
 ) -> None:
     """Refuse a case whose declarative scenario names a map of its own that
     the composed config is not on (#1424).
@@ -1769,52 +1799,34 @@ def check_scenario_maps(
     Args:
         configs: The cases' configs.
         labels: The cases' names, for the message; none for a single run.
+        documents: The documents already loaded, by scenario name, filled
+            here: a batch shares one across its checks, so each scenario's
+            document is loaded once.
 
     Raises:
         RunConfigError: naming the scenario, what differs and the
             ``map=<id>_map`` to run it with.
     """
     from autoware_carla_scenario.authoring.hydra_config import (  # noqa: PLC0415
-        own_map_mismatch,
-        run_map_group,
-    )
-    from autoware_carla_scenario.registry import (  # noqa: PLC0415
-        get_scenario_document,
+        scenario_map_refusal,
     )
 
     names = labels if labels is not None else []
     # Loaded once a scenario, however many of the batch's cases run it.
-    documents: dict[str, Any] = {}
+    loaded: dict[str, Any] = {} if documents is None else documents
     for i, cfg in enumerate(configs):
-        scenario_name = (cfg.get("scenario") or {}).get("name")
-        if not scenario_name:
-            continue
-        key = str(scenario_name)
-        if key not in documents:
-            try:
-                documents[key] = get_scenario_document(key)
-            except Exception:  # noqa: BLE001 - the builder refuses it, by name
-                logger.debug(
-                    "scenario %s: its document did not load", key, exc_info=True
-                )
-                documents[key] = None
-        document = documents[key]
-        if document is None:
-            continue
-        mismatch = own_map_mismatch(document, cfg.get("map"))
-        if mismatch is None:
+        refusal = scenario_map_refusal(cfg, loaded)
+        if refusal is None:
             continue
         prefix = f"{names[i]}: " if i < len(names) else ""
-        group = run_map_group(document)
-        raise RunConfigError(
-            f"{prefix}scenario {document.id!r} runs on the map its document "
-            f"names, but {mismatch}.  Run it with map={group}, the map group "
-            "its package ships"
-        )
+        raise RunConfigError(f"{prefix}{refusal}")
 
 
 def check_batch_configs(
-    configs: list[DictConfig], labels: list[str] | None = None
+    configs: list[DictConfig],
+    labels: list[str] | None = None,
+    *,
+    documents: dict[str, Any] | None = None,
 ) -> None:
     """Refuse the configs of a batch's cases for the values a run reads of its
     config before it starts, building nothing that starts (no queue, no CARLA,
@@ -1828,20 +1840,36 @@ def check_batch_configs(
     reads them (:func:`_check_batch_writer_settings`); each case's timeout and
     ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
-    each distinct set of them.  A SLURM batch is refused for these before
-    anything is submitted (each task would only refuse them on its node), and
-    a lanelet sweep before any case is forked (each case would refuse them in
-    turn).
+    each distinct set of them.  A batch is refused for these before any
+    scenario is built or the map is resolved (#1430): a local one would refuse
+    them only once its queue was built, a SLURM one only on its nodes, once
+    submitted; and a lanelet sweep before any case is forked (each case would
+    refuse them in turn).
+
+    Args:
+        configs: The cases' configs.
+        labels: The cases' names: a value a case is refused for is headed by
+            its name (``<label>: ...``), as the map checks head theirs; none
+            for a single run.
+        documents: The scenario documents already loaded, by name, shared
+            with :func:`check_scenario_maps` (and filled by it).
 
     Raises:
         RunConfigError: naming the key of the first value refused.
     """
     check_batch_map(configs, labels)
-    check_scenario_maps(configs, labels)
-    queue_settings: set[str] = set()
+    check_scenario_maps(configs, labels, documents=documents)
     try:
+        # The batch's: read off the first case enabling each writer.
         _check_batch_writer_settings(configs)
-        for cfg in configs:
+    except RunConfigError:
+        raise
+    except ValueError as exc:
+        raise RunConfigError(str(exc)) from exc
+    names = labels if labels is not None else []
+    queue_settings: set[str] = set()
+    for i, cfg in enumerate(configs):
+        try:
             run_timeout_seconds(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
@@ -1863,10 +1891,11 @@ def check_batch_configs(
             if key not in queue_settings:
                 queue_settings.add(key)
                 _check_batch_queue_settings(cfg)
-    except RunConfigError:
-        raise
-    except ValueError as exc:
-        raise RunConfigError(str(exc)) from exc
+        except ValueError as exc:
+            # Named by its case, as the map checks name it: every case of a
+            # batch is checked, and the one refused need not be the first.
+            prefix = f"{names[i]}: " if i < len(names) else ""
+            raise RunConfigError(f"{prefix}{exc}") from exc
 
 
 def check_run_config(cfg: DictConfig) -> None:
@@ -1940,6 +1969,12 @@ def run_batch(
 
     With ``launcher=slurm`` the cases run as SLURM array tasks instead
     (docs/slurm.md); *wait* overrides ``launcher.wait`` (``--no-wait``).
+
+    Raises:
+        RunConfigError: a config value a case would refuse
+            (:func:`check_batch_configs`), before any scenario is built or the
+            map is resolved.  The ``scenario`` CLI prints it as an ``Error:``
+            line and exits 1.
     """
     from ..slurm.settings import (  # noqa: PLC0415
         launcher_requested_in_argv,
@@ -1953,8 +1988,10 @@ def run_batch(
         except RuntimeError as exc:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(2)
+    # Each scenario's document, loaded once for every check of the batch.
+    documents: dict[str, Any] = {}
     if expand:
-        cases = _expand_batch(scenario_names, overrides)
+        cases = _expand_batch(scenario_names, overrides, documents=documents)
     else:
         cases = [(name, list(overrides)) for name in scenario_names]
     # Labelled before resuming, so a case keeps the name it had in the run
@@ -1996,7 +2033,7 @@ def run_batch(
     try:
         check_batch_map(configs, labels)
         # And that each case is on the map its document names, if it has one.
-        check_scenario_maps(configs, labels)
+        check_scenario_maps(configs, labels, documents=documents)
     except RunConfigError as exc:
         print(f"Error: {exc}")  # noqa: T201
         sys.exit(1)
@@ -2034,6 +2071,15 @@ def run_batch(
     if wait is not None and launcher != "slurm":
         print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
         sys.exit(1)
+
+    # Every value a case reads of its config before it starts (the queue's
+    # server, traffic and Autoware launcher settings, the run timeout, the
+    # writers' settings, ...), for every case, before anything is built or the
+    # map is resolved: a local batch would refuse it only once its queue was
+    # built, and a SLURM task only on its node, once the batch was submitted
+    # (#977, #1430).  Raised, as RunConfigError: the CLI reports it as an
+    # ``Error:`` line (_dispatch).
+    check_batch_configs(configs, labels, documents=documents)
 
     # Before anything is built: a batch asking for Rerun recordings without
     # the extra installed is refused at once (RerunUnavailableError).  Under
@@ -2078,12 +2124,6 @@ def run_batch(
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
-    # Refused here, before a SLURM submission or CARLA starts.
-    world_reset_settings(first_cfg)
-    if launcher == "slurm":
-        # What the local queue refuses below, for every case: a task would
-        # only refuse it on its node, once the batch was submitted.
-        check_batch_configs(configs, labels)
 
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
@@ -2786,6 +2826,15 @@ def _dispatch(resume_from: int) -> None:
         except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
+        except RunConfigError as exc:
+            # A config value a case would refuse (check_batch_configs), before
+            # anything was built: the key's line, not a traceback (#1430).  A
+            # configuration error, exit 1, as a single run's is and as the
+            # batch's other refusals are; HYDRA_FULL_ERROR=1 raises it.
+            if os.environ.get("HYDRA_FULL_ERROR") == "1":
+                raise
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(1)
     else:
         if no_wait:
             print("Error: --no-wait is for launcher=slurm only")  # noqa: T201

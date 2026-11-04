@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -363,3 +364,112 @@ def test_a_batch_reports_the_invalid_controls_of_each_scenario(
     for name in (_CONCRETE, twin):
         assert f"{name}: controls.x: expected a key or a mapping" in err
     assert batch.configs == []
+
+
+# A config value a case would refuse is refused before any scenario is built or
+# the map is resolved, locally as under SLURM, and the CLI prints the key's
+# ``Error:`` line rather than a traceback (#1430).
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("server.world_reset=fast", "server.world_reset"),
+        ("scenario.timeout_seconds=-1", "scenario.timeout_seconds"),
+        ("server.port=70000", "server.port"),
+        ("server.cooldown_max_retries=-1", "server.cooldown_max_retries"),
+    ],
+)
+@pytest.mark.parametrize("multirun", [False, True])
+def test_a_batch_refuses_a_bad_config_value_with_an_error_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    override: str,
+    key: str,
+    multirun: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    def not_reached(what: str) -> Any:
+        def fail(*_: object, **__: object) -> Any:
+            raise AssertionError(f"{what} before refusing {key}")
+
+        return fail
+
+    monkeypatch.setattr(run, "build_scenario", not_reached("built a scenario"))
+    monkeypatch.setattr(run, "resolve_map_paths", not_reached("resolved the map"))
+    monkeypatch.setattr(run, "_make_batch_output_dir", not_reached("made the output"))
+    # --multirun: refused before a sweep reads the map, as the sweeper does.
+    monkeypatch.setattr(expand, "expand_config", not_reached("expanded a sweep"))
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+    # main() exports --resume-from for the sweeper: undone after the test.
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
+    argv = ["scenario", "scenario=intersection_passing/straight*", override]
+    if multirun:
+        argv.insert(1, "--multirun")
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as exited:
+        run.main()
+    # A configuration error, as a single run's is (docs/usage.md, Exit Codes).
+    assert exited.value.code == 1
+    out, err = capsys.readouterr()
+    # The case named (the glob's first), as the batch's map checks name theirs.
+    assert re.search(
+        rf"^Error: intersection_passing/straight\S*: {re.escape(key)}", err
+    )
+    assert "Traceback" not in out + err
+
+
+def test_a_batch_names_the_case_a_bad_config_value_is_refused_for(
+    monkeypatch: pytest.MonkeyPatch, twin: str
+) -> None:
+    """Every case is checked, so the one refused is named: here the second."""
+    from autoware_carla_scenario.examples import run
+
+    compose = run._compose_config
+
+    def composed(name: str, overrides: list[str]) -> Any:
+        cfg = compose(name, overrides)
+        if name == twin:
+            cfg.server.world_reset = "fast"
+        return cfg
+
+    monkeypatch.setattr(run, "_compose_config", composed)
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
+    )
+    with pytest.raises(
+        run.RunConfigError,
+        match=rf"^{re.escape(twin)}: server\.world_reset must be one of",
+    ):
+        run.run_batch([_CONCRETE, twin], [])
+
+
+@pytest.mark.parametrize("multirun", [False, True])
+def test_a_batch_raises_a_bad_config_value_with_hydra_full_error(
+    monkeypatch: pytest.MonkeyPatch, multirun: bool
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    monkeypatch.setattr(
+        expand, "expand_config", lambda *_, **__: pytest.fail("expanded a sweep")
+    )
+
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
+    )
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scenario",
+            *(["--multirun"] if multirun else []),
+            f"scenario={_CONCRETE}*",
+            "server.world_reset=fast",
+        ],
+    )
+    with pytest.raises(run.RunConfigError, match="server.world_reset"):
+        run.main()

@@ -99,6 +99,16 @@ Python version, and the viewer's Run form reads it the same way.
   configured. A batch whose cases differ in any of them is refused, naming the
   key and the cases (`map.no_3d_model_lanelet_ids` may differ: only a sweep's
   constraints read it)
+- A config value a case would refuse -- an unknown `server.world_reset`, a
+  `scenario.timeout_seconds` that is not positive, a `server.port` out of
+  range, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
+  refused for every case before any scenario is built or the map is resolved,
+  locally as under `launcher=slurm`: the batch prints
+  `Error: <case>: <key> ...`, naming the case refused, and exits 1, a
+  configuration error as a single run's is (`HYDRA_FULL_ERROR=1` shows the
+  traceback). With `--multirun` each scenario's config is checked before its
+  sweep reads the map, as the lanelet sweeper checks it, and reported as
+  `Error: <scenario>: <key> ...`
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
   then `HH-MM-SS-2`, ...: every batch has a directory of its own)
@@ -146,8 +156,12 @@ sample match nothing on the map) is refused as the lanelet sweeper refuses
 it: the batch prints `Error: <scenario>: the sweep expands to no case ...` for
 each such scenario of the glob and exits 1 before anything runs, even when the
 other scenarios have cases. A scenario without a `sweep:` is one case, never
-refused. `launcher=slurm` expands the batch the same way, so it submits
-nothing.
+refused. An exported scenario on a map of its own composed on another map
+(`map=<id>_map` left out) is refused the same way, before its sweep reads any
+map:
+`Error: <scenario>: scenario '<id>' runs on the map its document names, but ...`
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
+`launcher=slurm` expands the batch the same way, so it submits nothing.
 
 On a SLURM cluster, `launcher=slurm` runs a batch's cases as array jobs, several
 at once, each on a CARLA of its own, with the same outputs (off unless
@@ -1196,7 +1210,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
-| 1 | One or more scenarios failed or errored, or configuration/runtime error |
+| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
 | 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 

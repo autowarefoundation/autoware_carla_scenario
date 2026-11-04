@@ -50,15 +50,20 @@ map no built-in group does, so an export ships it as a map group of its own
 every ``map`` key, and the package is run with ``map=<own_map_group>``
 (:func:`run_map_group`).  A run that composes another map group anyway --
 the default one, when ``map=<own_map_group>`` is left out -- is refused before
-anything starts (:func:`own_map_mismatch`).
+anything starts (:func:`own_map_mismatch`, :func:`scenario_map_refusal`), on
+every path that composes it: a run, a batch, a sweep, ``scenario-expand``, the
+viewer's sweep resolver and ``scenario-odd route``.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .models import Entity, LaneletSlot, ScenarioDocument
 from .persistence import dump_yaml
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "PACKAGE_GLOBAL_HEADER",
@@ -71,6 +76,7 @@ __all__ = [
     "own_map_mismatch",
     "param_override_key",
     "run_map_group",
+    "scenario_map_refusal",
     "slot_lanelet_key",
     "spawn_lanelet_key",
     "spawn_s_key",
@@ -332,6 +338,56 @@ def _same_source(source: str | None, want: str | None) -> bool:
         return MapSource.parse(source) == MapSource.parse(want)
     except MapSourceError:
         return source == want
+
+
+def scenario_map_refusal(
+    cfg: Any, documents: dict[str, ScenarioDocument | None] | None = None
+) -> str | None:
+    """Say why the composed run config *cfg* is refused for its map, or ``None``.
+
+    The scenario's document is the one its package registered with its builder
+    (:func:`~autoware_carla_scenario.registry.register_scenario_document`),
+    so the scenario packages must be loaded first
+    (:func:`~autoware_carla_scenario.registry.load_scenario_plugins`);
+    the composed ``map`` is compared with it by :func:`own_map_mismatch`.  A
+    scenario with no registered document, or one on a built-in group, is not
+    refused; neither is one whose document cannot be loaded, which its builder
+    refuses with its own message.  Nothing is resolved, fetched or read but
+    the document.
+
+    Args:
+        cfg: The composed config (a ``DictConfig`` or a dict).
+        documents: The documents already loaded, by scenario name: filled
+            here, so a batch loads each scenario's once.
+
+    Returns:
+        The refusal, naming what differs and the ``map=<group>`` to run the
+        scenario with, or ``None``.
+    """
+    from ..registry import get_scenario_document  # noqa: PLC0415
+
+    scenario_name = (cfg.get("scenario") or {}).get("name")
+    if not scenario_name:
+        return None
+    key = str(scenario_name)
+    loaded = {} if documents is None else documents
+    if key not in loaded:
+        try:
+            loaded[key] = get_scenario_document(key)
+        except Exception:  # noqa: BLE001 - the builder refuses it, by name
+            _logger.debug("scenario %s: its document did not load", key, exc_info=True)
+            loaded[key] = None
+    document = loaded[key]
+    if document is None:
+        return None
+    mismatch = own_map_mismatch(document, cfg.get("map"))
+    if mismatch is None:
+        return None
+    return (
+        f"scenario {document.id!r} runs on the map its document names, but "
+        f"{mismatch}.  Run it with map={run_map_group(document)}, the map "
+        "group its package ships"
+    )
 
 
 def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:

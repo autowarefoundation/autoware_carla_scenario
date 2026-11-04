@@ -67,8 +67,13 @@ def resolve_sweep(
     Raises:
         SweepResolutionError: When the config cannot be composed or its sweep
             cannot be expanded (a bad constraint, a route search that does
-            not parse, a missing map, invalid ``controls``, ...).
+            not parse, a missing map, invalid ``controls``, ...), and when an
+            exported scenario is composed on another map than its document
+            names (before any map is read: ``map=<id>_map`` runs it).
     """
+    from autoware_carla_scenario.authoring.hydra_config import (  # noqa: PLC0415
+        scenario_map_refusal,
+    )
     from autoware_carla_scenario.odd.controls import (  # noqa: PLC0415
         ControlsError,
         format_diagnostics,
@@ -89,6 +94,22 @@ def resolve_sweep(
                     config_name="config",
                     overrides=[f"scenario={scenario_name}", *(extra_overrides or [])],
                 )
+    except Exception as exc:  # noqa: BLE001 -- Hydra, OmegaConf, ...
+        raise SweepResolutionError(
+            f"{scenario_name}: {type(exc).__name__}: {exc}"
+        ) from exc
+    # Before the sweep resolves, fetches or searches any map: a scenario
+    # composed on another map than its document names would be expanded on
+    # that one (#1428).
+    try:
+        refusal = scenario_map_refusal(cfg)
+    except Exception as exc:  # noqa: BLE001 -- OmegaConf reading cfg.map, ...
+        raise SweepResolutionError(
+            f"{scenario_name}: {type(exc).__name__}: {exc}"
+        ) from exc
+    if refusal is not None:
+        raise SweepResolutionError(f"{scenario_name}: {refusal}")
+    try:
         cases = expand_config(cfg, drawn=drawn)
     except ControlsError as exc:
         raise SweepResolutionError(
