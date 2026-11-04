@@ -422,6 +422,16 @@ names `__init__.py` defines (`register`, `register_scenario`,
 `register_conf_dir`) cannot be scenario names; `scenario-new` refuses them
 (including when they come from the package name, as in `configs_package`).
 
+The package name is the import name and, hyphenated, the distribution name of
+what gets installed, so `scenario-new` also refuses one that would clash once
+installed: the framework's own (`autoware_carla_scenario` /
+`autoware-carla-scenario`, in any spelling that normalises to it), which would
+make the package depend on itself and replace the framework on
+`uv pip install -e`; a standard-library module (`json`, `typing`, ...); and the
+import name of one of the framework's run-time dependencies (`openodd`,
+`lanelet2`, `typesafe_carla`, `hydra`, `numpy`, ...). A name that only contains
+one of them, such as `openodd_scenarios_pkg`, is fine.
+
 ```bash
 uv pip install -e reach_goal_pkg
 uv run scenario scenario=reach_goal/default map=nishishinjuku
