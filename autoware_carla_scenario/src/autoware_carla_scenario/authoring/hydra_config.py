@@ -284,7 +284,8 @@ def own_map_mismatch(document: ScenarioDocument, map_config: Any) -> str | None:
       built-in group sets one, so it is the run's own local copy of the map
       (``map.directory=...``, as ``resolve_map_paths`` documents).  A source
       that is not the document's is another map, or another revision of it,
-      whose lanelet ids are not the ones the document names.
+      whose lanelet ids are not the ones the document names; two spellings
+      of one source are the same (:func:`_same_source`).
 
     ``map.lanelet2_path`` and ``map.xodr_path`` are not compared: an explicit
     file wins over the source by design, which is how a run points at a local
@@ -313,9 +314,24 @@ def own_map_mismatch(document: ScenarioDocument, map_config: Any) -> str | None:
             f"map.directory is unset (map.source {source!r}), not the "
             f"document's {want_directory!r}"
         )
-    if source != want_source:
+    if not _same_source(source, want_source):
         return f"map.source is {source!r}, not the document's {want_source!r}"
     return None
+
+
+def _same_source(source: str | None, want: str | None) -> bool:
+    """Whether two ``map.source`` values name the same map: compared as
+    :class:`~...maps.source.MapSource` parses them, so two spellings of one
+    source (``git+...@<ref>#<path>``, a browser URL, a trailing slash) agree;
+    as text when either does not parse."""
+    if source is None or want is None:
+        return source == want
+    from ..maps.source import MapSource, MapSourceError  # noqa: PLC0415
+
+    try:
+        return MapSource.parse(source) == MapSource.parse(want)
+    except MapSourceError:
+        return source == want
 
 
 def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:

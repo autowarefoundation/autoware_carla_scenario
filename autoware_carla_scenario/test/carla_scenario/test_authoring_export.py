@@ -521,7 +521,12 @@ class TestExportedMapGroup:
 @pytest.fixture
 def scenario_registry(monkeypatch: pytest.MonkeyPatch) -> Any:
     """The scenario registry, restored after the test: an exported ``cut_in``
-    package registers over the built-in ``cut_in``."""
+    package registers over the built-in ``cut_in``.
+
+    ``examples.run`` registers the built-in scenarios when it is first
+    imported: imported before the registry is copied, or they would be
+    registered into the copy and gone once it is restored."""
+    import autoware_carla_scenario.examples.run  # noqa: F401
     from autoware_carla_scenario import registry
 
     for name in ("_SCENARIO_REGISTRY", "_SCENARIO_CLASSES", "_SCENARIO_DOCUMENTS"):
@@ -636,6 +641,53 @@ class TestRunOnTheDocumentsMap:
         scenario_registry.register_scenario_document("cut_in", lambda: document)
         with pytest.raises(RunConfigError, match=r"^case-a: .*map=cut_in_map"):
             check_batch_configs([_compose_exported(package)], ["case-a"])
+
+    def test_a_batch_loads_each_document_once(
+        self, tmp_path: Path, scenario_registry: Any
+    ) -> None:
+        from autoware_carla_scenario.examples.run import check_batch_configs
+
+        document = _document_on_own_map("source")
+        package = export_package(document, tmp_path, **OFFLINE).root
+        loads: list[str] = []
+
+        def load() -> Any:
+            loads.append(document.id)
+            return document
+
+        scenario_registry.register_scenario_document("cut_in", load)
+        cfg = _compose_exported(package, "map=cut_in_map")
+        check_batch_configs([cfg, cfg, cfg], ["a", "b", "c"])
+        assert loads == ["cut_in"]
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            # A browser URL of the same revision and directory.
+            "https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+            "/tree/5058c6683a1077a99aa5fdca5e6ecff9d71fcfb1/autoware_maps/Town10HD_Opt",
+            _MAP_SOURCE + "/",
+        ],
+    )
+    def test_another_spelling_of_the_documents_source_is_accepted(
+        self, tmp_path: Path, scenario_registry: Any, spelling: str
+    ) -> None:
+        document = _document_on_own_map("source")
+        package = export_package(document, tmp_path, **OFFLINE).root
+        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        self._check(
+            _compose_exported(package, "map=cut_in_map", f"map.source='{spelling}'")
+        )
+
+    def test_an_unparsable_source_is_compared_as_text(self) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import own_map_mismatch
+
+        document = _document_on_own_map("source")
+        document.map.source = "not a source"
+        on_it = {"name": "Town10HD_Opt", "source": " not a source "}
+        assert own_map_mismatch(document, on_it) is None
+        other = {"name": "Town10HD_Opt", "source": _MAP_SOURCE}
+        assert "map.source" in (own_map_mismatch(document, other) or "")
 
 
 #: Valid scenario ids, each with the Python package its export is named after.

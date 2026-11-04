@@ -1783,17 +1783,22 @@ def check_scenario_maps(
     )
 
     names = labels if labels is not None else []
+    # Loaded once a scenario, however many of the batch's cases run it.
+    documents: dict[str, Any] = {}
     for i, cfg in enumerate(configs):
         scenario_name = (cfg.get("scenario") or {}).get("name")
         if not scenario_name:
             continue
-        try:
-            document = get_scenario_document(str(scenario_name))
-        except Exception:  # noqa: BLE001 - the builder refuses it, by name
-            logger.debug(
-                "scenario %s: its document did not load", scenario_name, exc_info=True
-            )
-            continue
+        key = str(scenario_name)
+        if key not in documents:
+            try:
+                documents[key] = get_scenario_document(key)
+            except Exception:  # noqa: BLE001 - the builder refuses it, by name
+                logger.debug(
+                    "scenario %s: its document did not load", key, exc_info=True
+                )
+                documents[key] = None
+        document = documents[key]
         if document is None:
             continue
         mismatch = own_map_mismatch(document, cfg.get("map"))

@@ -162,6 +162,9 @@ def register_scenario_document(name: str, loader: ScenarioDocumentLoader) -> Non
     one it replaces).  The run loads it before anything starts to check the
     composed config against it: a document naming its own map refuses a run
     on another (``examples.run.check_scenario_maps``).
+
+    The loader is called on every :func:`get_scenario_document`, with no
+    caching here: each lookup reads the document as it is then.
     """
     _SCENARIO_DOCUMENTS[name] = loader
 
