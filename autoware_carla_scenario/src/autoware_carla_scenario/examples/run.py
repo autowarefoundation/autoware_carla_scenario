@@ -433,8 +433,8 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
 
     Raises:
         ValueError: If ``cfg.ego.entity`` names an unknown entity, or a setting
-            of the entity's group is out of range (a NaN timeout, say), naming
-            the key.
+            of the entity's group is out of range (a NaN timeout, say) or not
+            one the group defines (``autoware.timout_s``), naming the key.
     """
     ego_cfg = cfg.get("ego") or {}
     entity = str(ego_cfg.get("entity", "autopilot"))
@@ -459,17 +459,24 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             GrpcAutowareBridgeServer,
         )
 
+        from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
+            checked_options,
+        )
+
         autoware_cfg = cfg.get("autoware")
+        # The group is the bridge's settings plus ``launcher``, which
+        # build_autoware_launcher reads; any other key is a typo
+        # (``+autoware.timout_s=30``) that would leave the default in place.
         try:
-            bridge_cfg = AutowareBridgeConfig(
-                **{
-                    key: value
-                    for key, value in (
-                        _to_dict(autoware_cfg) if autoware_cfg is not None else {}
-                    ).items()
-                    if key in AutowareBridgeConfig.__dataclass_fields__
-                }
+            bridge_options = checked_options(
+                AutowareBridgeConfig,
+                _to_dict(autoware_cfg) if autoware_cfg is not None else {},
+                ignore={"launcher"},
             )
+        except ValueError as exc:
+            raise ValueError(f"autoware: {exc}") from None
+        try:
+            bridge_cfg = AutowareBridgeConfig(**bridge_options)
         except ValueError as exc:
             raise ValueError(f"autoware.{exc}") from None
         # autostart=False: in a batch every scenario is built before the first
@@ -499,7 +506,8 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             raise ValueError(msg)
 
         driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
-        control = ControlConfig.from_mapping(driver_dict.get("control", {}))
+        # ``driver.control: null`` means the default gains, as ``ros2.control`` does.
+        control = ControlConfig.from_mapping(driver_dict.get("control") or {})
         bridge_dict = driver_dict.get("bridge")
         if bridge_dict is None:
             return CarlaDriverEntity(

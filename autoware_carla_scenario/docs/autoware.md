@@ -133,6 +133,12 @@ on it is refused).
 A stack that exits during a scenario ends it: the result's message says
 `The Autoware stack exited with code <n>`.
 
+The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
+`address`, `timeout_s`, `ready_timeout_ticks`, `boot_timeout_s`,
+`boot_tick_period_s`, `base_link_offset_m`) and `launcher`. Any other key is
+refused when the ego is built, with an error naming it: `+autoware.timout_s=30`
+fails the run rather than leaving the default timeout in place.
+
 ### Settings
 
 | Setting | Default | Meaning |
