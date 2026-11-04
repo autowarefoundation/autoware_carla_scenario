@@ -108,6 +108,10 @@ Python version, and the viewer's Run form reads it the same way.
   does not end the batch: it is reported as `[ERROR]` with the error, its
   `batch_results.json` entry is `"passed": false` with `"error": true`, and the
   batch goes on with the next case. Ctrl+C still stops the batch
+- A retry (`server.cooldown_max_retries`) runs on a reset world
+  (`server.world_reset`): an attempt that raised never reached the reset at
+  the end of its run, so the world is reset before the retry, and the weather
+  or frozen traffic lights the failed attempt set do not carry into it
 - A scenario with a `sweep:` section runs once, as configured; add `--multirun`
   to run every case of it (see [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
 
