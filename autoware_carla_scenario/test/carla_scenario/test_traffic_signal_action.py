@@ -412,7 +412,9 @@ class TestTrafficSignalActionByLanes:
 
 
 class TestTrafficSignalActionRouteJunction:
-    @pytest.mark.parametrize("junction", [0.5, 1.9, True, False, math.nan, math.inf])
+    @pytest.mark.parametrize(
+        "junction", [0.5, 1.9, True, False, math.nan, math.inf, "2"]
+    )
     def test_a_junction_that_is_not_a_whole_number_is_refused(
         self, junction: Any
     ) -> None:

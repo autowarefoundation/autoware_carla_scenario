@@ -49,7 +49,7 @@ class EntityCountCondition(BaseCondition):
         super().__init__(label=label)
         # int() alone would compare against 0.5 as 0 (">= 0.5" always holds)
         # and against True as 1, and fail on NaN with its own message.
-        if isinstance(count, bool):
+        if isinstance(count, (bool, str)):
             raise ValueError(f"count must be a whole number, got {count!r}")
         number = float(count)
         if not math.isfinite(number):

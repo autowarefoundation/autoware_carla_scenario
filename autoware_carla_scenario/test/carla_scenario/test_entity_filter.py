@@ -272,7 +272,7 @@ class TestEntityCountCondition:
         with pytest.raises(ValueError, match="count"):
             EntityCountCondition(EntityFilter(), count=-1, label="x")
 
-    @pytest.mark.parametrize("count", [0.5, 1.9, True, False, math.nan, math.inf])
+    @pytest.mark.parametrize("count", [0.5, 1.9, True, False, math.nan, math.inf, "2"])
     def test_a_count_that_is_not_a_whole_number_is_refused(self, count: Any) -> None:
         # int() would compare against 0.5 as 0, so ">= 0.5" always held (#1474).
         with pytest.raises(ValueError, match="count"):

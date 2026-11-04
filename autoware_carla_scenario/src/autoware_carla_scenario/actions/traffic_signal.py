@@ -126,7 +126,7 @@ class TrafficSignalAction(BaseAction):
             turn = route_turn
         # int() alone would take junction 0.5 as 0 and True as 1, and fail on
         # NaN with its own message.
-        if isinstance(route_junction, bool):
+        if isinstance(route_junction, (bool, str)):
             raise ValueError(
                 f"{label}: route_junction must be a whole number, "
                 f"got {route_junction!r}"
