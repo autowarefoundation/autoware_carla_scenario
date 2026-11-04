@@ -760,6 +760,18 @@ class TestPlayMotionAction:
         with pytest.raises(ValueError, match="duration_s"):
             PlayMotionAction("walker1", wave, duration_s=-1.0)
 
+    @pytest.mark.parametrize("fps", [math.nan, math.inf, -math.inf])
+    def test_a_rate_must_be_finite(self, wave: Path, fps: float) -> None:
+        # #1321: NaN passed `fps <= 0`, and either failed int() mid-run.
+        with pytest.raises(ValueError, match="fps"):
+            PlayMotionAction("walker1", wave, fps=fps)
+
+    @pytest.mark.parametrize("fps", ["nan", "inf"])
+    def test_a_file_s_rate_must_be_finite(self, tmp_path: Path, fps: str) -> None:
+        bad = _write_motion(tmp_path / "bad.npz", [{}], extra={"fps": float(fps)})
+        with pytest.raises(ValueError, match="fps"):
+            PlayMotionAction("walker1", bad)
+
 
 class TestStanding:
     """The standing gate itself (``_Standing``)."""

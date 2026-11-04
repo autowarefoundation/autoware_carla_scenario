@@ -190,7 +190,8 @@ def load_soma_motion(path: Union[str, Path], fps: Optional[float] = None) -> Som
         ValueError: If it is not a SOMA body motion: no ``poses``, poses of
             neither shape, a hand motion (``hand_type``), joints the SOMA rig
             does not have, or poses relative to the T-pose without the
-            ``joint_orient`` that makes them absolute.
+            ``joint_orient`` that makes them absolute; or if the frame rate
+            (*fps* or the file's) is not finite and positive.
     """
     file = Path(path).expanduser()
     if not file.is_file():
@@ -224,8 +225,8 @@ def load_soma_motion(path: Union[str, Path], fps: Optional[float] = None) -> Som
                     break
     if rate is None:
         rate = DEFAULT_FPS
-    if rate <= 0:
-        raise ValueError(f"{file}: fps must be positive, not {rate}")
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError(f"{file}: fps must be finite and positive, not {rate}")
     rotations = _as_matrices(poses, file)
     if rotations.shape[0] == 0:
         raise ValueError(f"{file}: the motion has no frames")

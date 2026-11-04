@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -2063,7 +2064,9 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
 
     Raises:
         ValueError: If ``source.speed_kmh`` is not a number, not finite, or
-            below 1 km/h (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`).
+            below 1 km/h (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`),
+            or ``source.vehicles_per_minute`` or ``source.min_gap_m`` is not a
+            number, not finite, or negative.
     """
     background = cfg.get("background_traffic")
     if background is None or not background.get("enabled", False):
@@ -2093,6 +2096,26 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             f"background speed ({exc})"
         ) from exc
 
+    def finite_amount(key: str, default: float) -> float:
+        # Refused here, naming the key: NaN would fail `rate > 0` below and be
+        # dropped without a word, infinity would crash the run (#1321).
+        value = source.get(key, default)
+        try:
+            amount = float(str(value))
+        except ValueError as exc:
+            raise ValueError(
+                f"background_traffic.source.{key}: {value!r} is not a number"
+            ) from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(
+                f"background_traffic.source.{key}: {value!r} must be finite "
+                "and not negative"
+            )
+        return amount
+
+    min_gap_m = finite_amount("min_gap_m", 15.0)
+    rate = finite_amount("vehicles_per_minute", 0.0)
+
     def source_action(
         *, initial: int, rate: float, seed: int, label: str
     ) -> TrafficSourceAction:
@@ -2102,7 +2125,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             vehicles_per_minute=rate,
             max_vehicles=None if max_vehicles is None else int(max_vehicles),
             speed_kmh=speed_kmh,
-            min_gap_m=float(source.get("min_gap_m", 15.0)),
+            min_gap_m=min_gap_m,
             blueprint=source.get("blueprint"),
             seed=seed,
             label=label,
@@ -2114,7 +2137,6 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
         )
 
     initial = int(source.get("initial_vehicles", 0))
-    rate = float(source.get("vehicles_per_minute", 0.0))
     if constraints and initial > 0:
         scenario.register_init(
             source_action(
