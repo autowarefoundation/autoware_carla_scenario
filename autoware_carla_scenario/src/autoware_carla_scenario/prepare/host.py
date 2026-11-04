@@ -216,7 +216,8 @@ def _gpus() -> tuple[Gpu, ...]:
             ],
             check=True,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         ).stdout
     except (OSError, subprocess.SubprocessError):

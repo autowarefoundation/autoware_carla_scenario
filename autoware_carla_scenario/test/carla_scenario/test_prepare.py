@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Mapping, Optional
@@ -470,6 +471,94 @@ class TestDockerBackend:
         _Answering.from_settings({}).start()
         removed = [c[-1] for c in recorded.calls if c[1] == "rm"]
         assert removed == ["dead"]
+
+
+#: A docker whose ``logs`` (and every other command) print bytes that are not
+#: UTF-8, as a backend's own output may (#1346).
+_UNDECODABLE_DOCKER = """\
+import sys
+sys.stdout.buffer.write(b"out \\xff\\n")
+sys.stderr.buffer.write(b"err \\xfe\\n")
+"""
+
+
+class _Silent(docker_module.DockerBackend):
+    backend_name = "silent"
+
+    def ready(self, timeout_s: float) -> bool:
+        return False
+
+
+def _undecodable_docker(tmp_path: Path) -> str:
+    script = tmp_path / "docker"
+    script.write_text(f"#!{sys.executable}\n{_UNDECODABLE_DOCKER}")
+    script.chmod(0o755)
+    return str(script)
+
+
+def _silent_backend(docker: str, startup_timeout_s: float) -> _Silent:
+    backend = _Silent(
+        docker_module.DockerSettings(
+            image="img:1",
+            container_port=1,
+            startup_timeout_s=startup_timeout_s,
+            docker=docker,
+        )
+    )
+    backend._container = "c0ffee"
+    return backend
+
+
+class TestDockerBackendOutput:
+    """The backend's output is any bytes: it is read, not refused (#1346)."""
+
+    def test_a_log_that_is_not_utf8_is_read_with_replacements(
+        self, tmp_path: Path
+    ) -> None:
+        backend = _silent_backend(_undecodable_docker(tmp_path), 600.0)
+        tail = backend._tail()
+        assert "out \ufffd" in tail
+        assert "err \ufffd" in tail
+
+    def test_a_backend_that_exits_reports_a_log_that_is_not_utf8(
+        self, tmp_path: Path
+    ) -> None:
+        # ``inspect`` does not print "true": the container is not running.
+        backend = _silent_backend(_undecodable_docker(tmp_path), 600.0)
+        with pytest.raises(docker_module.BackendError, match="exited while starting"):
+            backend._wait_ready()
+
+    def test_a_timeout_reports_a_log_that_is_not_utf8_and_closes(
+        self, tmp_path: Path
+    ) -> None:
+        backend = _silent_backend(_undecodable_docker(tmp_path), 0.0)
+        with pytest.raises(docker_module.BackendError, match="did not answer") as err:
+            backend._wait_ready()
+        assert "out \ufffd" in str(err.value)
+        assert backend._container is None
+
+    def test_a_timeout_closes_even_when_the_log_cannot_be_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+        backend = _silent_backend("docker", 0.0)
+
+        def unreadable() -> str:
+            raise OSError("no log")
+
+        monkeypatch.setattr(backend, "_tail", unreadable)
+        with pytest.raises(OSError, match="no log"):
+            backend._wait_ready()
+        assert ["docker", "stop", "--time", "10", "c0ffee"] in recorded.calls
+        assert ["docker", "rm", "--force", "c0ffee"] in recorded.calls
+        assert backend._container is None
+
+    def test_docker_output_that_is_not_utf8_is_read_with_replacements(
+        self, tmp_path: Path
+    ) -> None:
+        out = docker_module._docker([_undecodable_docker(tmp_path), "ps"], "list")
+        assert out == "out \ufffd\n"
 
 
 class TestQueue:

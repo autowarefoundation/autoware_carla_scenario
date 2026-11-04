@@ -11,6 +11,7 @@ is loaded, in the viewer process.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 # Resolved locally to avoid importing examples.run (which pulls in carla).
 _CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf"
+
+#: Held while Hydra composes a config.  ``GlobalHydra`` and
+#: ``initialize_config_dir`` are process-global, and the viewer resolves
+#: sweeps on worker threads (#1345): every Hydra composition in the viewer
+#: process takes this lock, so two requests never clear or initialize
+#: Hydra under each other.
+HYDRA_LOCK = threading.Lock()
 
 
 class SweepResolutionError(ValueError):
@@ -74,12 +82,13 @@ def resolve_sweep(
     # autoware_scenario_searchpath); loading is a no-op after the first call.
     load_scenario_plugins()
     try:
-        GlobalHydra.instance().clear()
-        with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
-            cfg = compose(
-                config_name="config",
-                overrides=[f"scenario={scenario_name}", *(extra_overrides or [])],
-            )
+        with HYDRA_LOCK:
+            GlobalHydra.instance().clear()
+            with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
+                cfg = compose(
+                    config_name="config",
+                    overrides=[f"scenario={scenario_name}", *(extra_overrides or [])],
+                )
         cases = expand_config(cfg, drawn=drawn)
     except ControlsError as exc:
         raise SweepResolutionError(

@@ -195,7 +195,8 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
         [str(cli), "rrd", "print", str(recording)],
         check=True,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     ).stdout
     chunks = [line for line in printed.splitlines() if line.startswith("Chunk(")]
     matches = [_CHUNK_LINE.match(line) for line in chunks]

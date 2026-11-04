@@ -329,7 +329,8 @@ def _download_wheels(venv: Path, requirements: Path, destination: Path) -> str:
     result = subprocess.run(  # noqa: S603
         command,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         timeout=_WHEEL_TIMEOUT_SECONDS,
     )

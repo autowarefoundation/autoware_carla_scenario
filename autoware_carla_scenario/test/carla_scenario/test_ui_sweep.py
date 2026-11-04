@@ -8,6 +8,8 @@ rather than run as "no lanelets matched".
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,9 @@ from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import runner, sweep_resolver
 
 EXTRA = ["ego.initial_speed_kmh=42.0"]
+
+#: How long a test waits on another thread before it gives up.
+_HANG_S = 120.0
 
 
 @pytest.fixture
@@ -204,3 +209,96 @@ def test_the_scenarios_of_a_run_share_their_odd_draws(
     assert len(seen) == 2
     assert isinstance(seen[0], OddDraws)
     assert seen[0] is seen[1]
+
+
+def test_a_busy_run_is_refused_before_its_sweep_is_resolved(
+    started: dict[str, Any], client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolution can load or clone a map: a refused run never pays for it (#1345)."""
+    resolved: list[str] = []
+
+    def resolve(name: str, extra: Any = None, *, drawn: Any = None) -> Any:
+        resolved.append(name)
+        return [[f"scenario={name}"]]
+
+    monkeypatch.setattr(sweep_resolver, "resolve_sweep", resolve)
+    monkeypatch.setattr(runner, "is_running", lambda: True)
+    response = client.post(
+        "/api/run", json={"scenario": "a/one", "extra_overrides": [], "sweeper": "x"}
+    )
+    assert response.status_code == 409
+    assert response.json() == app_module._BUSY
+    assert resolved == []
+    assert "jobs" not in started
+
+
+def test_a_slow_sweep_resolution_leaves_other_requests_served(
+    started: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While one run's sweep resolves, another request is answered (#1345).
+
+    The client is entered as a context manager so every request shares one
+    event loop, as they do under uvicorn: a resolution run inline would hold
+    that loop, and the second request would wait for the release that only
+    comes after it.
+    """
+    began = threading.Event()
+    release = threading.Event()
+    seen: dict[str, Any] = {}
+
+    def slow(name: str, extra: Any = None, *, drawn: Any = None) -> Any:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            seen["on_loop"] = False
+        else:
+            seen["on_loop"] = True
+        began.set()
+        seen["released"] = release.wait(_HANG_S)
+        return [[f"scenario={name}"]]
+
+    monkeypatch.setattr(sweep_resolver, "resolve_sweep", slow)
+    with TestClient(app_module.app) as client:
+        results: list[Any] = []
+        poster = threading.Thread(
+            target=lambda: results.append(
+                client.post(
+                    "/api/run",
+                    json={"scenario": "a/one", "extra_overrides": [], "sweeper": "x"},
+                )
+            )
+        )
+        poster.start()
+        try:
+            assert began.wait(_HANG_S)
+            during = client.get("/api/run/status")
+            answered_while_resolving = not release.is_set()
+        finally:
+            release.set()
+            poster.join(_HANG_S)
+    assert not poster.is_alive(), "the run request never finished"
+    assert during.status_code == 200
+    assert answered_while_resolving
+    assert seen == {"on_loop": False, "released": True}
+    assert results and results[0].json() == {"status": "started"}
+    assert started["jobs"] == [["scenario=a/one"]]
+
+
+def test_hydra_is_composed_under_the_shared_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hydra's global state is cleared and composed holding HYDRA_LOCK (#1345)."""
+    from autoware_carla_scenario.sweeper import expand
+
+    held: list[bool] = []
+    real_compose = sweep_resolver.compose
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        held.append(sweep_resolver.HYDRA_LOCK.locked())
+        return real_compose(*args, **kwargs)
+
+    monkeypatch.setattr(sweep_resolver, "compose", spy)
+    monkeypatch.setattr(expand, "expand_config", lambda cfg, *a, **k: [[]])
+    assert sweep_resolver.resolve_sweep("cut_in/left") == [["scenario=cut_in/left"]]
+    assert held == [True]
+    assert not sweep_resolver.HYDRA_LOCK.locked()

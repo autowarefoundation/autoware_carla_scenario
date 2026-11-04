@@ -230,6 +230,31 @@ async def run_preview(request: Request) -> dict[str, str]:
     return {"command": preview}
 
 
+def _resolve_sweeps(
+    scenario_names: list[str], extra_overrides: list[str]
+) -> tuple[list[list[str]], list[str]]:
+    """Every job the sweeps of *scenario_names* expand to, and the errors.
+
+    Blocking (Hydra, the Lanelet2 map, route searches): :func:`run_scenarios`
+    runs it on a worker thread.  Hydra's global state is guarded by
+    :data:`.sweep_resolver.HYDRA_LOCK` inside :func:`.sweep_resolver.resolve_sweep`.
+    """
+    from ..odd.sampler import OddDraws  # noqa: PLC0415
+    from .sweep_resolver import SweepResolutionError, resolve_sweep  # noqa: PLC0415
+
+    overrides_list: list[list[str]] = []
+    errors: list[str] = []
+    # Scenarios on one ODD go on from each other's draws.
+    drawn = OddDraws()
+    for name in scenario_names:
+        try:
+            overrides_list.extend(resolve_sweep(name, extra_overrides, drawn=drawn))
+        except SweepResolutionError as exc:
+            logger.error("Sweep resolution failed for %s: %s", name, exc)
+            errors.append(str(exc))
+    return overrides_list, errors
+
+
 #: The answer to a run refused because another is still in progress.
 _BUSY = {"status": "busy", "message": "A scenario run is already in progress"}
 
@@ -255,6 +280,12 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     if body.get("launcher") == "slurm":
         return _submit_slurm(scenario, extra_overrides, sweeper, body.get("slurm"))
 
+    # A fast path: a sweep's resolution can load (or clone) a map, so a run
+    # that would be refused is refused before it.  The claim in
+    # runner.start_run stays the one that counts (#1345).
+    if runner.is_running():
+        return JSONResponse(status_code=409, content=_BUSY)
+
     try:
         scenario_names = _resolve_scenario_names(scenario)
     except ValueError as exc:
@@ -266,20 +297,12 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
         # Expand each scenario's sweep in-process (no CARLA), as
         # scenario-batch does (sweeper.expand.expand_config): constraints,
         # route searches and ODD draws alike.  Each job is then run as a
-        # plain single-scenario run.
-        from ..odd.sampler import OddDraws  # noqa: PLC0415
-        from .sweep_resolver import SweepResolutionError, resolve_sweep  # noqa: PLC0415
-
-        overrides_list: list[list[str]] = []
-        errors: list[str] = []
-        # Scenarios on one ODD go on from each other's draws.
-        drawn = OddDraws()
-        for name in scenario_names:
-            try:
-                overrides_list.extend(resolve_sweep(name, extra_overrides, drawn=drawn))
-            except SweepResolutionError as exc:
-                logger.error("Sweep resolution failed for %s: %s", name, exc)
-                errors.append(str(exc))
+        # plain single-scenario run.  Resolution composes Hydra, loads the
+        # map and searches routes: it runs on a worker thread, so the loop
+        # goes on serving other requests (#1345).
+        overrides_list, errors = await asyncio.to_thread(
+            _resolve_sweeps, scenario_names, extra_overrides
+        )
 
         if errors:
             # Nothing runs: a run missing some of the scenarios asked for

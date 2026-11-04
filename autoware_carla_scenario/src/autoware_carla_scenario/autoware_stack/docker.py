@@ -531,14 +531,17 @@ class DockerAutowareLauncher:
         log: Optional[IO[str]] = None
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            log = log_path.open("w")
+            log = log_path.open("w", encoding="utf-8")
         try:
             process: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603 - argv comes from the user's own config
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
+                # gcc echoes source lines, any bytes: replace what is not
+                # UTF-8 rather than abort the build mid-stream (#1346).
+                encoding="utf-8",
+                errors="replace",
             )
             assert process.stdout is not None  # noqa: S101 - stdout=PIPE
             for line in process.stdout:
@@ -661,7 +664,8 @@ class DockerAutowareLauncher:
             completed = subprocess.run(  # noqa: S603 - argv comes from the user's own config
                 [self._config.docker] + args,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
         except OSError as exc:
