@@ -1988,7 +1988,8 @@ def check_batch_configs(
     ``background_traffic`` (:func:`background_traffic_settings`),
     ``environment`` (:func:`environment_settings`) and the form of its
     ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
-    ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`), the
+    ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`), ``ros2``
+    settings of an ``ego.entity=ros2`` case (:func:`_check_ros2_settings`), the
     ``scenario`` settings its config class refuses
     (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
@@ -2028,6 +2029,7 @@ def check_batch_configs(
             environment_settings(cfg)
             _check_weather_rules(cfg)
             _check_driver_settings(cfg)
+            _check_ros2_settings(cfg)
             _check_scenario_config(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
@@ -2404,6 +2406,33 @@ def _check_driver_settings(cfg: DictConfig) -> None:
     from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
 
     DriverClientConfig.from_mapping(_with_fog_density_scale(_to_dict(driver_cfg), cfg))
+
+
+def _check_ros2_settings(cfg: DictConfig) -> None:
+    """Refuse the ``ros2`` settings of an ``ego.entity=ros2`` case as
+    :func:`build_ego_entity` would (``ros2.domain_id`` above 232, a quoted
+    ``priority``, ...), building only the configs: nothing joins a DDS domain,
+    which the entity first does once the ego has spawned.
+
+    Raises:
+        ValueError: When :class:`~autoware_carla_scenario.ros2.Ros2EgoConfig`
+            or the trajectory follower's ``ros2.control`` refuses them, headed
+            ``ros2:``.
+    """
+    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "ros2":
+        return
+    ros2_cfg = cfg.get("ros2")
+    if ros2_cfg is None:
+        return  # Refused, with its remedy, by build_ego_entity.
+    from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
+    from autoware_carla_scenario.ros2 import Ros2EgoConfig  # noqa: PLC0415
+
+    ros2_dict = _to_dict(ros2_cfg)
+    try:
+        ControlConfig.from_mapping(ros2_dict.get("control") or {})
+        Ros2EgoConfig.from_mapping(ros2_dict)
+    except ValueError as exc:
+        raise ValueError(f"ros2: {exc}") from None
 
 
 def _check_scenario_config(cfg: DictConfig) -> None:

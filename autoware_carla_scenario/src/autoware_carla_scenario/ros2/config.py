@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
-from ..constants import US_PER_S
+from ..constants import MAX_ROS_DOMAIN_ID, US_PER_S
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 
 __all__ = [
@@ -43,6 +43,23 @@ COMMAND_KINDS: Tuple[str, ...] = ("trajectory", "steer_accel", "control")
 ON_STALE_ACTIONS: Tuple[str, ...] = ("hold", "brake")
 
 
+# A mapping (a Hydra node) is not coerced: a field annotated float may hold a
+# quoted "0.3" or a bool, which math.isfinite() would refuse with a TypeError
+# naming no key, or take as 1.0 and 0.0.
+
+
+def _check_number(owner: str, key: str, value: float) -> None:
+    """Refuse *value* unless it is an int or a float, not a bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{owner}: {key} must be a number, got {value!r}")
+
+
+def _check_whole_number(owner: str, key: str, value: int) -> None:
+    """Refuse *value* unless it is an int, not a bool."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{owner}: {key} must be a whole number, got {value!r}")
+
+
 @dataclass(frozen=True)
 class CommandSourceConfig:
     """One ROS 2 publisher the ego takes commands from.
@@ -56,7 +73,8 @@ class CommandSourceConfig:
         topic: The command topic, for ``trajectory`` and ``control``.
         steering_topic: The steering topic, for ``steer_accel``.
         acceleration_topic: The acceleration topic, for ``steer_accel``.
-        priority: Higher wins among the fresh sources.
+        priority: Higher wins among the fresh sources.  An ``int`` (not a
+            bool, a float or a string).
         stale_s: Simulated seconds after its last command that a source stops
             counting as fresh.
         steering_sign: Multiplies a ``steer_accel`` steering angle before it
@@ -104,6 +122,17 @@ class CommandSourceConfig:
                 )
         elif not self.topic:
             raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
+        owner = f"command source {self.name!r}"
+        # The arbiter compares priorities: a quoted "10" would only fail there,
+        # on the first tick two sources are fresh, and a NaN would never win.
+        _check_whole_number(owner, "priority", self.priority)
+        for key, value in (
+            ("stale_s", self.stale_s),
+            ("steering_sign", self.steering_sign),
+            ("speed_horizon_s", self.speed_horizon_s),
+            ("jerk_mps3", self.jerk_mps3),
+        ):
+            _check_number(owner, key, value)
         # A NaN fails every comparison: a NaN stale_s would pass a `<= 0`
         # check and then never count a command fresh, and a NaN gain makes
         # every command non-finite, so the ego brakes for the whole run.
@@ -113,6 +142,8 @@ class CommandSourceConfig:
                 f"finite, got {self.stale_s}"
             )
         window = self.pair_window_s
+        if window is not None:
+            _check_number(owner, "pair_window_s", window)
         if window is not None and (not math.isfinite(window) or window < 0.0):
             raise ValueError(
                 f"command source {self.name!r}: pair_window_s must be finite and "
@@ -195,6 +226,11 @@ class Ros2CameraConfig:
     def __post_init__(self) -> None:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
+        owner = f"camera {self.logical_id!r}"
+        # A float size is taken, as a driver camera's (DriverCameraConfig);
+        # a bool or a string is not.
+        _check_number(owner, "image_width", self.image_width)
+        _check_number(owner, "image_height", self.image_height)
         for key, value in (
             ("fov", self.fov),
             ("fps", self.fps),
@@ -205,6 +241,7 @@ class Ros2CameraConfig:
             ("pitch", self.pitch),
             ("yaw", self.yaw),
         ):
+            _check_number(owner, key, value)
             if not math.isfinite(value):
                 raise ValueError(
                     f"camera {self.logical_id!r}: {key} must be finite, got {value}"
@@ -295,7 +332,9 @@ class Ros2EgoConfig:
     the origin on the rear axle, Autoware's ``base_link``.
 
     Attributes:
-        domain_id: The DDS domain (``ROS_DOMAIN_ID``).
+        domain_id: The DDS domain (``ROS_DOMAIN_ID``): an ``int`` (not a
+            bool) from 0 to :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`
+            (232), the domains ROS 2 can use.
         frame_id: ``header.frame_id`` of the published odometry.
         child_frame_id: Its ``child_frame_id``.
         kinematic_state_topic: ``nav_msgs/msg/Odometry`` of the ego.
@@ -335,6 +374,19 @@ class Ros2EgoConfig:
     cameras: Tuple[Ros2CameraConfig, ...] = field(default_factory=_no_cameras)
 
     def __post_init__(self) -> None:
+        # Checked here: the domain is first used as the entity joins it, once
+        # the scenario has started and the ego has spawned, where 233 fails
+        # with an opaque DDSException and "7" with a ctypes TypeError.
+        domain_id = self.domain_id
+        if (
+            isinstance(domain_id, bool)
+            or not isinstance(domain_id, int)
+            or not 0 <= domain_id <= MAX_ROS_DOMAIN_ID
+        ):
+            raise ValueError(
+                "domain_id must be a ROS domain id, a whole number from 0 to "
+                f"{MAX_ROS_DOMAIN_ID}, got {domain_id!r}"
+            )
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"unknown on_stale {self.on_stale!r}, expected one of "
@@ -343,6 +395,10 @@ class Ros2EgoConfig:
         if not self.sources:
             raise ValueError("the ego needs at least one command source")
         offset = self.rear_axle_offset_m
+        if offset is not None and (
+            isinstance(offset, bool) or not isinstance(offset, (int, float))
+        ):
+            raise ValueError(f"rear_axle_offset_m must be a number, got {offset!r}")
         if offset is not None and not math.isfinite(offset):
             raise ValueError(f"rear_axle_offset_m must be finite, got {offset}")
         names = [source.name for source in self.sources]

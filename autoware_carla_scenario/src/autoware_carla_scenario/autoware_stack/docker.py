@@ -47,6 +47,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
+from ..constants import MAX_ROS_DOMAIN_ID
 from .bridge_node import (
     BRIDGE_APT_PACKAGES,
     bridge_command,
@@ -94,13 +95,6 @@ _INTERFACE_PACKAGE = "autoware_carla_interface"
 _BRIDGE_PYTHON_ROOT = "/opt/autoware_carla_scenario/python"
 
 
-#: The highest ``ROS_DOMAIN_ID`` ROS 2 can use: the DDS (RTPS) port of a
-#: domain above it is past 65535 ("The ROS_DOMAIN_ID", ROS 2 documentation,
-#: https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html).
-#: On Linux that page advises 0 to 101, below the kernel's ephemeral ports.
-_MAX_ROS_DOMAIN_ID = 232
-
-
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
     return f"uid-{os.getuid()}"
@@ -141,7 +135,7 @@ class DockerAutowareConfig:
             stack from discovering what is left of the last one before its
             participants time out.  Each is an ``int`` from 0 to 232, the
             range ROS 2 can use (0 to 101 is safe on Linux; see
-            :data:`_MAX_ROS_DOMAIN_ID`).
+            :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`).
         gpus: Docker's ``--gpus`` value; ``None`` for no GPU.
         user: Docker's ``--user`` value.  ``None`` leaves it to the image, which
             maps its ``aw`` user to ``HOST_UID``/``HOST_GID`` (set to this
@@ -199,12 +193,10 @@ class DockerAutowareConfig:
         # Checked here: an id out of range would only be refused inside the
         # container, by the stack's DDS, once a scenario has started.
         for domain_id in self.ros_domain_ids:
-            if isinstance(domain_id, bool) or not (
-                0 <= domain_id <= _MAX_ROS_DOMAIN_ID
-            ):
+            if isinstance(domain_id, bool) or not (0 <= domain_id <= MAX_ROS_DOMAIN_ID):
                 raise ValueError(
                     "ros_domain_ids must be ROS domain ids, whole numbers from 0 "
-                    f"to {_MAX_ROS_DOMAIN_ID}, got {domain_id}"
+                    f"to {MAX_ROS_DOMAIN_ID}, got {domain_id}"
                 )
         _check_stop_timeout_s(self.stop_timeout_s)
 
