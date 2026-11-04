@@ -241,7 +241,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
 | `road_traffic_rule` | An OpenDRIVE road's traffic rule, `"RHT"` or `"LHT"` (its `rule` attribute, `"RHT"` where unset). |
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
-| `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`. |
+| `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`; refuses (`ValueError`) a negative or non-finite distance, or a ray of no length. |
 | `lanelets_ahead` | A lanelet and the lanelets that follow it in the routing graph (no lane changes, every branch), up to a distance: the lanes a vehicle keeps to without changing lanes. |
 | `lanes_ahead_before_junction` | `lanelets_ahead` cut at the first junction lanelet (one with a `turn_direction` tag): the lane a vehicle is on until the next intersection. |
 | `lane_beside` | The lanelet a lane change to the `"left"` or `"right"` ends on: the routing graph's `left` / `right`, else its `adjacentLeft` / `adjacentRight`; `None` where there is none. |

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -63,6 +64,7 @@ from omegaconf.errors import OmegaConfBaseException
 from tqdm import tqdm
 
 from autoware_carla_scenario.coordinate.map_manager import MapManager
+from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
 )
@@ -136,7 +138,19 @@ def detect_no_3d_model_lanelets(
     -------
     list[int]
         Sorted lanelet IDs where ground projection found no hit.
+
+    Raises
+    ------
+    ValueError
+        A negative or non-finite distance, or a ray of no length (one that
+        cannot hit would flag every lanelet).
     """
+    check_ray_distances(
+        ray_distance_upper,
+        ray_distance_lower,
+        "ray_distance_upper",
+        "ray_distance_lower",
+    )
     no_model_ids: list[int] = []
     total = len(lanelet_map.laneletLayer)
 
@@ -646,7 +660,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RAY_DISTANCE_UPPER,
         help=(
             "Ray search range above z estimate in metres, as the runner's "
-            "entity.ground_projection_ray_distance_upper (default: %(default)s)"
+            "entity.ground_projection_ray_distance_upper; non-negative, and "
+            "with --ray-lower a positive length (default: %(default)s)"
         ),
     )
     parser.add_argument(
@@ -655,14 +670,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RAY_DISTANCE_LOWER,
         help=(
             "Ray search range below z estimate in metres, as the runner's "
-            "entity.ground_projection_ray_distance_lower (default: %(default)s)"
+            "entity.ground_projection_ray_distance_lower; non-negative "
+            "(default: %(default)s)"
         ),
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
-        help="CARLA client timeout in seconds (default: 10.0)",
+        help="CARLA client timeout in seconds, positive (default: 10.0)",
     )
     parser.add_argument(
         "-v",
@@ -673,9 +689,28 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a ray or timeout the detection cannot run with, by
+    ``parser.error`` (exit 2), before CARLA is connected to or the YAML read.
+
+    A ray of no length, or a negative or non-finite one, hits nothing: every
+    lanelet would be flagged and written to the YAML (#1416).
+    """
+    try:
+        check_ray_distances(
+            args.ray_upper, args.ray_lower, "--ray-upper", "--ray-lower"
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not math.isfinite(args.timeout) or args.timeout <= 0.0:
+        parser.error(f"--timeout must be positive and finite, got {args.timeout}")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for detecting lanelets without a CARLA 3D model."""
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    _check_args(parser, args)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

@@ -31,7 +31,9 @@ class GroundProjectionConfig:
 
     The ray is cast downward from ``z_estimate + ray_distance_upper`` and
     searches a total of ``ray_distance_upper + ray_distance_lower`` metres,
-    i.e. from ``z_estimate + upper`` to ``z_estimate - lower``.
+    i.e. from ``z_estimate + upper`` to ``z_estimate - lower``.  Both must be
+    finite and non-negative and their sum positive (:func:`check_ray_distances`):
+    a ray of no length never hits, so it is refused with a ``ValueError``.
 
     The scenario runner builds this config from its
     ``entity.ground_projection_ray_distance_*`` values (5 m up, 10 m down as
@@ -50,6 +52,46 @@ class GroundProjectionConfig:
 
     #: Minimum absolute z delta (m) to log an info message.
     z_log_threshold: float = 0.01
+
+    def __post_init__(self) -> None:
+        check_ray_distances(
+            self.ray_distance_upper,
+            self.ray_distance_lower,
+            "ray_distance_upper",
+            "ray_distance_lower",
+        )
+
+
+def check_ray_distances(
+    upper: float, lower: float, upper_name: str, lower_name: str
+) -> None:
+    """Refuse a ground-projection ray that cannot hit, or whose range is nonsense.
+
+    The ray starts *upper* metres above the z estimate and searches
+    ``upper + lower`` metres down, so each must be finite and non-negative and
+    the two together positive.  A ray of no length (or a negative or NaN one)
+    misses every surface, and every pose keeps its estimate; a negative range
+    on one side is refused too, as a search range below zero means nothing
+    (#1416).
+
+    Args:
+        upper: The search range above the z estimate (m).
+        lower: The search range below the z estimate (m).
+        upper_name: What the message calls *upper*, such as the config key.
+        lower_name: What the message calls *lower*.
+
+    Raises:
+        ValueError: naming the value refused.
+    """
+    if not math.isfinite(upper) or upper < 0.0:
+        raise ValueError(f"{upper_name} must be non-negative and finite, got {upper}")
+    if not math.isfinite(lower) or lower < 0.0:
+        raise ValueError(f"{lower_name} must be non-negative and finite, got {lower}")
+    if upper + lower <= 0.0:
+        raise ValueError(
+            f"{upper_name} + {lower_name} must be positive (the ray's length), "
+            f"got {upper} + {lower}"
+        )
 
 
 @overload
