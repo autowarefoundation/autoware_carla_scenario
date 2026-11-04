@@ -217,7 +217,8 @@ class BicycleConfig:
         min_distance_m: The shortest ride generated, metres (between where it
             starts and ends).
         max_distance_m: The longest ride generated, metres; ``None`` for no
-            limit.
+            limit.  Above ``min_distance_m``: ``randomTrips.py`` keeps a ride
+            at least ``min_distance_m`` and under ``max_distance_m`` long.
         radius_m: Mirror only the bicycles this close to the ego into CARLA;
             ``None``: ``spawn_radius_m``, the vehicles' radius.
         max_bicycles: Most bicycles mirrored into CARLA at once, the nearest
@@ -258,6 +259,15 @@ class BicycleConfig:
         )
         _check_not_negative("bicycles.min_distance_m", self.min_distance_m)
         _check_positive_or_inf("bicycles.max_distance_m", self.max_distance_m)
+        # randomTrips.py keeps a ride min <= distance < max: an equal or
+        # inverted pair keeps none, and generates no ride without a word.
+        max_distance = self.max_distance_m
+        if max_distance is not None and not self.min_distance_m < max_distance:
+            raise ValueError(
+                "bicycles.min_distance_m must be less than "
+                f"bicycles.max_distance_m (got {self.min_distance_m!r} and "
+                f"{max_distance!r})"
+            )
         _check_positive("bicycles.radius_m", self.radius_m)
         _check_count("bicycles.max_bicycles", self.max_bicycles)
 
