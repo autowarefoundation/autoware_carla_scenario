@@ -101,6 +101,7 @@ __all__ = [
     "TIRE_FRICTION_KEY",
     "weights_from_config",
     "VISIBILITY_KEY",
+    "whole_number_setting",
     "with_tire_friction",
     "with_visibility",
 ]
@@ -301,13 +302,35 @@ def seed_setting(key: str, value: Any) -> Optional[int]:
     Raises:
         ValueError: naming *key*, when *value* is not such a number.
     """
+    number = whole_number_setting(key, value)
+    if number is not None and number < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return number
+
+
+def whole_number_setting(
+    key: str, value: Any, *, minimum: Optional[int] = None
+) -> Optional[int]:
+    """The whole number a config sets under *key*, checked; ``None`` when it
+    is null.
+
+    ``2`` or ``2.0`` (or the string ``"2"``), not ``2.5``, a boolean, a blank
+    or any other string -- ``int()`` alone would read ``1.9`` and ``true`` as
+    1 -- and, with *minimum*, not below it.  What every whole-number setting a
+    run reads goes through: its seeds (:func:`seed_setting`), and the
+    ``background_traffic`` and ``server`` counts.
+
+    Raises:
+        ValueError: naming *key*: ``<key> must be a whole number, got ...``,
+            or ``<key> must be >= <minimum>, got ...``.
+    """
     if value is None:
         return None
     number = _whole_number(key, value)
-    if number is None:  # A blank string, which a seed is not either.
+    if number is None:  # A blank string, which no whole number is.
         raise ValueError(f"{key} must be a whole number, got {value!r}")
-    if number < 0:
-        raise ValueError(f"{key} must not be negative, got {value!r}")
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{key} must be >= {minimum}, got {value!r}")
     return number
 
 

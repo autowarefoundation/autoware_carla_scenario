@@ -303,3 +303,35 @@ def test_t4_scenes_take_the_scenarios_goal_and_the_runs_map_by_default() -> None
         DriverClientConfig(t4_scene_goal="anywhere")
     with pytest.raises(ValueError, match="t4_scene_map"):
         DriverClientConfig(t4_scene_map="roadgen")
+
+
+# ``driver.random_seed`` is a whole number, not negative, as the run's seed:
+# it used to be kept as given and handed to the policy through int(), so 1.9
+# and True seeded the session as 1, and "abc" failed only then (#1445).
+@pytest.mark.parametrize("seed", [1.9, True, False, "abc", "7", -3, math.nan, math.inf])
+def test_a_random_seed_that_is_no_seed_is_refused(seed: Any) -> None:
+    with pytest.raises(ValueError, match=r"^driver\.random_seed must "):
+        DriverClientConfig.from_mapping({"random_seed": seed})
+    with pytest.raises(ValueError, match=r"^driver\.random_seed must "):
+        DriverClientConfig(random_seed=seed)
+
+
+@pytest.mark.parametrize(("seed", "expected"), [(None, None), (0, 0), (7, 7), (2.0, 2)])
+def test_a_whole_random_seed_is_kept(seed: Any, expected: Any) -> None:
+    from autoware_carla_scenario.seed import resolve_seed
+
+    config = DriverClientConfig.from_mapping({"random_seed": seed})
+    if expected is not None:
+        assert resolve_seed(config.random_seed) == expected
+
+
+def test_a_carla_driver_run_is_refused_for_it_before_anything_is_built() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["ego.entity=carla_driver", "driver.random_seed=1.9"])
+    with pytest.raises(run.RunConfigError, match=r"^driver\.random_seed must "):
+        run.check_run_config(cfg)
+    # Another ego reads no driver settings.
+    run.check_run_config(_shipped(["driver.random_seed=1.9"]))

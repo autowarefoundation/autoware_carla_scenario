@@ -365,6 +365,101 @@ class TestHydraSwitch:
         ]
         assert isinstance(source._until, ElapsedTimeCondition)
 
+    @staticmethod
+    def _composed(overrides: list[str]) -> Any:
+        from pathlib import Path
+
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.examples import conf as conf_package
+
+        conf_dir = str(Path(conf_package.__file__).parent.resolve())
+        with initialize_config_dir(config_dir=conf_dir, version_base=None):
+            return compose(
+                config_name="config",
+                overrides=["background_traffic.enabled=true", *overrides],
+            )
+
+    @pytest.mark.parametrize(
+        ("override", "key"),
+        [
+            # What int() alone read as 1, 1, 2, 1 and 7 (#1445).
+            ("background_traffic.seed=1.9", "background_traffic.seed"),
+            ("background_traffic.seed=true", "background_traffic.seed"),
+            ("background_traffic.seed=-5", "background_traffic.seed"),
+            ("background_traffic.seed=abc", "background_traffic.seed"),
+            (
+                "background_traffic.source.initial_vehicles=2.9",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.initial_vehicles=true",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.initial_vehicles=-1",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=1.5",
+                "background_traffic.source.max_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=false",
+                "background_traffic.source.max_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=-2",
+                "background_traffic.source.max_vehicles",
+            ),
+        ],
+    )
+    def test_a_count_or_seed_that_is_no_whole_number_is_refused_up_front(
+        self, override: str, key: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([override])
+        with pytest.raises(ValueError, match=rf"^{key} must "):
+            run.add_background_traffic(cfg, _scenario())
+        # Before anything is built, as the run's other settings are.
+        with pytest.raises(run.RunConfigError, match=rf"^{key} must "):
+            run.check_run_config(cfg)
+
+    def test_whole_floats_are_those_numbers(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            [
+                "background_traffic.seed=7.0",
+                "background_traffic.source.initial_vehicles=3.0",
+                "background_traffic.source.max_vehicles=4.0",
+                "background_traffic.source.vehicles_per_minute=0",
+            ]
+        )
+        settings = run.background_traffic_settings(cfg)
+        assert settings is not None
+        assert (settings.seed, settings.initial_vehicles, settings.max_vehicles) == (
+            7,
+            3,
+            4,
+        )
+        assert isinstance(settings.initial_vehicles, int)
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        (initial,) = scenario._init_actions
+        assert isinstance(initial, TrafficSourceAction)
+        assert (initial._initial, initial._max, initial._seed) == (3, 4, 7)
+
+    def test_a_disabled_block_is_not_read(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            ["background_traffic.enabled=false", "background_traffic.seed=1.9"]
+        )
+        assert run.background_traffic_settings(cfg) is None
+        run.check_run_config(cfg)
+
 
 class TestConstraintsFromText:
     """How the scenario editor hands a source or sink its constraints."""

@@ -45,7 +45,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import typesafe_carla.carla as carla
 import hydra
@@ -81,6 +81,7 @@ from autoware_carla_scenario.odd.sampler import (
     check_sample_settings,
     decode_case,
     seed_setting,
+    whole_number_setting,
 )
 from autoware_carla_scenario.prepare.pool import BackendPool
 from autoware_carla_scenario.rerun import (
@@ -908,13 +909,17 @@ def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
 
     Raises:
         ValueError: naming the key, when ``world_reset`` is neither ``reload``
-            nor ``soft`` or ``reload_every`` is negative.
+            nor ``soft``, or ``reload_every`` is not a whole number (``2`` or
+            ``2.0``; not ``2.5`` or a boolean) or is negative.
     """
     from ..world_reset import RESET_RELOAD, check_world_reset  # noqa: PLC0415
 
     server = cfg.get("server") or {}
     world_reset = str(server.get("world_reset", RESET_RELOAD) or RESET_RELOAD)
-    reload_every = int(server.get("reload_every", 0) or 0)
+    # null is 0, as it always was.
+    reload_every = (
+        whole_number_setting("server.reload_every", server.get("reload_every", 0)) or 0
+    )
     try:
         check_world_reset(world_reset, reload_every)
     except ValueError as exc:
@@ -1667,7 +1672,7 @@ def _batch_queue(
     case as a T4 dataset (:func:`build_t4_recorder`).
     """
     cooldown = _cooldown_seconds(first_cfg)
-    cooldown_max_retries = _cooldown_max_retries(first_cfg)
+    max_retries = cooldown_max_retries(first_cfg)
     world_reset, reload_every = world_reset_settings(first_cfg)
     return ScenarioQueue(
         host=first_cfg.server.host,
@@ -1679,7 +1684,7 @@ def _batch_queue(
         lanelet2_path=map_paths.lanelet2_path,
         map_name=map_paths.name,
         cooldown_seconds=cooldown,
-        cooldown_max_retries=cooldown_max_retries,
+        cooldown_max_retries=max_retries,
         output_dir=output_dir,
         max_tick_rate_hz=_max_tick_rate_hz(first_cfg),
         projector_type=map_paths.projector_type,
@@ -1697,16 +1702,21 @@ def _batch_queue(
     )
 
 
-def _cooldown_max_retries(cfg: DictConfig) -> int:
-    """``server.cooldown_max_retries``, checked.
+def cooldown_max_retries(cfg: DictConfig) -> int:
+    """``server.cooldown_max_retries``, checked: a whole number (``2`` or
+    ``2.0``; not ``1.9``, a boolean or null), 0 or more.
 
     Raises:
-        ValueError: naming the key, when it is negative: a zero-attempt loop
-            would record every scenario as errored without running it.
+        ValueError: naming the key, when it is not a whole number, or when it
+            is negative: a zero-attempt loop would record every scenario as
+            errored without running it.
     """
-    retries = int((cfg.get("server") or {}).get("cooldown_max_retries", 0))
-    if retries < 0:
-        raise ValueError(f"server.cooldown_max_retries must be >= 0, got {retries}")
+    value = (cfg.get("server") or {}).get("cooldown_max_retries", 0)
+    retries = whole_number_setting("server.cooldown_max_retries", value, minimum=0)
+    if retries is None:
+        raise ValueError(
+            f"server.cooldown_max_retries must be a whole number, got {value!r}"
+        )
     return retries
 
 
@@ -1740,7 +1750,7 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
     _check_port_setting(cfg, "server")
     _check_port_setting(cfg, "traffic_manager")
     _cooldown_seconds(cfg)
-    _cooldown_max_retries(cfg)
+    cooldown_max_retries(cfg)
     _max_tick_rate_hz(cfg)
     world_reset_settings(cfg)
     # server.fog_density_scale, checked whether or not a LiDAR reads it.
@@ -1908,7 +1918,10 @@ def check_batch_configs(
 
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout,
-    seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``) and
+    seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
+    ``background_traffic`` (:func:`background_traffic_settings`),
+    ``environment`` (:func:`environment_settings`), ``driver`` settings of an
+    ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`) and
     ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
@@ -1943,6 +1956,9 @@ def check_batch_configs(
         try:
             run_timeout_seconds(cfg)
             _check_seeds(cfg)
+            background_traffic_settings(cfg)
+            environment_settings(cfg)
+            _check_driver_settings(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
@@ -2301,6 +2317,25 @@ def _check_seeds(cfg: DictConfig) -> None:
         check_sample_settings(odd_sample)
 
 
+def _check_driver_settings(cfg: DictConfig) -> None:
+    """Refuse the ``driver`` settings of an ``ego.entity=carla_driver`` case
+    as :func:`build_ego_entity` would (``driver.random_seed``, a LiDAR's
+    ``noise_seed``, ...), building only the config: nothing dials a policy.
+
+    Raises:
+        ValueError: When :class:`~autoware_carla_scenario.driver.DriverClientConfig`
+            refuses them.
+    """
+    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "carla_driver":
+        return
+    driver_cfg = cfg.get("driver")
+    if driver_cfg is None:
+        return  # Refused, with its remedy, by build_ego_entity.
+    from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
+
+    DriverClientConfig.from_mapping(_with_fog_density_scale(_to_dict(driver_cfg), cfg))
+
+
 def build_scenario(
     cfg: DictConfig,
     *,
@@ -2383,35 +2418,51 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
             finite, or outside the range its argument takes); the message
             names the key.
     """
-    from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
-        _refusal,
-    )
     from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
         use_weather_rules,
     )
 
+    # Any: EnvironmentAction takes its other arguments by keyword too.
+    settings: dict[str, Any] = dict(environment_settings(cfg))
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
-    use_weather_rules(_rules_locations(raw.pop("rules", None)))
-    settings: dict[str, Any] = {}
-    for key, value in raw.items():
-        if value is None:
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"environment.{key} must be a number, got {value!r}"
-            ) from None
-        refusal = _refusal(str(key), number)
-        if refusal != "":
-            raise ValueError(f"environment.{key} {refusal}")
-        settings[str(key)] = number
+    use_weather_rules(_rules_locations(raw.get("rules")))
     if not settings:
         return
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 
     scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
+
+
+def environment_settings(cfg: DictConfig) -> dict[str, float]:
+    """The config's ``environment`` settings but ``rules``, checked: the ones
+    set, by name, each a number (an int or a float; not a boolean or a
+    string, which ``float()`` would read) that
+    :class:`~autoware_carla_scenario.EnvironmentAction` takes.
+
+    Raises:
+        ValueError: naming the key, as :func:`add_environment` documents.
+    """
+    from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
+        _refusal,
+    )
+
+    env_cfg = cfg.get("environment")
+    raw = {} if env_cfg is None else _to_dict(env_cfg)
+    raw.pop("rules", None)
+    settings: dict[str, float] = {}
+    for key, value in raw.items():
+        if value is None:
+            continue
+        # A bool is an int to Python, and ``float("15")`` would read a string.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"environment.{key} must be a number, got {value!r}")
+        number = float(value)
+        refusal = _refusal(str(key), number)
+        if refusal != "":
+            raise ValueError(f"environment.{key} {refusal}")
+        settings[str(key)] = number
+    return settings
 
 
 def _rules_locations(spec: Any) -> Any:
@@ -2437,6 +2488,95 @@ def _rules_locations(spec: Any) -> Any:
     return where(spec)
 
 
+class BackgroundTraffic(NamedTuple):
+    """The ``background_traffic`` settings a run reads as numbers, checked
+    (:func:`background_traffic_settings`)."""
+
+    #: ``seed``; ``None`` follows the run's.
+    seed: int | None
+    initial_vehicles: int
+    #: ``None``: no limit.
+    max_vehicles: int | None
+    vehicles_per_minute: float
+    speed_kmh: float
+    min_gap_m: float
+
+
+def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
+    """The numbers of the config's ``background_traffic``, checked; ``None``
+    when it is off (``enabled`` false or the block absent), when none is read.
+
+    ``seed``, ``source.initial_vehicles`` and ``source.max_vehicles`` are
+    whole numbers, not negative (``2`` or ``2.0``; not ``1.9``, a boolean or
+    a string that is no integer: ``int()`` alone would read ``1.9`` and
+    ``true`` as 1); ``seed`` and ``max_vehicles`` may be null (the run's
+    seed, no limit), and a null ``initial_vehicles`` places none.
+    ``source.speed_kmh`` is finite and at least 1 km/h
+    (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`),
+    and ``source.vehicles_per_minute`` and ``source.min_gap_m`` finite and
+    not negative.  Read by :func:`add_background_traffic` and checked up
+    front by :func:`check_batch_configs`.
+
+    Raises:
+        ValueError: naming the key of the first value refused.
+    """
+    background = cfg.get("background_traffic")
+    if background is None or not background.get("enabled", False):
+        return None
+    settings = _to_dict(background)
+    source = settings.get("source") or {}
+    seed = seed_setting("background_traffic.seed", settings.get("seed"))
+    initial = whole_number_setting(
+        "background_traffic.source.initial_vehicles",
+        source.get("initial_vehicles", 0),
+        minimum=0,
+    )
+    max_vehicles = whole_number_setting(
+        "background_traffic.source.max_vehicles",
+        source.get("max_vehicles"),
+        minimum=0,
+    )
+    # Refused here, naming the key, whether or not a source is built from it:
+    # 0 would be traffic that never moves (#967).
+    speed_value = source.get("speed_kmh", 30.0)
+    try:
+        speed_kmh = check_background_speed(float(str(speed_value)))
+    except ValueError as exc:
+        raise ValueError(
+            f"background_traffic.source.speed_kmh: {speed_value!r} is not a "
+            f"background speed ({exc})"
+        ) from exc
+
+    def finite_amount(key: str, default: float) -> float:
+        # Refused here, naming the key: NaN would fail `rate > 0` and be
+        # dropped without a word, infinity would crash the run (#1321).
+        value = source.get(key, default)
+        try:
+            amount = float(str(value))
+        except ValueError as exc:
+            raise ValueError(
+                f"background_traffic.source.{key}: {value!r} is not a number"
+            ) from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(
+                f"background_traffic.source.{key}: {value!r} must be finite "
+                "and not negative"
+            )
+        return amount
+
+    min_gap_m = finite_amount("min_gap_m", 15.0)
+    rate = finite_amount("vehicles_per_minute", 0.0)
+    return BackgroundTraffic(
+        seed=seed,
+        # null places none, as 0 does.
+        initial_vehicles=initial or 0,
+        max_vehicles=max_vehicles,
+        vehicles_per_minute=rate,
+        speed_kmh=speed_kmh,
+        min_gap_m=min_gap_m,
+    )
+
+
 def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     """Register the run's background traffic on *scenario*, when it asks for any.
 
@@ -2456,58 +2596,28 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     placed during initialization.
 
     Raises:
-        ValueError: If ``source.speed_kmh`` is not a number, not finite, or
-            below 1 km/h (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`),
-            or ``source.vehicles_per_minute`` or ``source.min_gap_m`` is not a
-            number, not finite, or negative.
+        ValueError: naming the key, for a value
+            :func:`background_traffic_settings` refuses.
     """
-    background = cfg.get("background_traffic")
-    if background is None or not background.get("enabled", False):
+    checked = background_traffic_settings(cfg)
+    if checked is None:
         return
-    settings = _to_dict(background)
+    settings = _to_dict(cfg["background_traffic"])
     source = settings.get("source") or {}
     sink = settings.get("sink") or {}
     # null (the default) follows the run's seed, the scenario's.
-    seed_value = settings.get("seed")
-    seed = scenario.random_seed if seed_value is None else int(seed_value)
+    seed = scenario.random_seed if checked.seed is None else checked.seed
 
     def until(seconds: object, label: str) -> ElapsedTimeCondition | None:
         if seconds is None:
             return None
         return ElapsedTimeCondition(float(str(seconds)), label=label)
 
-    max_vehicles = source.get("max_vehicles")
+    max_vehicles = checked.max_vehicles
     constraints = source.get("constraints") or []
-    # Refused here, naming the key, whether or not a source is built from it:
-    # 0 would be traffic that never moves (#967).
-    speed_value = source.get("speed_kmh", 30.0)
-    try:
-        speed_kmh = check_background_speed(float(str(speed_value)))
-    except ValueError as exc:
-        raise ValueError(
-            f"background_traffic.source.speed_kmh: {speed_value!r} is not a "
-            f"background speed ({exc})"
-        ) from exc
-
-    def finite_amount(key: str, default: float) -> float:
-        # Refused here, naming the key: NaN would fail `rate > 0` below and be
-        # dropped without a word, infinity would crash the run (#1321).
-        value = source.get(key, default)
-        try:
-            amount = float(str(value))
-        except ValueError as exc:
-            raise ValueError(
-                f"background_traffic.source.{key}: {value!r} is not a number"
-            ) from exc
-        if not math.isfinite(amount) or amount < 0:
-            raise ValueError(
-                f"background_traffic.source.{key}: {value!r} must be finite "
-                "and not negative"
-            )
-        return amount
-
-    min_gap_m = finite_amount("min_gap_m", 15.0)
-    rate = finite_amount("vehicles_per_minute", 0.0)
+    speed_kmh = checked.speed_kmh
+    min_gap_m = checked.min_gap_m
+    rate = checked.vehicles_per_minute
 
     def source_action(
         *, initial: int, rate: float, seed: int, label: str
@@ -2516,7 +2626,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             constraints,
             initial_vehicles=initial,
             vehicles_per_minute=rate,
-            max_vehicles=None if max_vehicles is None else int(max_vehicles),
+            max_vehicles=max_vehicles,
             speed_kmh=speed_kmh,
             min_gap_m=min_gap_m,
             blueprint=source.get("blueprint"),
@@ -2529,7 +2639,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             ),
         )
 
-    initial = int(source.get("initial_vehicles", 0))
+    initial = checked.initial_vehicles
     if constraints and initial > 0:
         scenario.register_init(
             source_action(
@@ -2609,7 +2719,7 @@ def _queue_retries(cfg: DictConfig) -> int:
 
     if os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
         return 0
-    return int(cfg.server.get("cooldown_max_retries", 0))
+    return cooldown_max_retries(cfg)
 
 
 def _run_scenario(

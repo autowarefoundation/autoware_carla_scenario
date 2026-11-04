@@ -26,10 +26,12 @@ This module imports nothing but the standard library.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 __all__ = [
     "DEFAULT_SEED",
+    "check_seed",
     "resolve_seed",
     "run_seed",
     "set_run_seed",
@@ -58,6 +60,30 @@ def set_run_seed(seed: int) -> int:
     previous = _RUN_SEED[0]
     _RUN_SEED[0] = int(seed)
     return previous
+
+
+def check_seed(key: str, seed: int) -> int:
+    """*seed*, a component's own seed as its config holds it, checked: a
+    whole number (``2``, or ``2.0`` read as 2), not negative, as the run's
+    ``seed`` is.
+
+    A config dataclass is not coerced, so a field typed ``int`` may hold
+    whatever its mapping did: ``int()`` alone would seed ``1.9`` and ``True``
+    as 1, so a boolean, a string, a fraction, NaN or infinity is refused.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if isinstance(seed, bool) or isinstance(seed, str):
+        raise ValueError(f"{key} must be a whole number, got {seed!r}")
+    number = float(seed)
+    if not math.isfinite(number):
+        raise ValueError(f"{key} must be finite, got {seed!r}")
+    if math.floor(number) != number:
+        raise ValueError(f"{key} must be a whole number, got {seed!r}")
+    if number < 0.0:
+        raise ValueError(f"{key} must not be negative, got {seed!r}")
+    return int(seed)
 
 
 def resolve_seed(seed: Optional[int]) -> int:

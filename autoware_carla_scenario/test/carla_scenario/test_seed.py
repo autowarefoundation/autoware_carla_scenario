@@ -264,3 +264,29 @@ def test_a_sweep_draws_its_odd_cases_from_the_runs_seed() -> None:
         _odd_cases({"seed": 6, "sweep": {"odd_sample": {"count": 4, "seed": 5}}})
         == from_run
     )
+
+
+# A component's own seed, as its config dataclass holds it (#1445).
+@pytest.mark.parametrize("value", [1.9, True, False, "7", "abc"])
+def test_check_seed_refuses_what_is_no_whole_number(value: object) -> None:
+    from autoware_carla_scenario.seed import check_seed
+
+    with pytest.raises(ValueError, match=r"^x\.seed must be a whole number"):
+        check_seed("x.seed", value)  # type: ignore[arg-type]
+
+
+def test_check_seed_refuses_a_negative_or_non_finite_seed() -> None:
+    from autoware_carla_scenario.seed import check_seed
+
+    with pytest.raises(ValueError, match=r"^x\.seed must not be negative"):
+        check_seed("x.seed", -1)
+    with pytest.raises(ValueError, match=r"^x\.seed must be finite"):
+        check_seed("x.seed", float("nan"))  # type: ignore[arg-type]
+
+
+def test_check_seed_takes_a_whole_number() -> None:
+    from autoware_carla_scenario.seed import check_seed
+
+    assert check_seed("x.seed", 0) == 0
+    assert check_seed("x.seed", 2.0) == 2  # type: ignore[arg-type]
+    assert check_seed("x.seed", 2**62) == 2**62

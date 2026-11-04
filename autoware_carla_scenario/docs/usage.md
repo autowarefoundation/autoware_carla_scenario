@@ -103,7 +103,10 @@ Python version, and the viewer's Run form reads it the same way.
   `scenario.timeout_seconds` that is not positive, a `server.port` out of
   range, a NaN or negative `server.cooldown_seconds`, a
   `server.max_tick_rate_hz` or `server.fog_density_scale` that is not a
-  finite number above 0, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
+  finite number above 0, a `server.cooldown_max_retries` or
+  `server.reload_every` that is not a whole number, a seed or count that is
+  not one ([One Seed for the Whole Run](#one-seed-for-the-whole-run)), an
+  `environment.*` value that is not a number, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
   refused for every case before any scenario is built or the map is resolved,
   locally as under `launcher=slurm`: the batch prints
   `Error: <case>: <key> ...`, naming the case refused, and exits 1, a
@@ -533,13 +536,24 @@ follows, so the same seed runs the same scenario again:
 uv run scenario scenario=intersection_passing/straight seed=42
 ```
 
-A seed -- `seed`, and `sweep.odd_sample.seed` -- is a whole number, not
-negative: `42` or `42.0`, not `1.9`, a boolean or a string that is no
-integer, as a route search's counts are
-([Logical Scenarios](logical_scenarios.md)); `sweep.odd_sample.count` is a
-whole number of at least 1. Any other value is refused before anything
-starts, naming the key, on every path: a single run, a batch (local or
-SLURM), a lanelet sweep and `scenario-expand`.
+A seed -- `seed`, `sweep.odd_sample.seed`, and each component's own below
+(`background_traffic.seed`, `driver.random_seed`,
+`driver.lidars[].noise_seed`) -- is a whole number, not negative: `42` or
+`42.0`, not `1.9`, a boolean or a string that is no integer, as a route
+search's counts are ([Logical Scenarios](logical_scenarios.md));
+`sweep.odd_sample.count` is a whole number of at least 1. Any other value is
+refused before anything starts, naming the key, on every path: a single run,
+a batch (local or SLURM), a lanelet sweep and `scenario-expand` (which reads
+only `seed` and `sweep.odd_sample`). The driver's and its LiDARs' seeds are
+refused when their config is built, with an `ego.entity=carla_driver` run's
+other checks; being typed fields, they take no string at all, not even
+`"7"`.
+
+The other whole-number settings a run reads follow the same rule:
+`background_traffic.source.initial_vehicles` and `.max_vehicles` (not
+negative; `max_vehicles` may be null), `server.cooldown_max_retries` and
+`server.reload_every` (not negative). `2.0` is 2, but `2.5` or `true` is
+refused, naming the key, rather than run as 2 or 1.
 
 It is the seed of:
 
@@ -639,11 +653,11 @@ Defines the default config group composition:
 | `server.host` | str | `localhost` | CARLA server hostname |
 | `server.port` | int | `2000` | CARLA server port |
 | `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
-| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed) |
+| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed); a whole number, `0` or more (`2.0` is 2; `1.9` or `true` is refused) |
 | `server.max_tick_rate_hz` | float | `null` | Upper bound (Hz) on how fast the run ticks the world, or `null` for as fast as the server allows; a finite number above `0` (`20` is real time at the 0.05 s step, which `ego.entity=ros2` wants: [ROS 2](ros2.md#timing)) |
 | `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |
 | `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
-| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
+| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0` (or `null`): only when a soft reset cannot be done; a whole number, `0` or more |
 
 #### Ego Vehicle Configuration
 

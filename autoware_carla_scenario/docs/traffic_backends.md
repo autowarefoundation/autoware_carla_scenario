@@ -811,6 +811,11 @@ self.register_pre_tick(
   vehicle to any other) must be finite and not negative; NaN or infinity is
   refused by `TrafficSourceAction` and by `background_traffic.source.*`, naming
   the key, rather than crashing the run or being dropped without a word.
+- **`initial_vehicles`**, **`max_vehicles`** and `background_traffic.seed` are
+  whole numbers, not negative (`20` or `20.0`; `max_vehicles` and `seed` may
+  be null): `2.9`, `true` or `-5` is refused, naming the key, rather than run
+  as 2, 1 or a negative seed. The run refuses all of these before anything
+  starts, whenever `background_traffic.enabled` is true.
 
 The examples take all of this from the config, for any scenario:
 

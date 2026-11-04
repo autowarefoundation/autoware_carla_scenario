@@ -102,6 +102,22 @@ def test_a_nan_from_yaml_in_an_int_field_is_refused(field: str) -> None:
         DriverClientConfig.from_mapping({"lidars": [{field: float("nan")}]})
 
 
+@pytest.mark.parametrize("seed", [1.9, 0.5, True, False, "3"])
+def test_a_noise_seed_that_is_no_whole_number_is_refused(seed: Any) -> None:
+    """Only finite and not negative was checked, so 1.9 and True seeded the
+    noise as 1 (#1445)."""
+    with pytest.raises(ValueError, match="^LiDAR noise_seed must be a whole number"):
+        DriverLidarConfig(noise_seed=seed)
+    with pytest.raises(ValueError, match="^LiDAR noise_seed must be a whole number"):
+        DriverClientConfig.from_mapping({"lidars": [{"noise_seed": seed}]})
+
+
+def test_a_whole_float_noise_seed_is_that_seed() -> None:
+    from autoware_carla_scenario.seed import resolve_seed
+
+    assert resolve_seed(DriverLidarConfig(noise_seed=3.0).noise_seed) == 3  # type: ignore[arg-type]
+
+
 def test_lidar_logical_ids_must_be_unique() -> None:
     with pytest.raises(ValueError, match="unique"):
         DriverClientConfig(lidars=(DriverLidarConfig(), DriverLidarConfig()))
