@@ -37,7 +37,8 @@ Standalone (no pytest)::
 
     uv run scenario scenario=traffic_light_compliance/traffic_light_compliance
 
-With pytest — see ``test/carla_scenario/test_examples.py``.
+Its stop-line judgement and controls are tested with CARLA stubbed, in
+``test/carla_scenario/test_traffic_light_compliance.py``.
 """
 
 from __future__ import annotations
