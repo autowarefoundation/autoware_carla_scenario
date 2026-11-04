@@ -2517,6 +2517,19 @@ on, and with none, the ego is held on its brakes.</p>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">stale_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
 <a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">control</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">     </span><span class="c1"># trajectory-follower gains, as driver.control</span>
 </code></pre></div>
+<p>The settings are checked as the config is read -- by <code>check_run_config</code>, before a
+batch's first scenario starts, as well as when the entity is built -- and a bad one is
+refused naming its key (<code>ros2: domain_id must be ...</code>), not once the ego has spawned
+and joined the domain:</p>
+<ul>
+<li><code>domain_id</code> is a whole number (not a bool or a string) from 0 to 232, the
+  <code>ROS_DOMAIN_ID</code> range ROS 2 can use, the bound the docker launcher's
+  <code>ros_domain_ids</code> share (<a href="../autoware/">autoware.md</a>).</li>
+<li>A source's <code>priority</code> is a whole number (not a bool, a float or a quoted <code>"10"</code>).</li>
+<li><code>stale_s</code>, <code>pair_window_s</code>, <code>steering_sign</code>, <code>speed_horizon_s</code>, <code>jerk_mps3</code>,
+  <code>rear_axle_offset_m</code> and a camera's numeric fields are numbers, an int or a float
+  (not a bool or a quoted string), and finite, within the bounds above.</li>
+</ul>
 <h2 id="the-open-ad-kit-safety-island-demo">The Open AD Kit safety-island demo<a class="headerlink" href="#the-open-ad-kit-safety-island-demo" title="Permanent link">&para;</a></h2>
 <p><code>ros2=visionpilot_safety_island</code> is the bench side of the Open AD Kit CES 2027 demo
 (<a href="https://github.com/autowarefoundation/openadkit/issues/157">openadkit#157</a>):
@@ -2609,7 +2622,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 18:42:47 UTC"><span class="timeago" datetime="2026-11-04T18:42:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 18:42:47 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 23:15:22 UTC"><span class="timeago" datetime="2026-11-04T23:15:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 23:15:22 UTC">2026-11-04</span>
   </span>
 
     
