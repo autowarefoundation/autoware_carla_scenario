@@ -63,6 +63,7 @@ Prefer the masking operators over the recurrent ones.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -376,7 +377,7 @@ def smooth(temperature: float) -> dict[str, Any]:
     the exact min/max.  See the module docstring for why this is ``softmax``
     rather than ``logsumexp``.
     """
-    if temperature <= 0.0:
+    if not math.isfinite(temperature) or temperature <= 0.0:
         raise ValueError(f"temperature must be positive, got {temperature}")
     return {"approx_method": "softmax", "temperature": float(temperature)}
 
