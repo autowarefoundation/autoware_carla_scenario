@@ -171,6 +171,10 @@ class CommonRoadWorker:
         errors = {str(k): str(v) for k, v in dict(answer.get("errors", {})).items()}
         return values, errors
 
+    def running(self) -> bool:
+        """Whether the worker's process has not exited."""
+        return self._process.poll() is None
+
     def close(self) -> None:
         """Ask the worker to exit, and make sure it does."""
         process = self._process
