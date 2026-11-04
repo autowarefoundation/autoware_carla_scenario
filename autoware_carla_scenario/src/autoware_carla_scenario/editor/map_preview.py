@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +52,20 @@ __all__ = [
 _MAP_CACHE_SIZE = 2
 
 _MAP_CACHE: "OrderedDict[tuple[str, str, str], _LoadedMap]" = OrderedDict()
+
+#: Guards :data:`_MAP_CACHE` and the ``matches`` / ``derived`` caches of every
+#: map in it.  The editor reaches them from worker threads at once -- the map
+#: panel (a sync route, so run in Starlette's threadpool) and the lanelet
+#: preview (offloaded so a parse does not stall the event loop) -- and an
+#: ``OrderedDict``'s ``move_to_end`` / ``popitem`` are not safe to interleave.
+#: Only ever held for a dictionary operation, never across a parse or a search.
+_CACHE_LOCK = threading.Lock()
+
+#: One lock per map being parsed, so two requests for the same unparsed map
+#: parse it once (the second waits and is answered from the cache) while maps
+#: with different keys still parse side by side.  An entry lives only while
+#: its parse runs; guarded by :data:`_CACHE_LOCK`.
+_LOADING: "dict[tuple[str, str, str], threading.Lock]" = {}
 
 #: Distinct constraint trees whose matches are remembered per map.  A session
 #: writes a bounded number of them -- one per edit to a search -- and each is a
@@ -346,12 +361,25 @@ def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
 def is_map_loaded(document: ScenarioDocument, paths: Optional[MapPaths] = None) -> bool:
     """Whether the document's map is already parsed and cached."""
     key = _cache_key(map_paths(document) if paths is None else paths)
-    return key is not None and key in _MAP_CACHE
+    if key is None:
+        return False
+    with _CACHE_LOCK:
+        return key in _MAP_CACHE
 
 
 def clear_cache() -> None:
     """Drop every cached map.  Used by tests and by an explicit reload."""
-    _MAP_CACHE.clear()
+    with _CACHE_LOCK:
+        _MAP_CACHE.clear()
+
+
+def _cached(key: tuple[str, str, str]) -> Optional[_LoadedMap]:
+    """Return the cached parse for *key*, marking it most recently used."""
+    with _CACHE_LOCK:
+        cached = _MAP_CACHE.get(key)
+        if cached is not None:
+            _MAP_CACHE.move_to_end(key)
+        return cached
 
 
 def missing_map_reason(document: ScenarioDocument) -> str:
@@ -412,11 +440,39 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     key = _cache_key(paths)
     if key is None:
         raise FileNotFoundError(missing_map_reason(document))
-    cached = _MAP_CACHE.get(key)
+    cached = _cached(key)
     if cached is not None:
-        _MAP_CACHE.move_to_end(key)
         return cached
 
+    # Parsing takes seconds, so it runs outside _CACHE_LOCK: holding that would
+    # stall every cache lookup -- and so every editor render -- for the length
+    # of the parse.  The per-map lock dedupes concurrent parses of one map.
+    with _CACHE_LOCK:
+        loading = _LOADING.setdefault(key, threading.Lock())
+    with loading:
+        try:
+            cached = _cached(key)
+            if cached is not None:
+                return cached
+            loaded = _parse(paths)
+            with _CACHE_LOCK:
+                _MAP_CACHE[key] = loaded
+                while len(_MAP_CACHE) > _MAP_CACHE_SIZE:
+                    _MAP_CACHE.popitem(last=False)
+            return loaded
+        finally:
+            with _CACHE_LOCK:
+                if _LOADING.get(key) is loading:
+                    del _LOADING[key]
+
+
+def _parse(paths: MapPaths) -> _LoadedMap:
+    """Parse the map at *paths* and build its routing graph.  Not cached.
+
+    Raises:
+        FileNotFoundError: If the map files are missing.
+        RuntimeError: If Lanelet2 could not parse the map.
+    """
     from ..sweeper.constraints import create_routing_graph  # noqa: PLC0415
     from ..sweeper.map_loader import load_map  # noqa: PLC0415
 
@@ -428,15 +484,11 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     except Exception as exc:  # noqa: BLE001 -- lanelet2 raises bare RuntimeErrors
         raise RuntimeError(f"Could not load the Lanelet2 map: {exc}") from exc
 
-    loaded = _LoadedMap(
+    return _LoadedMap(
         lanelet_map=lanelet_map,
         routing_graph=routing_graph,
         lanelet_count=len(list(lanelet_map.laneletLayer)),
     )
-    _MAP_CACHE[key] = loaded
-    while len(_MAP_CACHE) > _MAP_CACHE_SIZE:
-        _MAP_CACHE.popitem(last=False)
-    return loaded
 
 
 # ---------------------------------------------------------------------------
@@ -498,9 +550,11 @@ def evaluate_slot(
     # searching for the same thing, or the same slot across an edit that did not
     # touch the search, are one answer.
     asked = json.dumps(materialized, sort_keys=True, default=str)
-    remembered = loaded.matches.get(asked)
+    with _CACHE_LOCK:
+        remembered = loaded.matches.get(asked)
+        if remembered is not None:
+            loaded.matches.move_to_end(asked)
     if remembered is not None:
-        loaded.matches.move_to_end(asked)
         result.matched_ids = list(remembered)
         return result
 
@@ -519,9 +573,10 @@ def evaluate_slot(
         result.error = f"Constraints could not be evaluated: {exc}"
         return result
 
-    loaded.matches[asked] = matched
-    while len(loaded.matches) > _MATCH_CACHE_SIZE:
-        loaded.matches.popitem(last=False)
+    with _CACHE_LOCK:
+        loaded.matches[asked] = matched
+        while len(loaded.matches) > _MATCH_CACHE_SIZE:
+            loaded.matches.popitem(last=False)
     result.matched_ids = list(matched)
     return result
 
@@ -550,8 +605,9 @@ def derive_lanelet(
     if loaded is None:
         return None
     asked = (json.dumps(binding.to_sweep_dict(), sort_keys=True), picked_id)
-    if asked in loaded.derived:
-        return loaded.derived[asked]
+    with _CACHE_LOCK:
+        if asked in loaded.derived:
+            return loaded.derived[asked]
 
     from ..sweeper.bindings import parse_binding  # noqa: PLC0415
 
@@ -565,7 +621,8 @@ def derive_lanelet(
         logger.info("Binding for %s did not resolve: %s", slot.key, exc)
         value = None
     derived = value if isinstance(value, int) else None
-    loaded.derived[asked] = derived
-    while len(loaded.derived) > _MATCH_CACHE_SIZE:
-        loaded.derived.popitem(last=False)
+    with _CACHE_LOCK:
+        loaded.derived[asked] = derived
+        while len(loaded.derived) > _MATCH_CACHE_SIZE:
+            loaded.derived.popitem(last=False)
     return derived

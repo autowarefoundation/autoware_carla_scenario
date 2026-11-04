@@ -3245,6 +3245,168 @@ class TestMapActionsKeepConcurrentEdits:
         assert len(service._locks) == 0
 
 
+class TestLaneletPreviewOffTheLoop:
+    """The "load map" preview parses a city; it must not stall the loop (#1335)."""
+
+    def test_a_slow_preview_leaves_other_requests_served(
+        self,
+        tmp_path: Path,
+        at_repo_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """While one preview is parsing, another request is answered.
+
+        The client is entered as a context manager so every request shares one
+        event loop, as they do under uvicorn: an evaluation run inline would
+        hold that loop, and the second request would wait for the release that
+        only comes after it.
+        """
+        import asyncio
+
+        from autoware_carla_scenario.editor import map_preview
+
+        started = threading.Event()
+        release = threading.Event()
+        seen: dict[str, Any] = {}
+        real = map_preview.evaluate_slot
+
+        def _slow(*args: Any, **kwargs: Any) -> map_preview.PreviewResult:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                seen["on_loop"] = False
+            else:
+                seen["on_loop"] = True
+            seen["load_map"] = kwargs.get("load_map")
+            started.set()
+            seen["released"] = release.wait(_HANG_S)
+            return real(*args, **{**kwargs, "load_map": False})
+
+        monkeypatch.setattr(map_preview, "evaluate_slot", _slow)
+        app = create_app(
+            draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"
+        )
+        with TestClient(app) as client:
+            draft_id = (
+                client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
+                .headers["location"]
+                .rsplit("/", 1)[-1]
+            )
+            results: list[Any] = []
+            previewer = threading.Thread(
+                target=lambda: results.append(
+                    client.post(
+                        f"/draft/{draft_id}/lanelet-preview",
+                        data={"slot": "npc1.spawn", "load_map": "1"},
+                    )
+                )
+            )
+            previewer.start()
+            try:
+                assert started.wait(_HANG_S)
+                during = client.get(f"/draft/{draft_id}/yaml")
+                answered_while_parsing = not release.is_set()
+            finally:
+                release.set()
+                previewer.join(_HANG_S)
+        assert not previewer.is_alive(), "the preview never finished"
+        assert during.status_code == 200
+        assert answered_while_parsing
+        assert seen == {"on_loop": False, "load_map": True, "released": True}
+        assert results and results[0].status_code == 200
+
+
+class TestMapCacheConcurrency:
+    """The parsed-map cache is shared by worker threads (#1335)."""
+
+    @staticmethod
+    def _paths(tmp_path: Path, name: str) -> Any:
+        from autoware_carla_scenario.maps import MapPaths
+
+        return MapPaths(lanelet2_path=tmp_path / f"{name}.osm")
+
+    def test_one_map_asked_for_at_once_is_parsed_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+        started = threading.Event()
+        release = threading.Event()
+        calls: list[Any] = []
+
+        def _parse(paths: Any) -> Any:
+            calls.append(paths)
+            started.set()
+            assert release.wait(_HANG_S)
+            return map_preview._LoadedMap(
+                lanelet_map=None, routing_graph=None, lanelet_count=1
+            )
+
+        monkeypatch.setattr(map_preview, "_parse", _parse)
+        document = ScenarioDocument()
+        paths = self._paths(tmp_path, "town")
+        loaded: list[Any] = []
+        threads = [
+            threading.Thread(
+                target=lambda: loaded.append(map_preview._load(document, paths))
+            )
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            # The first parse is under way; the others queue behind it.
+            assert started.wait(_HANG_S)
+        finally:
+            release.set()
+            for thread in threads:
+                thread.join(_HANG_S)
+        assert not any(thread.is_alive() for thread in threads)
+        assert len(calls) == 1
+        assert len(loaded) == 4
+        assert all(item is loaded[0] for item in loaded)
+        assert map_preview._LOADING == {}
+        map_preview.clear_cache()
+
+    def test_a_parse_does_not_hold_up_another_map(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only the map being parsed waits: the cache lock is not held across
+        the parse, so another map loads, and a lookup answers, meanwhile."""
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+        slow = self._paths(tmp_path, "slow")
+        fast = self._paths(tmp_path, "fast")
+        started = threading.Event()
+        release = threading.Event()
+
+        def _parse(paths: Any) -> Any:
+            if paths is slow:
+                started.set()
+                assert release.wait(_HANG_S)
+            return map_preview._LoadedMap(
+                lanelet_map=None, routing_graph=None, lanelet_count=1
+            )
+
+        monkeypatch.setattr(map_preview, "_parse", _parse)
+        document = ScenarioDocument()
+        thread = threading.Thread(target=lambda: map_preview._load(document, slow))
+        thread.start()
+        try:
+            assert started.wait(_HANG_S)
+            assert map_preview._load(document, fast).lanelet_count == 1
+            assert map_preview.is_map_loaded(document, fast)
+            assert not map_preview.is_map_loaded(document, slow)
+        finally:
+            release.set()
+            thread.join(_HANG_S)
+        assert not thread.is_alive()
+        assert map_preview.is_map_loaded(document, slow)
+        map_preview.clear_cache()
+
+
 @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "NaN"])
 def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
     """A NaN timeout typed into the editor never fires (#934)."""
