@@ -68,13 +68,18 @@ class RecordedResult:
         return dict(self.data)
 
 
-def _last_submission_of(layout: BatchLayout, case: int) -> tuple[int, int] | None:
-    """(submission, task) that was last given *case*, if any."""
+def _last_submission_of(
+    layout: BatchLayout, case: int
+) -> tuple[int, int, dict[str, Any]] | None:
+    """(submission, task, the submission's record) that was last given *case*,
+    if any.  A record that cannot be read gave no case (#1356)."""
     for index in reversed(layout.submissions()):
-        submission = layout.read_submission(index)
+        submission = layout.submission_record(index)
+        if submission is None:
+            continue
         for task, chunk in enumerate(submission.get("chunks") or []):
             if case in chunk:
-                return index, task
+                return index, task, submission
     return None
 
 
@@ -83,8 +88,7 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
     if where is None:
         detail = "it was never submitted"
     else:
-        index, task = where
-        submission = layout.read_submission(index)
+        index, task, submission = where
         status = layout.read_task(index, task)
         state = "never started" if status is None else status.get("state", "?")
         detail = f"task {task} of job {submission.get('job_id')} {state}"

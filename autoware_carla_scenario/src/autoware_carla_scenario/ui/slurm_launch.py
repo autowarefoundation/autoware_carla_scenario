@@ -302,7 +302,9 @@ def _case_states(
     # The last submission (and task) each case was given to.
     given: dict[int, tuple[int, int, dict[str, Any]]] = {}
     for index in layout.submissions():
-        sub = layout.read_submission(index)
+        sub = layout.submission_record(index)
+        if sub is None:
+            continue  # batch_status notes it; it gave no case (#1356)
         for task, chunk in enumerate(sub.get("chunks") or []):
             for case in chunk:
                 given[int(case)] = (index, task, sub)
@@ -372,7 +374,8 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     """A SLURM batch's progress, or ``None`` when *batch_dir* holds none:
     its cases (``passed``, ``failed``, ``errored``, ``running``, ``pending``,
     ``missing`` or ``unknown``), its submissions with their jobs' and tasks'
-    states (``squeue``), and whether it has been collected."""
+    states (``squeue``), and whether it has been collected.  A submission
+    whose record cannot be read is listed ``unreadable`` with a ``note``."""
     layout = BatchLayout(batch_dir)
     try:
         manifest = layout.read_manifest()
@@ -381,7 +384,27 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     squeue: dict[int, dict[int, str] | None] = {}
     submissions = []
     for index in layout.submissions():
-        sub = layout.read_submission(index)
+        sub = layout.submission_record(index)
+        if sub is None:
+            path = layout.submission(index)
+            if path.exists():  # else removed since: its sbatch failed
+                submissions.append(
+                    {
+                        "index": index,
+                        "unreadable": True,
+                        "note": f"Its record {path} cannot be read (empty, not "
+                        "JSON, or not a JSON object): its job is not shown and "
+                        "its cases count as not submitted by it.",
+                        "job_id": None,
+                        "collect_job_id": None,
+                        "collect_error": None,
+                        "cases": 0,
+                        "active": False,
+                        "squeue_unavailable": False,
+                        "tasks": [],
+                    }
+                )
+            continue
         job = sub.get("job_id")
         states = squeue_states(str(job)) if job else {}
         squeue[index] = states
@@ -412,6 +435,8 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
                 and any(s in ACTIVE_STATES for s in states.values()),
                 "squeue_unavailable": states is None,
                 "tasks": tasks,
+                "unreadable": False,
+                "note": None,
             }
         )
     cases = _case_states(layout, manifest, squeue)

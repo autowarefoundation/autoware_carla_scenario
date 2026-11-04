@@ -222,7 +222,14 @@ def submit_batch(
 def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* to its end and collect (``wait``), or say
     how to; the exit status."""
-    submission = layout.read_submission(index)
+    submission = layout.submission_record(index)
+    if submission is None:
+        print(  # noqa: T201
+            f"Error: the submission record {layout.submission(index)} cannot be "
+            f"read; see the batch with: scenario-slurm status {layout.batch_dir}",
+            file=sys.stderr,
+        )
+        return 1
     if settings.wait:
         return follow(layout, index, settings)
     if submission.get("collect_error"):
@@ -549,7 +556,15 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     collect the batch; the exit status (0 when every case passed)."""
     from .collect import collect  # noqa: PLC0415
 
-    submission = layout.read_submission(index)
+    submission = layout.submission_record(index)
+    if submission is None:
+        print(  # noqa: T201
+            f"Error: the submission record {layout.submission(index)} is missing "
+            "or cannot be read; collect the batch with: "
+            f"scenario-slurm collect {layout.batch_dir}",
+            file=sys.stderr,
+        )
+        return 1
     job = str(submission["job_id"])
     cases = [case for chunk in submission["chunks"] for case in chunk]
     last = ""

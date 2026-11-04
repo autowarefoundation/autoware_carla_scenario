@@ -192,6 +192,11 @@
     var jobs = document.getElementById('slurm-jobs');
     jobs.innerHTML = '';
     st.submissions.forEach(function (sub) {
+      if (sub.unreadable) {
+        jobs.appendChild(el('div', 'font-medium text-gray-700 mt-1', 'Submission ' + sub.index + ': unreadable record'));
+        jobs.appendChild(el('div', 'text-xs text-amber-700', sub.note));
+        return;
+      }
       var head = el('div', 'font-medium text-gray-700 mt-1',
         'Submission ' + sub.index + ': job ' + sub.job_id + ', ' + sub.cases + ' case(s)' +
         (sub.collect_job_id ? ', collect job ' + sub.collect_job_id : '') +

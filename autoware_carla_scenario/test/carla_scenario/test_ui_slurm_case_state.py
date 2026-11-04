@@ -100,6 +100,9 @@ class _Layout:
     def read_submission(self, index: int) -> dict[str, Any]:
         return self._submissions[index]
 
+    def submission_record(self, index: int) -> dict[str, Any] | None:
+        return self._submissions[index]
+
     def read_result(self, index: int) -> dict[str, Any] | None:
         return self._results.get(index)
 
