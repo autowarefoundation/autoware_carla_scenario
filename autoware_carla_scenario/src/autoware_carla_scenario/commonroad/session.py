@@ -23,8 +23,10 @@ from __future__ import annotations
 import atexit
 import logging
 import math
+import operator
 import os
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -99,6 +101,18 @@ def _check_period(name: str, period: float) -> None:
         raise ValueError(f"{name} must be positive and finite, got {period}")
 
 
+def _check_workers(workers: Any) -> int:
+    """*workers* as an ``int``: an integer (a NumPy one too, not a bool) of at
+    least 1."""
+    try:
+        count = None if isinstance(workers, bool) else operator.index(workers)
+    except TypeError:
+        count = None
+    if count is None or count < 1:
+        raise ValueError(f"workers must be an integer of at least 1, got {workers!r}")
+    return count
+
+
 @dataclass(frozen=True)
 class CommonRoadSettings:
     """How the CommonRoad metrics are evaluated.
@@ -113,11 +127,13 @@ class CommonRoadSettings:
             On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``
             (or the ``scenario`` command decided otherwise,
             :data:`HEAVY_METRICS_DECIDED_ENV`).
-        workers: How many workers evaluate frames at once.
-        dt: The time step of the CommonRoad scenario a frame becomes (s).
+        workers: How many workers evaluate frames at once; at least 1.
+        dt: The time step of the CommonRoad scenario a frame becomes (s);
+            positive and finite.
         horizon_s: How far ahead the road users' trajectories run on, and the
-            reachable set is computed (s).
-        radius_m: How far from the ego road users and lanelets are taken in.
+            reachable set is computed (s); positive and finite.
+        radius_m: How far from the ego road users and lanelets are taken in;
+            positive and finite.
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
             section and key.
         cache_dir: Where the converted maps are kept; ``None`` for
@@ -148,6 +164,10 @@ class CommonRoadSettings:
                     f"({', '.join(COMMONROAD_METRICS)})"
                 )
             _check_period(f"metric_periods_s[{key!r}]", period)
+        object.__setattr__(self, "workers", _check_workers(self.workers))
+        _check_period("dt", self.dt)
+        _check_period("horizon_s", self.horizon_s)
+        _check_period("radius_m", self.radius_m)
 
     def evaluates(self, key: str) -> bool:
         """Whether the metric *key* is evaluated: not when it is heavy and the
@@ -181,6 +201,8 @@ class _Pool:
 
 
 _POOL = _Pool()
+#: Held while the pool's workers are started, swapped or closed.
+_POOL_LOCK = threading.RLock()
 
 
 def configure_commonroad_metrics(**changes: Any) -> CommonRoadSettings:
@@ -193,16 +215,17 @@ def configure_commonroad_metrics(**changes: Any) -> CommonRoadSettings:
     (``metric_periods_s={**commonroad_settings().metric_periods_s,
     "crime_wttr_s": 0.3}``).
     """
-    settings = replace(_POOL.settings, **changes)
-    old = _POOL.settings
-    if (
-        settings.worker_settings() != old.worker_settings()
-        or settings.command != old.command
-        or settings.workers != old.workers
-    ):
-        close_commonroad_workers()
-    _POOL.settings = settings
-    return settings
+    with _POOL_LOCK:
+        settings = replace(_POOL.settings, **changes)
+        old = _POOL.settings
+        if (
+            settings.worker_settings() != old.worker_settings()
+            or settings.command != old.command
+            or settings.workers != old.workers
+        ):
+            close_commonroad_workers()
+        _POOL.settings = settings
+        return settings
 
 
 def commonroad_settings() -> CommonRoadSettings:
@@ -211,11 +234,26 @@ def commonroad_settings() -> CommonRoadSettings:
 
 
 def _workers_for(carla_map: Any) -> list[CommonRoadWorker]:
-    """The workers on *carla_map*, started (and the map converted) if need be."""
-    name = str(carla_map.name)
-    if _POOL.workers and _POOL.map_name == name:
-        return _POOL.workers
-    close_commonroad_workers()
+    """The workers on *carla_map*, started (and the map converted) if need be:
+    started afresh when one of those pooled has exited."""
+    with _POOL_LOCK:
+        name = str(carla_map.name)
+        workers = _POOL.workers
+        if (
+            workers
+            and _POOL.map_name == name
+            and all(worker.running() for worker in workers)
+        ):
+            return workers
+        close_commonroad_workers()
+        started = _start_workers(carla_map, name)
+        _POOL.workers, _POOL.map_name = started, name
+        return started
+
+
+def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
+    """:attr:`CommonRoadSettings.workers` workers on *carla_map*: all of them
+    or, when one cannot be started, none (those started are closed)."""
     settings = _POOL.settings
     try:
         map_path = commonroad_map(carla_map.to_opendrive(), settings.cache_dir)
@@ -231,15 +269,17 @@ def _workers_for(carla_map: Any) -> list[CommonRoadWorker]:
     )
     # Started together: each spends its first seconds importing CommonRoad.
     with ThreadPoolExecutor(settings.workers) as starting:
-        started = list(
-            starting.map(
-                lambda _: CommonRoadWorker(
-                    command, map_path, settings.worker_settings()
-                ),
-                range(settings.workers),
+        futures: list[Future[CommonRoadWorker]] = [
+            starting.submit(
+                CommonRoadWorker, command, map_path, settings.worker_settings()
             )
-        )
-    _POOL.workers, _POOL.map_name = started, name
+            for _ in range(settings.workers)
+        ]
+    started = [f.result() for f in futures if f.exception() is None]
+    failed = [f.exception() for f in futures if f.exception() is not None]
+    if failed:
+        _close_all(started)
+        raise failed[0]  # type: ignore[misc]
     return started
 
 
@@ -281,26 +321,43 @@ def evaluate_commonroad(
             done.append((i, got, errors))
         return done
 
-    with ThreadPoolExecutor(len(workers)) as pool:
-        for done in pool.map(share, range(len(workers))):
-            for i, got, errors in done:
-                for key in keys:
-                    values[key][i] = got.get(key)
-                for key, error in errors.items():
-                    if key not in reported:
-                        reported.add(key)
-                        logger.warning(
-                            "CommonRoad metric %s reads nothing: %s", key, error
-                        )
+    try:
+        with ThreadPoolExecutor(len(workers)) as pool:
+            shares = list(pool.map(share, range(len(workers))))
+    except BaseException:
+        # A worker that failed, answered out of protocol or was interrupted
+        # mid-request is not reused: the next run starts the pool afresh.
+        with _POOL_LOCK:
+            if _POOL.workers is workers:
+                close_commonroad_workers()
+        raise
+    for done in shares:
+        for i, got, errors in done:
+            for key in keys:
+                values[key][i] = got.get(key)
+            for key, error in errors.items():
+                if key not in reported:
+                    reported.add(key)
+                    logger.warning("CommonRoad metric %s reads nothing: %s", key, error)
     return values
 
 
 def close_commonroad_workers() -> None:
     """Stop the workers, if any run."""
-    workers = _POOL.workers
-    _POOL.workers, _POOL.map_name = [], None
+    with _POOL_LOCK:
+        workers = _POOL.workers
+        _POOL.workers, _POOL.map_name = [], None
+    _close_all(workers)
+
+
+def _close_all(workers: list[CommonRoadWorker]) -> None:
+    """Close each of *workers*: one that cannot be closed neither stops the
+    others' closing nor masks the error being raised, if any."""
     for worker in workers:
-        worker.close()
+        try:
+            worker.close()
+        except Exception:  # noqa: BLE001
+            logger.warning("could not close a CommonRoad worker", exc_info=True)
 
 
 atexit.register(close_commonroad_workers)

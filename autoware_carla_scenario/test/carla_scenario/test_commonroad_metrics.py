@@ -421,6 +421,191 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
         evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("workers", 0, "workers must be an integer of at least 1, got 0"),
+        ("workers", -1, "workers must be an integer of at least 1, got -1"),
+        ("workers", True, "workers must be an integer of at least 1, got True"),
+        ("workers", 2.0, "workers must be an integer of at least 1, got 2.0"),
+        ("dt", 0.0, "dt must be positive and finite, got 0.0"),
+        ("dt", -0.1, "dt must be positive and finite, got -0.1"),
+        ("dt", math.nan, "dt must be positive and finite, got nan"),
+        ("horizon_s", math.inf, "horizon_s must be positive and finite, got inf"),
+        ("horizon_s", 0.0, "horizon_s must be positive and finite, got 0.0"),
+        ("radius_m", -1.0, "radius_m must be positive and finite, got -1.0"),
+        ("radius_m", math.nan, "radius_m must be positive and finite, got nan"),
+        ("radius_m", math.inf, "radius_m must be positive and finite, got inf"),
+    ],
+)
+def test_the_settings_refuse_a_bad_value(field: str, value: Any, message: str) -> None:
+    """Issue #1341: refused when the settings are built, not later in a run."""
+    with pytest.raises(ValueError, match=re.escape(message)):
+        cr_session.CommonRoadSettings(**{field: value})
+    before = cr_session.commonroad_settings()
+    with pytest.raises(ValueError, match=re.escape(message)):
+        cr_session.configure_commonroad_metrics(**{field: value})
+    assert cr_session.commonroad_settings() is before
+
+
+def test_the_settings_take_good_values() -> None:
+    settings = cr_session.CommonRoadSettings(
+        workers=1, dt=0.05, horizon_s=0.01, radius_m=1e-3
+    )
+    assert settings.worker_settings()["horizon_steps"] == 1
+
+
+def test_the_workers_may_be_any_integer() -> None:
+    np = pytest.importorskip("numpy")
+    settings = cr_session.CommonRoadSettings(workers=np.int64(2))
+    assert settings.workers == 2 and type(settings.workers) is int
+
+
+#: A worker that, the first time any is started (no marker file yet), exits
+#: (3) on its first ``evaluate``; afterwards the stand-in.
+_DIES_ONCE = textwrap.dedent(
+    """
+    import json, os, runpy, sys
+
+    marker = sys.argv.pop(1)
+    if os.path.exists(marker):
+        sys.argv = sys.argv[1:]
+        runpy.run_path(sys.argv[0], run_name="__main__")
+        sys.exit(0)
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "evaluate":
+            open(marker, "w").close()
+            sys.exit(3)
+        sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+        sys.stdout.flush()
+        if op == "close":
+            break
+    """
+)
+
+
+def test_a_dead_worker_is_not_reused(opendrive: str, tmp_path: Path) -> None:
+    """Issue #1340: the next run on the map starts fresh workers."""
+    script = tmp_path / "worker.py"
+    script.write_text(_STAND_IN)
+    dies = tmp_path / "dies_once.py"
+    dies.write_text(_DIES_ONCE)
+    log = tmp_path / "requests.jsonl"
+    cr_session.configure_commonroad_metrics(
+        command=(
+            sys.executable,
+            str(dies),
+            str(tmp_path / "died"),
+            str(script),
+            str(log),
+        ),
+        cache_dir=tmp_path / "maps",
+        workers=1,
+    )
+    world = _following(opendrive)
+    frames = _recorded(world, [0.0])
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match=r"exited \(3\)"):
+        evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    # The failed pool is gone, not kept for the next run.
+    assert cr_session._POOL.workers == []
+
+    series = evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    assert series[CRIME_TTC_S].values == [pytest.approx(2.55)]
+
+
+def test_an_exited_pooled_worker_restarts_the_pool(
+    opendrive: str, stand_in: Path
+) -> None:
+    world = _following(opendrive)
+    frames = _recorded(world, [0.0])
+    evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    first = list(cr_session._POOL.workers)
+    first[0]._process.kill()
+    first[0]._process.wait()
+
+    series = evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    assert series[CRIME_TTC_S].values == [pytest.approx(2.55)]
+    assert not any(worker in cr_session._POOL.workers for worker in first)
+    # Every worker of the old pool was closed, the one alive too.
+    assert not any(worker.running() for worker in first)
+    assert [r["op"] for r in _requests(stand_in)].count("init") == 4
+
+
+def test_a_worker_that_cannot_be_closed_does_not_mask_the_failure(
+    opendrive: str, stand_in: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _following(opendrive)
+    frames = _recorded(world, [0.0])
+    evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    stuck, other = cr_session._POOL.workers
+    close = stuck.close
+
+    def cannot_close() -> None:
+        raise BrokenPipeError("cannot close")
+
+    def fails(*_: Any) -> Any:
+        raise cr_worker.CommonRoadWorkerError("the worker failed: boom")
+
+    monkeypatch.setattr(stuck, "close", cannot_close)
+    monkeypatch.setattr(other, "evaluate", fails)
+    monkeypatch.setattr(stuck, "evaluate", fails)
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError, match="boom"):
+            evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+        # The other worker was still closed, and the pool reset.
+        assert not other.running()
+        assert cr_session._POOL.workers == []
+    finally:
+        close()
+
+
+#: A worker that, the first time any is started, exits before its ``init``;
+#: the others are the stand-in.
+_ONE_FAILS_TO_START = textwrap.dedent(
+    """
+    import os, runpy, sys
+
+    marker = sys.argv.pop(1)
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        sys.argv = sys.argv[1:]
+        runpy.run_path(sys.argv[0], run_name="__main__")
+        sys.exit(0)
+    sys.exit(4)
+    """
+)
+
+
+def test_the_workers_started_are_closed_when_one_cannot_start(
+    opendrive: str, tmp_path: Path
+) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_STAND_IN)
+    fails = tmp_path / "one_fails.py"
+    fails.write_text(_ONE_FAILS_TO_START)
+    log = tmp_path / "requests.jsonl"
+    cr_session.configure_commonroad_metrics(
+        command=(
+            sys.executable,
+            str(fails),
+            str(tmp_path / "failed"),
+            str(script),
+            str(log),
+        ),
+        cache_dir=tmp_path / "maps",
+        workers=3,
+    )
+    world = _following(opendrive)
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match=r"exited \(4\)"):
+        evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
+    assert cr_session._POOL.workers == []
+    ops = [r["op"] for r in _requests(log)]
+    # The two that started were asked to exit.
+    assert ops.count("init") == 2 and ops.count("close") == 2
+
+
 def test_the_worker_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(
         cr_worker.WORKER_ENV, "my-python -m commonroad_metrics --x 'a b'"

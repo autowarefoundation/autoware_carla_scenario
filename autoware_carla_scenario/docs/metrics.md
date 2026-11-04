@@ -242,11 +242,18 @@ The workers are started with, in order, the command in
 the `PATH`, or, in a checkout, `uv run --project commonroad_metrics
 commonroad-metrics-worker` (which builds its environment the first time). A run
 judged on a CommonRoad metric whose workers cannot be started fails with
-`CommonRoadWorkerError` rather than pass on a metric that read nothing.
-`configure_commonroad_metrics()` (in `autoware_carla_scenario.commonroad`)
-changes the period (`period_s`, and `metric_periods_s` for each metric), the
-number of workers, the horizon, the radius, CommonRoad-Reach's settings and
-the command.
+`CommonRoadWorkerError` rather than pass on a metric that read nothing. A
+worker that fails during a run (exits, or answers out of protocol) fails that
+run the same way, and takes the pool down with it: the next run starts fresh
+workers rather than reuse a dead one, as does a run that finds a pooled worker
+has exited. When one of the workers cannot be started, those that did are
+stopped. `configure_commonroad_metrics()` (in
+`autoware_carla_scenario.commonroad`) changes the period (`period_s`, and
+`metric_periods_s` for each metric), the number of workers (`workers`, at
+least 1), the time step (`dt`), the horizon (`horizon_s`), the radius
+(`radius_m`), CommonRoad-Reach's settings and the command. The periods, `dt`,
+`horizon_s` and `radius_m` must be positive and finite: a bad value raises
+`ValueError` when the settings are built, not later in a run.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
 

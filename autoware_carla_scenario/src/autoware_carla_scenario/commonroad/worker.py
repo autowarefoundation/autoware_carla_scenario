@@ -18,6 +18,7 @@ The command that starts it is, in order:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -171,6 +172,10 @@ class CommonRoadWorker:
         errors = {str(k): str(v) for k, v in dict(answer.get("errors", {})).items()}
         return values, errors
 
+    def running(self) -> bool:
+        """Whether the worker's process has not exited."""
+        return self._process.poll() is None
+
     def close(self) -> None:
         """Ask the worker to exit, and make sure it does."""
         process = self._process
@@ -186,4 +191,6 @@ class CommonRoadWorker:
                 process.wait()
         for stream in (process.stdin, process.stdout):
             if stream is not None:
-                stream.close()
+                # Flushing a dead worker's stdin raises BrokenPipeError.
+                with contextlib.suppress(OSError):
+                    stream.close()
