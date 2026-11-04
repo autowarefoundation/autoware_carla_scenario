@@ -7,6 +7,7 @@ what the launcher itself needs in ``slurm/`` beside them::
     slurm/manifest.json         every case: its config, overrides, file stem;
                                 which cases decide the batch-level settings
     slurm/submissions/<k>.json  submission k: its job, which cases each task runs
+                                (created exclusively: its index is reserved)
     slurm/jobs/<k>.sh           the job script submission k runs
     slurm/tasks/<k>-<t>.json    task t of submission k: host, ports, progress
     slurm/results/<i>.json      case i's outcome, written as soon as it ran
@@ -19,10 +20,12 @@ heavy imports: the ``scenario-slurm`` commands only read these.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,12 +38,14 @@ __all__ = [
     "MANIFEST_VERSION",
     "MANIFEST_VERSIONS",
     "RUN_FILE_SUFFIXES",
+    "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
     "config_files",
     "config_key",
     "file_sha256",
     "resubmit_target",
     "read_json",
+    "sbatch_in_flight",
     "sequential_stems",
     "write_json",
 ]
@@ -142,6 +147,60 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+#: How long a submission record whose ``job_id`` is still ``None`` counts as
+#: in flight (its submitter running sbatch) from its ``submitted_at``.  Past
+#: this, it is taken for one a crashed or killed submitter left behind, which
+#: would otherwise refuse every resubmit of the batch (#1352).
+SBATCH_IN_FLIGHT_SECONDS = 600.0
+
+
+def sbatch_in_flight(submission: dict[str, Any], now: float | None = None) -> bool:
+    """Whether *submission* is being submitted: its index is reserved, its
+    sbatch has not returned yet (no ``job_id``), and it was reserved less than
+    :data:`SBATCH_IN_FLIGHT_SECONDS` ago."""
+    if submission.get("job_id"):
+        return False
+    started = submission.get("submitted_at")
+    if not isinstance(started, (int, float)):
+        return False
+    now = time.time() if now is None else now
+    return now - float(started) < SBATCH_IN_FLIGHT_SECONDS
+
+
+def _create_exclusive(path: Path, data: Any) -> bool:
+    """Create *path* holding *data* as JSON, unless it exists; whether it was
+    created.
+
+    The JSON is written to a temporary file first and hard-linked to *path*:
+    ``link()`` fails if *path* exists, also on NFS (where ``flock()`` may not
+    work and ``O_EXCL`` did not before NFSv3), and a reader never sees the
+    file empty.  On NFS a link whose reply was lost is retried by the client
+    and reports EEXIST although it was made: the temporary file's link count
+    tells.  On a file system without hard links, ``O_CREAT | O_EXCL``.
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return os.stat(tmp).st_nlink == 2
+        except OSError as exc:
+            if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+                raise
+            try:
+                created = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return False
+            with os.fdopen(created, "w", encoding="utf-8") as stream:
+                stream.write(text)
+        return True
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
 @dataclass(frozen=True)
 class BatchLayout(BatchPaths):
     """Where the launcher's files of the batch in *batch_dir* are, and what
@@ -159,8 +218,27 @@ class BatchLayout(BatchPaths):
         return sorted(int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit())
 
     def next_submission(self) -> int:
+        """The index after the batch's last submission.  Not reserved: two
+        submitters may both be told it (:meth:`reserve_submission`)."""
         existing = self.submissions()
         return existing[-1] + 1 if existing else 0
+
+    def reserve_submission(self, record: dict[str, Any]) -> int:
+        """Create the batch's next submission record from *record* (its
+        ``index`` set), atomically; that index.
+
+        Two submitters of one batch at once -- two viewer tabs, the viewer
+        and ``scenario-slurm resubmit`` -- each get an index of their own
+        (#1352): the record is created exclusively, and an index another
+        submitter took is passed over.  :func:`write_json` then fills it in.
+        """
+        (self.root / "submissions").mkdir(parents=True, exist_ok=True)
+        index = self.next_submission()
+        while True:
+            record["index"] = index
+            if _create_exclusive(self.submission(index), record):
+                return index
+            index = max(index + 1, self.next_submission())
 
     def read_manifest(self) -> dict[str, Any]:
         """The batch's manifest.
