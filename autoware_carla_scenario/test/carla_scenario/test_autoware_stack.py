@@ -492,6 +492,27 @@ def test_docker_launcher_refuses_a_failed_build(
         _docker_launcher(ws, docker).prepare()
 
 
+def test_build_output_that_is_not_utf8_is_streamed_with_replacements(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # gcc echoes source lines whatever their bytes: one that is not UTF-8
+    # neither aborts the build's output nor truncates its log (#1346).
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+    child = (
+        "import sys; "
+        "sys.stdout.buffer.write(b'warning: \\xff in a source line\\nafter\\n'); "
+        "sys.exit(3)"
+    )
+
+    code = launcher._stream([sys.executable, "-c", child], "autoware-build.log")
+
+    assert code == 3
+    log = (tmp_path / "out" / "autoware-build.log").read_text(encoding="utf-8")
+    assert log == "warning: \ufffd in a source line\nafter\n"
+    assert "warning: \ufffd in a source line" in capsys.readouterr().out
+
+
 def test_docker_launcher_does_not_build_when_told_not_to(
     tmp_path: Path, fake_docker
 ) -> None:

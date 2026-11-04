@@ -64,7 +64,10 @@ class Toolchain:
 
     def version(self) -> str:
         out = subprocess.run(
-            [str(self.executable), "--version"], capture_output=True, text=True
+            [str(self.executable), "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return out.stdout.strip() or out.stderr.strip()
 

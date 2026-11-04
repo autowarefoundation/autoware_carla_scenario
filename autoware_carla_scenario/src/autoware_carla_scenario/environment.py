@@ -66,7 +66,8 @@ def _git(path: Path, *args: str) -> Optional[str]:
         done = subprocess.run(
             ["git", "-C", str(path), *args],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=True,
         )
