@@ -3509,7 +3509,10 @@ it accepts does not fail only when the scenario starts:</p>
 <p>A field whose constructor raises for a value needs the matching bound;
 <code>test_authoring_accepted_builds.py</code> checks each bound is refused, a value on
 it (or just inside an exclusive one) is accepted and builds, and each default
-lies inside it.</p>
+lies inside it. It also tries every field with no bound on values well outside
+its usual domain (-1, -0.001, 101, 1e12): each one the validator accepts must
+build, so a missing bound shows up there. A spawn or lanelet binding's fields
+are held to the same rule against the sweeper's <code>parse_binding</code>.</p>
 <h3 id="a-list-of-records">A list of records<a class="headerlink" href="#a-list-of-records" title="Permanent link">&para;</a></h3>
 <p>A field of kind <code>record_list</code> holds an ordered list of records, each a mapping
 of its own <code>item_fields</code> -- for a list whose order means something and whose
@@ -3833,7 +3836,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 07:54:10 UTC"><span class="timeago" datetime="2026-11-04T07:54:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 07:54:10 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 08:41:42 UTC"><span class="timeago" datetime="2026-11-04T08:41:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 08:41:42 UTC">2026-11-04</span>
   </span>
 
     
