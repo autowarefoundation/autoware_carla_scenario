@@ -1,0 +1,17 @@
+# The part of Python's socket the checked framework names, for the checker
+# (docs/typecheck.md): create_connection(address, timeout) and close() on the
+# socket it returns, with CPython 3.10's signature for the arguments it is
+# given: address a (host, port) pair, timeout a float or None.
+# source_address, all_errors and the rest of the module are not declared.
+# Nothing here connects: the check sees a socket that is closed.
+
+
+class socket:
+    def close(self) -> None:
+        pass
+
+
+def create_connection(
+    address: tuple[str, int], timeout: Optional[float] = None
+) -> socket:
+    return socket()
