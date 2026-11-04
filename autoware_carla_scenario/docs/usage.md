@@ -406,7 +406,10 @@ A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` is past its last case.
 A `--multirun` batch, the viewer and `scenario-expand` refuse such a sweep
-with the same message, naming the scenario.
+with the same message, naming the scenario. They refuse an invalid sweep (a
+`sweep.case_index` past its cases, a constraint that does not parse, ...) the
+same way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
+reports every scenario refused, not just the first, and runs or lists nothing.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
 sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
@@ -428,7 +431,11 @@ A scenario without a `sweep:` section is already concrete, so it expands to a
 single empty case. Only the Lanelet2 map is needed, not a CARLA server. A
 sweep that expands to no case is refused rather than listed as `"cases": []`:
 `Error: <scenario>: the sweep expands to no case ...` on stderr, nothing on
-stdout, exit 1.
+stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` past its cases,
+a constraint or binding that does not parse, constraints for more than one
+key, ...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its
+traceback instead). As for `scenario`, the last `scenario=` wins when it is
+given more than once.
 
 As with `scenario`, `scenario=` may be a glob. Each scenario it matches is
 expanded with the same overrides and printed as its own JSON object, one per
@@ -443,8 +450,8 @@ uv run scenario-expand 'scenario=intersection_passing/*'
 ```
 
 Every matched scenario is expanded before anything is printed. If one of them
-fails (its `controls:` are invalid, its sweep expands to no case, or an
-override does not compose), each
+fails (its `controls:` are invalid, its sweep is invalid or expands to no
+case, or an override does not compose), each
 failure goes to stderr headed by that scenario's name, nothing goes to stdout,
 and the exit status is non-zero.
 

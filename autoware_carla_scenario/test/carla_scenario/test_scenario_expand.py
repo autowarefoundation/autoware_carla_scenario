@@ -568,6 +568,58 @@ def test_the_cli_refuses_a_sweep_that_expands_to_no_case(
     assert captured.out == ""
 
 
+# An invalid sweep is reported, named, for every scenario of a glob (#1412):
+# its ValueError used to escape as a traceback, hiding the other scenarios.
+_OUT_OF_RANGE = ["+sweep.odd_sample.count=2", "++sweep.case_index=99"]
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_an_invalid_sweep_of_each_scenario(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(["scenario=cut_in/*", *_OUT_OF_RANGE])
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("cut_in/left", "cut_in/right"):
+        assert (
+            f"Error: {name}: sweep.case_index 99 is out of range: the sweep "
+            "expands to 2 case(s)"
+        ) in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_hydra_full_error_raises_an_invalid_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    with pytest.raises(ValueError, match="case_index 99 is out of range"):
+        main(["scenario=cut_in/left", *_OUT_OF_RANGE])
+
+
+# `scenario=` given twice: the last wins, as for `scenario` and Hydra (#1412);
+# it used to take the first.
+def test_the_cli_takes_the_last_scenario_argument(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(
+        [
+            "scenario=intersection_passing/straight",
+            "scenario=intersection_passing/straight_3npc",
+        ]
+    )
+    assert code == 0
+    listing = json.loads(capsys.readouterr().out)
+    assert listing == {"scenario": "intersection_passing/straight_3npc", "cases": [[]]}
+
+
 # A scenario without a sweep has its `controls:` checked too (#1191).
 @pytest.mark.parametrize("override", ["+controls.x=5", "+controls.x.rnge=[1,2]"])
 def test_the_cli_refuses_a_concrete_scenario_with_invalid_controls(
