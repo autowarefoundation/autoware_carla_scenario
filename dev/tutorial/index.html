@@ -3078,6 +3078,15 @@ importing it binds its name in <code>__init__.py</code>, so <code>configs</code>
 names <code>__init__.py</code> defines (<code>register</code>, <code>register_scenario</code>,
 <code>register_conf_dir</code>) cannot be scenario names; <code>scenario-new</code> refuses them
 (including when they come from the package name, as in <code>configs_package</code>).</p>
+<p>The package name is the import name and, hyphenated, the distribution name of
+what gets installed, so <code>scenario-new</code> also refuses one that would clash once
+installed: the framework's own (<code>autoware_carla_scenario</code> /
+<code>autoware-carla-scenario</code>, in any spelling that normalises to it), which would
+make the package depend on itself and replace the framework on
+<code>uv pip install -e</code>; a standard-library module (<code>json</code>, <code>typing</code>, ...); and the
+import name of one of the framework's run-time dependencies (<code>openodd</code>,
+<code>lanelet2</code>, <code>typesafe_carla</code>, <code>hydra</code>, <code>numpy</code>, ...). A name that only contains
+one of them, such as <code>openodd_scenarios_pkg</code>, is fine.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>reach_goal_pkg
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>reach_goal/default<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
@@ -3202,7 +3211,7 @@ is only what lets the stock <code>scenario</code> CLI find you automatically.</p
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 06:52:20 UTC"><span class="timeago" datetime="2026-11-03T06:52:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 06:52:20 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 21:16:50 UTC"><span class="timeago" datetime="2026-11-04T21:16:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 21:16:50 UTC">2026-11-04</span>
   </span>
 
     
