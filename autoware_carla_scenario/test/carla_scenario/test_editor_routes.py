@@ -2789,6 +2789,38 @@ class TestTheJunctionEditor:
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == ""
 
+    def test_deleting_a_phase_shared_within_its_cycle_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-written duplicate: the other ``phase_1`` is still declared."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[0].phases[1].name = "phase_1"
+        store.save(draft)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase/1/delete")
+
+        document = _document(store, draft_id)
+        phases = document.map.traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1"]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_deleting_a_phase_of_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``junction_1`` still has a ``phase_1`` the card resolves to."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/1/phase/0/delete")
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
     def test_deleting_a_controller_clears_the_cards_that_named_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -2872,6 +2904,102 @@ class TestTheJunctionEditor:
 
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_controller_carries_into_the_offsets_measuring_from_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1",
+            data={
+                "name": "junction_2",
+                "reference": "junction_1",
+                "delay_seconds": "8",
+            },
+        )
+
+        client.post(f"/draft/{draft_id}/signal-controller/0", data={"name": "crossing"})
+
+        controllers = self._map(store, draft_id).traffic_signal_controllers
+        assert [c.name for c in controllers] == ["crossing", "junction_2"]
+        assert controllers[1].reference == "crossing"
+        assert controllers[1].delay_seconds == 8.0
+
+    def _same_named_controllers(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> Any:
+        """Two cycles called ``junction_1``, a third offset from it, and a card.
+
+        The editor never makes two controllers share a name, so the duplicate
+        is written into the draft the way a hand-edited document would hold it.
+        """
+        self._groups(client, draft_id, "ns")
+        for _ in range(3):
+            client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        controllers = draft.document.map.traffic_signal_controllers
+        controllers[1].name = "junction_1"
+        controllers[2].reference = "junction_1"
+        controllers[2].delay_seconds = 8.0
+        store.save(draft)
+        return node_id
+
+    def test_renaming_one_of_two_same_named_controllers_leaves_the_other_its_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The cards and offsets naming ``junction_1`` still mean the one left."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/1", data={"name": "crossing"})
+
+        document = _document(store, draft_id)
+        controllers = document.map.traffic_signal_controllers
+        assert [c.name for c in controllers] == ["junction_1", "crossing", "junction_3"]
+        assert controllers[2].reference == "junction_1"
+        assert controllers[2].delay_seconds == 8.0
+        node = _present(document.action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_phase_shared_within_its_cycle_leaves_the_cards_alone(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``phase_1`` of the cycle is still what the card names."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[0].phases[1].name = "phase_1"
+        store.save(draft)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/1",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        document = _document(store, draft_id)
+        phases = document.map.traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1", "ns_green"]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_phase_of_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``junction_1`` still has a ``phase_1`` the card resolves to."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1/phase/0",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == "phase_1"
 
     def test_deleting_a_controller_drops_the_offsets_that_measured_from_it(

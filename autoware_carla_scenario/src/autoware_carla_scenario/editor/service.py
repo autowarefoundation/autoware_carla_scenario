@@ -642,7 +642,17 @@ class EditorService:
     def update_signal_controller(
         self, document: ScenarioDocument, index: int, form: Mapping[str, Any]
     ) -> None:
-        """Apply one controller's own form -- its name and its offset."""
+        """Apply one controller's own form -- its name and its offset.
+
+        A rename carries: every ``reference`` offsetting from the old name is
+        rewritten, as is every card naming it -- the renamed controller's own
+        reference included, so a self-reference stays one for the validator to
+        report.  While another controller is still called the
+        old name, the references still resolve to it, so they are left alone:
+        the editor never makes two controllers share a name, but a document
+        written by hand may, and renaming one of them must not carry off the
+        cards and offsets that meant the other.
+        """
         controller = self._signal_controller(document, index)
         if "name" in form:
             new_name = str(form["name"]).strip()
@@ -654,12 +664,16 @@ class EditorService:
                     controller,
                 )
                 old = controller.name
-                for other in document.map.traffic_signal_controllers:
-                    if other.reference == old:
-                        other.reference = new_name
-                for path, node in _signal_controller_uses(document):
-                    if str(node.params.get("controller") or "") == old:
-                        node.params["controller"] = new_name
+                if not any(
+                    other is not controller and other.name == old
+                    for other in document.map.traffic_signal_controllers
+                ):
+                    for other in document.map.traffic_signal_controllers:
+                        if other.reference == old:
+                            other.reference = new_name
+                    for path, node in _signal_controller_uses(document):
+                        if str(node.params.get("controller") or "") == old:
+                            node.params["controller"] = new_name
                 controller.name = new_name
         if "reference" in form:
             reference = str(form["reference"]).strip()
@@ -727,6 +741,13 @@ class EditorService:
         they are the escape hatch for a junction the groups cannot describe,
         they are written by hand, and a form that does not show them must not
         be able to delete them either.
+
+        A rename carries into every card naming this controller and the old
+        phase name.  A card names a phase by the pair, so while another phase
+        still answers to it -- a sibling in this cycle, or a phase of a
+        same-named controller -- the cards still resolve to that one and are
+        left alone: the editor never makes two phases of a cycle share a name,
+        but a document written by hand may.
         """
         from ..authoring.models import SignalStateRef  # noqa: PLC0415
 
@@ -740,12 +761,18 @@ class EditorService:
                     f"phase of {controller.name!r}", new_name, controller.phases, phase
                 )
                 old = phase.name
-                for path, node in _signal_controller_uses(document):
-                    if (
-                        str(node.params.get("controller") or "") == controller.name
-                        and str(node.params.get("signal_phase") or "") == old
-                    ):
-                        node.params["signal_phase"] = new_name
+                if not any(
+                    other is not phase and other.name == old
+                    for cycle in document.map.traffic_signal_controllers
+                    if cycle.name == controller.name
+                    for other in cycle.phases
+                ):
+                    for path, node in _signal_controller_uses(document):
+                        if (
+                            str(node.params.get("controller") or "") == controller.name
+                            and str(node.params.get("signal_phase") or "") == old
+                        ):
+                            node.params["signal_phase"] = new_name
                 phase.name = new_name
         if "duration_seconds" in form:
             phase.duration_seconds = _as_float(
@@ -768,11 +795,25 @@ class EditorService:
     def delete_signal_phase(
         self, document: ScenarioDocument, index: int, phase_index: int
     ) -> None:
-        """Remove one step of a cycle, and any card that named it."""
+        """Remove one step of a cycle, and any card that named it.
+
+        A card names a phase by its controller's name and the phase's, so while
+        another phase still answers to that pair -- a sibling in this cycle, or
+        a phase of a same-named controller -- the cards still resolve to it and
+        are kept, as a rename leaves them: a hand-written duplicate is the
+        validator's to report, not this delete's to guess which one they meant.
+        """
         controller = self._signal_controller(document, index)
         phase = self._signal_phase(document, index, phase_index)
         name = phase.name
         controller.phases.pop(phase_index)
+        if any(
+            other is not phase and other.name == name
+            for cycle in document.map.traffic_signal_controllers
+            if cycle.name == controller.name
+            for other in cycle.phases
+        ):
+            return
         for path, node in _signal_controller_uses(document):
             if (
                 str(node.params.get("controller") or "") == controller.name
