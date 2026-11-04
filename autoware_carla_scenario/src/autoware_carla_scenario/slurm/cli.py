@@ -166,7 +166,15 @@ def _status(layout: BatchLayout) -> int:
         f"{len(cases) - done} without"
     )
     for index in layout.submissions():
-        submission = layout.read_submission(index)
+        submission = layout.submission_record(index)
+        if submission is None:
+            path = layout.submission(index)
+            if path.exists():  # else removed since: its sbatch failed
+                print(  # noqa: T201
+                    f"  submission {index}: unreadable record {path} "
+                    "(empty, not JSON, or not a JSON object)"
+                )
+            continue
         job = submission.get("job_id")
         states = squeue_states(str(job)) if job else {}
         queued = (
@@ -174,11 +182,12 @@ def _status(layout: BatchLayout) -> int:
             if states is None
             else ", ".join(f"{t}:{s}" for t, s in sorted(states.items())) or "ended"
         )
+        chunks = submission.get("chunks") or []
         print(  # noqa: T201
-            f"  submission {index}: job {job}, {len(submission['chunks'])} task(s), "
-            f"{len(submission['cases'])} case(s); in the queue: {queued}"
+            f"  submission {index}: job {job}, {len(chunks)} task(s), "
+            f"{len(submission.get('cases') or [])} case(s); in the queue: {queued}"
         )
-        for task, chunk in enumerate(submission["chunks"]):
+        for task, chunk in enumerate(chunks):
             status = layout.read_task(index, task) or {}
             ports = status.get("ports") or {}
             rss = status.get("peak_rss_mb")
@@ -258,7 +267,16 @@ def _cancel(args: argparse.Namespace) -> int:
     layout = _layout(args.batch_dir)
     jobs: list[str] = []
     for index in layout.submissions():
-        submission = layout.read_submission(index)
+        submission = layout.submission_record(index)
+        if submission is None:
+            path = layout.submission(index)
+            if path.exists():  # else removed since: its sbatch failed
+                print(  # noqa: T201
+                    f"Skipping {path}: it cannot be read as a submission record; "
+                    "if it named a job, cancel that with scancel",
+                    file=sys.stderr,
+                )
+            continue
         for key in ("job_id", "collect_job_id"):
             if submission.get(key):
                 jobs.append(str(submission[key]))

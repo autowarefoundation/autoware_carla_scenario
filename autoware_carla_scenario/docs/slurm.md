@@ -119,7 +119,11 @@ nothing. A record whose sbatch fails is removed. One left with no job id by a
 submitter that was killed stops counting as in flight 600 s
 (`SBATCH_IN_FLIGHT_SECONDS`) after it was made. A record that cannot be read
 (empty, or not a JSON object) refuses a resubmit for as long after the file
-was last modified, then is ignored with a warning.
+was last modified, then is ignored with a warning. The other readers skip
+such a record with a warning naming it: `status` lists it as unreadable,
+`cancel` says it skipped it (cancel its job with `scancel` if it had one),
+`collect` counts its cases as not submitted by it, and the viewer's batch page
+shows the batch with a note on that submission.
 `collect` can be run any number of times.
 
 `sacct` is not needed: the batch is followed through `squeue` and the files the

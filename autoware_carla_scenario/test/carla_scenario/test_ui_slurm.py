@@ -482,6 +482,35 @@ def test_an_ended_batch_names_its_missing_cases(
     assert client.post("/api/slurm/2026-10-19/12-00-00/rm").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "content", ["", "{not json", "[1, 2]", "null"], ids=["empty", "bad", "list", "null"]
+)
+def test_a_batch_with_an_unreadable_submission_record_is_shown_with_a_note(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    """#1356: a corrupt record does not keep the batch's page (and its
+    Resubmit) from the user: that submission is noted, the others shown."""
+    batch = _manifest_batch(tmp_path)
+    path = batch / "slurm" / "submissions" / "1.json"
+    path.write_text(content)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert [c["state"] for c in status["cases"]] == [
+        "passed",
+        "failed",
+        "errored",
+        "missing",
+    ]
+    assert "CARLA did not start" in status["cases"][3]["message"]
+    first, second = status["submissions"]
+    assert first["job_id"] == "999999" and not first["unreadable"]
+    assert second["unreadable"] and str(path) in second["note"]
+    assert not status["active"]
+    assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
+
+
 def test_collect_writes_the_summary(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

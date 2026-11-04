@@ -1953,6 +1953,116 @@ def test_an_unreadable_submission_record_refuses_only_while_young(
     assert any(str(path) in r.getMessage() for r in caplog.records)
 
 
+_UNREADABLE = pytest.mark.parametrize(
+    "content", ["", "{not json", "[1, 2]", "null"], ids=["empty", "bad", "list", "null"]
+)
+
+
+@_UNREADABLE
+def test_read_submission_record_is_none_for_an_unreadable_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, content: str
+) -> None:
+    """#1356: the shared reader names the file it cannot read; a missing
+    record is None without a warning."""
+    from autoware_carla_scenario.slurm import manifest
+
+    layout = _batch_on_disk(tmp_path)
+    path = layout.submission(1)
+    path.write_text(content)
+    with caplog.at_level("WARNING", logger=manifest.__name__):
+        assert manifest.read_submission_record(path) is None
+        assert layout.submission_record(1) is None
+    assert any(str(path) in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=manifest.__name__):
+        assert layout.submission_record(2) is None
+    assert not caplog.records
+    assert layout.submission_record(0) == layout.read_submission(0)
+
+
+@_UNREADABLE
+def test_status_lists_an_unreadable_submission_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    content: str,
+) -> None:
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    path = layout.submission(1)
+    path.write_text(content)
+    assert cli.main(["status", str(layout.batch_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "submission 0: job 77, 1 task(s)" in out
+    assert f"submission 1: unreadable record {path}" in out
+
+
+@_UNREADABLE
+def test_cancel_skips_an_unreadable_submission_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    content: str,
+) -> None:
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    cancelled: list[list[str]] = []
+
+    def cancel_jobs(jobs: list[str]) -> bool:
+        cancelled.append(jobs)
+        return True
+
+    monkeypatch.setattr(cli, "cancel_jobs", cancel_jobs)
+    path = layout.submission(1)
+    path.write_text(content)
+    assert cli.main(["cancel", str(layout.batch_dir)]) == 0
+    assert cancelled == [["77"]]
+    captured = capsys.readouterr()
+    assert f"Skipping {path}" in captured.err
+    assert "Cancelling job(s) 77" in captured.out
+
+
+@_UNREADABLE
+def test_collect_counts_an_unreadable_record_s_cases_as_not_submitted_by_it(
+    tmp_path: Path, content: str
+) -> None:
+    """#1356: a case's missing message names the last submission that can be
+    read; with none, the case was never submitted."""
+    from autoware_carla_scenario.slurm.collect import collect
+
+    layout = _batch_on_disk(tmp_path)
+    layout.submission(1).write_text(content)
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert ["task 0 of job 77 never started" in e["message"] for e in summary] == [
+        True
+    ] * 3
+    layout.submission(0).write_text(content)
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert ["it was never submitted" in e["message"] for e in summary] == [True] * 3
+
+
+@_UNREADABLE
+def test_wait_and_the_worker_refuse_an_unreadable_submission_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
+) -> None:
+    from autoware_carla_scenario.slurm import submit, worker
+
+    layout = _batch_on_disk(tmp_path)
+    path = layout.submission(1)
+    path.write_text(content)
+    assert submit.follow(layout, 1, SlurmSettings()) == 1
+    assert f"the submission record {path} is missing or cannot be read" in (
+        capsys.readouterr().err
+    )
+    assert worker.run_task(layout.manifest, 1, 0) == 2
+    assert f"the submission record {path} is missing" in capsys.readouterr().err
+
+
 def test_of_two_resubmits_at_once_the_later_index_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

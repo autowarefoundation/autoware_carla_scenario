@@ -23,6 +23,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -45,10 +46,13 @@ __all__ = [
     "file_sha256",
     "resubmit_target",
     "read_json",
+    "read_submission_record",
     "sbatch_in_flight",
     "sequential_stems",
     "write_json",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: Bumped when the manifest changes in a way an older worker cannot read.
 #: Version 2 is a batch submitted with ``launcher.remote_cwd``: its jobs find
@@ -145,6 +149,34 @@ def write_json(path: Path, data: Any) -> None:
 def read_json(path: Path) -> Any:
     """Read the JSON file *path*."""
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_submission_record(path: Path) -> dict[str, Any] | None:
+    """The submission record *path*, or ``None`` when there is none to read.
+
+    A record that cannot be read as one -- empty, not JSON, or JSON that is
+    not an object (outside corruption, or an ``O_CREAT | O_EXCL`` submitter
+    that died mid-write, :func:`_create_exclusive`) -- is ``None`` with a
+    warning naming the file (#1356).  A missing one (removed since it was
+    listed: its sbatch failed) is ``None`` without one.
+    """
+    try:
+        record = read_json(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "Ignoring %s: it cannot be read as a submission record (%s)", path, exc
+        )
+        return None
+    if not isinstance(record, dict):
+        logger.warning(
+            "Ignoring %s: it cannot be read as a submission record "
+            "(it holds JSON that is not an object)",
+            path,
+        )
+        return None
+    return record
 
 
 #: How long a submission record whose ``job_id`` is still ``None`` counts as
@@ -263,6 +295,11 @@ class BatchLayout(BatchPaths):
 
     def read_submission(self, index: int) -> dict[str, Any]:
         return read_json(self.submission(index))
+
+    def submission_record(self, index: int) -> dict[str, Any] | None:
+        """Submission *index*'s record, or ``None`` when it is missing or
+        cannot be read as one (:func:`read_submission_record`)."""
+        return read_submission_record(self.submission(index))
 
     def read_result(self, case: int) -> dict[str, Any] | None:
         path = self.result(case)

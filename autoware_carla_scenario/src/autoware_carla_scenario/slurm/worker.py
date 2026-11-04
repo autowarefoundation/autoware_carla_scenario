@@ -480,8 +480,15 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     """Run task *task_index* of submission *submission_index*; its exit status."""
     layout = BatchLayout(manifest_path.resolve().parent.parent)
     manifest = layout.read_manifest()
-    submission = layout.read_submission(submission_index)
-    chunks = submission["chunks"]
+    submission = layout.submission_record(submission_index)
+    if submission is None:
+        print(  # noqa: T201
+            f"Error: the submission record {layout.submission(submission_index)} "
+            "is missing or cannot be read",
+            file=sys.stderr,
+        )
+        return 2
+    chunks = submission.get("chunks") or []
     if not 0 <= task_index < len(chunks):
         print(  # noqa: T201
             f"Error: submission {submission_index} has {len(chunks)} task(s), "
