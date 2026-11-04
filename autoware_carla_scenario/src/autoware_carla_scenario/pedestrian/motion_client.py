@@ -132,7 +132,8 @@ class PedestrianMotionClient:
         """Agree on the contract; what the generator produces.
 
         Raises:
-            RuntimeError: If the generator speaks another contract version.
+            RuntimeError: If the generator speaks another contract version,
+                or answers a frame rate that is not finite and positive.
             grpc.RpcError: If it does not answer.
         """
         reply = self._stub.Negotiate(
@@ -145,12 +146,20 @@ class PedestrianMotionClient:
                 f"{reply.contract_version or '(none)'}, not {CONTRACT_VERSION}: use "
                 "a backend image of the contract this autoware_carla_scenario speaks"
             )
+        fps = float(reply.fps)
+        # Every frame number is a time times the rate: an unset (0), NaN or
+        # infinite rate would place every frame at 0 or fail int().
+        if not math.isfinite(fps) or fps <= 0:
+            raise RuntimeError(
+                f"the pedestrian motion generator at {self._address} answers a "
+                f"frame rate of {fps!r}, not a finite positive one"
+            )
         self._joint_names = tuple(reply.joint_names)
         return MotionGeneratorInfo(
             backend=reply.backend,
             backend_version=reply.backend_version,
             model=reply.model,
-            fps=float(reply.fps),
+            fps=fps,
             horizon_frames=int(reply.horizon_frames),
             joint_names=self._joint_names,
         )
