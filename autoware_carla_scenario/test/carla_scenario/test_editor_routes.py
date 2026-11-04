@@ -2436,6 +2436,106 @@ class TestTheJunctionEditor:
         phase = document_map.traffic_signal_controllers[0].phases[0]
         assert [state.group for state in phase.states] == ["ew"]
 
+    def test_deleting_a_group_takes_the_conflicts_naming_it_with_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        client.post(f"/draft/{draft_id}/signal-group/0/delete")
+
+        assert self._map(store, draft_id).signal_groups[0].conflicts_with == []
+
+    def _same_named_groups(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """``ns``, ``ew`` and a hand-written second ``ns``, with a cycle.
+
+        The editor never makes two groups share a name, so the duplicate is
+        written into the draft the way a hand-edited document would hold it.
+        """
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-group")
+        draft = _draft(store, draft_id)
+        groups = draft.document.map.signal_groups
+        groups[1].conflicts_with = ["ns"]
+        groups[2].name = "ns"
+        groups[2].conflicts_with = ["ns", "ew"]
+        store.save(draft)
+
+    def test_deleting_one_of_two_same_named_groups_keeps_the_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-written duplicate: the name the phases use is still declared."""
+        self._same_named_groups(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-group/2/delete")
+
+        document_map = self._map(store, draft_id)
+        assert [g.name for g in document_map.signal_groups] == ["ns", "ew"]
+        assert document_map.signal_groups[1].conflicts_with == ["ns"]
+        phase = document_map.traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["ns", "ew"]
+
+    def test_renaming_one_of_two_same_named_groups_leaves_the_other_its_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The phases and conflicts naming ``ns`` still mean the ``ns`` left."""
+        self._same_named_groups(client, store, draft_id)
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/2",
+            data={
+                "name": "diagonal",
+                "lanelet2_regulatory_element_ids": "1332",
+                "conflicts_with": ["ns", "ew"],
+            },
+        )
+
+        groups = self._map(store, draft_id).signal_groups
+        assert [g.name for g in groups] == ["ns", "ew", "diagonal"]
+        assert groups[0].conflicts_with == []
+        assert groups[1].conflicts_with == ["ns"]
+        assert groups[2].conflicts_with == ["ns", "ew"]
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["ns", "ew"]
+
+    def test_renaming_a_group_that_conflicts_with_itself_keeps_the_self_reference(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Rewritten with the rest, so the validator still has it to report.
+
+        The form always posts the conflicts and never offers a group its own
+        name, so this is the service, applying a rename alone.
+        """
+        self._groups(client, draft_id, "ns", "ew")
+        document = _document(store, draft_id)
+        document.map.signal_groups[0].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(document, 0, {"name": "north_south"})
+
+        assert document.map.signal_groups[0].conflicts_with == ["north_south"]
+
+    def test_renaming_one_of_two_same_named_groups_keeps_its_conflict_with_the_other(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Its ``ns`` is the sibling it shared the name with, not itself."""
+        self._same_named_groups(client, store, draft_id)
+        document = _document(store, draft_id)
+
+        EditorService(store).update_signal_group(document, 2, {"name": "diagonal"})
+
+        assert document.map.signal_groups[2].conflicts_with == ["ns", "ew"]
+        assert document.map.signal_groups[1].conflicts_with == ["ns"]
+
     # -- controllers and phases -------------------------------------------
 
     def test_a_new_controller_arrives_runnable(
