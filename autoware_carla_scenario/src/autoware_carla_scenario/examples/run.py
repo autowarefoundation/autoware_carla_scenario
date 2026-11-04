@@ -410,9 +410,16 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     (``+autoware.launcher.stop_timout_s=60``) is refused, whatever the type,
     rather than leaving the default in place.
 
+    The settings the launcher of the type reads are checked too, naming the
+    key: ``stop_timeout_s`` must be a finite number above 0, and the docker
+    launcher's ``ros_domain_ids`` a list of ROS domain ids (ints from 0 to
+    232).  :func:`check_batch_configs` calls this, so a batch or a sweep is
+    refused for any of these before its first scenario starts.
+
     Raises:
-        ValueError: If ``autoware.launcher.type`` names an unknown launcher, or
-            the group holds a key no launcher reads, naming it.
+        ValueError: If ``autoware.launcher.type`` names an unknown launcher,
+            the group holds a key no launcher reads, or a setting the type
+            reads is refused, naming it.
     """
     ego_cfg = cfg.get("ego") or {}
     if str(ego_cfg.get("entity", "autopilot")) != "autoware":
@@ -454,30 +461,88 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         return cached
 
     launcher: AutowareLauncher
-    if kind == "docker":
-        options = {k: v for k, v in settings.items() if k in docker_fields}
-        options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
-        for name in ("launch", "colcon_args", "docker_args", "ros_domain_ids"):
-            if name in options:
-                options[name] = tuple(options[name] or ())
-        if "bridge_parameters" in options:
-            options["bridge_parameters"] = dict(options["bridge_parameters"] or {})
-        launcher = DockerAutowareLauncher(DockerAutowareConfig(**options))
-    elif kind == "command":
-        launcher = CommandAutowareLauncher(
-            tuple(str(arg) for arg in settings.get("command") or ()),
-            env={str(k): str(v) for k, v in (settings.get("env") or {}).items()},
-            stop_timeout_s=float(settings.get("stop_timeout_s", 20.0)),
-            bridge_parameters=dict(settings.get("bridge_parameters") or {}),
-        )
-    else:
+    if kind not in ("docker", "command"):
         msg = (
             f"Unknown autoware.launcher.type: {kind!r}. "
             "Expected one of: 'none', 'docker', 'command'."
         )
         raise ValueError(msg)
+    stop_timeout_s = _launcher_stop_timeout_s(settings)
+    ros_domain_ids = _launcher_ros_domain_ids(settings) if kind == "docker" else ()
+    try:
+        if kind == "docker":
+            options = {k: v for k, v in settings.items() if k in docker_fields}
+            options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
+            # Absent is empty, refused naming the key.
+            options.setdefault("launch", ())
+            for name in ("launch", "colcon_args", "docker_args"):
+                if name in options:
+                    options[name] = tuple(options[name] or ())
+            options["ros_domain_ids"] = ros_domain_ids
+            options["stop_timeout_s"] = stop_timeout_s
+            if "bridge_parameters" in options:
+                options["bridge_parameters"] = dict(options["bridge_parameters"] or {})
+            launcher = DockerAutowareLauncher(DockerAutowareConfig(**options))
+        else:
+            launcher = CommandAutowareLauncher(
+                tuple(str(arg) for arg in settings.get("command") or ()),
+                env={str(k): str(v) for k, v in (settings.get("env") or {}).items()},
+                stop_timeout_s=stop_timeout_s,
+                bridge_parameters=dict(settings.get("bridge_parameters") or {}),
+            )
+    except ValueError as exc:
+        # The configs' own refusals name the field; this is the group.
+        raise ValueError(f"autoware.launcher.{exc}") from None
     _AUTOWARE_LAUNCHERS[key] = launcher
     return launcher
+
+
+def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
+    """``autoware.launcher.stop_timeout_s`` of *settings*, checked: a finite
+    number of seconds -- an int or a float, not a bool, a string or null --
+    above 0, as the bridge's timeouts are.  Each launcher type reads it.
+
+    A NaN never times out (``Popen.wait(timeout=nan)``), so a stack that
+    ignores ``SIGINT`` would never be escalated and the batch would hang; 0 or
+    less skips the grace the stack is given to stop.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    value = settings.get("stop_timeout_s", 20.0)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(
+            "autoware.launcher.stop_timeout_s must be a finite number > 0 "
+            f"(got {value!r})"
+        )
+    return float(value)
+
+
+def _launcher_ros_domain_ids(settings: dict[str, Any]) -> tuple[int, ...]:
+    """``autoware.launcher.ros_domain_ids`` of *settings*, checked: a list of
+    ints (not bools) from 0 to 232, the ``ROS_DOMAIN_ID`` range ROS 2 can use
+    (:class:`~autoware_carla_scenario.autoware_stack.DockerAutowareConfig`
+    checks the range); null or absent is none.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    value = settings.get("ros_domain_ids")
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise ValueError(
+            "autoware.launcher.ros_domain_ids must be a list of ROS domain ids, "
+            f"whole numbers from 0 to 232 (got {value!r})"
+        )
+    return tuple(value)
 
 
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:

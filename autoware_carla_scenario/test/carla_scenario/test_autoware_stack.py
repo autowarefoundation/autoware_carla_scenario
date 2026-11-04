@@ -641,6 +641,64 @@ def test_docker_config_rejects_an_unknown_build_policy() -> None:
         DockerAutowareConfig(workspace=Path("/ws"), launch=("a",), build="sometimes")  # type: ignore[arg-type]
 
 
+#: #1450: a NaN never times out (the stack is never escalated), and 0 or less
+#: skips the grace a stack is given to stop.
+_BAD_STOP_TIMEOUTS = [float("nan"), float("inf"), -5.0, 0.0]
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_docker_config_rejects_a_stop_timeout_that_is_not_positive_and_finite(
+    stop_timeout_s: float,
+) -> None:
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        DockerAutowareConfig(
+            workspace=Path("/ws"), launch=("a",), stop_timeout_s=stop_timeout_s
+        )
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_command_launcher_rejects_a_stop_timeout_that_is_not_positive_and_finite(
+    stop_timeout_s: float,
+) -> None:
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        CommandAutowareLauncher(["true"], stop_timeout_s=stop_timeout_s)
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_process_group_rejects_a_stop_timeout_before_it_starts_anything(
+    stop_timeout_s: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import autoware_carla_scenario.autoware_stack.launcher as launcher_module
+
+    monkeypatch.setattr(
+        launcher_module,
+        "_start_session",
+        lambda *_a, **_k: pytest.fail("started the command"),
+    )
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        ProcessGroup([sys.executable, "-c", "pass"], stop_timeout_s=stop_timeout_s)
+
+
+@pytest.mark.parametrize("ids", [(-3,), (233,), (7, 999), (True,)])
+def test_docker_config_rejects_a_ros_domain_id_out_of_range(
+    ids: tuple[int, ...],
+) -> None:
+    """#1450: refused here, not by the stack's DDS inside the container."""
+    with pytest.raises(ValueError, match="^ros_domain_ids must be ROS domain ids"):
+        DockerAutowareConfig(workspace=Path("/ws"), launch=("a",), ros_domain_ids=ids)
+
+
+def test_docker_config_takes_the_ros_domain_id_range_and_a_small_timeout() -> None:
+    config = DockerAutowareConfig(
+        workspace=Path("/ws"),
+        launch=("a",),
+        ros_domain_ids=(0, 101, 232),
+        stop_timeout_s=0.1,
+    )
+    assert tuple(config.ros_domain_ids) == (0, 101, 232)
+    assert config.stop_timeout_s == 0.1
+
+
 def test_compose_override_files_merge_environment_and_volumes(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     devcontainer = ws / ".devcontainer" / "universe-devel-cuda" / "devcontainer.json"

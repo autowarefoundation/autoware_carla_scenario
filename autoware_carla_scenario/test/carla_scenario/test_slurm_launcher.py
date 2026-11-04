@@ -840,6 +840,36 @@ def test_slurm_checks_the_launcher_of_an_autoware_case_after_an_autopilot_one(
         run.check_batch_configs([first, second])
 
 
+@pytest.mark.parametrize(
+    ("kind", "override", "key"),
+    [
+        ("docker", "autoware.launcher.stop_timeout_s=nan", "stop_timeout_s"),
+        ("command", "autoware.launcher.stop_timeout_s=nan", "stop_timeout_s"),
+        ("docker", "autoware.launcher.stop_timeout_s=-5", "stop_timeout_s"),
+        ("command", "autoware.launcher.stop_timeout_s=abc", "stop_timeout_s"),
+        ("docker", "autoware.launcher.ros_domain_ids=[-3,999]", "ros_domain_ids"),
+        ("docker", "autoware.launcher.ros_domain_ids=7", "ros_domain_ids"),
+    ],
+)
+def test_a_batch_with_a_bad_launcher_setting_is_refused_up_front(
+    fake_slurm: SimpleNamespace, kind: str, override: str, key: str
+) -> None:
+    """#1450: the launcher's stop timeout and ROS domain ids are refused with
+    the batch, naming the key, not when a stack is stopped or started."""
+    run = fake_slurm.run
+    overrides = [
+        "ego.entity=autoware",
+        f"autoware.launcher.type={kind}",
+        "autoware.launcher.launch=[autoware_launch,x.launch.xml]",
+        "autoware.launcher.command=[ros2,launch]",
+        override,
+    ]
+    with pytest.raises(
+        run.RunConfigError, match=re.escape(f"autoware.launcher.{key} must be")
+    ):
+        run.check_batch_configs([run._compose_config(_CONCRETE, overrides)])
+
+
 @pytest.mark.parametrize("kind", ["docker", "command"])
 def test_a_batch_with_an_unknown_launcher_key_is_refused_before_anything_runs(
     fake_slurm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, kind: str
