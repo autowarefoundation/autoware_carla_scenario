@@ -80,7 +80,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from .forms import field_present, parse_params
+from .forms import field_present, parse_int_list, parse_params
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -495,9 +495,9 @@ class EditorService:
             # and two spellings of one map are one string.
             document.map.source = self._canonical_source(document.map.source)
         if "map_no_3d_model_lanelet_ids" in form:
-            from .forms import parse_int_list  # noqa: PLC0415
-
-            parsed = parse_int_list(form["map_no_3d_model_lanelet_ids"])
+            parsed = _as_int_list(
+                form["map_no_3d_model_lanelet_ids"], "Excluded lanelet IDs"
+            )
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
@@ -557,8 +557,6 @@ class EditorService:
         document written by hand may, and renaming one of them must not carry
         off what the other was driving.
         """
-        from .forms import parse_int_list  # noqa: PLC0415
-
         group = self._signal_group(document, index)
         if "name" in form:
             new_name = str(form["name"]).strip()
@@ -574,7 +572,9 @@ class EditorService:
                     self._rename_signal_group(document, old_name, new_name)
                 group.name = new_name
         if "lanelet2_regulatory_element_ids" in form:
-            parsed = parse_int_list(form["lanelet2_regulatory_element_ids"])
+            parsed = _as_int_list(
+                form["lanelet2_regulatory_element_ids"], "Regulatory element IDs"
+            )
             group.lanelet2_regulatory_element_ids = (
                 parsed if isinstance(parsed, list) else []
             )
@@ -1760,6 +1760,20 @@ def as_int(raw: Any, label: str, fallback: int) -> int:
         return int(text)
     except ValueError as exc:
         raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
+
+
+def _as_int_list(raw: Any, label: str) -> Any:
+    """Return *raw* as a list of ints (or an interpolation), or raise a
+    user-facing error naming *label*.
+
+    The form parser (:func:`_parse`) turns the same ``ValueError`` into an
+    :class:`EditorError`; a handler that reads an id list itself goes through
+    here, so a typo is shown beside the form instead of escaping as a 500.
+    """
+    try:
+        return parse_int_list(raw)
+    except ValueError as exc:
+        raise EditorError(f"{label}: {exc}.") from exc
 
 
 def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:

@@ -8,6 +8,7 @@ only way to catch a template that renders but shows the wrong thing.
 
 from __future__ import annotations
 
+import html
 import io
 import math
 import re
@@ -1640,6 +1641,28 @@ class TestScenarioMetadata:
         )
         assert document.map.no_3d_model_lanelet_ids == [3, 4, 41]
 
+    @pytest.mark.parametrize("ids", ["12, 3.5", "12 abc"])
+    def test_a_bad_excluded_lanelet_id_is_explained_and_not_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str, ids: str
+    ) -> None:
+        """A typo in the id list is an inline error, not an HTTP 500 (#1518)."""
+        client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "3, 4"},
+        )
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"title": "Renamed", "map_no_3d_model_lanelet_ids": ids},
+        )
+        assert response.status_code == 200
+        bad = ids.split()[-1]
+        assert f"Excluded lanelet IDs: must be whole numbers, got {bad!r}" in (
+            html.unescape(response.text)
+        )
+        document = _document(store, draft_id)
+        assert document.map.no_3d_model_lanelet_ids == [3, 4]
+        assert document.title != "Renamed"
+
     def test_an_invalid_identifier_is_refused(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -2494,6 +2517,22 @@ class TestTheJunctionEditor:
             "group_1",
             "group_2",
         ]
+
+    def test_a_bad_regulatory_element_id_is_explained_and_not_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A typo in the id list is an inline error, not an HTTP 500 (#1518)."""
+        self._groups(client, draft_id, "ns")
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "renamed", "lanelet2_regulatory_element_ids": "1330, 1333x"},
+        )
+        assert response.status_code == 200
+        assert "Regulatory element IDs: must be whole numbers, got '1333x'" in (
+            html.unescape(response.text)
+        )
+        group = self._map(store, draft_id).signal_groups[0]
+        assert (group.name, group.lanelet2_regulatory_element_ids) == ("ns", [1330])
 
     def test_renaming_a_group_carries_into_the_phases_that_set_it(
         self, client: TestClient, store: DraftStore, draft_id: str
