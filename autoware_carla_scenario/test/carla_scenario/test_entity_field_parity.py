@@ -43,7 +43,7 @@ import autoware_carla_scenario.examples as examples_package
 CONF = Path(examples_package.__file__).parent / "conf"
 
 #: Where each kind sits in :func:`_base`'s entity list.
-INDEX = {"ego": 0, "vehicle": 1, "pedestrian": 2}
+INDEX = {"ego": 0, "vehicle": 1, "pedestrian": 2, "motorcycle": 3}
 
 #: Fields that are not values the run is configured with.
 NOT_RUNTIME = {
@@ -61,6 +61,7 @@ def _base() -> ScenarioDocument:
                 {"id": "ego", "kind": "ego", "spawn": {"lanelet_id": 242}},
                 {"id": "car", "kind": "vehicle", "spawn": {"lanelet_id": 243}},
                 {"id": "walker", "kind": "pedestrian", "spawn": {"lanelet_id": 244}},
+                {"id": "moto", "kind": "motorcycle", "spawn": {"lanelet_id": 245}},
             ],
             "assertions": {
                 "pass": [{"type": "elapsed_time", "params": {"duration_seconds": 5.0}}],
@@ -199,7 +200,11 @@ def _derived_lanelet(side: str) -> Mutation:
 
 
 def _cases() -> Iterator[tuple[str, str, str, Mutation, Mutation]]:
-    model = {"ego": "vehicle.tesla.model3", "vehicle": "vehicle.tesla.model3"}
+    model = {
+        "ego": "vehicle.tesla.model3",
+        "vehicle": "vehicle.tesla.model3",
+        "motorcycle": "vehicle.yamaha.yzf",
+    }
     for kind in INDEX:
         walker = kind == "pedestrian"
         ego = kind == "ego"

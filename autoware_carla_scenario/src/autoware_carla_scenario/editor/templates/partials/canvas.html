@@ -180,6 +180,7 @@
           style="display:flex; align-items:center; gap:7px">
       <select name="kind" class="ed-input-sm">
         <option value="vehicle">Vehicle</option>
+        <option value="motorcycle">Motorcycle</option>
         <option value="pedestrian">Pedestrian</option>
         <option value="ego" {% if document.ego %}disabled{% endif %}>Ego</option>
       </select>
@@ -217,7 +218,7 @@
              hx-get="/draft/{{ draft.id }}/inspector/{{ entity.id }}"
              hx-target="#inspector" hx-swap="innerHTML">
           <div class="ed-actor">
-            <span class="ed-avatar">{{ ic.icon('user' if entity.kind == 'ego' else 'car', 13) }}</span>
+            <span class="ed-avatar">{{ ic.icon({'ego': 'user', 'motorcycle': 'motorcycle'}.get(entity.kind, 'car'), 13) }}</span>
             <span style="min-width:0">
               <span class="ed-actor-name" style="display:block">{{ entity.display_name }}</span>
               <span class="ed-actor-role">{{ 'Ego' if entity.kind == 'ego' else entity.id }}</span>

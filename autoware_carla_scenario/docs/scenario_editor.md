@@ -28,6 +28,12 @@ There is no editor-only runtime. Every action a document names is built by
 `autoware_carla_scenario.conditions`, and every spawn constraint is evaluated by
 the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
+An entity is of one of four kinds, picked when it is added (**+ Actor**): the
+`ego`, a `vehicle`, a `motorcycle` or a `pedestrian`. A motorcycle is spawned
+as a `MotorcycleEntity`, by default on whichever motorcycle the running CARLA
+has (`vehicle_type: auto`), and its track offers every action a vehicle's
+does; the traffic backends drive it as a motorcycle (docs/traffic_backends.md).
+
 ## Which map: the Map library
 
 A scenario's map is named by a **source URI** pointing at a git repository, and

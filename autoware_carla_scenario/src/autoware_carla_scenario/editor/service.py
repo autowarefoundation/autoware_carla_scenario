@@ -1106,6 +1106,7 @@ class EditorService:
     _ID_PREFIXES: ClassVar[dict[str, str]] = {
         "ego": "ego",
         "vehicle": "npc",
+        "motorcycle": "moto",
         "pedestrian": "walker",
     }
 

@@ -431,7 +431,7 @@ class ActionSpec:
     #: warning in a run's log -- and so the rule lives with the action rather
     #: than as a list of type ids the validator would have to be kept in step
     #: with.  Ignored for an ``environment`` action, which has no actor.
-    actor_kinds: tuple[str, ...] = ("ego", "vehicle")
+    actor_kinds: tuple[str, ...] = ("ego", "vehicle", "motorcycle")
     #: ``instant`` renders as a diamond on the swimlane, ``continuous`` as a bar.
     visual_kind: Literal["instant", "continuous"] = "instant"
     #: An ``actor`` action whose actor may be left out: it then acts on the
@@ -1586,7 +1586,7 @@ register_action_spec(
         category="Vehicle / Motion",
         builder="build_despawn_action",
         target="..actions:DespawnAction",
-        actor_kinds=("vehicle", "pedestrian"),
+        actor_kinds=("vehicle", "motorcycle", "pedestrian"),
         actor_optional=True,
         visual_kind="instant",
         fields=(
@@ -1617,7 +1617,7 @@ register_action_spec(
         builder="build_spawn_action",
         target="..actions:SpawnAction",
         argmap=(("speed_ms", "speed"),),
-        actor_kinds=("vehicle", "pedestrian"),
+        actor_kinds=("vehicle", "motorcycle", "pedestrian"),
         actor_optional=True,
         visual_kind="instant",
         builds=(
@@ -1795,7 +1795,7 @@ register_action_spec(
         category="Adversity",
         builder="build_stalled_object_action",
         target="..actions.stalled_object:StalledObjectAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         builds=(
             BuiltArgument(
@@ -1916,7 +1916,7 @@ register_action_spec(
         category="Adversity",
         builder="build_adversarial_brake_action",
         target="..actions.adversarial:AdversarialBrakeAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Brake hard in front of a follower that keeps coming."
@@ -1931,7 +1931,7 @@ register_action_spec(
         category="Adversity",
         builder="build_ignore_leader_action",
         target="..actions.adversarial:IgnoreLeaderAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Drive on as if the close, slower leader were not there."
@@ -1946,7 +1946,7 @@ register_action_spec(
         category="Adversity",
         builder="build_adversarial_cut_in_action",
         target="..actions.adversarial:AdversarialCutInAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Change lane in front of a vehicle too close behind in the next lane."
@@ -1961,7 +1961,7 @@ register_action_spec(
         category="Adversity",
         builder="build_adversarial_merge_action",
         target="..actions.adversarial:AdversarialMergeAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Beside a merging lane, speed up or change in to cut a "
@@ -1976,7 +1976,7 @@ register_action_spec(
         category="Adversity",
         builder="build_lane_change_abort_action",
         target="..actions.adversarial:LaneChangeAbortAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Start into the next lane in front of a vehicle too close "
@@ -1991,7 +1991,7 @@ register_action_spec(
         category="Adversity",
         builder="build_head_on_action",
         target="..actions.adversarial:HeadOnAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Drive on at a leader coming the other way." + _ADVERSITY_NOTE,
@@ -2005,7 +2005,7 @@ register_action_spec(
         category="Adversity",
         builder="build_run_traffic_rule_action",
         target="..actions.adversarial:RunTrafficRuleAction",
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="continuous",
         fields=_ADVERSITY_FIELDS,
         description="Run the red or yellow light the vehicle is stopping for."
@@ -2792,7 +2792,7 @@ register_action_spec(
         target="..actions:TrafficParametersAction",
         # An NPC: the ego is driven by what it is (Autoware, a policy), not by
         # the traffic backend's driver model.
-        actor_kinds=("vehicle",),
+        actor_kinds=("vehicle", "motorcycle"),
         visual_kind="instant",
         builds=(_VEHICLES_ARGUMENT,),
         fields=_spread_fields(_VEHICLE_SPREADS) + _TRAFFIC_BOOLEANS,
@@ -2819,7 +2819,7 @@ register_action_spec(
         builder="build_routing_action",
         target="..actions:RoutingAction",
         argmap=(("speed_ms", "speed"),),
-        actor_kinds=("ego", "vehicle", "pedestrian"),
+        actor_kinds=("ego", "vehicle", "motorcycle", "pedestrian"),
         visual_kind="continuous",
         vertex_conditions=True,
         # The route is a goal and via lanelets, or written-out waypoints, and

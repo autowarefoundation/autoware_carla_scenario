@@ -36,7 +36,12 @@ from .signals import (
 from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
 from .entity.pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
-from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .entity.vehicle_entity import (
+    ANY_MOTORCYCLE,
+    MotorcycleEntity,
+    VehicleEntity,
+    VehicleEntityConfig,
+)
 from .scenario_base import BaseScenario, EgoConfig
 
 if TYPE_CHECKING:
@@ -572,12 +577,14 @@ class DeclarativeScenario(BaseScenario):
         )
 
     def _build_npc(self, entity: Entity, world: "object") -> VehicleEntity:
-        """Return the :class:`VehicleEntity` for *entity*, snapped to the road."""
+        """Return the :class:`VehicleEntity` for *entity*, snapped to the road:
+        a :class:`MotorcycleEntity` for a ``motorcycle``."""
         from .coordinate.transform import to_opendrive  # noqa: PLC0415
 
         vehicle_type = _vehicle_type(entity, world)
+        npc_class = MotorcycleEntity if entity.kind == "motorcycle" else VehicleEntity
         if self._parked(entity):
-            return VehicleEntity(
+            return npc_class(
                 VehicleEntityConfig(
                     role_name=self._compiled.role_of(entity.id),
                     spawn_location=SpawnTransform(self._parking_transform(entity)),
@@ -598,7 +605,7 @@ class DeclarativeScenario(BaseScenario):
         snapped = snap_to_carla_road(
             pose, world, ground_projection=self._ground_projection
         )
-        return VehicleEntity(
+        return npc_class(
             VehicleEntityConfig(
                 # The role the compiler already resolved every condition to.
                 # Deriving it a second time here is how a vehicle ends up
@@ -627,6 +634,9 @@ def _vehicle_type(entity: Entity, world: "object") -> str:
 
     if entity.vehicle_type != AUTO_MODEL:
         return entity.vehicle_type
+    if entity.kind == "motorcycle":
+        # MotorcycleEntity picks the server's motorcycle when it spawns.
+        return ANY_MOTORCYCLE
     from .entity.fit import fitted_vehicle  # noqa: PLC0415
 
     size = entity.size

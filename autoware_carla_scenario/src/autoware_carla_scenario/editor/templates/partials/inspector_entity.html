@@ -7,7 +7,7 @@
 
 <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
-  <p class="ed-kicker">{{ 'Ego vehicle' if target.kind == 'ego' else 'Vehicle' }}</p>
+  <p class="ed-kicker">{{ {'ego': 'Ego vehicle', 'motorcycle': 'Motorcycle', 'pedestrian': 'Pedestrian'}.get(target.kind, 'Vehicle') }}</p>
   <h3 class="ed-heading">{{ target.display_name }}</h3>
 
   <div class="ed-field">
