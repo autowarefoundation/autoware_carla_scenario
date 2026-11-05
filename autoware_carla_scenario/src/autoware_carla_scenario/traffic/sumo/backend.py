@@ -118,6 +118,7 @@ from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
+from ...utils.vehicles import is_emergency_vehicle_type
 from ...visibility import driver_quantile, sight_speed_at, world_visibility
 from ...world_reset import episode_of
 from ..base import (
@@ -309,9 +310,6 @@ _PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
 #: a fire engine's truck).
 EMERGENCY_TYPE = "acs_emergency"
 _EMERGENCY = ("emergency", EMERGENCY_TYPE)
-#: The value of the CARLA blueprint attribute ``special_type`` that makes an
-#: emergency vehicle's blueprint.
-EMERGENCY_SPECIAL_TYPE = "emergency"
 #: How far (m) SUMO's vehicles react to an emergency vehicle on a call
 #: (its bluelight device's ``reactiondist``; SUMO's default).  Off duty, 0:
 #: none does.
@@ -388,13 +386,18 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
     return 0.0, 0.0
 
 
-def _base_type(actor: Any) -> str:
-    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case; empty
-    for an actor without one."""
+def _blueprint_attribute(actor: Any, name: str) -> str:
+    """The CARLA vehicle *actor*'s blueprint attribute *name*, lower case;
+    empty for an actor without one."""
     try:
-        return str(actor.attributes.get("base_type", "")).lower()
+        return str(actor.attributes.get(name, "")).lower()
     except Exception:  # noqa: BLE001 - an actor without attributes is a car
         return ""
+
+
+def _base_type(actor: Any) -> str:
+    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case."""
+    return _blueprint_attribute(actor, "base_type")
 
 
 def is_bicycle(actor: Any) -> bool:
@@ -411,13 +414,12 @@ def is_motorcycle(actor: Any) -> bool:
 
 def is_emergency(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is an emergency vehicle: its
-    blueprint's ``special_type`` says so, as CARLA's police cars',
-    ambulances' and fire engines' do."""
-    try:
-        special = str(actor.attributes.get("special_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return special.lower() == EMERGENCY_SPECIAL_TYPE
+    blueprint's ``special_type`` says so (CARLA 0.9), or, with none, its id
+    (CARLA 0.10; :func:`~autoware_carla_scenario.utils.vehicles.is_emergency_vehicle_type`)."""
+    type_id = str(getattr(actor, "type_id", ""))
+    return is_emergency_vehicle_type(
+        type_id, _blueprint_attribute(actor, "special_type")
+    )
 
 
 def _sumo_class(actor: Any) -> tuple[str, str]:
@@ -429,15 +431,13 @@ def _sumo_class(actor: Any) -> tuple[str, str]:
     return _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
 
 
-def _with_siren(mode: int, on: bool, braked: bool = True) -> int:
+def _with_siren(mode: int, on: bool) -> int:
     """Speed mode *mode* of an emergency vehicle on a call (*on*: it does not
-    brake for red lights) or off duty, when it brakes for them again if it
-    did before its call (*braked*)."""
+    brake for red lights) or off duty (it does again: every emergency vehicle
+    joins with SUMO's own speed mode, which does)."""
     if on:
         return mode & ~_SPEED_MODE_RED_LIGHT
-    if braked:
-        return mode | _SPEED_MODE_RED_LIGHT
-    return mode
+    return mode | _SPEED_MODE_RED_LIGHT
 
 
 def _write_scenario_types(path: Path) -> Path:
@@ -676,14 +676,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._ambient: dict[str, Any] = {}
         #: SUMO id -> its vehicle class, read once.
         self._vclasses: dict[str, str] = {}
-        #: The entities (by ``id()``) of the emergency vehicles on a call
-        #: (:meth:`set_emergency`), whether in SUMO yet or not.
-        self._emergencies: set[int] = set()
         #: Entity ``id()`` -> the SUMO id of its emergency vehicle in SUMO.
         self._emergency_ids: dict[int, str] = {}
-        #: SUMO id -> whether it braked for red lights before its call, for
-        #: the emergency vehicles SUMO drives through them now.
-        self._running_red: dict[str, bool] = {}
         #: The bicycle blueprints the world has, of ``bicycles.blueprints``;
         #: looked up on the first bicycle mirrored.
         self._bicycle_blueprints: Optional[list[str]] = None
@@ -854,19 +848,14 @@ class SumoTrafficBackend(TrafficBackend):
         (a rescue lane), and one SUMO drives goes through red lights, still
         giving way at the junction; off duty the device is silent and it
         brakes for red lights again.  The TrafficManager, when it drives the
-        scenario's vehicles, is told too.  Before the vehicle joins SUMO the
-        state is kept, and it joins in it.  A vehicle whose blueprint is not
+        scenario's vehicles, is told too.  A vehicle not in SUMO yet joins
+        as its entity's ``in_emergency`` says.  A vehicle whose blueprint is not
         an emergency vehicle's (:func:`is_emergency`) has no device: SUMO's
         vehicles do not make way for it.
         """
-        key = id(entity)
-        if active:
-            self._emergencies.add(key)
-        else:
-            self._emergencies.discard(key)
         if self._tm_drives_scenario:
             self._tm.set_emergency(entity, active)
-        sumo_id = self._emergency_ids.get(key)
+        sumo_id = self._emergency_ids.get(id(entity))
         if sumo_id is not None and self._running:
             self._sound_siren(sumo_id, entity, active)
 
@@ -883,34 +872,23 @@ class SumoTrafficBackend(TrafficBackend):
             logger.debug("SUMO could not sound %s's siren: %s", sumo_id, exc)
             return
         handed = self._handed.get(id(entity))
-        released = handed is not None and handed[0] == sumo_id and handed[1] >= 0
-        driven = sumo_id in self._driven and sumo_id not in self._external
-        if active != (sumo_id in self._running_red) and (released or driven):
-            braked = self._running_red.pop(sumo_id, True)
-            if handed is not None and released:
-                # Released: its speed mode is the one resume() gives back.
-                if active:
-                    braked = (handed[1] & _SPEED_MODE_RED_LIGHT) != 0
+        if handed is not None and handed[0] == sumo_id:
+            # Released: its speed mode is the one resume() gives back.
+            if handed[1] >= 0:
                 self._handed[id(entity)] = (
                     sumo_id,
-                    _with_siren(handed[1], active, braked),
+                    _with_siren(handed[1], active),
                     handed[2],
                 )
-            else:
-                try:
-                    mode = int(tc.vehicle.getSpeedMode(sumo_id))
-                    if active:
-                        braked = (mode & _SPEED_MODE_RED_LIGHT) != 0
-                    tc.vehicle.setSpeedMode(sumo_id, _with_siren(mode, active, braked))
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("SUMO could not set %s's speed mode: %s", sumo_id, exc)
-                    return
-                if sumo_id in self._unstuck:
-                    self._unstuck[sumo_id] = _with_siren(
-                        self._unstuck[sumo_id], active, braked
-                    )
-            if active:
-                self._running_red[sumo_id] = braked
+        elif sumo_id in self._driven and sumo_id not in self._external:
+            try:
+                mode = int(tc.vehicle.getSpeedMode(sumo_id))
+                tc.vehicle.setSpeedMode(sumo_id, _with_siren(mode, active))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SUMO could not set %s's speed mode: %s", sumo_id, exc)
+                return
+            if sumo_id in self._unstuck:
+                self._unstuck[sumo_id] = _with_siren(self._unstuck[sumo_id], active)
         logger.info(
             "SUMO: %s %s",
             sumo_id,
@@ -1282,7 +1260,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._unplaced[sumo_id] = actor
         if entity is not None and is_emergency(actor):
             self._emergency_ids[id(entity)] = sumo_id
-            if id(entity) in self._emergencies:
+            if getattr(entity, "in_emergency", False):
                 self._sound_siren(sumo_id, entity, True)
 
     def _place_driven(self, on_the_road: Collection[str]) -> None:
@@ -1574,9 +1552,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._blueprints = {}
         self._ambient = {}
         self._vclasses = {}
-        self._emergencies = set()
         self._emergency_ids = {}
-        self._running_red = {}
         self._bicycle_blueprints = None
         self._lane_targets = {}
         self._signals = {}

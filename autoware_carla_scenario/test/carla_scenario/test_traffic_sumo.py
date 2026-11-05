@@ -3797,6 +3797,8 @@ def test_an_emergency_vehicle_is_a_vehicle_whose_special_type_says_so() -> None:
     taxi = _FakeActor(None, type_id="vehicle.mercedes.sprinter")
     taxi.attributes["special_type"] = "taxi"
     assert not is_emergency(taxi)
+    # CARLA 0.10's have no special_type: their id says so.
+    assert is_emergency(_FakeActor(None, type_id="vehicle.carlamotors.firetruck"))
     assert not is_emergency(_FakeActor(None))
     assert not is_emergency(SimpleNamespace())
 
@@ -3918,8 +3920,9 @@ def test_an_emergency_vehicle_on_a_call_before_the_run_joins_on_one(
     actor.attributes["special_type"] = "emergency"
     world = _FakeWorld([actor])
     entity = _Entity(actor, "police")
+    # On a call from its spawn, as EmergencyVehicleEntity(emergency=True) is.
+    entity.in_emergency = True  # type: ignore[attr-defined]
     backend.adopt(entity)
-    backend.set_emergency(entity, True)
     backend.start(world)
     tc = backend._traci
     try:

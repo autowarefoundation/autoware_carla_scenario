@@ -326,8 +326,7 @@ class TrafficManagerBackend(TrafficBackend):
     _drawn: set[int]
     _entity_overrides: dict[int, VehicleParameters]
     _emergencies: set[int]
-    _own_lights: dict[int, float]
-    _own_signs: dict[int, float]
+    _own_ignores: dict[int, tuple[float, float]]
     _autopiloted: dict[int, "carla.Actor"]
     _speed_differences: dict[int, float]
     _exact_kmh: dict[int, float]
@@ -416,10 +415,10 @@ class TrafficManagerBackend(TrafficBackend):
         #: The emergency vehicles on a call (:meth:`set_emergency`), by actor
         #: id: they run red lights and stop signs whatever they drew.
         self._emergencies = set()
-        #: Actor id -> its own draw of ``ignore_lights`` / ``ignore_signs``
-        #: (percentages), which an emergency vehicle goes back to off duty.
-        self._own_lights = {}
-        self._own_signs = {}
+        #: Actor id -> its own draws of ``ignore_lights`` and
+        #: ``ignore_signs`` (percentages; 0 undrawn), which an emergency
+        #: vehicle goes back to off duty.
+        self._own_ignores = {}
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
         #: The speed (m/s) each vehicle was last asked to hold, by actor id.
@@ -667,8 +666,7 @@ class TrafficManagerBackend(TrafficBackend):
         # Actor ids are reused across runs: none keeps a finished run's.
         self._entity_overrides = {}
         self._emergencies = set()
-        self._own_lights = {}
-        self._own_signs = {}
+        self._own_ignores = {}
         self._draws = None
         self._kept = {}
         self._desired_mps = {}
@@ -1424,16 +1422,19 @@ class TrafficManagerBackend(TrafficBackend):
         # The TrafficManager's are percentages, the parameters' probabilities.
         # An emergency vehicle on a call keeps running them (set_emergency):
         # its draws are kept for when it is off duty again.
+        lights, signs = self._own_ignores.get(actor_id, (0.0, 0.0))
+        on_call = actor_id in self._emergencies
         ignore_lights = parameters.ignore_lights
         if ignore_lights is not None:
-            self._own_lights[actor_id] = _percent(ignore_lights, rng, "ignore_lights")
-            if actor_id not in self._emergencies:
-                tm.ignore_lights_percentage(vehicle, self._own_lights[actor_id])
+            lights = _percent(ignore_lights, rng, "ignore_lights")
+            if not on_call:
+                tm.ignore_lights_percentage(vehicle, lights)
         ignore_signs = parameters.ignore_signs
         if ignore_signs is not None:
-            self._own_signs[actor_id] = _percent(ignore_signs, rng, "ignore_signs")
-            if actor_id not in self._emergencies:
-                tm.ignore_signs_percentage(vehicle, self._own_signs[actor_id])
+            signs = _percent(ignore_signs, rng, "ignore_signs")
+            if not on_call:
+                tm.ignore_signs_percentage(vehicle, signs)
+        self._own_ignores[actor_id] = (lights, signs)
         ignore_vehicles = parameters.ignore_vehicles
         if ignore_vehicles is not None:
             tm.ignore_vehicles_percentage(
@@ -1801,8 +1802,9 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
         vehicle = _vehicle(emergency)
-        lights = EMERGENCY_IGNORE_PCT if active else self._own_lights.get(actor_id, 0.0)
-        signs = EMERGENCY_IGNORE_PCT if active else self._own_signs.get(actor_id, 0.0)
+        lights, signs = self._own_ignores.get(actor_id, (0.0, 0.0))
+        if active:
+            lights, signs = EMERGENCY_IGNORE_PCT, EMERGENCY_IGNORE_PCT
         tm.ignore_lights_percentage(vehicle, lights)
         tm.ignore_signs_percentage(vehicle, signs)
         logger.info(

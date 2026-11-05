@@ -47,8 +47,8 @@ from autoware_carla_scenario.traffic.traffic_manager import (
     TrafficManagerBackend,
 )
 from autoware_carla_scenario.utils.vehicles import (
+    is_emergency_vehicle_type,
     set_siren_lights,
-    siren_lights_on,
     with_siren_lights,
 )
 
@@ -171,13 +171,42 @@ class TestTheSirenLights:
         actor = _LitActor(1, _LOW_BEAM)
         set_siren_lights(actor, True)  # type: ignore[arg-type]
         assert actor.light_state == _LOW_BEAM | _SIREN
-        assert siren_lights_on(actor)  # type: ignore[arg-type]
         set_siren_lights(actor, False)  # type: ignore[arg-type]
         assert actor.light_state == _LOW_BEAM
-        assert not siren_lights_on(actor)  # type: ignore[arg-type]
+
+    def test_a_vehicle_already_so_is_sent_nothing(self) -> None:
+        sent: List[int] = []
+
+        class _Counting(_LitActor):
+            def set_light_state(self, light_state: int) -> None:
+                sent.append(int(light_state))
+                super().set_light_state(light_state)
+
+        actor = _Counting(1, _SIREN)
+        set_siren_lights(actor, True)  # type: ignore[arg-type]
+        assert sent == []
 
 
 class TestTheBlueprint:
+    @pytest.mark.parametrize(
+        "type_id",
+        [
+            "vehicle.ford.ambulance",
+            "vehicle.carlamotors.firetruck",
+            "vehicle.dodge.charger_police_2020",
+            "vehicle.dodgecop.charger",
+        ],
+    )
+    def test_with_no_special_type_its_id_says_so_as_on_carla_0_10(
+        self, type_id: str
+    ) -> None:
+        assert is_emergency_vehicle_type(type_id, "")
+        assert is_emergency_vehicle_blueprint(_Blueprint(type_id, None))
+
+    def test_a_special_type_wins_over_the_id(self) -> None:
+        assert not is_emergency_vehicle_type("vehicle.ford.ambulance", "car")
+        assert not is_emergency_vehicle_type("vehicle.mini.cooper", "")
+
     def test_an_emergency_vehicle_is_a_blueprint_whose_special_type_says_so(
         self,
     ) -> None:

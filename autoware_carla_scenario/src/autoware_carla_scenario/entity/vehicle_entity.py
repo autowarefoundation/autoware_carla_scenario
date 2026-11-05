@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from ..traffic.base import DrivenEntity, TrafficBackend
 from ..traffic.driven import BackendDriven
-from ..utils.vehicles import set_siren_lights
+from ..utils.vehicles import is_emergency_vehicle_type, set_siren_lights
 from ._spawn import SpawnLocation, spawn_vehicle_actor
 
 #: Module-level flag set by :class:`~autoware_carla_scenario.scenario_runner.ScenarioRunner`
@@ -226,18 +226,34 @@ def resolve_motorcycle_type(world: "carla.World", vehicle_type: str) -> str:
         ValueError: If *world* has no motorcycle, or *vehicle_type* names a
             blueprint that is not one of its motorcycles.
     """
-    motorcycles = motorcycle_blueprints(world)
-    if vehicle_type == ANY_MOTORCYCLE:
-        if not motorcycles:
-            raise ValueError(
-                "This CARLA server has no motorcycle blueprint (no vehicle "
-                f"blueprint has base_type {MOTORCYCLE_BASE_TYPE!r})"
-            )
-        return motorcycles[0]
-    if vehicle_type not in motorcycles:
+    return _resolve_among(
+        motorcycle_blueprints(world),
+        vehicle_type,
+        "a motorcycle",
+        "motorcycles",
+        "This CARLA server has no motorcycle blueprint (no vehicle blueprint "
+        f"has base_type {MOTORCYCLE_BASE_TYPE!r})",
+    )
+
+
+def _resolve_among(
+    found: list[str], vehicle_type: str, kind: str, kinds: str, none_found: str
+) -> str:
+    """*vehicle_type* if it is one of the blueprints *found* (each *kind*),
+    or the first of them for an empty one (``ANY_*``).
+
+    Raises:
+        ValueError: *none_found* if there is none, or *vehicle_type* is not
+            one of them.
+    """
+    if not vehicle_type:
+        if not found:
+            raise ValueError(none_found)
+        return found[0]
+    if vehicle_type not in found:
         raise ValueError(
-            f"Vehicle blueprint {vehicle_type!r} is not a motorcycle of this "
-            f"CARLA server. Available motorcycles: {motorcycles}"
+            f"Vehicle blueprint {vehicle_type!r} is not {kind} of this CARLA "
+            f"server. Available {kinds}: {found}"
         )
     return vehicle_type
 
@@ -302,9 +318,6 @@ class MotorcycleEntity(VehicleEntity):
         return super().spawn(world)
 
 
-#: The ``special_type`` CARLA gives an emergency vehicle's blueprint (a police
-#: car's, an ambulance's, a fire engine's), whatever its ``base_type``.
-EMERGENCY_SPECIAL_TYPE: str = "emergency"
 #: :class:`EmergencyVehicleEntityConfig`'s ``vehicle_type`` when it names no
 #: blueprint: the first emergency vehicle, by blueprint id, of the server the
 #: run is on -- which ones a CARLA build has differs between builds.
@@ -313,11 +326,12 @@ ANY_EMERGENCY_VEHICLE: str = ""
 
 def is_emergency_vehicle_blueprint(blueprint: "carla.ActorBlueprint") -> bool:
     """Whether *blueprint* is an emergency vehicle's: its ``special_type``
-    says so."""
-    if not blueprint.has_attribute("special_type"):
-        return False
-    special_type = blueprint.get_attribute("special_type").as_str()
-    return special_type.lower() == EMERGENCY_SPECIAL_TYPE
+    says so (CARLA 0.9), or, with none, its id (CARLA 0.10;
+    :func:`~autoware_carla_scenario.utils.vehicles.is_emergency_vehicle_type`)."""
+    special_type = ""
+    if blueprint.has_attribute("special_type"):
+        special_type = blueprint.get_attribute("special_type").as_str()
+    return is_emergency_vehicle_type(str(blueprint.id), special_type)
 
 
 def emergency_vehicle_blueprints(world: "carla.World") -> list[str]:
@@ -341,21 +355,15 @@ def resolve_emergency_vehicle_type(world: "carla.World", vehicle_type: str) -> s
         ValueError: If *world* has no emergency vehicle, or *vehicle_type*
             names a blueprint that is not one of its emergency vehicles.
     """
-    emergency_vehicles = emergency_vehicle_blueprints(world)
-    if vehicle_type == ANY_EMERGENCY_VEHICLE:
-        if not emergency_vehicles:
-            raise ValueError(
-                "This CARLA server has no emergency vehicle blueprint (no "
-                "vehicle blueprint has special_type "
-                f"{EMERGENCY_SPECIAL_TYPE!r})"
-            )
-        return emergency_vehicles[0]
-    if vehicle_type not in emergency_vehicles:
-        raise ValueError(
-            f"Vehicle blueprint {vehicle_type!r} is not an emergency vehicle of "
-            f"this CARLA server. Available emergency vehicles: {emergency_vehicles}"
-        )
-    return vehicle_type
+    return _resolve_among(
+        emergency_vehicle_blueprints(world),
+        vehicle_type,
+        "an emergency vehicle",
+        "emergency vehicles",
+        "This CARLA server has no emergency vehicle blueprint (none has "
+        "special_type 'emergency', nor a police car's, an ambulance's or a "
+        "fire engine's id)",
+    )
 
 
 class EmergencyVehicleEntityConfig(VehicleEntityConfig):
@@ -442,8 +450,8 @@ class EmergencyVehicleEntity(VehicleEntity):
             world, self._config.vehicle_type
         )
         actor = super().spawn(world)
-        set_siren_lights(actor, self._emergency)
         if self._emergency:
+            set_siren_lights(actor, True)
             self._tell_backend()
         return actor
 
@@ -463,8 +471,7 @@ class EmergencyVehicleEntity(VehicleEntity):
         # A typed local: Codon unwraps the Optional here.
         vehicle: "carla.Actor" = actor
         set_siren_lights(vehicle, active)
-        entity: DrivenEntity = self
-        self._resolve_backend().set_emergency(entity, active)
+        self._tell_backend()
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Inject the backend that drives it, which drives it on a call at

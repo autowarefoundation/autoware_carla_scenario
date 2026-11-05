@@ -65,7 +65,7 @@ class EmergencyAction(BaseAction):
             overrides=overrides,
         )
         self._entity_name = str(entity_name)
-        self._active = bool(active)
+        self._active = active
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The vehicle's siren lights: its lighting domain."""
