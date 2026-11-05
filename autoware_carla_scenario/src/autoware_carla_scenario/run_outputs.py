@@ -25,8 +25,9 @@ a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 ``ui.web_viewer_paths`` shares it with ``rerun`` and ``rerun_lidar``, which
 re-export it under the names they had.
 
-Free of imports beyond ``pathlib`` and ``shutil``: the SLURM worker and the
-library check read it.
+Free of imports beyond ``pathlib``, ``shutil`` and the gate's record (whose
+:data:`~autoware_carla_scenario.gate.record.GATE_RECORD_SUFFIX` it lists):
+the SLURM worker and the library check read it.
 """
 
 from __future__ import annotations
@@ -34,8 +35,12 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from .gate.record import GATE_RECORD_SUFFIX
+
 __all__ = [
+    "COVERAGE_SUFFIX",
     "RECORDING_SUFFIX",
+    "RESULT_SUFFIX",
     "RUN_DIR_SUFFIXES",
     "RUN_FILE_SUFFIXES",
     "RUN_SUFFIXES",
@@ -50,6 +55,10 @@ __all__ = [
     "trajectory_stem",
 ]
 
+#: A run's result: ``{stem}_result.json``.
+RESULT_SUFFIX = "_result.json"
+#: Its ODD coverage file: ``{stem}_coverage.json``.
+COVERAGE_SUFFIX = "_coverage.json"
 #: A run's trajectory log: ``{stem}.trajectory.jsonl``.
 TRAJECTORY_SUFFIX = ".trajectory.jsonl"
 #: The Rerun recording made of it: ``{stem}.rrd``.
@@ -59,21 +68,21 @@ SENSORS_SUFFIX = ".sensors.rrd"
 
 #: The files a run writes as ``{stem}{suffix}``.
 RUN_FILE_SUFFIXES: tuple[str, ...] = (
-    "_result.json",
-    ".trajectory.jsonl",
-    "_coverage.json",
+    RESULT_SUFFIX,
+    TRAJECTORY_SUFFIX,
+    COVERAGE_SUFFIX,
     # A logical scenario's gate record (docs/gate.md).
-    "_gate.json",
+    GATE_RECORD_SUFFIX,
     "_odd.tar.gz",
     "_environment.json",
     "_requirements.lock",
     # CARLA's own recorder (its replay log).
     ".log",
     # The Rerun recording of the trajectory log (rerun.enabled).
-    ".rrd",
+    RECORDING_SUFFIX,
     # The sensors recorded during the run, merged into the recording and
     # removed when it is written; left behind by a run that did not finish.
-    ".sensors.rrd",
+    SENSORS_SUFFIX,
     # The T4Scene of the trajectory log and its map (t4scene.enabled).
     ".t4scene.pb",
     ".t4scene.map.pb",

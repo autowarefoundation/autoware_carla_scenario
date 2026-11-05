@@ -2420,7 +2420,9 @@ and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; not the evaluator itself, which reads the gate's pydantic model and
 openodd's merged coverage), the HILS bridge's wire format (a command's values included)
-and its configuration's sensor spec (not the YAML reading around it), the
+and its configuration's sensor spec and the check of a field's signal name
+(not the YAML reading around it), how an error shows an integer too long for
+`repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
@@ -2434,7 +2436,9 @@ recordings and its copy of Rerun's web viewer, and which web viewer it picks
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
-names a case's log and recording with it too), the typed core of the sensors
+names a case's log and recording with it too; the suffixes of a run's result
+and coverage file are its too, which `scenario_runner`, `ui.case_paths`,
+`ui.scanner` and `examples/run.py` name them with, #1704), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a
 recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
@@ -3815,12 +3819,16 @@ What Codon 0.19 needs that Python does not, beyond
   = CoordinateFrame.LANELET2`) rather than from a function run after the
   class.
 - **A global of a module whose top level runs a statement** (`server`, which
-  calls `load_dotenv()` on import) cannot be read at another module's top
-  level: Codon 0.19 reports "name '_WATCHDOG_GRACE_S' is not defined" for
-  `_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0`, though a function of
-  the module, or a parameter default, reads it. `sweeper.isolation` computes
-  that constant in the `else` branch of `if TYPE_CHECKING:` and gives the
-  check its value in the first (#719).
+  calls `load_dotenv()` on import) could not be read at another module's top
+  level: Codon 0.19 reported "name '_WATCHDOG_GRACE_S' is not defined" for
+  `_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0`, and `sweeper.isolation`
+  gave the check a copy of its value under `if TYPE_CHECKING:` (#719). A
+  constant imported from another checked module is now read through that
+  module (#1693, *Checked modules and the model* above), so the module
+  computes it once, as Python does (#1704). Any other name is still imported
+  with `from M import`, which Codon 0.19 may report as not defined at the
+  importing module's top level; a function of the module, or a parameter
+  default, reads it.
 - **Codon does not narrow an `Optional`** after `if x is None: return`. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),

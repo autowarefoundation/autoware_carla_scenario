@@ -33,19 +33,13 @@ logger = logging.getLogger("autoware_carla_scenario.sweeper.lanelet_constraint_s
 #: stopped, sends it ``SIGTERM``.  It is sent ``SIGKILL`` after that.
 _STOP_GRACE_SECONDS = 30.0
 
-if TYPE_CHECKING:
-    # Codon cannot read a global of `server` (whose top level runs
-    # load_dotenv()) at this module's top level ("name '_WATCHDOG_GRACE_S' is
-    # not defined"), though a function of it can: the check takes the value.
-    _CARLA_GONE_TIMEOUT_S = 15.0
-else:
-    #: How long the sweep waits, after a case that left a CARLA server it
-    #: launched running (it timed out or died of a signal), for that server to
-    #: exit (:func:`_wait_until_carla_gone`).  The server's watchdog notices
-    #: the case is gone within about a second, sends CARLA ``SIGTERM`` and
-    #: ``SIGKILL`` :data:`~autoware_carla_scenario.server._WATCHDOG_GRACE_S`
-    #: later; the margin covers the noticing and a loaded machine.
-    _CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0
+#: How long the sweep waits, after a case that left a CARLA server it
+#: launched running (it timed out or died of a signal), for that server to
+#: exit (:func:`_wait_until_carla_gone`).  The server's watchdog notices
+#: the case is gone within about a second, sends CARLA ``SIGTERM`` and
+#: ``SIGKILL`` :data:`~autoware_carla_scenario.server._WATCHDOG_GRACE_S`
+#: later; the margin covers the noticing and a loaded machine.
+_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0
 
 #: Set in the environment of each case the sweeper forks: the sweeper retries
 #: the case itself (``server.cooldown_max_retries``), so the case's own queue

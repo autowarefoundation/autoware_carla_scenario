@@ -3,7 +3,8 @@ configuration chooses from.
 
 :class:`SensorSpec` (the CARLA sensor a device carries), the checks of a
 LiDAR's blueprint attributes, the resolution of a file relative to the
-configuration, :data:`CLOCKS`, :data:`PHASES` and :class:`HilsConfigError`.
+configuration, the check of a field's signal name (:func:`checked_signal`),
+:data:`CLOCKS`, :data:`PHASES` and :class:`HilsConfigError`.
 Nothing here reads YAML or a document of any shape, so the library check
 compiles it (docs/typecheck.md); :mod:`.config` uses it and re-exports it.
 """
@@ -15,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Tuple
 
+from .signals import SIGNALS
+
 __all__ = [
     "CAMERA_PREFIX",
     "CLOCKS",
@@ -22,6 +25,7 @@ __all__ = [
     "PHASES",
     "HilsConfigError",
     "SensorSpec",
+    "checked_signal",
 ]
 
 #: What the devices' time is:
@@ -144,3 +148,14 @@ def _relative_file(value: str, base: Path) -> str:
     if (base / path).is_file():
         return str((base / path).resolve())
     return value
+
+
+def checked_signal(name: str, where: str) -> str:
+    """*name*, which must be one of :data:`~.signals.SIGNALS` (a field's
+    ``$signal`` or ``{signal: name}``), or a :class:`HilsConfigError` naming
+    *where* and the signals there are."""
+    if name not in SIGNALS:
+        raise HilsConfigError(
+            f"{where}: unknown signal {name!r}; signals: {', '.join(SIGNALS)}"
+        )
+    return name

@@ -77,7 +77,7 @@ from .world_reset import (
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter, recording_path
-from .run_outputs import run_outputs_exist
+from .run_outputs import COVERAGE_SUFFIX, RESULT_SUFFIX, run_outputs_exist
 from .t4 import T4Recorder, T4Recording
 from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
@@ -659,8 +659,8 @@ def _write_gate_record(
         # The outputs the run wrote beside it, by role: what the gate reads
         # (the coverage file) is named only when it is there.
         for role, suffix in (
-            ("result", "_result.json"),
-            ("coverage", "_coverage.json"),
+            ("result", RESULT_SUFFIX),
+            ("coverage", COVERAGE_SUFFIX),
             ("trajectory", TRAJECTORY_SUFFIX),
         ):
             if (output_dir / f"{file_stem}{suffix}").exists():
@@ -2272,7 +2272,7 @@ class ScenarioRunner:
                 result.message,
                 result.elapsed_seconds,
             )
-            json_path = self.output_dir / f"{file_stem}_result.json"
+            json_path = self.output_dir / f"{file_stem}{RESULT_SUFFIX}"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if TYPE_CHECKING:
@@ -2296,7 +2296,7 @@ class ScenarioRunner:
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
                 _record_run(coverage, case, result, scenario.outcome_weight)
-                coverage_path = self.output_dir / f"{file_stem}_coverage.json"
+                coverage_path = self.output_dir / f"{file_stem}{COVERAGE_SUFFIX}"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
                     "[%s] Coverage written to: %s", scenario_name, coverage_path

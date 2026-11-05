@@ -10,6 +10,7 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from ..registry import get_conf_dirs, load_scenario_plugins
+from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
 from .case_paths import result_path
@@ -158,7 +159,7 @@ def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
     # Derive from the *_result.json filename
     path = result_path(job_dir)
     if path is not None:
-        return path.name[: -len("_result.json")]
+        return path.name[: -len(RESULT_SUFFIX)]
     return "unknown"
 
 
