@@ -13,7 +13,8 @@ weighted by it is the naturalistic one.
 As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
 
 * **Candidates** are the agents within ``control_radius`` of the ego: the
-  ``max_controlled`` nearest vehicles, and every pedestrian.
+  ``max_controlled`` nearest vehicles, and every pedestrian -- on the ego's
+  level of road, not on a bridge over it or under it (#1596).
 * **Adversity**: each candidate's is the first of the list whose trigger
   fires (:func:`~.triggers.adversity_command`, the location gate
   included), giving ``{normal: 1 - p, adversarial: p}``.
@@ -62,7 +63,7 @@ from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
 from .geometry import AgentFootprint, PredictedState
 from .location import AdversityLocation
-from .observation import Scene
+from .observation import Scene, on_another_level
 from .triggers import (
     DEFAULT_THRESHOLDS,
     AdversityKind,
@@ -207,7 +208,8 @@ def candidates(
 
     The ``max_controlled`` nearest vehicles within ``control_radius`` of
     *ego*, then every pedestrian there; only those named in
-    *controllable* (what an action can drive), never *ego*.
+    *controllable* (what an action can drive), never *ego*, and none on
+    another level of road than it (:func:`~.observation.on_another_level`).
     """
     me = scene.agents[ego]
     vehicles: list[tuple[float, str]] = []
@@ -216,7 +218,7 @@ def candidates(
         if name == ego or name not in controllable:
             continue
         distance = math.hypot(agent.x - me.x, agent.y - me.y)
-        if distance > settings.control_radius:
+        if distance > settings.control_radius or on_another_level(me, agent):
             continue
         if agent.footprint.is_vehicle:
             vehicles.append((distance, name))
@@ -425,7 +427,11 @@ class _Futures:
         self, name: str, command: AdversarialCommand, ego: str, names: list[str]
     ) -> tuple[list[str], list[PredictedState]]:
         """Whom *name* carrying out *command* challenges -- the ego, and with
-        ``challenge_npcs`` the other candidates' vehicles -- and its future."""
+        ``challenge_npcs`` the other candidates' vehicles -- and its future.
+
+        One on another level of road than *name* is never challenged: their
+        paths may cross in the plane, on a bridge and under it, but they
+        cannot meet (#1596)."""
         agents = self.scene.agents
         agent = agents[name]
         future = self._predict(name, command)
@@ -451,6 +457,8 @@ class _Futures:
                 math.hypot(near.x - agent.x, near.y - agent.y)
                 > DEFAULT_DISTANCE_THRESHOLD
             ):
+                continue
+            if on_another_level(agent, near):
                 continue
             # The ego's was predicted first, from its indicator; the others'
             # as ego_command predicts with none.

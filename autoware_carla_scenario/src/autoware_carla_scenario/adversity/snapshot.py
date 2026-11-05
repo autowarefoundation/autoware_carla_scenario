@@ -2,9 +2,9 @@
 
 The only CARLA-facing part of the observation layer: an actor becomes an
 :class:`.observation.AgentSnapshot` in the Lanelet2 map frame (the y axis
-and the yaw flipped, the map's offset added), a traffic light's state a
-:class:`.observation.SignalState` by the Lanelet2 regulatory element that
-names it.  Requires :class:`~..coordinate.map_manager.MapManager`.
+and the yaw flipped, the map's offsets added, its box's height kept), a
+traffic light's state a :class:`.observation.SignalState` by the Lanelet2
+regulatory element that names it.  Requires :class:`~..coordinate.map_manager.MapManager`.
 
 A walker's speed is measured from where it stood when last read
 (:class:`~..kinematics.walker_motion.WalkerVelocities`): one walked by
@@ -132,8 +132,12 @@ def _snapshot(
     measured one would be the difference of two speeds each measured from a
     tick's move, and so its noise divided by the tick twice.
     """
-    x, y, yaw = _carla_to_lanelet2_frame(CarlaWorldPose.from_carla_transform(transform))
+    pose = CarlaWorldPose.from_carla_transform(transform)
+    x, y, yaw = _carla_to_lanelet2_frame(pose)
     box = actor.bounding_box
+    # The box's centre in the map's elevation, pitch and roll ignored, as
+    # utils.clearance's spans: which deck it is on (#1596).
+    z = pose.z + MapManager.get_instance().z_offset + float(box.location.z)
     # The box's offset from the origin, in the actor's own axes: CARLA's y is
     # to the right, the map frame's to the left.
     ahead = float(box.location.x)
@@ -160,6 +164,8 @@ def _snapshot(
         _speed_limit(actor) if is_vehicle else None,
         ahead,
         left,
+        z,
+        2.0 * float(box.extent.z),
     )
 
 

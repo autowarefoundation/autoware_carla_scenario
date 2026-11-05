@@ -17,9 +17,15 @@ snapshot of the agents, so a trigger is a pure function of what it is given:
   is on a crosswalk, the nearest crosswalk, and the nearest point of a road
   within reach.
 
-Gaps are bumper to bumper, along the lanes.  Signal states come in by the
-id of the Lanelet2 traffic-light regulatory element (:mod:`.snapshot` reads
-them off CARLA).
+Gaps are bumper to bumper, along the lanes.  Each check is on one level of
+road: an agent on a bridge over another, or in an underpass beneath it, is
+located on its own deck (the elevation passed to
+:func:`~..trajectory.relative_lane.reference_lane_pose`) and is no leader,
+follower or neighbour of it (:func:`on_another_level`, the rule of
+:func:`~..utils.clearance.on_another_level`; #1596).
+
+Signal states come in by the id of the Lanelet2 traffic-light regulatory
+element (:mod:`.snapshot` reads them off CARLA).
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ import lanelet2.geometry
 from ..odd.probes import lanelet_speed_limit
 from ..route.geometry import LaneSpan, MapFeatures
 from ..trajectory.relative_lane import _arc, _centreline, _point_at, reference_lane_pose
+from ..utils.clearance import on_another_level as _levels_apart
 from .geometry import AgentFootprint
 
 if TYPE_CHECKING:
@@ -55,6 +62,8 @@ __all__ = [
     "SignalAhead",
     "SignalState",
     "VehicleObservation",
+    "on_another_level",
+    "vertical_span",
 ]
 
 #: How far along the lanes (m) a leader, a follower or a signal is looked
@@ -100,6 +109,11 @@ class AgentSnapshot:
             its heading (m): a vehicle's origin is often behind the centre
             of its bounding box (#889).
         box_left: How far its centre is left of its actor's origin (m).
+        z: Up (m) of its centre, in the Lanelet2 map's elevation (CARLA's
+            plus the map's ``z_offset``); ``None`` where it is not known,
+            which leaves the agent on every level (#1596).
+        height: Its box's height (m); 0 makes its vertical span a point
+            at *z*.
     """
 
     name: str
@@ -112,6 +126,33 @@ class AgentSnapshot:
     speed_limit: Optional[float] = None
     box_ahead: float = 0.0
     box_left: float = 0.0
+    z: Optional[float] = None
+    height: float = 0.0
+
+
+def vertical_span(agent: AgentSnapshot) -> Optional[tuple[float, float]]:
+    """The bottom and top (m) of *agent*'s box in the map's elevation, or
+    None where its height above the ground is not known."""
+    z = agent.z
+    if z is None:
+        return None
+    centre: float = z
+    half = max(agent.height, 0.0) / 2.0
+    return centre - half, centre + half
+
+
+def on_another_level(one: AgentSnapshot, other: AgentSnapshot) -> bool:
+    """Whether *other* is on another level of road than *one* -- on a
+    bridge over it, or in an underpass beneath it -- by
+    :func:`~..utils.clearance.on_another_level`, their spans being
+    :func:`vertical_span`.  False when either's elevation is not known."""
+    one_span = vertical_span(one)
+    other_span = vertical_span(other)
+    if one_span is None or other_span is None:
+        return False
+    mine: tuple[float, float] = one_span
+    theirs: tuple[float, float] = other_span
+    return _levels_apart(mine, theirs, math.hypot(other.x - one.x, other.y - one.y))
 
 
 @dataclass(frozen=True)
@@ -308,7 +349,16 @@ class Scene:
         agent = self.agents[name]
         found: Optional[LanePosition] = None
         if agent.footprint.is_vehicle:
-            pose = reference_lane_pose(self.features.map, agent.x, agent.y, agent.yaw)
+            # Its bottom, where it stands on its road: the elevation tells a
+            # deck from the road under it (#1596).
+            span = vertical_span(agent)
+            bottom: Optional[float] = None
+            if span is not None:
+                standing: tuple[float, float] = span
+                bottom = standing[0]
+            pose = reference_lane_pose(
+                self.features.map, agent.x, agent.y, agent.yaw, bottom
+            )
             lanelet: ConstLanelet = self.features.map.laneletLayer[pose.lanelet_id]
             if (
                 abs(pose.t) <= _MAX_LATERAL_M
@@ -346,6 +396,8 @@ class Scene:
                 if name == agent.name:
                     continue
                 other = self.agents[name]
+                if on_another_level(agent, other):
+                    continue  # on a bridge over it, or under it (#1596)
                 lane = self._lanes[name]
                 assert lane is not None
                 along = span.start + lane.s
