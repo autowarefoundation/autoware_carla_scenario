@@ -1796,13 +1796,12 @@ def test_a_named_module_brings_the_checked_modules_it_imports() -> None:
 
 
 def test_a_modelled_import_is_not_followed() -> None:
-    deps = _dependencies(f"{_PACKAGE}.entity.ego")
+    # measures imports scenario_base (for the running BaseScenario it holds)
+    # through the model, so the scenario_base it names is not brought ...
+    deps = _dependencies(f"{_PACKAGE}.measures")
     assert f"{_PACKAGE}.scenario_base" not in deps  # MODELLED_IMPORTS
-    # entity._spawn brings the rest of the vehicle entity's replaced model,
-    # so the model re-exports the checked definitions, as in the full run.
-    assert {f"{_PACKAGE}.entity._spawn", f"{_PACKAGE}.entity.vehicle_entity"} <= set(
-        deps
-    )
+    # ... while the checked modules it imports from source are.
+    assert {f"{_PACKAGE}.metrics", f"{_PACKAGE}.coordinate.map_manager"} <= set(deps)
 
 
 def test_the_full_run_compiles_only_the_checked_modules() -> None:
@@ -1817,8 +1816,8 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
         "entity.ego",
         # actions.lane_change too: it is the same program (the test below).
         "actions.turn",
-        # BridgedEgoEntity derives from EgoVehicle, which imports
-        # scenario_base through the model, and AutowareEgoEntity from it.
+        # BridgedEgoEntity derives from EgoVehicle, which defines the
+        # EgoConfig scenario_base re-exports, and AutowareEgoEntity from it.
         "entity.bridged_ego",
         "entity.autoware_entity",
         # The run starts at coordinate.frames, which the model's _poses.codon

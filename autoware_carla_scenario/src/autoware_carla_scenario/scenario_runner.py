@@ -1677,17 +1677,7 @@ class ScenarioRunner:
             # replaced, which reads what its own reader reads.
             prepare_measures(self.odd, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
-            if TYPE_CHECKING:
-                # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego
-                # imports scenario_base through the model: MODELLED_IMPORTS in
-                # typecheck/library.py), which the checked BaseScenario's is
-                # not, so the check takes the actor the entity holds once
-                # spawned.
-                spawned = ego.actor
-                assert spawned is not None
-                ego_actor = spawned
-            else:
-                ego_actor = ego.spawn(world, scenario.ego_config)
+            ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(
                 "[%s] Ego spawned: id=%d blueprint=%s",
                 scenario_name,

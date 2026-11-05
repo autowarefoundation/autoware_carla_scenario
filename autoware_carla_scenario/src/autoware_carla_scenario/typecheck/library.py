@@ -729,9 +729,6 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds Measures (`_measures: dict[str, Measure]`), and
     # measures holds the running BaseScenario (`_MEASURED`).
     "autoware_carla_scenario.measures": ("autoware_carla_scenario.scenario_base",),
-    # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
-    # takes an EgoConfig.
-    "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
     # PlannedRoute.of_scenario() reads a BaseScenario, which holds an
     # EgoVehicle, whose route_to() plans with route_poses().
     "autoware_carla_scenario.odd.route_plan": (
