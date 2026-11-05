@@ -502,6 +502,93 @@ class TestHydraSwitch:
         assert isinstance(initial, TrafficSourceAction)
         assert (initial._initial, initial._max, initial._seed) == (3, 4, 7)
 
+    @pytest.mark.parametrize(
+        ("key", "message"),
+        [
+            ("speed_kmh", "is not a background speed"),
+            ("min_gap_m", "must be finite and not negative"),
+            ("vehicles_per_minute", "must be finite and not negative"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            (10**400, "1000"),
+            # More digits than str() turns into text (#1660).
+            (10**5000, "an integer of about 10\\*\\*"),
+            (-(10**5000), "an integer of about -10\\*\\*"),
+        ],
+        ids=["huge", "too-long-for-str", "-too-long-for-str"],
+    )
+    def test_an_amount_too_big_for_a_float_is_refused_by_its_key(
+        self, key: str, message: str, value: int, shown: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source[key] = value
+        prefix = rf"^background_traffic\.source\.{key}: {shown}.* {message}"
+        with pytest.raises(ValueError, match=prefix):
+            run.background_traffic_settings(cfg)
+        with pytest.raises(run.RunConfigError, match=prefix):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("key", ["speed_kmh", "min_gap_m", "vehicles_per_minute"])
+    def test_a_list_holding_such_an_int_is_not_a_number(self, key: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source[key] = [10**5000]
+        with pytest.raises(
+            ValueError,
+            match=rf"^background_traffic\.source\.{key}: a list holding an integer",
+        ):
+            run.background_traffic_settings(cfg)
+
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            ("abc", "'abc'"),
+            (True, "True"),
+            (0, "0"),
+            (10**400, "1000"),
+            (10**5000, "an integer of about 10\\*\\*"),
+        ],
+        ids=["text", "bool", "zero", "huge", "too-long-for-str"],
+    )
+    def test_a_stop_after_seconds_that_is_no_duration_is_refused_by_its_key(
+        self, block: str, value: object, shown: str
+    ) -> None:
+        """#1660: refused, naming the key, where it was refused without it."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic[block].stop_after_seconds = value
+        with pytest.raises(
+            ValueError,
+            match=rf"^background_traffic\.{block}\.stop_after_seconds: "
+            rf"{shown}.* is not a duration",
+        ):
+            run.add_background_traffic(cfg, _scenario())
+
+    @pytest.mark.parametrize("value", [12.5, 3, "7.5"])
+    def test_a_stop_after_seconds_is_read_as_before(self, value: float | str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source.stop_after_seconds = value
+        cfg.background_traffic.sink.stop_after_seconds = value
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        ends = [a._until for a in scenario._pre_tick_actions]
+        assert len(ends) == 2
+        durations = set()
+        for end in ends:
+            assert isinstance(end, ElapsedTimeCondition)
+            durations.add(end.duration_seconds)
+        assert durations == {float(value)}
+
     def test_a_disabled_block_is_not_read(self) -> None:
         from autoware_carla_scenario.examples import run
 

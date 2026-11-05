@@ -37,6 +37,8 @@ from autoware_carla_scenario.authoring.persistence import DraftStore
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.editor.app import create_app
 from autoware_carla_scenario.trajectory.authoring import (
+    authored_place,
+    authored_route,
     authored_timing,
     authored_trajectory,
     format_relative_vertices,
@@ -208,6 +210,50 @@ class TestFactories:
         assert not authored_trajectory(
             "lanelets", lanelet_ids=[1], speed_kmh=0
         ).is_timed
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("wide", "must be a number, got 'wide'"),
+            (10**400, "must be finite, got 1000"),
+            (10**5000, "must be finite, got an integer of about 10\\*\\*"),
+        ],
+        ids=["text", "huge", "too-long-for-repr"],
+    )
+    def test_a_lateral_offset_float_cannot_read_is_refused_by_its_name(
+        self, monkeypatch: pytest.MonkeyPatch, value: Any, message: str
+    ) -> None:
+        """#1660: not an unkeyed ``ValueError`` or ``OverflowError``."""
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.transform.lanelet_length",
+            lambda lanelet_id: 10.0,
+        )
+        with pytest.raises(ValueError, match=rf"^route: lateral_offset_m {message}"):
+            authored_route("lanelets", lanelet_ids=[1], lateral_offset_m=value)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("lanelet_id", "abc", "must be a whole number, got 'abc'"),
+            ("lanelet_id", math.inf, "must be a whole number, got inf"),
+            ("s", "far", "must be a number, got 'far'"),
+            ("t", 10**400, "must be finite, got 1000"),
+            ("heading", -(10**5000), "must be finite, got an integer of about -10"),
+        ],
+        ids=["lanelet_id-text", "lanelet_id-inf", "s-text", "t-huge", "heading-long"],
+    )
+    def test_a_place_float_or_int_cannot_read_is_refused_by_its_name(
+        self, field: str, value: Any, message: str
+    ) -> None:
+        """#1660: not an unkeyed ``ValueError`` or ``OverflowError``."""
+        with pytest.raises(ValueError, match=rf"^{field} {message}"):
+            authored_place(**{field: value})
+
+    def test_a_place_reads_what_float_and_int_read_as_before(self) -> None:
+        # The editor's fields may arrive as text: read as int() and float() do.
+        fields: dict[str, Any] = {"lanelet_id": "7", "s": "2.5", "t": True}
+        place = authored_place(heading=None, **fields)
+        assert place == Lanelet2Pose(7, 2.5, 1.0, 0.0)
 
     def test_timing(self) -> None:
         assert authored_timing("none") is None

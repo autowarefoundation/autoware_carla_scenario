@@ -9,6 +9,7 @@ pattern is found on a real one.
 
 from __future__ import annotations
 
+import math
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -505,6 +506,65 @@ class TestTheMatchAsConfig:
                     "junction_turns": [],
                 }
             )
+
+    @staticmethod
+    def _config(**overrides: Any) -> dict[str, Any]:
+        config: dict[str, Any] = {
+            "lanelet_ids": [1, 2],
+            "segment_kinds": ["lane"],
+            "segment_ends": [10.0],
+            "segment_lanelet_counts": [2],
+            "junction_turns": [],
+            "start_s": 1.0,
+            "end_s": 9.0,
+        }
+        config.update(overrides)
+        return config
+
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            ("lanelet_ids", ["abc", 2], "'abc' is not a whole number"),
+            ("lanelet_ids", [1.0, math.inf], "inf is not a whole number"),
+            ("segment_lanelet_counts", ["two"], "'two' is not a whole number"),
+            ("segment_ends", ["far"], "'far' is not a number"),
+            ("segment_ends", [10**400], "1000+ is not finite"),
+            (
+                "segment_ends",
+                [-(10**5000)],
+                "an integer of about -10\\*\\*\\d+ is not finite",
+            ),
+            ("start_s", "abc", "'abc' is not a number"),
+            ("start_s", 10**400, "1000+ is not finite"),
+            ("end_s", [1.0], "\\[1\\.0\\] is not a number"),
+            ("end_s", -(10**400), "-1000+ is not finite"),
+            ("index", "first", "'first' is not a whole number"),
+        ],
+    )
+    def test_a_value_float_or_int_cannot_read_is_refused_by_its_key(
+        self, key: str, value: Any, message: str
+    ) -> None:
+        """#1660: refused naming the key, not with an unkeyed ``ValueError``,
+        ``TypeError`` or ``OverflowError``."""
+        with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
+            RouteMatch.from_config(self._config(**{key: value}))
+
+    def test_what_float_and_int_read_is_read_as_before(self) -> None:
+        match = RouteMatch.from_config(
+            self._config(
+                lanelet_ids=["1", 2.0],
+                segment_kinds=["lane", "lane"],
+                segment_ends=["5", 10],
+                segment_lanelet_counts=[True, 1],
+                start_s="1.5",
+                end_s=True,
+                index="3",
+            )
+        )
+        assert match is not None
+        assert match.lanelet_ids == (1, 2)
+        assert [(m.start, m.end) for m in match.segments] == [(0.0, 5.0), (5.0, 10.0)]
+        assert (match.start_s, match.end_s, match.index) == (1.5, 1.0, 3)
 
     def test_an_anchor_the_route_lacks(self) -> None:
         match = RouteMatch(

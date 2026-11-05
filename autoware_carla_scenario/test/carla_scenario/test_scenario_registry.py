@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -725,6 +726,94 @@ class TestBuildEgoAndSpawn:
         ego, _, _ = build_ego_and_spawn(_ego_and_spawn_cfg(entity="autoware"))
 
         assert ego.goal_pose is None
+
+
+class TestEgoNumbersAreRefusedByTheirKey:
+    """#1660: what ``float()`` or ``int()`` cannot read of the ego's and the
+    entity's numbers is refused with a ``ValueError`` naming the key, not an
+    unkeyed ``ValueError`` (``"abc"``) or ``OverflowError`` (``10**400``)."""
+
+    @staticmethod
+    def _cfg(group: str, key: str, value: object) -> DictConfig:
+        cfg = _ego_and_spawn_cfg(goal_lanelet_id=265)
+        cfg[group][key] = value
+        return cfg
+
+    @pytest.mark.parametrize(
+        ("group", "key"),
+        [
+            ("ego", "initial_speed_kmh"),
+            ("entity", "spawn_retry_t_step"),
+            ("entity", "spawn_retry_z_step"),
+            ("ego", "spawn_s"),
+            ("ego", "spawn_t"),
+            ("ego", "spawn_heading"),
+            ("ego", "goal_s"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("abc", "must be a number, got 'abc'"),
+            (10**400, "must be finite, got 1000"),
+            (-(10**5000), "must be finite, got an integer of about -10\\*\\*"),
+        ],
+        ids=["text", "huge", "too-long-for-repr"],
+    )
+    def test_a_number_float_cannot_read(
+        self, group: str, key: str, value: object, message: str
+    ) -> None:
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_planned_route,
+            build_spawn_pose,
+        )
+
+        cfg = self._cfg(group, key, value)
+        match = rf"^{group}\.{key} {message}"
+        with pytest.raises(ValueError, match=match):
+            build_ego_and_spawn(cfg)
+        if key in ("spawn_s", "spawn_t", "spawn_heading"):
+            with pytest.raises(ValueError, match=match):
+                build_spawn_pose(cfg)
+            with pytest.raises(ValueError, match=match):
+                build_planned_route(cfg)
+
+    @pytest.mark.parametrize("value", ["abc", "1.5", math.inf])
+    def test_a_retry_count_int_cannot_read(self, value: object) -> None:
+        from autoware_carla_scenario.examples.run import build_ego_and_spawn
+
+        cfg = self._cfg("entity", "spawn_retry_max_count", value)
+        with pytest.raises(
+            ValueError, match=r"^entity\.spawn_retry_max_count must be a whole number"
+        ):
+            build_ego_and_spawn(cfg)
+
+    def test_what_float_and_int_read_is_read_as_before(self) -> None:
+        """A numeric string, a bool and an int read as ``float()``/``int()`` do."""
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_planned_route,
+        )
+
+        cfg = _ego_and_spawn_cfg(
+            goal_lanelet_id=265,
+            initial_speed_kmh="12.5",
+            spawn_s=True,
+            spawn_t="-1",
+            spawn_heading=0,
+            goal_s="3",
+        )
+        cfg.entity.spawn_retry_max_count = "4"
+        cfg.entity.spawn_retry_t_step = 2
+        ego, spawn, _ = build_ego_and_spawn(cfg)
+        assert ego.initial_speed_kmh == 12.5
+        assert ego.spawn_retry_max_count == 4
+        assert ego.spawn_retry_t_step == 2.0
+        assert (spawn.s, spawn.t, spawn.heading) == (1.0, -1.0, 0.0)
+        assert ego.goal_pose is not None and ego.goal_pose.s == 3.0
+        route = build_planned_route(cfg)
+        assert (route.start.s, route.start.t) == (1.0, -1.0)
 
 
 # ---------------------------------------------------------------------------
