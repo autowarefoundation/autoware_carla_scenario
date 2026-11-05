@@ -1,11 +1,12 @@
 """A frame of the world as the CommonRoad worker reads it.
 
-Every road user -- the ego, the vehicles and the pedestrians near it -- as an
-actor of ``commonroad_metrics.Actor``: where its box's centre is, where it
-heads, its velocity and acceleration, its box and its kind, in the CommonRoad
-frame of the map.  That frame is the OpenDRIVE's (roadgen writes the scenario
-in it): right-handed, where CARLA's is left-handed, so ``y``, the yaw and the
-yaw rate change sign (:func:`to_commonroad`).
+Every road user -- the ego, the vehicles and the pedestrians near it on its
+level of road -- as an actor of ``commonroad_metrics.Actor``: where its box's
+centre is, where it heads, its velocity and acceleration, its box and its
+kind, in the CommonRoad frame of the map.  That frame is the OpenDRIVE's
+(roadgen writes the scenario in it): right-handed, where CARLA's is
+left-handed, so ``y``, the yaw and the yaw rate change sign
+(:func:`to_commonroad`).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import find_actor_in_world
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import _HIDDEN_BELOW_M, _level_gap, _vertical_span
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -144,20 +145,31 @@ def _road_users_near(
     world: "carla.World", ego: "carla.Actor", radius_m: float
 ) -> list["carla.Actor"]:
     """The vehicles and walkers of *world* other than *ego*, within *radius_m*
-    of it (in the plane) and not hidden under the map, in the world's order."""
+    of it (in the plane), not hidden under the map and on the ego's level of
+    road, in the world's order.
+
+    CommonRoad's scenario is planar: a road user on a bridge over the ego, or
+    in an underpass beneath it, would be on its lane there, and a TTC or a
+    headway to it would read a collision the two can never have (#1580).
+    """
     near: list["carla.Actor"] = []
-    centre = ego.get_transform().location
+    placed = ego.get_transform()
+    centre = placed.location
+    ego_span = _vertical_span(ego, placed)
     for actor in world.get_actors():
         type_id = str(actor.type_id)
         if actor.id == ego.id or not (
             type_id.startswith("vehicle.") or type_id.startswith("walker.")
         ):
             continue
-        location = actor.get_transform().location
+        transform = actor.get_transform()
+        location = transform.location
         # A road user parked under the map (hidden) is out of the scene.
         if location.z < _HIDDEN_BELOW_M:
             continue
         if math.hypot(location.x - centre.x, location.y - centre.y) > radius_m:
+            continue
+        if _level_gap(ego_span, _vertical_span(actor, transform)) > 0.0:
             continue
         near.append(actor)
     return near

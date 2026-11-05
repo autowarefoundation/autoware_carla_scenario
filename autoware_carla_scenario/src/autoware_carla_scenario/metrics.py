@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
-from .utils.clearance import _HIDDEN_BELOW_M
+from .utils.clearance import _HIDDEN_BELOW_M, _level_gap, _vertical_span
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -423,6 +423,13 @@ class _Frame:
     """What one frame of one world reads, each part once: the ego's box and
     the others', what its box meets, and the lane under its centre.
 
+    The boxes are on the ground, and each other road user has how far it is
+    above or below the ego's level of road (:attr:`others_gap`): where roads
+    cross at different heights, a road user on the bridge over the ego is in
+    no collision with it, and is as far from it as the height between them at
+    least.  The lanes are asked for at the ego's height (:attr:`ego_z`), so
+    that they are the ones it drives on (#1580).
+
     Every box also has the circle around it (its centre and the distance to
     its corners): two boxes whose circles are apart are apart, which spares
     the exact tests for the road users nowhere near the ego.
@@ -430,12 +437,17 @@ class _Frame:
 
     has_ego: bool
     ego_yaw: float
+    #: The height of the ego's origin, which the map is asked at.
+    ego_z: float
     ego_box: Box
     ego_centre: Point
     ego_radius: float
     others: list[Box]
     others_centre: list[Point]
     others_radius: list[float]
+    #: Metres between the ego's box and each other's in height, ``0.0`` for
+    #: one on the ego's level of road (``utils.clearance._level_gap``).
+    others_gap: list[float]
     #: What the ego's box meets: _FRONT, _REAR and _LATERAL once the road
     #: users have been read (collisions_read), _OFFROAD once the road has
     #: (offroad_read).
@@ -445,9 +457,17 @@ class _Frame:
     centre_read: bool
     centre_waypoint: Optional["carla.Waypoint"]
 
-    def __init__(self, ego_yaw: float, ego_box: Box, others: list[Box]) -> None:
+    def __init__(
+        self,
+        ego_yaw: float,
+        ego_z: float,
+        ego_box: Box,
+        others: list[Box],
+        others_gap: list[float],
+    ) -> None:
         self.has_ego = bool(ego_box)
         self.ego_yaw = ego_yaw
+        self.ego_z = ego_z
         self.ego_box = ego_box
         self.ego_centre = _centre(ego_box) if ego_box else (0.0, 0.0)
         self.ego_radius = _radius(ego_box, self.ego_centre) if ego_box else 0.0
@@ -456,6 +476,7 @@ class _Frame:
         self.others_radius = [
             _radius(box, centre) for box, centre in zip(others, self.others_centre)
         ]
+        self.others_gap = others_gap
         self.hits = 0
         self.collisions_read = False
         self.offroad_read = False
@@ -463,16 +484,26 @@ class _Frame:
         self.centre_waypoint = None
 
     def clearance(self, i: int) -> float:
-        """How far apart the ego's circle and the *i*-th road user's are; at
-        most the distance between their boxes, and ``0.0`` when they overlap."""
+        """How far apart the ego's circle and the *i*-th road user's are, with
+        the height between them (:attr:`others_gap`); at most the distance
+        between their boxes, and ``0.0`` when they overlap."""
         centre = self.others_centre[i]
         apart = math.hypot(
             centre[0] - self.ego_centre[0], centre[1] - self.ego_centre[1]
         )
-        return max(apart - self.ego_radius - self.others_radius[i], 0.0)
+        planar = max(apart - self.ego_radius - self.others_radius[i], 0.0)
+        return math.hypot(planar, self.others_gap[i])
+
+    def distance(self, i: int) -> float:
+        """Metres between the ego's box and the *i*-th road user's: on the
+        ground, and across the height between them when it is on another
+        level of road; ``0.0`` when they meet."""
+        return math.hypot(
+            _box_distance(self.ego_box, self.others[i]), self.others_gap[i]
+        )
 
 
-_NO_EGO = _Frame(0.0, [], [])
+_NO_EGO = _Frame(0.0, 0.0, [], [], [])
 
 
 class _Cache:
@@ -533,7 +564,10 @@ def _read_frame(world: "carla.World") -> _Frame:
         ego = None
     if ego is None:
         return _NO_EGO
+    transform = ego.get_transform()
+    ego_span = _vertical_span(ego, transform)
     others: list[Box] = []
+    others_gap: list[float] = []
     for actor in actors:
         kind = actor.type_id
         if actor.id == ego.id or not (
@@ -545,8 +579,17 @@ def _read_frame(world: "carla.World") -> _Frame:
         if placed.location.z < _HIDDEN_BELOW_M:
             continue
         others.append(_box_of(actor, placed))
-    transform = ego.get_transform()
-    return _Frame(transform.rotation.yaw, _box_of(ego, transform), others)
+        # One on another level of road -- on a bridge over the ego, in an
+        # underpass beneath it -- may overlap the ego's box on the ground, but
+        # is as far from it as the height between them.
+        others_gap.append(_level_gap(ego_span, _vertical_span(actor, placed)))
+    return _Frame(
+        transform.rotation.yaw,
+        float(transform.location.z),
+        _box_of(ego, transform),
+        others,
+        others_gap,
+    )
 
 
 def _map(world: "carla.World") -> "carla.Map":
@@ -566,13 +609,17 @@ def _map(world: "carla.World") -> "carla.Map":
     return found
 
 
-def _driving_waypoint(world: "carla.World", point: Point) -> "Optional[carla.Waypoint]":
-    """The driving lane under *point*, ``None`` when it is on none."""
+def _driving_waypoint(
+    world: "carla.World", point: Point, z: float
+) -> "Optional[carla.Waypoint]":
+    """The driving lane under *point*, at the height *z* (the ego's: where
+    roads cross at different heights, the lane is the one it is on), ``None``
+    when it is on none."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     carla_map = _map(world)
     return carla_map.get_waypoint(
-        carla.Location(x=point[0], y=point[1], z=0.0),
+        carla.Location(x=point[0], y=point[1], z=z),
         project_to_road=False,
         lane_type=_CACHE.driving,
     )
@@ -580,10 +627,12 @@ def _driving_waypoint(world: "carla.World", point: Point) -> "Optional[carla.Way
 
 def _collision_bits(frame: _Frame) -> int:
     """AlpaSim's ``CollisionScorer``: each road user the ego's box meets meets
-    its front edge, else its rear edge, else its side."""
+    its front edge, else its rear edge, else its side.  One on another level
+    of road (a bridge, an underpass) meets none."""
     if not frame.collisions_read:
         box = frame.ego_box
         for i, other in enumerate(frame.others):
+            # Its height above or below the ego's level is in the clearance.
             if frame.clearance(i) > 0.0:
                 continue
             if _segment_meets_box(box[0], box[1], other):
@@ -605,7 +654,7 @@ def _offroad_bits(world: "carla.World", frame: _Frame) -> int:
     """
     if not frame.offroad_read:
         for corner in frame.ego_box:
-            if _driving_waypoint(world, corner) is None:
+            if _driving_waypoint(world, corner, frame.ego_z) is None:
                 frame.hits |= _OFFROAD
                 break
         frame.offroad_read = True
@@ -615,7 +664,7 @@ def _offroad_bits(world: "carla.World", frame: _Frame) -> int:
 def _centre_waypoint(world: "carla.World", frame: _Frame) -> "Optional[carla.Waypoint]":
     """The driving lane under the ego's centre."""
     if not frame.centre_read:
-        frame.centre_waypoint = _driving_waypoint(world, frame.ego_centre)
+        frame.centre_waypoint = _driving_waypoint(world, frame.ego_centre, frame.ego_z)
         frame.centre_read = True
     return frame.centre_waypoint
 
@@ -828,7 +877,9 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         _hold(world)
         try:
             transform = ego.get_transform()
-            waypoint = _driving_waypoint(world, _centre(_box_of(ego, transform)))
+            waypoint = _driving_waypoint(
+                world, _centre(_box_of(ego, transform)), float(transform.location.z)
+            )
         except Exception:
             waypoint = None
         # A junction's lanes overlap, and the one read may be another's, at
@@ -1013,7 +1064,8 @@ def _offroad_or_collision_at_fault(world: "carla.World") -> Optional[float]:
 
 def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
     """AlpaSim's ``MinDistanceToObstacleScorer``: box to box, ``None`` when
-    the ego is alone."""
+    the ego is alone; across the height between them too for a road user on
+    another level of road (:meth:`_Frame.distance`)."""
     frame = _frame(world)
     if not frame.has_ego or not frame.others:
         return None
@@ -1024,7 +1076,7 @@ def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
     for i in order:
         if frame.clearance(i) >= best:
             break
-        best = min(best, _box_distance(frame.ego_box, frame.others[i]))
+        best = min(best, frame.distance(i))
     return best
 
 

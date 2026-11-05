@@ -37,6 +37,45 @@ __all__ = [
 #: An actor this far (m) or more below the ground is out of the world.
 _HIDDEN_BELOW_M = -100.0
 
+#: How far (m) one road user's box may be clear of another's in height and
+#: still be on the same level of road (#1580).  The same idea as
+#: ``measures._OFF_THE_ROAD_M`` (a vehicle far above or below the ego is on no
+#: road of the ego's), with the boxes rather than the origins, and a margin a
+#: collision can use: a metre covers the box's height turned by a slope's
+#: pitch (the spans below ignore pitch and roll) and a box a little off the
+#: road it stands on, and is less than the 1.5 m or more between the roof of
+#: a truck under a bridge (4.5 m of clearance or more, and the deck) and the
+#: wheels of a car on it.
+_SAME_LEVEL_MARGIN_M = 1.0
+
+
+def _vertical_span(
+    actor: "carla.Actor", transform: "carla.Transform"
+) -> tuple[float, float]:
+    """The bottom and top of *actor*'s box in the world, *transform* being
+    where the actor is: the box's centre (the origin's height plus the box's
+    offset) less and plus its half height, pitch and roll ignored.  The
+    origin's height alone when the actor has no box."""
+    centre = float(transform.location.z)
+    half = 0.0
+    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
+    try:
+        box = actor.bounding_box
+        centre += float(box.location.z)
+        half = float(box.extent.z)
+    except AttributeError:
+        pass
+    return centre - half, centre + half
+
+
+def _level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
+    """How far apart in height the vertical spans *one* and *other* (bottom,
+    top) are, in metres, when that is more than :data:`_SAME_LEVEL_MARGIN_M`:
+    a road user on a bridge over the other, or in an underpass beneath it.
+    ``0.0`` when the two are on the same level of road."""
+    gap = max(other[0] - one[1], one[0] - other[1], 0.0)
+    return gap if gap > _SAME_LEVEL_MARGIN_M else 0.0
+
 
 class Obstacle:
     """An actor in the way: where (its bounding box's centre), how big
