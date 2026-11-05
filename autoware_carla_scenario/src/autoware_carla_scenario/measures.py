@@ -1331,6 +1331,26 @@ def vehicle_ahead_definition(ego: "carla.Transform") -> str:
     return ALONG_LANE
 
 
+def _off_the_ego_s_level(
+    ego_z: float,
+    ego_span: tuple[float, float],
+    z: float,
+    span: tuple[float, float],
+    planar: float,
+) -> bool:
+    """Whether a vehicle whose origin is at height *z* and whose vertical
+    span (bottom, top) is *span*, *planar* metres from the ego in the plane,
+    is on no road of the ego's (origin at *ego_z*, span *ego_span*): far
+    above or below it (:data:`_OFF_THE_ROAD_M`; vehicle_bumpers()'s probe,
+    for one), or on another level of road -- on a bridge over the ego, or in
+    an underpass beneath it (#1587) -- though one up or down a slope ahead is
+    not (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`).
+    The live measure and :func:`vehicle_ahead_gap_between` both ask it."""
+    if abs(z - ego_z) > _OFF_THE_ROAD_M:
+        return True
+    return on_another_level(ego_span, span, planar)
+
+
 def vehicle_ahead_gap_between(
     ego: "carla.Transform",
     ego_bumpers: Bumpers,
@@ -1342,15 +1362,27 @@ def vehicle_ahead_gap_between(
     lane (the module docstring), or along its heading without one.
 
     ``None`` when the measure would not count it as ahead (not on the ego's
-    lane or a lane beside it, behind the ego, or further than
-    :data:`AHEAD_RANGE_M`).  The built-in measure reads the nearest such
-    vehicle with this same code, so a vehicle placed where this reads *v*,
-    alone ahead of the ego, is measured at *v*
+    lane or a lane beside it, behind the ego, further than
+    :data:`AHEAD_RANGE_M`, or on another level of road: on a bridge over the
+    ego or in an underpass beneath it, #1604).  The built-in measure reads the
+    nearest such vehicle with this same code, so a vehicle placed where this
+    reads *v*, alone ahead of the ego, is measured at *v*
     (:func:`~autoware_carla_scenario.placement.place_at_vehicle_ahead_gap`).
+    With transforms and no boxes, each vehicle's vertical span is the point
+    at its origin's height.
     """
-    lead, _definition = _nearest_ahead(
-        _placed(ego, ego_bumpers), [_placed(other, other_bumpers)]
-    )
+    placed_ego = _placed(ego, ego_bumpers)
+    placed_other = _placed(other, other_bumpers)
+    planar = math.hypot(placed_other.x - placed_ego.x, placed_other.y - placed_ego.y)
+    if _off_the_ego_s_level(
+        placed_ego.z,
+        (placed_ego.z, placed_ego.z),
+        placed_other.z,
+        (placed_other.z, placed_other.z),
+        planar,
+    ):
+        return None
+    lead, _definition = _nearest_ahead(placed_ego, [placed_other])
     if lead is None:
         return None
     return lead.gap
@@ -1386,9 +1418,13 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
                 planar = math.hypot(location.x - ego.x, location.y - ego.y)
                 if planar > reach:
                     continue
-                if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
-                    continue
-                if on_another_level(ego_span, _vertical_span(actor, placed), planar):
+                if _off_the_ego_s_level(
+                    ego_z,
+                    ego_span,
+                    float(location.z),
+                    _vertical_span(actor, placed),
+                    planar,
+                ):
                     continue
                 attributes = actor.attributes
                 if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:
