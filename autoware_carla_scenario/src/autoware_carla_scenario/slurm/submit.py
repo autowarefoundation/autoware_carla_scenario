@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -35,23 +34,36 @@ from .manifest import (
     write_json,
 )
 
+# SLURM's command-line tools are run in slurm.queue (#1634), which the library
+# check compiles; these are named here as they were before.
+from .queue import ACTIVE_STATES as ACTIVE_STATES
+from .queue import CANCEL_WAIT_SECONDS as CANCEL_WAIT_SECONDS
+from .queue import _array_refused as _array_refused
+from .queue import _chunks as _chunks
+from .queue import _run_sbatch as _run_sbatch
+from .queue import _wait_until_gone as _wait_until_gone
+from .queue import cancel_jobs as cancel_jobs
+from .queue import max_array_size as max_array_size
+from .queue import squeue_states as squeue_states
+
 # The job scripts and sbatch command lines are built in slurm.scripts (#732),
 # which the library check compiles; these are named here as they were before.
 from .scripts import CLI_MODULE as CLI_MODULE
 from .scripts import REMOTE_EARLY_OUTPUT_DIR as REMOTE_EARLY_OUTPUT_DIR
 from .scripts import WORKER_MODULE as WORKER_MODULE
-from .scripts import ScriptInputs, squeue_task_states
+from .scripts import ScriptInputs
 from .scripts import _expand_ranges as _expand_ranges
 from .scripts import _shell_path as _shell_path
 from .scripts import relative_batch_dir as relative_batch_dir
 from .scripts import sbatch_command as sbatch_command
+from .scripts import squeue_task_states as squeue_task_states
 from .settings import (
     DEFAULT_MAX_ARRAY_SIZE,
     SlurmSettings,
-    parse_max_array_size,
-    require_sbatch,
     snapshot_environment,
 )
+from .settings import parse_max_array_size as parse_max_array_size
+from .settings import require_sbatch as require_sbatch
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -251,10 +263,6 @@ def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> in
     return 0
 
 
-def _chunks(indices: list[int], size: int) -> list[list[int]]:
-    return [indices[i : i + size] for i in range(0, len(indices), size)]
-
-
 def _script_inputs(
     manifest: dict[str, Any], *, python: bool, cwd: bool, env: Any
 ) -> ScriptInputs:
@@ -320,62 +328,6 @@ def _collect_command(
         manifest, python=False, cwd=settings.remote_cwd is None, env={}
     )
     return scripts._collect_command(layout, inputs, settings, job, script)
-
-
-def _run_sbatch(command: list[str]) -> str:
-    """Run *command* (an ``sbatch --parsable``); the job id it printed."""
-    command = [require_sbatch(), *command[1:]]
-    logger.info("Submitting: %s", shlex.join(command))
-    completed = subprocess.run(
-        command, capture_output=True, encoding="utf-8", errors="replace", check=False
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"sbatch failed ({completed.returncode}): "
-            f"{(completed.stderr or completed.stdout).strip()}"
-        )
-    # --parsable: "<job id>" or "<job id>;<cluster>".  Nothing printed is no
-    # job id, not an IndexError past callers catching RuntimeError (#1630).
-    lines = completed.stdout.strip().splitlines()
-    job = lines[-1].split(";")[0].strip() if lines else ""
-    if not job:
-        raise RuntimeError(f"sbatch printed no job id: {completed.stdout!r}")
-    return job
-
-
-def max_array_size() -> int:
-    """The cluster's ``MaxArraySize`` (``scontrol show config``): an array
-    holds at most this many tasks.  SLURM's default, 1001, when ``scontrol``
-    cannot be asked or names none (#1347)."""
-    try:
-        completed = subprocess.run(
-            ["scontrol", "show", "config"],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.debug("scontrol show config failed (%s): MaxArraySize 1001", exc)
-        return DEFAULT_MAX_ARRAY_SIZE
-    limit = None
-    if completed.returncode == 0:
-        limit = parse_max_array_size(completed.stdout)
-    if limit is None:
-        logger.debug(
-            "scontrol show config (exit %d) named no MaxArraySize: 1001",
-            completed.returncode,
-        )
-        return DEFAULT_MAX_ARRAY_SIZE
-    return limit
-
-
-def _array_refused(message: str) -> bool:
-    """Whether sbatch's *message* refuses an array's size (SLURM's "Invalid
-    job array specification", or one naming MaxArraySize)."""
-    lowered = message.lower()
-    return "invalid job array" in lowered or "maxarraysize" in lowered
 
 
 def _write_script(path: Path, text: str) -> None:
@@ -507,54 +459,6 @@ def submit_cases(
     return index
 
 
-#: The states of a task SLURM has not finished with.
-ACTIVE_STATES = frozenset(
-    {
-        "PENDING",
-        "CONFIGURING",
-        "RUNNING",
-        "COMPLETING",
-        "SUSPENDED",
-        "REQUEUED",
-        "REQUEUE_HOLD",
-        "REQUEUE_FED",
-        "RESIZING",
-        "SIGNALING",
-        "STAGE_OUT",
-        "STOPPED",
-    }
-)
-
-#: After a Ctrl-C's ``scancel``, how long :func:`follow` waits for the tasks to
-#: leave the queue (stopping their CARLAs, recording their state) before it
-#: collects.
-CANCEL_WAIT_SECONDS = 60.0
-
-
-def squeue_states(job: str) -> dict[int, str] | None:
-    """The state of each task of array *job* that SLURM still lists.
-
-    ``{}`` once the job is gone from the queue (or never was); ``None`` when
-    ``squeue`` cannot be asked (not on PATH, or it failed for another reason).
-    """
-    try:
-        completed = subprocess.run(
-            ["squeue", "-h", "-r", "-j", str(job), "-o", "%i %T"],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if completed.returncode != 0:
-        if "Invalid job id" in completed.stderr:
-            return {}
-        return None
-    return squeue_task_states(job, completed.stdout)
-
-
 def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* until SLURM lists none of its tasks, then
     collect the batch; the exit status (0 when every case passed).
@@ -647,52 +551,3 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
             )
             return 130
     return collect(layout)
-
-
-def _wait_until_gone(job: str, timeout: float, poll_seconds: float) -> bool:
-    """Wait, at most *timeout* s, until SLURM lists no active task of *job*:
-    collecting sooner would find the cancelled tasks' results half written.
-    Whether they left; a second Ctrl-C stops waiting."""
-    deadline = time.monotonic() + timeout
-    try:
-        while True:
-            states = squeue_states(job)
-            if states is not None and not any(
-                state in ACTIVE_STATES for state in states.values()
-            ):
-                return True
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(min(poll_seconds, 1.0))
-    except KeyboardInterrupt:
-        pass
-    print(  # noqa: T201
-        f"[slurm] job {job} is still in the queue; collecting what there is",
-        flush=True,
-    )
-    return False
-
-
-def cancel_jobs(jobs: Sequence[str]) -> bool:
-    """``scancel`` *jobs* (this user's own); whether scancel succeeded."""
-    jobs = [str(job) for job in jobs if job]
-    if not jobs:
-        return True
-    try:
-        completed = subprocess.run(
-            ["scancel", *jobs],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-    except OSError as exc:
-        print(f"[slurm] could not run scancel: {exc}", file=sys.stderr)  # noqa: T201
-        return False
-    if completed.returncode != 0:
-        print(  # noqa: T201
-            f"[slurm] scancel {' '.join(jobs)} failed: {completed.stderr.strip()}",
-            file=sys.stderr,
-        )
-        return False
-    return True

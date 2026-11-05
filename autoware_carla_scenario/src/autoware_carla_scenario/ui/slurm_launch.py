@@ -21,7 +21,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import threading
@@ -31,9 +30,14 @@ from pathlib import Path
 from typing import Any
 
 from ..slurm.manifest import BatchLayout
-from ..slurm.submit import ACTIVE_STATES, squeue_states
+from ..slurm.queue import ACTIVE_STATES, squeue_states
 from . import slurm_options as _options
 from .slurm_case_state import case_state
+
+# SLURM's command-line tools are run in the checked slurm.queue (#1634):
+# whether SLURM is here, and its partitions, are re-exported from there.
+from ..slurm.queue import availability as availability
+from ..slurm.queue import partitions as partitions
 
 # Checked by the library check, and re-exported: what each field may hold, the
 # overrides the options become and how the command line is put together.
@@ -82,36 +86,6 @@ def scenario_command() -> list[str]:
     """``scenario``, as this viewer starts it."""
     configured = os.environ.get(_ENV_COMMAND, "").strip()
     return shlex.split(configured) if configured else ["uv", "run", "scenario"]
-
-
-def availability() -> tuple[bool, str]:
-    """Whether batches can be submitted from here, and if not, why."""
-    missing = [tool for tool in ("sbatch", "squeue") if shutil.which(tool) is None]
-    if missing:
-        return False, (
-            f"SLURM's {' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} "
-            "not on this viewer's PATH: run the viewer on a SLURM submit (login) "
-            "host to launch batches through SLURM (docs/slurm.md)."
-        )
-    return True, ""
-
-
-def partitions() -> list[str]:
-    """The partitions ``sinfo`` lists (the default one first), if it can."""
-    try:
-        done = subprocess.run(
-            ["sinfo", "-h", "-o", "%P"],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    names = [line.strip() for line in done.stdout.splitlines() if line.strip()]
-    default = [n.rstrip("*") for n in names if n.endswith("*")]
-    return default + sorted({n.rstrip("*") for n in names} - set(default))
 
 
 #: The run of backslashes that ends a value, which ui.slurm_options doubles

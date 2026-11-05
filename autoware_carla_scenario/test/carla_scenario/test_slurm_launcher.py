@@ -2387,20 +2387,20 @@ def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
 ) -> None:
     """#1630: sbatch exiting 0 without output is the RuntimeError callers
     catch, not an IndexError."""
-    from autoware_carla_scenario.slurm import submit
+    from autoware_carla_scenario.slurm import queue
 
-    monkeypatch.setattr(submit, "require_sbatch", lambda: "sbatch")
+    monkeypatch.setattr(queue, "require_sbatch", lambda: "sbatch")
     stdout = ""
 
     def run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 0, stdout, "")
 
-    monkeypatch.setattr(submit.subprocess, "run", run)
+    monkeypatch.setattr(queue.subprocess, "run", run)
     for stdout in ("", "\n \n", ";cluster\n"):
         with pytest.raises(RuntimeError, match="sbatch printed no job id"):
-            submit._run_sbatch(["sbatch", "--parsable", "job.sh"])
+            queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
     stdout = "warning: something\n4242;cluster\n"
-    assert submit._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+    assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
 
 
 @pytest.mark.parametrize("stale", [False, True], ids=["in-flight", "stale"])
@@ -3130,7 +3130,7 @@ def test_an_unwritable_collect_script_is_reported_not_raised(
 def test_interrupt_waits_for_the_cancelled_tasks_before_collecting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autoware_carla_scenario.slurm import collect, submit
+    from autoware_carla_scenario.slurm import collect, queue, submit
 
     layout = _batch_on_disk(tmp_path)
     events: list[str] = []
@@ -3157,6 +3157,8 @@ def test_interrupt_waits_for_the_cancelled_tasks_before_collecting(
             raise interrupt
 
     monkeypatch.setattr(submit, "squeue_states", squeue)
+    # The wait after scancel polls through slurm.queue's own (#1634).
+    monkeypatch.setattr(queue, "squeue_states", squeue)
     monkeypatch.setattr(submit.time, "sleep", sleep)
     monkeypatch.setattr(submit, "cancel_jobs", lambda jobs: events.append("scancel"))
 
@@ -3183,15 +3185,15 @@ def test_interrupt_collects_after_the_bounded_wait(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from autoware_carla_scenario.slurm import submit
+    from autoware_carla_scenario.slurm import queue
 
     clock = [0.0]
-    monkeypatch.setattr(submit.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(queue.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
-        submit.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
+        queue.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
     )
-    monkeypatch.setattr(submit, "squeue_states", lambda _job: {0: "COMPLETING"})
-    assert submit._wait_until_gone("77", 60.0, 15.0) is False
+    monkeypatch.setattr(queue, "squeue_states", lambda _job: {0: "COMPLETING"})
+    assert queue._wait_until_gone("77", 60.0, 15.0) is False
     assert 60.0 <= clock[0] <= 61.0
     assert "still in the queue" in capsys.readouterr().out
 

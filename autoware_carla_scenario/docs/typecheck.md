@@ -2408,7 +2408,9 @@ and type files), the signal controllers, the adversity math, the measures,
 the metrics and the ODD's probes, the gate package's `__init__` and its per-run record and probe (not
 its evaluator), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec (not the YAML reading around it), the
-example scenarios and their configs, and the parts of the
+example scenarios and their configs, the SLURM launcher's job scripts and its
+calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
+`scontrol`, `sinfo`: `slurm.queue`, #1634), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
