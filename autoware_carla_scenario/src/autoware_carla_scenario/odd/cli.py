@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import sys
+import sysconfig
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Optional, Sequence
@@ -62,6 +63,36 @@ def _library_dirs() -> tuple[str, ...]:
     )
 
 
+#: The directories of installed packages, which are not the standard library
+#: even when they sit under it (a venv's ``platstdlib`` holds ``site-packages``).
+_SITE_DIRECTORIES = frozenset({"site-packages", "dist-packages"})
+
+
+def _stdlib_dirs() -> tuple[Path, ...]:
+    paths = sysconfig.get_paths()
+    out: list[Path] = []
+    for key in ("stdlib", "platstdlib"):
+        value = paths.get(key)
+        if value:
+            resolved = Path(value).resolve()
+            if resolved not in out:
+                out.append(resolved)
+    return tuple(out)
+
+
+def _is_stdlib(path: str) -> bool:
+    """Whether ``path`` is a module of CPython's standard library (``importlib``)."""
+    resolved = Path(path).resolve()
+    for root in _stdlib_dirs():
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        if not _SITE_DIRECTORIES.intersection(relative.parts):
+            return True
+    return False
+
+
 def _frames(tb: Optional[TracebackType]) -> list[TracebackType]:
     out = []
     while tb is not None:
@@ -74,7 +105,7 @@ def _is_library(tb: TracebackType, library: tuple[str, ...]) -> bool:
     path = tb.tb_frame.f_code.co_filename
     if path.startswith("<"):
         return True
-    return str(Path(path).resolve()).startswith(library)
+    return str(Path(path).resolve()).startswith(library) or _is_stdlib(path)
 
 
 def _own_package(spec: Optional[str]) -> Optional[str]:
@@ -92,8 +123,16 @@ def _user_location(
 
     A frame is the author's when it is in the package of the ODD module
     (also when that package is installed, i.e. under site-packages), or in a
-    file that is neither the library's, a frozen module nor in site-packages.
+    file that is neither the library's, the standard library's, a frozen
+    module nor in site-packages.  A :class:`SyntaxError` names the line it is
+    on itself: the frames that raised it are only the import machinery's.
     """
+    if (
+        isinstance(exc, SyntaxError)
+        and exc.filename
+        and not exc.filename.startswith("<")
+    ):
+        return exc.filename, exc.lineno or 0
     library = _library_dirs()
     own = _own_package(spec)
     found = None
@@ -106,8 +145,6 @@ def _user_location(
             if "site-packages" in path:
                 continue
         found = (path, tb.tb_lineno)
-    if found is None and isinstance(exc, SyntaxError) and exc.filename:
-        return exc.filename, exc.lineno or 0
     return found
 
 
