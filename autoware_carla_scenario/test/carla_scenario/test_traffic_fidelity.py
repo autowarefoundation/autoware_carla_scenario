@@ -135,6 +135,65 @@ def test_a_nan_radius_from_a_mapping_is_refused_rather_than_never_demoting() -> 
         )
 
 
+_MESOSCOPIC_NUMBERS = (
+    ("micro_radius_m", "must be positive and finite", False),
+    ("meso_radius_m", "must be finite or null", True),
+    ("update_interval_s", "must be finite and not negative", False),
+    ("headway_s", "must be positive and finite", False),
+    ("jam_spacing_m", "must be positive and finite", False),
+)
+
+
+@pytest.mark.parametrize(("key", "message", "nullable"), _MESOSCOPIC_NUMBERS)
+def test_a_mesoscopic_number_refuses_what_is_no_number_by_its_key(
+    key: str, message: str, nullable: bool
+) -> None:
+    # A bool passed as 0 or 1, and a string or a null in a required field
+    # raised a TypeError naming no key (#1663); 10**400 an OverflowError.
+    bad: list[Any] = [True, False, "2", "", [1.0], 10**400]
+    if not nullable:
+        bad.append(None)
+    for value in bad:
+        with pytest.raises(ValueError, match=f"^{key} {message}"):
+            MesoscopicConfig.from_mapping({"enabled": True, key: value})
+        with pytest.raises(ValueError, match=f"^{key} {message}"):
+            SumoBackendConfig.from_mapping(
+                {"mesoscopic": {"enabled": True, key: value}}
+            )
+    with pytest.raises(ValueError, match=r"got an integer of about 10\*\*5000\)$"):
+        MesoscopicConfig.from_mapping({key: 10**5000})
+
+
+def test_a_mesoscopic_whole_number_is_kept_as_its_float() -> None:
+    config = MesoscopicConfig.from_mapping(
+        {
+            "enabled": True,
+            "micro_radius_m": 100,
+            "meso_radius_m": 150,
+            "update_interval_s": 0,
+            "headway_s": 2,
+            "jam_spacing_m": 8,
+        }
+    )
+    assert config == MesoscopicConfig(
+        enabled=True,
+        micro_radius_m=100.0,
+        meso_radius_m=150.0,
+        update_interval_s=0.0,
+        headway_s=2.0,
+        jam_spacing_m=8.0,
+    )
+    for value in (
+        config.micro_radius_m,
+        config.meso_radius_m,
+        config.update_interval_s,
+        config.headway_s,
+        config.jam_spacing_m,
+    ):
+        assert type(value) is float
+    assert MesoscopicConfig(meso_radius_m=None).meso_radius_m is None
+
+
 def test_the_policy_is_an_option_of_the_sumo_backend() -> None:
     config = SumoBackendConfig.from_mapping(
         {"mesoscopic": {"enabled": True, "micro_radius_m": 50.0}}

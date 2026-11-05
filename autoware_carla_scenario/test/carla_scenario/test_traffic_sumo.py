@@ -13,6 +13,7 @@ import importlib.util
 import logging
 import itertools
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -4465,6 +4466,116 @@ def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
             AmbientTrafficConfig(fringe_factor=bad)
         with pytest.raises(ValueError, match="^bicycles.min_distance_m must be finite"):
             BicycleConfig(min_distance_m=bad)
+
+
+#: Every number option of the SUMO backend, as (group, key, message start,
+#: whether null is accepted, a valid value): the top-level options with no
+#: group, the generated demand's under theirs.
+_SUMO_NUMBER_OPTIONS: tuple[tuple[str, str, str, bool, float], ...] = (
+    ("", "feedback_distance_m", "must be finite and not negative", False, 1.0),
+    ("", "resync_distance_m", "must be positive", False, 8.0),
+    (
+        "",
+        "curve_lateral_acceleration",
+        "must be positive and finite or null",
+        True,
+        3.0,
+    ),
+    ("", "lateral_resolution_m", "must be positive and finite or null", True, 0.4),
+    ("", "step_length_s", "must be positive and finite or null", True, 0.05),
+    ("", "warmup_s", "must be finite and not negative", False, 30.0),
+    ("", "spawn_radius_m", "must be positive and finite or null", True, 50.0),
+    ("ambient", "vehicles_per_hour", "must be finite and not negative", False, 900.0),
+    ("ambient", "period_s", "must be positive and finite or null", True, 2.0),
+    ("ambient", "end_s", "must be positive and finite", False, 3600.0),
+    ("ambient", "fringe_factor", "must be finite and not negative", False, 5.0),
+    (
+        "pedestrians",
+        "persons_per_hour",
+        "must be finite and not negative",
+        False,
+        600.0,
+    ),
+    ("pedestrians", "period_s", "must be positive and finite or null", True, 2.0),
+    ("pedestrians", "end_s", "must be positive and finite", False, 3600.0),
+    ("pedestrians", "max_distance_m", "must be positive", False, 500.0),
+    ("pedestrians", "radius_m", "must be positive and finite or null", True, 80.0),
+    ("bicycles", "bicycles_per_hour", "must be finite and not negative", False, 300.0),
+    ("bicycles", "period_s", "must be positive and finite or null", True, 2.0),
+    ("bicycles", "end_s", "must be positive and finite", False, 3600.0),
+    ("bicycles", "min_distance_m", "must be finite and not negative", False, 10.0),
+    ("bicycles", "max_distance_m", "must be positive or null", True, 2000.0),
+    ("bicycles", "radius_m", "must be positive and finite or null", True, 80.0),
+)
+
+
+def _sumo_option(group: str, key: str, value: Any) -> SumoBackendConfig:
+    if group:
+        return SumoBackendConfig.from_mapping({group: {key: value}})
+    return SumoBackendConfig.from_mapping({key: value})
+
+
+def _sumo_option_value(config: SumoBackendConfig, group: str, key: str) -> Any:
+    return getattr(getattr(config, group) if group else config, key)
+
+
+@pytest.mark.parametrize(
+    ("group", "key", "message", "nullable", "valid"),
+    _SUMO_NUMBER_OPTIONS,
+    ids=[f"{group or 'options'}.{key}" for group, key, *_ in _SUMO_NUMBER_OPTIONS],
+)
+def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
+    group: str, key: str, message: str, nullable: bool, valid: float
+) -> None:
+    # A bool passed as 0 or 1 (period_s: true was a 1 s period), and a string
+    # or a null in a required field raised a TypeError naming no key (#1663).
+    name = re.escape(f"{group}.{key}" if group else key)
+    bad: list[Any] = [True, False, "2", "", [1.0], {"a": 1}, 10**400, -(10**400)]
+    if not nullable:
+        bad.append(None)
+    for value in bad:
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
+            _sumo_option(group, key, value)
+    # A huge int is shown without repr()'s digit limit (#1652).
+    with pytest.raises(ValueError, match=r"got an integer of about 10\*\*5000\)$"):
+        _sumo_option(group, key, 10**5000)
+    # A valid number is kept, an int as its float.
+    assert _sumo_option_value(_sumo_option(group, key, valid), group, key) == valid
+    whole = _sumo_option_value(_sumo_option(group, key, int(valid) or 1), group, key)
+    assert type(whole) is float and whole == float(int(valid) or 1)
+    if nullable:
+        assert _sumo_option_value(_sumo_option(group, key, None), group, key) is None
+
+
+def test_the_lane_change_duration_refuses_what_is_no_number_by_its_key() -> None:
+    def build(value: Any) -> SumoBackendConfig:
+        return SumoBackendConfig.from_mapping(
+            {"lane_change_duration_s": value, "lateral_resolution_m": None}
+        )
+
+    for value in (True, "3", 10**400):
+        with pytest.raises(
+            ValueError, match="^lane_change_duration_s must be positive and finite"
+        ):
+            build(value)
+    duration = build(3).lane_change_duration_s
+    assert type(duration) is float and duration == 3.0
+    assert build(None).lane_change_duration_s is None
+
+
+def test_the_shipped_sumo_options_still_load_and_a_bool_is_refused_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    run.check_run_config(_shipped(["traffic=sumo"]))
+    for override, key in (
+        ("traffic.options.ambient.vehicles_per_hour=true", "ambient.vehicles_per_hour"),
+        ("traffic.options.warmup_s='30'", "warmup_s"),
+        ("traffic.options.mesoscopic.headway_s=true", "headway_s"),
+    ):
+        with pytest.raises(run.RunConfigError, match=f"{re.escape(key)} must be"):
+            run.check_run_config(_shipped(["traffic=sumo", override]))
 
 
 def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
