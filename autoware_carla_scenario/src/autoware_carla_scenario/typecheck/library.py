@@ -454,6 +454,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.parameters.PedestrianParameters.describe": _DETAILS,
     "autoware_carla_scenario.traffic.parameters.BicycleParameters.describe": _DETAILS,
     "autoware_carla_scenario.traffic.parameters._described": "takes and returns a value of any type (`Any`: a Spread's describe() or the value unchanged), which Codon cannot express; only the describe() methods, themselves uncalled, call it",
+    "autoware_carla_scenario.traffic.parameters._number_of": "takes one config value of any type (`Any`: a number, or a bool or string to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._spread_of": "takes one config value of any type (`Any`: None, a Spread, a `{mean, std}` mapping or a number), which Codon cannot express; only _spreads_from, itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._spreads_from": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.parameters.PedestrianParameters.from_mapping": _FROM_MAPPING,

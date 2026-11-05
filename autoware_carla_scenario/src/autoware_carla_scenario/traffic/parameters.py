@@ -297,6 +297,13 @@ class Spread:
     std: float = 0.0
 
     def __post_init__(self) -> None:
+        # A bool is no number, though float() reads true as 1: ``{mean: true}``
+        # would otherwise be a spread of 1.
+        if isinstance(self.mean, bool) or isinstance(self.std, bool):
+            raise ValueError(
+                f"a spread's mean and std must be numbers, not bools "
+                f"(got mean {self.mean!r}, std {self.std!r})"
+            )
         # Finite: an infinite std draws infinite values, which an
         # unbounded parameter's bounds would let through.
         if not (math.isfinite(self.std) and self.std >= 0.0):
@@ -325,12 +332,64 @@ SpreadOrValue = Union[Spread, float]
 
 
 def as_spread(value: Optional[SpreadOrValue]) -> Optional[Spread]:
-    """*value* as a :class:`Spread`: a number is a spread of no width."""
+    """*value* as a :class:`Spread`: a number is a spread of no width.
+
+    Raises:
+        ValueError: If *value* is a bool, which ``float()`` would read as 0
+            or 1.
+    """
     if value is None:
         return None
     if isinstance(value, Spread):
         return value
+    if isinstance(value, bool):
+        raise ValueError(f"a spread must be a number, not a bool (got {value!r})")
     return Spread(float(value))
+
+
+def _named_spread(name: str, value: Optional[SpreadOrValue]) -> Optional[Spread]:
+    """:func:`as_spread` of the field *name*, whose error names it."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a number, not a bool (got {value!r})")
+    return as_spread(value)
+
+
+#: The strings a bool vehicle parameter (``lane_changes``,
+#: ``follow_visibility``) may be spelled with, read stripped and in any case:
+#: what Hydra leaves a ``lane_changes=no`` override as.  The scenario editor's
+#: bool fields take the same (``TRUTHY_VALUES`` and ``FALSY_VALUES`` of
+#: :mod:`autoware_carla_scenario.authoring.registry`), copied rather than
+#: imported, as the authoring package pulls in pydantic.
+_TRUE_SPELLINGS: tuple[str, ...] = ("1", "true", "on", "yes")
+_FALSE_SPELLINGS: tuple[str, ...] = ("0", "false", "off", "no")
+
+
+def _checked_bool(name: str, value: Optional[bool]) -> Optional[bool]:
+    """The bool field *name* as a real bool: ``None`` stays ``None``, a bool
+    is itself, and a string or an int is read by its text against
+    :data:`_TRUE_SPELLINGS` and :data:`_FALSE_SPELLINGS`.
+
+    A backend reads the field as a bool (the TrafficManager by ``bool()`` or
+    ``is True``, SUMO by its truth), so ``"no"`` or ``"off"`` kept as a string
+    would read as true under one and false under the other.
+
+    Raises:
+        ValueError: naming *name*, for anything else (``"enabled"``, ``2``,
+            ``0.5``, a list).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) or isinstance(value, int):
+        text = str(value).strip().lower()
+        if text in _TRUE_SPELLINGS:
+            return True
+        if text in _FALSE_SPELLINGS:
+            return False
+    raise ValueError(
+        f"{name} must be true or false (or 1/0, on/off, yes/no), got {value!r}"
+    )
 
 
 def _check(
@@ -349,10 +408,21 @@ def _check(
         )
 
 
+def _number_of(name: str, value: Any) -> float:
+    """A config value as a float; a bool (which ``float()`` reads as 0 or 1)
+    or anything not a number refused, naming *name*."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a number, not a bool (got {value!r})")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number (got {value!r})") from None
+
+
 def _spread_of(name: str, value: Any) -> Optional[Spread]:
     """A config value as a :class:`Spread`: a number is a spread of no width;
     ``{mean, std}`` is one; ``{mean: null}`` (what the Hydra groups declare)
-    or ``null`` is none."""
+    or ``null`` is none.  A bool is no number, alone or as the mean or std."""
     if value is None or isinstance(value, Spread):
         return value
     if isinstance(value, Mapping):
@@ -365,18 +435,27 @@ def _spread_of(name: str, value: Any) -> Optional[Spread]:
             if std is not None:
                 raise ValueError(f"{name}: a std needs a mean")
             return None
-        return Spread(float(mean), float(std or 0.0))
-    return Spread(float(value))
+        return Spread(
+            _number_of(f"{name}.mean", mean),
+            0.0 if std is None else _number_of(f"{name}.std", std),
+        )
+    return Spread(_number_of(name, value))
 
 
 def _spreads_from(
-    cls: type, mapping: Mapping[str, Any], numeric: dict[str, tuple[float, float]]
+    cls: type,
+    mapping: Mapping[str, Any],
+    numeric: dict[str, tuple[float, float]],
+    node: str,
 ) -> dict[str, Any]:
+    """*mapping*'s fields for *cls*: each numeric one a :class:`Spread`, the
+    rest (a bool field) as given, for the constructor to check; an error
+    names the field under *node* (``traffic.vehicles``)."""
     from ..utils.config import checked_options  # noqa: PLC0415
 
     checked = checked_options(cls, mapping)
     return {
-        key: _spread_of(key, value) if key in numeric else value
+        key: _spread_of(f"{node}.{key}", value) if key in numeric else value
         for key, value in checked.items()
     }
 
@@ -473,21 +552,37 @@ class VehicleParameters:
     ) -> None:
         # Written out rather than generated, to take a plain number as well as
         # a spread (as_spread) and keep the fields themselves spreads.
-        self.speed_factor = as_spread(speed_factor)
-        self.min_gap_m = as_spread(min_gap_m)
-        self.lane_changes = lane_changes
-        self.ignore_lights = as_spread(ignore_lights)
-        self.ignore_signs = as_spread(ignore_signs)
-        self.ignore_vehicles = as_spread(ignore_vehicles)
-        self.ignore_walkers = as_spread(ignore_walkers)
-        self.random_lane_changes = as_spread(random_lane_changes)
-        self.accel = as_spread(accel)
-        self.decel = as_spread(decel)
-        self.reaction_time_s = as_spread(reaction_time_s)
-        self.imperfection = as_spread(imperfection)
-        self.max_lateral_speed_mps = as_spread(max_lateral_speed_mps)
-        self.max_lateral_accel = as_spread(max_lateral_accel)
-        self.follow_visibility = follow_visibility
+        self.speed_factor = _named_spread("traffic.vehicles.speed_factor", speed_factor)
+        self.min_gap_m = _named_spread("traffic.vehicles.min_gap_m", min_gap_m)
+        self.lane_changes = _checked_bool("traffic.vehicles.lane_changes", lane_changes)
+        self.ignore_lights = _named_spread(
+            "traffic.vehicles.ignore_lights", ignore_lights
+        )
+        self.ignore_signs = _named_spread("traffic.vehicles.ignore_signs", ignore_signs)
+        self.ignore_vehicles = _named_spread(
+            "traffic.vehicles.ignore_vehicles", ignore_vehicles
+        )
+        self.ignore_walkers = _named_spread(
+            "traffic.vehicles.ignore_walkers", ignore_walkers
+        )
+        self.random_lane_changes = _named_spread(
+            "traffic.vehicles.random_lane_changes", random_lane_changes
+        )
+        self.accel = _named_spread("traffic.vehicles.accel", accel)
+        self.decel = _named_spread("traffic.vehicles.decel", decel)
+        self.reaction_time_s = _named_spread(
+            "traffic.vehicles.reaction_time_s", reaction_time_s
+        )
+        self.imperfection = _named_spread("traffic.vehicles.imperfection", imperfection)
+        self.max_lateral_speed_mps = _named_spread(
+            "traffic.vehicles.max_lateral_speed_mps", max_lateral_speed_mps
+        )
+        self.max_lateral_accel = _named_spread(
+            "traffic.vehicles.max_lateral_accel", max_lateral_accel
+        )
+        self.follow_visibility = _checked_bool(
+            "traffic.vehicles.follow_visibility", follow_visibility
+        )
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -687,7 +782,7 @@ class VehicleParameters:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "VehicleParameters":
         """Return parameters built from a plain mapping (e.g. a Hydra node):
         a numeric field is a number or ``{mean, std}``."""
-        return cls(**_spreads_from(cls, mapping, VEHICLE_BOUNDS))
+        return cls(**_spreads_from(cls, mapping, VEHICLE_BOUNDS, "traffic.vehicles"))
 
 
 @dataclass(init=False)
@@ -723,9 +818,13 @@ class PedestrianParameters:
     ) -> None:
         # Written out rather than generated, to take a plain number as well as
         # a spread (as_spread) and keep the fields themselves spreads.
-        self.walking_speed_mps = as_spread(walking_speed_mps)
-        self.min_gap_m = as_spread(min_gap_m)
-        self.red_light_violation_s = as_spread(red_light_violation_s)
+        self.walking_speed_mps = _named_spread(
+            "traffic.pedestrians.walking_speed_mps", walking_speed_mps
+        )
+        self.min_gap_m = _named_spread("traffic.pedestrians.min_gap_m", min_gap_m)
+        self.red_light_violation_s = _named_spread(
+            "traffic.pedestrians.red_light_violation_s", red_light_violation_s
+        )
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -793,7 +892,9 @@ class PedestrianParameters:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianParameters":
         """Return parameters built from a plain mapping (e.g. a Hydra node):
         each field is a number or ``{mean, std}``."""
-        return cls(**_spreads_from(cls, mapping, PEDESTRIAN_BOUNDS))
+        return cls(
+            **_spreads_from(cls, mapping, PEDESTRIAN_BOUNDS, "traffic.pedestrians")
+        )
 
 
 @dataclass(init=False)
@@ -848,14 +949,22 @@ class BicycleParameters:
         red_light_violation_s: Optional[SpreadOrValue] = None,
     ) -> None:
         # Written out, as PedestrianParameters' is.
-        self.max_speed_mps = as_spread(max_speed_mps)
-        self.accel = as_spread(accel)
-        self.decel = as_spread(decel)
-        self.min_gap_m = as_spread(min_gap_m)
-        self.reaction_time_s = as_spread(reaction_time_s)
-        self.imperfection = as_spread(imperfection)
-        self.max_lateral_speed_mps = as_spread(max_lateral_speed_mps)
-        self.red_light_violation_s = as_spread(red_light_violation_s)
+        self.max_speed_mps = _named_spread(
+            "traffic.bicycles.max_speed_mps", max_speed_mps
+        )
+        self.accel = _named_spread("traffic.bicycles.accel", accel)
+        self.decel = _named_spread("traffic.bicycles.decel", decel)
+        self.min_gap_m = _named_spread("traffic.bicycles.min_gap_m", min_gap_m)
+        self.reaction_time_s = _named_spread(
+            "traffic.bicycles.reaction_time_s", reaction_time_s
+        )
+        self.imperfection = _named_spread("traffic.bicycles.imperfection", imperfection)
+        self.max_lateral_speed_mps = _named_spread(
+            "traffic.bicycles.max_lateral_speed_mps", max_lateral_speed_mps
+        )
+        self.red_light_violation_s = _named_spread(
+            "traffic.bicycles.red_light_violation_s", red_light_violation_s
+        )
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -929,7 +1038,7 @@ class BicycleParameters:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleParameters":
         """Return parameters built from a plain mapping (e.g. a Hydra node):
         each field is a number or ``{mean, std}``."""
-        return cls(**_spreads_from(cls, mapping, BICYCLE_BOUNDS))
+        return cls(**_spreads_from(cls, mapping, BICYCLE_BOUNDS, "traffic.bicycles"))
 
 
 #: The parameters the current run's traffic backend was given, for the ODD's

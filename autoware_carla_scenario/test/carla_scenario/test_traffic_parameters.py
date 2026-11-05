@@ -1082,3 +1082,178 @@ def test_the_traffic_config_reads_the_bicycle_parameters() -> None:
     }
     with pytest.raises(TrafficParameterError, match="traffic.bicycles"):
         build_backend("traffic_manager", {}, bicycles=config.bicycles)
+
+
+# --- The bool fields read strictly, and no bool taken as a number (#1490) ---
+
+
+@pytest.mark.parametrize(
+    "spelling, expected",
+    [
+        (True, True),
+        (False, False),
+        (1, True),
+        (0, False),
+        ("true", True),
+        ("False", False),
+        (" yes ", True),
+        ("NO", False),
+        ("on", True),
+        ("off", False),
+        ("1", True),
+        ("0", False),
+    ],
+)
+@pytest.mark.parametrize("field", ["lane_changes", "follow_visibility"])
+def test_a_bool_vehicle_field_is_stored_as_a_real_bool(
+    field: str, spelling: Any, expected: bool
+) -> None:
+    from_mapping = VehicleParameters.from_mapping({field: spelling})
+    direct = VehicleParameters(**{field: spelling})
+    for parameters in (from_mapping, direct):
+        value = getattr(parameters, field)
+        assert type(value) is bool
+        assert value is expected
+
+
+@pytest.mark.parametrize("field", ["lane_changes", "follow_visibility"])
+def test_a_bool_vehicle_field_left_unset_keeps_the_backends_default(
+    field: str,
+) -> None:
+    assert getattr(VehicleParameters.from_mapping({field: None}), field) is None
+    assert field not in VehicleParameters.from_mapping({}).set_fields()
+
+
+@pytest.mark.parametrize("value", ["ture", "enabled", "", 2, -1, 0.5, 1.0, [True]])
+@pytest.mark.parametrize("field", ["lane_changes", "follow_visibility"])
+def test_a_bool_vehicle_field_spelling_neither_is_refused(
+    field: str, value: Any
+) -> None:
+    with pytest.raises(ValueError, match=rf"traffic\.vehicles\.{field} must be true"):
+        VehicleParameters.from_mapping({field: value})
+    with pytest.raises(ValueError, match=rf"traffic\.vehicles\.{field} must be true"):
+        VehicleParameters(**{field: value})
+    with pytest.raises(ValueError, match=rf"traffic\.vehicles\.{field}"):
+        TrafficConfig.from_mapping({"vehicles": {field: value}})
+
+
+def test_a_hydra_no_or_off_override_turns_the_field_off() -> None:
+    """Hydra leaves ``lane_changes=no`` a string: it must read as false, for
+    the TrafficManager and SUMO alike, not as a truthy string."""
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+
+    parser = OverridesParser.create()
+    lane_changes = parser.parse_override("traffic.vehicles.lane_changes=no").value()
+    follow = parser.parse_override("traffic.vehicles.follow_visibility=off").value()
+    assert (lane_changes, follow) == ("no", "off")
+    config = TrafficConfig.from_mapping(
+        {"vehicles": {"lane_changes": lane_changes, "follow_visibility": follow}}
+    )
+    assert config.vehicles.lane_changes is False
+    assert config.vehicles.follow_visibility is False
+    assert config.vehicles.describe() == {
+        "lane_changes": False,
+        "follow_visibility": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "value, key",
+    [
+        (True, "ignore_lights"),
+        ({"mean": True}, r"ignore_lights\.mean"),
+        ({"mean": 0.5, "std": False}, r"ignore_lights\.std"),
+    ],
+)
+def test_a_bool_is_no_numeric_vehicle_value(value: Any, key: str) -> None:
+    with pytest.raises(
+        ValueError, match=rf"traffic\.vehicles\.{key} must be a number, not a bool"
+    ):
+        VehicleParameters.from_mapping({"ignore_lights": value})
+
+
+def test_a_word_is_no_numeric_value() -> None:
+    with pytest.raises(
+        ValueError, match=r"traffic\.vehicles\.speed_factor must be a number"
+    ):
+        VehicleParameters.from_mapping({"speed_factor": "fast"})
+
+
+def test_a_bool_is_no_numeric_value_when_constructed_directly() -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        BicycleParameters,
+        as_spread,
+    )
+
+    with pytest.raises(ValueError, match=r"traffic\.vehicles\.ignore_lights"):
+        VehicleParameters(ignore_lights=True)
+    with pytest.raises(ValueError, match=r"traffic\.pedestrians\.min_gap_m"):
+        PedestrianParameters(min_gap_m=False)
+    with pytest.raises(ValueError, match=r"traffic\.bicycles\.accel"):
+        BicycleParameters(accel=True)
+    with pytest.raises(ValueError, match="not a bool"):
+        as_spread(True)
+    with pytest.raises(ValueError, match="not bools"):
+        Spread(True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="not bools"):
+        Spread(1.0, False)  # type: ignore[arg-type]
+
+
+def test_a_bool_is_no_numeric_pedestrian_or_bicycle_value() -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    with pytest.raises(
+        ValueError, match=r"traffic\.pedestrians\.walking_speed_mps must be a number"
+    ):
+        PedestrianParameters.from_mapping({"walking_speed_mps": True})
+    with pytest.raises(
+        ValueError, match=r"traffic\.bicycles\.max_speed_mps\.mean must be a number"
+    ):
+        BicycleParameters.from_mapping({"max_speed_mps": {"mean": True}})
+
+
+def test_the_authored_parameters_refuse_a_bool_and_read_a_spelling() -> None:
+    from autoware_carla_scenario.traffic.authoring import (
+        authored_vehicle_parameters,
+    )
+
+    parameters = authored_vehicle_parameters(lane_changes="off")  # type: ignore[arg-type]
+    assert parameters is not None
+    assert parameters.lane_changes is False
+    with pytest.raises(ValueError, match=r"traffic\.vehicles\.lane_changes"):
+        authored_vehicle_parameters(lane_changes="maybe")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ignore_lights: a mean or std"):
+        authored_vehicle_parameters(ignore_lights_mean=True)
+    with pytest.raises(ValueError, match="ignore_lights: a mean or std"):
+        authored_vehicle_parameters(ignore_lights_mean=0.5, ignore_lights_std=True)
+
+
+@pytest.mark.parametrize("traffic", ["traffic_manager", "sumo"])
+def test_the_run_check_reads_the_bool_fields_before_anything_starts(
+    traffic: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    run.check_run_config(
+        _shipped(
+            [
+                f"traffic={traffic}",
+                "traffic.vehicles.lane_changes=no",
+                "traffic.vehicles.follow_visibility=OFF",
+            ]
+        )
+    )
+    with pytest.raises(
+        run.RunConfigError, match=r"traffic\.vehicles\.lane_changes must be true"
+    ):
+        run.check_run_config(
+            _shipped([f"traffic={traffic}", "traffic.vehicles.lane_changes=maybe"])
+        )
+    with pytest.raises(
+        run.RunConfigError, match=r"traffic\.vehicles\.min_gap_m.mean must be a number"
+    ):
+        run.check_run_config(
+            _shipped([f"traffic={traffic}", "traffic.vehicles.min_gap_m.mean=true"])
+        )
