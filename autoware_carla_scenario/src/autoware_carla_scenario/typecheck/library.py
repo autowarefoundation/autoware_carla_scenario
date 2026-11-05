@@ -246,6 +246,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.pedestrian._proto",
     "autoware_carla_scenario.pedestrian.poser",
     "autoware_carla_scenario.pedestrian.skeleton",
+    "autoware_carla_scenario.pedestrian.soma",
     "autoware_carla_scenario.placement",
     "autoware_carla_scenario.prepare",
     "autoware_carla_scenario.prepare.docker",
@@ -294,6 +295,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.sweeper.map_loader",
     "autoware_carla_scenario.t4_scene._proto",
     "autoware_carla_scenario.t4_scene.exporter",
+    "autoware_carla_scenario.t4_scene.frames",
     "autoware_carla_scenario.t4_scene.grid",
     "autoware_carla_scenario.t4_settings",
     "autoware_carla_scenario.text_escape",
@@ -577,6 +579,8 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.prepare.docker.whole_mib": f"{_BACKEND_VALUE} (an amount of memory); only read_docker_settings, itself uncalled, calls it",
     "autoware_carla_scenario.prepare.docker.string_list": f"{_BACKEND_VALUE} (a list setting, `docker_args`); only read_docker_settings, itself uncalled, calls it",
     "autoware_carla_scenario.prepare.docker.read_docker_settings": "takes a backend's block of the run's config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express; only the excluded pedestrian.ardy calls it",
+    "autoware_carla_scenario.pedestrian.soma.load_soma_motion": "reads a SOMA motion's .npz with `numpy.load(..., allow_pickle=False)`: Codon's numpy cannot read an .npz, and its load() has no `allow_pickle`; the checked actions.play_motion, which calls it, imports pedestrian.soma through its model (MODELLED_IMPORTS), so it is not compiled through that call either",
+    "autoware_carla_scenario.pedestrian.soma._as_matrices": "returns a motion's poses as they come when they are `(N, J, 3, 3)` matrices, or converts `(N, J, 3)` axis-angle ones with _rotvec_to_matrix: an array of 3 or 4 dimensions (`np.ndarray[Any, ...]`), which Codon, typing an array by its number of dimensions, cannot express; only load_soma_motion, itself uncalled, calls it",
     "autoware_carla_scenario.value_text.shown": "takes a config value of any type (`Any`: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take `Any` themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with",
 }
 
@@ -657,7 +661,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2_grpc": "imports grpc",
     "autoware_carla_scenario.pedestrian.ardy": "imports grpc and pedestrian.motion_client (grpc), which is neither checked nor modelled; ArdyBackend.from_settings() reads the backend's settings as `Mapping[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.pedestrian.motion_client": "imports grpc and the generated protobuf modules (google.protobuf)",
-    "autoware_carla_scenario.pedestrian.soma": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it",
     "autoware_carla_scenario.prepare.declare": "sets and reads a class attribute by name (setattr, `type.__dict__`, `__mro__`) and imports a module by name (importlib), which Codon cannot",
     "autoware_carla_scenario.prepare.pool": "builds backends from the classes it is handed, by attribute name (`getattr(cls, ...)`), which Codon cannot",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
@@ -683,7 +686,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.t4_scene": "re-exports t4_scene.convert and t4_scene.map_resource, which are not checked, and the checked t4_scene.exporter; t4_scene.codon models what scenario_runner, scenario_queue and t4_scene.exporter use of it",
     "autoware_carla_scenario.t4_scene.__main__": "the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked",
     "autoware_carla_scenario.t4_scene._proto.t4_scene_pb2": "imports google.protobuf",
-    "autoware_carla_scenario.t4_scene.convert": "reads JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) with orjson, imports numpy.typing (`NDArray`), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls",
+    "autoware_carla_scenario.t4_scene.convert": "reads JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) with orjson, imports numpy.typing (`NDArray`), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), which it re-exports; t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls",
     "autoware_carla_scenario.t4_scene.live": "builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (`NDArray`); entity.carla_driver_entity (excluded) is all that uses it",
     "autoware_carla_scenario.t4_scene.map_resource": "imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (`TemporaryDirectory()`), and builds protobuf messages (t4_scene._proto)",
     "autoware_carla_scenario.t4_scene.route": "Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (`NDArray`), which Codon's numpy lacks; holds the lane graph as `Mapping[int, tuple[int, ...]]` attributes; and moves a map's points with `Lanelet.resetCache()` and `LineString3d.__setitem__()`, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it",
@@ -745,10 +748,18 @@ REPLACED_MODELS: dict[str, tuple[str, ...]] = {
 
 #: Checked modules that import another checked module through its model
 #: rather than its source, by importing module -> the modules so imported.
-#: For an import cycle Codon cannot resolve: each module names the other's
-#: types where Codon resolves them when it reads the module (a class-level
-#: attribute, a global, a signature), so neither can be read first.  The
-#: module keeps the model's types: they never meet the checked module's.
+#: The module keeps the model's types: they never meet the checked module's.
+#: It serves two cases:
+#:
+#: - An import cycle Codon cannot resolve: each module names the other's
+#:   types where Codon resolves them when it reads the module (a class-level
+#:   attribute, a global, a signature), so neither can be read first.
+#: - A call of an ``UNCALLED`` function of the imported module.  Codon
+#:   compiles a function when something calls it, so a checked caller would
+#:   compile the uncalled function's body through the call; through the model,
+#:   the caller is compiled against the model's declaration of it instead
+#:   (``actions.play_motion`` calling ``pedestrian.soma.load_soma_motion``,
+#:   whose ``numpy.load`` of an .npz Codon cannot compile).
 MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds Measures (`_measures: dict[str, Measure]`), and
     # measures holds the running BaseScenario (`_MEASURED`).
@@ -757,6 +768,12 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # EgoVehicle, whose route_to() plans with route_poses().
     "autoware_carla_scenario.odd.route_plan": (
         "autoware_carla_scenario.scenario_base",
+    ),
+    # PlayMotionAction.__init__() calls load_soma_motion(), which is UNCALLED
+    # (numpy.load of an .npz): through pedestrian/soma.codon, which declares
+    # it, the call does not compile its body.
+    "autoware_carla_scenario.actions.play_motion": (
+        "autoware_carla_scenario.pedestrian.soma",
     ),
 }
 

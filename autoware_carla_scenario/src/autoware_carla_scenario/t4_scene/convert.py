@@ -45,6 +45,10 @@ from ..rerun import TRAJECTORY_SUFFIX
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.light_lanes import LightLanes, elements_ahead, light_lanes
 from ._proto import t4_scene_pb2 as pb
+from .frames import FLIP_Y as _FLIP_Y
+from .frames import map_angles, map_positions
+from .frames import quaternions as _quaternions
+from .frames import rotations as _rotations
 from .grid import (
     checked_max_distance,
     indicator_at,
@@ -102,11 +106,10 @@ _DTYPES = {
     "f4": pb.NumericArray.FLOAT32,
     "f8": pb.NumericArray.FLOAT64,
 }
-#: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
-_FLIP_Y = np.array([1.0, -1.0, 1.0])
-#: The same reflection of an *axial* vector (an angular velocity): ``x`` and
-#: ``z`` flip, as ``driver.observation._to_local_axial`` turns one (the driver
-#: package, gRPC and all, is not imported for it; a test keeps the two equal).
+#: The reflection ``_FLIP_Y`` (t4_scene.frames) of an *axial* vector (an
+#: angular velocity): ``x`` and ``z`` flip, as
+#: ``driver.observation._to_local_axial`` turns one (the driver package, gRPC
+#: and all, is not imported for it; a test keeps the two equal).
 _FLIP_AXIAL = np.array([-1.0, 1.0, -1.0])
 _NO_STATES = np.zeros((0, 10))
 
@@ -303,47 +306,15 @@ class _MapFrame:
         return cls(np.array([float(mgrs[0]), float(mgrs[1]), z]))
 
     def positions(self, xyz: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        """(N, 3) CARLA locations as map-frame positions."""
-        return xyz * _FLIP_Y + self.offset
+        """(N, 3) CARLA locations as map-frame positions
+        (:func:`t4_scene.frames.map_positions`)."""
+        return map_positions(xyz, self.offset)
 
     @staticmethod
     def angles(rpy_deg: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """(N, 3) CARLA rotations (roll, pitch, yaw; degrees) as map-frame
-        Euler angles (radians)."""
-        return np.radians(rpy_deg) * np.array([1.0, -1.0, -1.0])
-
-
-def _rotations(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """(N, 3, 3) body-to-map rotations of (N, 3) roll/pitch/yaw (ZYX)."""
-    cr, cp, cw = np.cos(angles).T
-    sr, sp, sw = np.sin(angles).T
-    return np.stack(
-        [
-            np.stack(
-                [cw * cp, cw * sp * sr - sw * cr, cw * sp * cr + sw * sr], axis=-1
-            ),
-            np.stack(
-                [sw * cp, sw * sp * sr + cw * cr, sw * sp * cr - cw * sr], axis=-1
-            ),
-            np.stack([-sp, cp * sr, cp * cr], axis=-1),
-        ],
-        axis=-2,
-    )
-
-
-def _quaternions(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """(N, 4) unit quaternions ``(x, y, z, w)`` of (N, 3) roll/pitch/yaw (ZYX)."""
-    cr, cp, cw = np.cos(angles / 2).T
-    sr, sp, sw = np.sin(angles / 2).T
-    return np.stack(
-        [
-            sr * cp * cw - cr * sp * sw,
-            cr * sp * cw + sr * cp * sw,
-            cr * cp * sw - sr * sp * cw,
-            cr * cp * cw + sr * sp * sw,
-        ],
-        axis=-1,
-    )
+        Euler angles (radians) (:func:`t4_scene.frames.map_angles`)."""
+        return map_angles(rpy_deg)
 
 
 def _array(

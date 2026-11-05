@@ -1,8 +1,10 @@
-# Model of autoware_carla_scenario.pedestrian.soma (docs/typecheck.md), which
-# reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot
-# read) and holds its bone directions as a numpy array typed with numpy.typing
-# (`NDArray`), which Codon's numpy lacks: what the checked actions.play_motion
-# uses of it, with the signatures of the Python module.
+# Model of autoware_carla_scenario.pedestrian.soma (docs/typecheck.md): what
+# a scenario and the checked actions.play_motion use of it, with the
+# signatures of the Python module.  pedestrian.soma is checked from its source,
+# but its load_soma_motion() reads a SOMA motion with numpy.load (an .npz,
+# which Codon's numpy cannot read) and is UNCALLED: actions.play_motion, which
+# calls it, imports the module through this model (MODELLED_IMPORTS in
+# typecheck/library.py), so the call does not compile its body.
 
 from pathlib import Path
 
@@ -20,7 +22,7 @@ class SomaMotion:
                       "(required: fps, joints, directions)")
 
     # SomaMotion(fps, joints, directions): directions is a numpy array
-    # (`NDArray[np.float64]`), taken as it comes.
+    # (`np.ndarray[tuple[int, int, int], np.dtype[np.float64]]`), taken as it comes.
     def __init__(self, fps: float, joints, directions):
         self.fps = fps
         self.joints = [str(joint) for joint in joints]

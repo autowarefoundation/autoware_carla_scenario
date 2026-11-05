@@ -2324,7 +2324,9 @@ package without Codon.
 A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the `CHECKED` modules they import,
 transitively. It does not follow an import that `MODELLED_IMPORTS` routes
-through the model, or one inside an `UNCALLED` function. It also brings the
+through the model (an import cycle Codon cannot resolve, or a call of an
+`UNCALLED` function of the imported module, see *A call of another checked
+module's `UNCALLED` function* below), or one inside an `UNCALLED` function. It also brings the
 other modules of a `REPLACED_MODELS` entry once one of them is in, so that the
 model re-exports the checked definitions, as it does in the full run.
 `scenario_base`, for example, imports `register_vehicle_entity` from the
@@ -2415,7 +2417,11 @@ example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
-`scenario-new` (`scaffold.names`, #1654), and the parts of the
+`scenario-new` (`scaffold.names`, #1654), the frame math of the T4Scene
+converter (CARLA's world frame to Autoware's `map` frame, and the rotations
+and quaternions of its angles: `t4_scene.frames`, #1665; the converter
+itself, which reads the log's mixed-type records and builds protobuf
+messages, re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
@@ -4038,7 +4044,11 @@ What Codon 0.19 needs that Python does not, beyond
   `numpy.typing`. Annotate with numpy's shape-typed array instead,
   `np.ndarray[tuple[int, int], np.dtype[np.float32]]` (two dimensions),
   which mypy reads as precisely and the check translates; a shape of
-  `tuple[int, ...]` or `Any`, and `NDArray`, are dropped. An annotation
+  `tuple[int, ...]` or `Any`, and `NDArray`, are dropped (`pedestrian.soma`
+  holds a motion's bone directions as `np.ndarray[tuple[int, int, int],
+  np.dtype[np.float64]]` and its rotations with four dimensions; its
+  `_as_matrices()`, whose poses have three dimensions or four, takes
+  `np.ndarray[Any, np.dtype[np.float64]]` and is `UNCALLED`). An annotation
   broken over lines keeps its line breaks inside its brackets, so
   `newest: Optional[\n    ...\n] = None` still compiles.
 - **A measurement's `raw_data` is a view** in typesafe_carla's Codon library,
@@ -4289,6 +4299,17 @@ What Codon 0.19 needs that Python does not, beyond
   makes `other` a `Lanelet`, and a list of `(float, ConstLanelet)` then
   refuses it. Give the upcast a name of its own (`nearby: ConstLanelet =
   near`, `route.geometry`).
+- **A call of another checked module's `UNCALLED` function**: Codon
+  compiles a function when something calls it, so a checked module that
+  calls an `UNCALLED` function of another compiles that function's body
+  through the call, and its `UNCALLED` entry does not keep it out. When the
+  other module has a model that declares the function, the caller imports
+  the module through the model (`MODELLED_IMPORTS`), and is compiled against
+  that declaration instead: `actions.play_motion` imports `pedestrian.soma`
+  through `pedestrian/soma.codon`, so its call of `load_soma_motion()`, whose
+  `numpy.load` of an .npz Codon cannot compile, compiles against the model,
+  while `pedestrian.soma` itself is checked from its source. The caller then
+  holds the model's types (`SomaMotion`), as below.
 - **A value of a type the model holds**: a checked module that hands a checked
   value to a checked module that imports it through the model
   (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the
