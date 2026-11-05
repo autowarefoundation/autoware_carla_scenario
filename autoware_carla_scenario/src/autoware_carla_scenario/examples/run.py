@@ -251,6 +251,32 @@ def _cap_malloc_arenas() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _config_float(key: str, value: Any) -> float:
+    """``float(value)`` of the config's *key*; for a value ``float()`` cannot
+    read -- not a number, or an int too big for a float (``10**400``) -- a
+    ``ValueError`` naming the key (#1660).  What ``float()`` reads, a boolean
+    or a numeric string included, is read as before.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, got {shown(value)}") from None
+    except OverflowError:
+        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
+
+
+def _config_int(key: str, value: Any) -> int:
+    """``int(value)`` of the config's *key*; for a value ``int()`` cannot read
+    (not a number, an infinity, a string of more digits than
+    ``sys.get_int_max_str_digits()``), a ``ValueError`` naming the key
+    (#1660).  What ``int()`` reads is read as before.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{key} must be a whole number, got {shown(value)}") from None
+
+
 def build_ego_and_spawn(
     cfg: DictConfig,
 ) -> tuple[EgoConfig, Lanelet2Pose, GroundProjectionConfig]:
@@ -275,10 +301,18 @@ def build_ego_and_spawn(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
         ),
         vehicle_type=cfg.ego.vehicle_type,
-        initial_speed_kmh=float(cfg.ego.initial_speed_kmh),
-        spawn_retry_max_count=int(cfg.entity.spawn_retry_max_count),
-        spawn_retry_t_step=float(cfg.entity.spawn_retry_t_step),
-        spawn_retry_z_step=float(cfg.entity.spawn_retry_z_step),
+        initial_speed_kmh=_config_float(
+            "ego.initial_speed_kmh", cfg.ego.initial_speed_kmh
+        ),
+        spawn_retry_max_count=_config_int(
+            "entity.spawn_retry_max_count", cfg.entity.spawn_retry_max_count
+        ),
+        spawn_retry_t_step=_config_float(
+            "entity.spawn_retry_t_step", cfg.entity.spawn_retry_t_step
+        ),
+        spawn_retry_z_step=_config_float(
+            "entity.spawn_retry_z_step", cfg.entity.spawn_retry_z_step
+        ),
         goal_pose=build_goal_pose(cfg),
         waypoint_poses=build_waypoint_poses(cfg),
     )
@@ -332,9 +366,11 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     ego_cfg = cfg.ego
     return Lanelet2Pose(
         lanelet_id=int(ego_cfg.spawn_lanelet_id),
-        s=float(ego_cfg.spawn_s),
-        t=float(ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=float(ego_cfg.get("spawn_heading", 0.0) or 0.0),
+        s=_config_float("ego.spawn_s", ego_cfg.spawn_s),
+        t=_config_float("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=_config_float(
+            "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
+        ),
     )
 
 
@@ -350,7 +386,7 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
         return None
     return Lanelet2Pose(
         lanelet_id=int(goal_lanelet_id),
-        s=float(ego_cfg.get("goal_s", 0.0)),
+        s=_config_float("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
     )
 
 
@@ -391,9 +427,11 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
     start = Lanelet2Pose(
         lanelet_id=int(spawn_lanelet_id),
-        s=float(ego_cfg.get("spawn_s", 0.0)),
-        t=float(ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=float(ego_cfg.get("spawn_heading", 0.0) or 0.0),
+        s=_config_float("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
+        t=_config_float("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=_config_float(
+            "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
+        ),
     )
     goal = build_goal_pose(cfg)
     scenario_cfg = cfg.get("scenario") or {}
@@ -2762,6 +2800,24 @@ class BackgroundTraffic(NamedTuple):
     min_gap_m: float
 
 
+def _float_of_text(value: Any) -> float:
+    """``float(str(value))``, the way ``background_traffic`` reads a number
+    (``"30"`` reads, ``true`` does not); an int of more digits than
+    ``sys.get_int_max_str_digits()``, which ``str()`` refuses, is infinite,
+    as ``float(str())`` of a shorter one too big for a float is (#1660).
+
+    Raises:
+        ValueError: For a value that is not a number.
+    """
+    try:
+        text = str(value)
+    except ValueError:
+        if isinstance(value, int):
+            return -math.inf if value < 0 else math.inf
+        raise  # A value holding such an int ([10**5000]): not a number.
+    return float(text)
+
+
 def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     """The numbers of the config's ``background_traffic``, checked; ``None``
     when it is off (``enabled`` false or the block absent), when none is read.
@@ -2800,10 +2856,10 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     # 0 would be traffic that never moves (#967).
     speed_value = source.get("speed_kmh", 30.0)
     try:
-        speed_kmh = check_background_speed(float(str(speed_value)))
+        speed_kmh = check_background_speed(_float_of_text(speed_value))
     except ValueError as exc:
         raise ValueError(
-            f"background_traffic.source.speed_kmh: {speed_value!r} is not a "
+            f"background_traffic.source.speed_kmh: {shown(speed_value)} is not a "
             f"background speed ({exc})"
         ) from exc
 
@@ -2812,14 +2868,14 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
         # dropped without a word, infinity would crash the run (#1321).
         value = source.get(key, default)
         try:
-            amount = float(str(value))
+            amount = _float_of_text(value)
         except ValueError as exc:
             raise ValueError(
-                f"background_traffic.source.{key}: {value!r} is not a number"
+                f"background_traffic.source.{key}: {shown(value)} is not a number"
             ) from exc
         if not math.isfinite(amount) or amount < 0:
             raise ValueError(
-                f"background_traffic.source.{key}: {value!r} must be finite "
+                f"background_traffic.source.{key}: {shown(value)} must be finite "
                 "and not negative"
             )
         return amount
@@ -2857,7 +2913,9 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
 
     Raises:
         ValueError: naming the key, for a value
-            :func:`background_traffic_settings` refuses.
+            :func:`background_traffic_settings` refuses, and for a
+            ``stop_after_seconds`` read that is not a positive, finite number
+            of seconds.
     """
     checked = background_traffic_settings(cfg)
     if checked is None:
@@ -2868,10 +2926,17 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     # null (the default) follows the run's seed, the scenario's.
     seed = scenario.random_seed if checked.seed is None else checked.seed
 
-    def until(seconds: object, label: str) -> ElapsedTimeCondition | None:
+    def until(seconds: object, key: str, label: str) -> ElapsedTimeCondition | None:
         if seconds is None:
             return None
-        return ElapsedTimeCondition(float(str(seconds)), label=label)
+        try:
+            return ElapsedTimeCondition(_float_of_text(seconds), label=label)
+        except ValueError as exc:
+            # Not a number, or not a positive finite duration (#1660).
+            raise ValueError(
+                f"background_traffic.{key}: {shown(seconds)} is not a "
+                f"duration ({exc})"
+            ) from exc
 
     max_vehicles = checked.max_vehicles
     constraints = source.get("constraints") or []
@@ -2893,7 +2958,11 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             seed=seed,
             label=label,
             until=(
-                until(source.get("stop_after_seconds"), "background_source_ends")
+                until(
+                    source.get("stop_after_seconds"),
+                    "source.stop_after_seconds",
+                    "background_source_ends",
+                )
                 if rate > 0
                 else None
             ),
@@ -2922,7 +2991,11 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
             TrafficSinkAction(
                 sink["constraints"],
                 label="background_sink",
-                until=until(sink.get("stop_after_seconds"), "background_sink_ends"),
+                until=until(
+                    sink.get("stop_after_seconds"),
+                    "sink.stop_after_seconds",
+                    "background_sink_ends",
+                ),
             )
         )
     logger.info(

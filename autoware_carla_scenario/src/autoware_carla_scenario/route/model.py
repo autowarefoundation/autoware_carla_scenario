@@ -699,14 +699,41 @@ class RouteMatch:
         """The match ``scenario.route`` holds, or ``None`` when it holds none.
 
         Raises:
-            ValueError: On keys that do not describe one route.
+            ValueError: On keys that do not describe one route, naming the
+                key of a value that is not a number.
         """
-        lanelet_ids = [int(v) for v in (raw.get("lanelet_ids") or [])]
+
+        def whole(key: str, value: Any) -> int:
+            # int() as before; what it cannot read, refused by its key (#1660).
+            try:
+                return int(value)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a whole number"
+                ) from None
+
+        def number(key: str, value: Any) -> float:
+            # float() as before; what it cannot read, refused by its key (#1660).
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a number"
+                ) from None
+            except OverflowError:
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not finite"
+                ) from None
+
+        lanelet_ids = [whole("lanelet_ids", v) for v in (raw.get("lanelet_ids") or [])]
         if not lanelet_ids:
             return None
         kinds = [str(v) for v in (raw.get("segment_kinds") or [])]
-        ends = [float(v) for v in (raw.get("segment_ends") or [])]
-        counts = [int(v) for v in (raw.get("segment_lanelet_counts") or [])]
+        ends = [number("segment_ends", v) for v in (raw.get("segment_ends") or [])]
+        counts = [
+            whole("segment_lanelet_counts", v)
+            for v in (raw.get("segment_lanelet_counts") or [])
+        ]
         turns = [str(v) for v in (raw.get("junction_turns") or [])]
         if not (len(kinds) == len(ends) == len(counts)) or not kinds:
             raise ValueError(
@@ -735,10 +762,10 @@ class RouteMatch:
             start, first = end, first + count
         return cls(
             lanelet_ids=tuple(lanelet_ids),
-            start_s=float(raw.get("start_s") or 0.0),
-            end_s=float(raw.get("end_s") or 0.0),
+            start_s=number("start_s", raw.get("start_s") or 0.0),
+            end_s=number("end_s", raw.get("end_s") or 0.0),
             segments=tuple(segments),
-            index=int(raw.get("index") or 0),
+            index=whole("index", raw.get("index") or 0),
         )
 
 

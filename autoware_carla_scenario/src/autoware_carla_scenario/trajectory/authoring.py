@@ -141,6 +141,29 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
     return number
 
 
+def _field_float(name: str, value: Any) -> float:
+    """``float(value)`` of the card's field *name*; for a value ``float()``
+    cannot read -- not a number, or an int too big for a float
+    (``10**400``) -- a ``ValueError`` naming the field (#1660).  What
+    ``float()`` reads is read as before."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number, got {shown(value)}") from None
+    except OverflowError:
+        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
+
+
+def _field_int(name: str, value: Any) -> int:
+    """``int(value)`` of the card's field *name*; for a value ``int()`` cannot
+    read, a ``ValueError`` naming the field (#1660).  What ``int()`` reads is
+    read as before."""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be a whole number, got {shown(value)}") from None
+
+
 # ---------------------------------------------------------------------------
 # Vertices, as text and as data
 # ---------------------------------------------------------------------------
@@ -559,7 +582,10 @@ def authored_trajectory(
                 "no waypoint conditions"
             )
         return _lanelet_path(
-            name, list(lanelet_ids or ()), speed_kmh, float(lateral_offset_m or 0.0)
+            name,
+            list(lanelet_ids or ()),
+            speed_kmh,
+            _field_float(f"{name}: lateral_offset_m", lateral_offset_m or 0.0),
         )
     raise ValueError(f"{name}: unknown path source {path_source!r}")
 
@@ -626,8 +652,8 @@ def authored_place(
     if rows:
         return route_pose(rows[0])
     return Lanelet2Pose(
-        lanelet_id=int(lanelet_id or 0),
-        s=float(s or 0.0),
-        t=float(t or 0.0),
-        heading=float(heading or 0.0),
+        lanelet_id=_field_int("lanelet_id", lanelet_id or 0),
+        s=_field_float("s", s or 0.0),
+        t=_field_float("t", t or 0.0),
+        heading=_field_float("heading", heading or 0.0),
     )
