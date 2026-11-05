@@ -44,7 +44,7 @@ from .entity.vehicle_entity import VehicleEntity
 from .failure import FailureCategory
 from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
 from .seed import check_seed
-from .traffic.base import TrafficBackend, WalkedEntity
+from .traffic.base import DrivenEntity, TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
@@ -743,7 +743,11 @@ class BaseScenario(ABC):
         # a run -- no runner, so no backend -- has always meant instead.
         if self._traffic_backend is not None:
             entity.set_traffic_backend(self._traffic_backend)
-            self._traffic_backend.adopt(entity)
+            # Through a local of the type adopt() takes: Codon passes a
+            # subclass to a method a backend overrides only once it is that
+            # type (docs/typecheck.md).
+            adopted: DrivenEntity = entity
+            self._traffic_backend.adopt(adopted)
         elif self._client is not None:
             entity.set_client(self._client, self._tm_port)
 

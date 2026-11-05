@@ -1179,8 +1179,11 @@ class SumoTrafficBackend(TrafficBackend):
             self._tm.prepare(context)
 
     def adopt(self, entity: Any) -> None:
-        """Remember *entity*; it joins SUMO when the run starts."""
+        """Remember *entity*; it joins SUMO when the run starts, an emergency
+        vehicle on a call as one (:meth:`_join`)."""
         self._entities.append(entity)
+        if self._tm_drives_scenario and getattr(entity, "in_emergency", False):
+            self._tm.set_emergency(entity, True)
 
     def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
         """Put the run's vehicles into SUMO, warm the traffic up and go."""

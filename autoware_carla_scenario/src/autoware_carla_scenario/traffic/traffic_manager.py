@@ -1776,6 +1776,15 @@ class TrafficManagerBackend(TrafficBackend):
     # Emergency vehicles
     # ------------------------------------------------------------------
 
+    def adopt(self, entity: DrivenEntity) -> None:
+        """Drive an emergency vehicle on a call from its spawn as one
+        (:meth:`set_emergency`); every other entity needs nothing here."""
+        # hasattr: Codon decides it when it compiles (docs/typecheck.md), and
+        # DrivenEntity itself has no in_emergency.
+        if hasattr(entity, "in_emergency"):
+            if entity.in_emergency:
+                self.set_emergency(entity, True)
+
     def set_emergency(self, entity: DrivenEntity, active: bool) -> None:
         """Have *entity*'s vehicle run red lights and stop signs while on a
         call (*active*), and obey them as it drew (``traffic.vehicles``'

@@ -320,7 +320,7 @@ class TestTheEntity:
         assert actor.light_state == _LOW_BEAM  # type: ignore[attr-defined]
         assert told == [(ambulance, True), (ambulance, False)]
 
-    def test_the_backend_injected_drives_one_on_a_call_at_once(
+    def test_a_backend_injected_before_its_spawn_drives_it_on_a_call(
         self, spawned: List[Tuple[str, str]]
     ) -> None:
         told: List[bool] = []
@@ -330,9 +330,21 @@ class TestTheEntity:
                 told.append(active)
 
         ambulance = EmergencyVehicleEntity(_config(emergency=True))
-        ambulance.spawn(_world())
         ambulance.set_traffic_backend(_Backend())
+        assert told == []  # no actor yet
+        ambulance.spawn(_world())
         assert told == [True]
+
+    def test_the_traffic_manager_adopting_one_on_a_call_drives_it_as_one(
+        self, spawned: List[Tuple[str, str]]
+    ) -> None:
+        tm = _SirenTrafficManager()
+        backend = TrafficManagerBackend(client=_Client(tm))
+        ambulance = EmergencyVehicleEntity(_config(emergency=True))
+        actor = ambulance.spawn(_world())
+        ambulance.set_traffic_backend(backend)
+        backend.adopt(ambulance)
+        assert tm.lights[actor.id] == [EMERGENCY_IGNORE_PCT]
 
     def test_a_backend_that_cannot_drive_one_says_so(
         self, spawned: List[Tuple[str, str]], caplog: pytest.LogCaptureFixture

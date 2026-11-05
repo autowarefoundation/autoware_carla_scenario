@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..coordinate.poses import OpenDrivePose
     from ..coordinate.snap import GroundProjectionConfig
 
-from ..traffic.base import DrivenEntity, TrafficBackend
+from ..traffic.base import DrivenEntity
 from ..traffic.driven import BackendDriven
 from ..utils.vehicles import is_emergency_vehicle_type, set_siren_lights
 from ._spawn import SpawnLocation, spawn_vehicle_actor
@@ -473,18 +473,6 @@ class EmergencyVehicleEntity(VehicleEntity):
         set_siren_lights(vehicle, active)
         self._tell_backend()
 
-    def set_traffic_backend(self, backend: TrafficBackend) -> None:
-        """Inject the backend that drives it, which drives it on a call at
-        once if it is on one (:meth:`set_emergency`).
-
-        Sets the backend as :meth:`BackendDriven.set_traffic_backend` does,
-        not through ``super()``: Codon cannot call the mixin's method from
-        an override two classes below it (docs/typecheck.md).
-        """
-        self._traffic_backend = backend
-        if self._emergency:
-            self._tell_backend()
-
     def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
         """Accept the actor a traffic backend brings it back as
         (:meth:`VehicleEntity._replace_actor`), lit and driven as it was."""
@@ -499,7 +487,11 @@ class EmergencyVehicleEntity(VehicleEntity):
     def _tell_backend(self) -> None:
         """Have the backend drive it as :attr:`in_emergency` says; none is
         told before one is given (:meth:`set_traffic_backend`,
-        :meth:`set_client`), nor before the actor exists."""
+        :meth:`set_client`), nor before the actor exists.  A backend given
+        it later reads :attr:`in_emergency` when it adopts it
+        (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.adopt`):
+        it overrides no method of the mixin, which Codon cannot dispatch
+        (docs/typecheck.md)."""
         if self._vehicle is None:
             return
         if self._traffic_backend is None and self._fallback_backend is None:
