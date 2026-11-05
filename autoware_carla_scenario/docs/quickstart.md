@@ -57,7 +57,10 @@ the previous install or none, never a half-deleted one; the next run deletes
 whatever the interrupted one left beside it. Only one `scenario-setup` at a time
 installs into a directory: a second one started meanwhile says it is waiting for
 the first (a lock on `carla.lock`, which stays beside the install), then usually
-finds the first one's install up to date; Ctrl-C stops it while it waits.
+finds the first one's install up to date; Ctrl-C stops it while it waits. A
+user who cannot write `carla.lock` (a shared install of another user's) can
+still check the install, and is told so rather than downloading if it is
+missing or out of date.
 
 | Option | Meaning |
 | --- | --- |
