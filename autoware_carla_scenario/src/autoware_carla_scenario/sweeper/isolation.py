@@ -230,9 +230,7 @@ def _forget_inherited_exit_handlers() -> None:
     They are the sweep's: the CARLA server it started, the policy server it
     serves, the Docker containers it runs.  Run in the child, they would stop
     them under the sweep (#1568).  CPython's own ``atexit._clear()``, which
-    Codon has nothing for (its shim declares ``register()`` and
-    ``unregister()`` only): :func:`_run_in_child` calls this in the ``else``
-    branch of ``if TYPE_CHECKING:``.
+    the check's atexit shim declares (#1647).
     """
     import atexit  # noqa: PLC0415
 
@@ -248,8 +246,7 @@ def _run_own_exit_handlers() -> None:
     started, its CommonRoad workers (#1568).  An exception a handler raises
     is reported and the next one runs, as at an exit; none may stop the
     child before its ``os._exit``.  CPython's ``atexit._run_exitfuncs()``,
-    which Codon has nothing for: :func:`_run_in_child` calls this in the
-    ``else`` branch of ``if TYPE_CHECKING:``.
+    which the check's atexit shim declares (#1647).
     """
     import atexit  # noqa: PLC0415
 
@@ -279,10 +276,7 @@ def _run_in_child(
     """
     # Before anything that could reach the `finally` below: the sweep's
     # handlers must never run in the child.
-    if TYPE_CHECKING:
-        pass
-    else:
-        _forget_inherited_exit_handlers()
+    _forget_inherited_exit_handlers()
     code = 1
     try:
         # A process group of its own, so the parent can signal the whole tree.
@@ -313,10 +307,7 @@ def _run_in_child(
     finally:
         # No stop signal may raise past here and skip os._exit.
         signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
-        if TYPE_CHECKING:
-            pass
-        else:
-            _run_own_exit_handlers()
+        _run_own_exit_handlers()
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()

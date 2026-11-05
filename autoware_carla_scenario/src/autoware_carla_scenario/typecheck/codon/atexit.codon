@@ -1,12 +1,15 @@
-# Python's atexit, for the checker (docs/typecheck.md): register() and
-# unregister(), with CPython 3.10's signatures.
+# Python's atexit, for the checker (docs/typecheck.md): register(),
+# unregister(), _clear() and _run_exitfuncs(), with CPython 3.10's signatures.
 #
 # register(func, *args, **kwargs) -> func takes the function by position
 # only (`register(func=f)` is a TypeError), and calls it at exit with the
 # arguments it was given: the check calls it with them, so a function that
 # cannot take them is refused (CPython would only report it at exit).
-# unregister(func) takes one value by position, any value. _run_exitfuncs()
-# and _clear() are not declared. Nothing here runs: nothing is registered.
+# unregister(func) takes one value by position, any value. _clear() and
+# _run_exitfuncs(), CPython's undocumented helpers (sweeper.isolation drops
+# the handlers a forked child inherits, and runs its own before os._exit),
+# take no argument and return None. Nothing here runs: nothing is registered,
+# cleared or run.
 
 import internal.static as static
 
@@ -24,3 +27,11 @@ def register(*args, **kwargs):
 def unregister(*args) -> None:
     if static.len(args) != 1:
         compile_error("unregister() takes exactly one argument, by position")
+
+
+def _clear() -> None:
+    pass
+
+
+def _run_exitfuncs() -> None:
+    pass

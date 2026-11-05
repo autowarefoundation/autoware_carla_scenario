@@ -15,7 +15,8 @@ from . import cases
 from .case_paths import result_path
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
-from .runner import RAW_OUTPUT_LOG
+from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
+from .runner import _read_raw_log as _read_raw_log
 
 logger = logging.getLogger(__name__)
 
@@ -410,33 +411,6 @@ def load_session(
     if session_type != "batch" or final:
         _cache[cache_key] = (stamp, items)
     return items
-
-
-_RAW_LOG_MAX_BYTES = 256 * 1024  # 256 KB cap per log
-
-
-def _read_raw_log(job_dir: Path) -> str:
-    """Read raw terminal log from a job directory.
-
-    Tries ``raw_output.log`` first (subprocess stdout/stderr captured by
-    the runner), then falls back to ``run.log`` (Python logging output).
-    Returns an empty string when neither file exists.  Large files are
-    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.
-    """
-    for name in (RAW_OUTPUT_LOG, "run.log"):
-        try:
-            log_path = job_dir / name
-            size = log_path.stat().st_size
-            if size <= _RAW_LOG_MAX_BYTES:
-                return log_path.read_text(encoding="utf-8", errors="replace")
-            with log_path.open(encoding="utf-8", errors="replace") as f:
-                f.seek(size - _RAW_LOG_MAX_BYTES)
-                f.readline()  # discard partial first line
-                tail = f.read()
-            return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
-        except OSError:
-            continue
-    return ""
 
 
 def _build_condition_tree(details: dict[str, Any]) -> list[ConditionNode]:
