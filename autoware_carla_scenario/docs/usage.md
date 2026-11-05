@@ -12,6 +12,7 @@ The package provides these CLI commands:
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
 | [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
 | [`scenario-slurm`](slurm.md#following-collecting-resubmitting) | argparse | Follow, collect, resubmit or cancel a batch run as SLURM array jobs (`launcher=slurm`) |
+| [`scenario-gate`](gate.md#judging-scenario-gate) | argparse | Judge logical scenarios' gates (runs, success rate, coverage, trajectory consistency) from their runs' gate records |
 | [`scenario-odd`](odd.md#checking-an-odd) | argparse | Check an ODD and show its buckets; `scenario-odd route` checks scenarios' planned routes against it on the Lanelet2 map |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
@@ -1038,6 +1039,7 @@ started in the same second as another run or a batch gets `HH-MM-SS-1`, then
 | `{ScenarioName}.log` | CARLA native recording (replay format) |
 | `{ScenarioName}_result.json` | Machine-readable result with condition statuses |
 | `{ScenarioName}_coverage.json` | ODD and scenario coverage hits of the run (merge with `scenario-coverage`, see [Coverage](coverage.md)) |
+| `{ScenarioName}_gate.json` | A logical scenario's gate record: its case, outcome and the ego's drive in the route's frame, which `scenario-gate` judges the scenario's gate from (a document with a gate only, see [Gates](gate.md)) |
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |

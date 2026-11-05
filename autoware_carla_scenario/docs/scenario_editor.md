@@ -594,6 +594,11 @@ also warns about a strict rule pointing off the route from a target on a bound
 actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
 action state.
 
+The **Gate** section below it says when the logical scenario passes over all
+its runs -- minimum runs, success rate, case and cover coverage, trajectory
+consistency -- each threshold a field of its own, blank for not judged
+([Gates for Logical Scenarios](gate.md)).
+
 ## Ego: who drives, and where to
 
 The ego's inspector opens with **Driven by** — the stack that drives it, exported

@@ -524,6 +524,9 @@ class TestExpansion:
         )
         assert "scenario.route.segment_kinds=[lane,junction,lane]" in first
         assert "scenario.route.junction_turns=[left]" in first
+        # Every case says how many there are: a gate's case coverage
+        # (docs/gate.md) is counted against it.
+        assert all("scenario.route.case_count=4" in case for case in cases)
         assert first[-1] == "extra=1"
 
     def test_no_goal_when_the_search_says_so(self, road: tuple[Any, Any]) -> None:

@@ -3770,3 +3770,89 @@ def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
         _as_float(raw, "Timeout", 60.0)
     assert _as_float(" 12.5 ", "Timeout", 60.0) == 12.5
     assert _as_float("", "Timeout", 60.0) == 60.0
+
+
+class TestTheGate:
+    """A logical scenario's gate, edited in the scenario inspector (docs/gate.md)."""
+
+    def test_the_inspector_offers_a_gate(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_enabled"' in body
+        assert "add a route search first" in body
+
+    def test_turning_the_gate_on_and_setting_thresholds(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/scenario", data={"gate_form": "1", "gate_enabled": "1"}
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None and gate.judged() == ["min_runs"]
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_min_success_rate"' in body
+
+        client.post(
+            f"/draft/{draft_id}/scenario",
+            data={
+                "gate_form": "1",
+                "gate_enabled": "1",
+                "gate_min_runs": "8",
+                "gate_min_success_rate": "0.9",
+                "gate_max_lateral_spread_m": "0.4",
+                "gate_min_odd_coverage": "",
+                "gate_coverage_items": "speed_at_cut_in 0.8\n\ngap 1",
+            },
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert (gate.min_runs, gate.min_success_rate) == (8, 0.9)
+        assert gate.max_lateral_spread_m == 0.4
+        assert gate.min_odd_coverage is None
+        assert [(e.item, e.min) for e in gate.coverage_items] == [
+            ("speed_at_cut_in", 0.8),
+            ("gap", 1.0),
+        ]
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert "success rate &gt;= 90%" in body
+        assert "speed_at_cut_in 0.8" in body
+
+    def test_turning_the_gate_off_drops_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/scenario", data={"gate_form": "1", "gate_enabled": "1"}
+        )
+        client.post(f"/draft/{draft_id}/scenario", data={"gate_form": "1"})
+        assert _document(store, draft_id).gate is None
+
+    def test_a_threshold_out_of_range_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={
+                "gate_form": "1",
+                "gate_enabled": "1",
+                "gate_min_success_rate": "1.5",
+            },
+        )
+        assert "Gate:" in response.text
+        assert _document(store, draft_id).gate is None
+
+    def test_a_malformed_coverage_item_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={
+                "gate_form": "1",
+                "gate_enabled": "1",
+                "gate_coverage_items": "speed",
+            },
+        )
+        assert (
+            "must be &#39;item min&#39;" in response.text or "item min" in response.text
+        )
+        assert _document(store, draft_id).gate is None

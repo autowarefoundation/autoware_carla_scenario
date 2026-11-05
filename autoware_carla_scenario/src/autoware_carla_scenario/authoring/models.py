@@ -51,6 +51,9 @@ __all__ = [
     "Entity",
     "EntitySize",
     "DEFAULT_MODELS",
+    "GATE_CRITERIA",
+    "GateCoverageItem",
+    "GateSpec",
     "EntityKind",
     "GoalSpec",
     "JunctionPath",
@@ -1242,6 +1245,156 @@ class RouteSearch(_Node):
 
 
 # ---------------------------------------------------------------------------
+# Gate: when a logical scenario as a whole passes
+# ---------------------------------------------------------------------------
+
+#: The criteria a gate can judge, in the order a report lists them.  Each is a
+#: field of :class:`GateSpec` that judges nothing while it is ``None`` (the
+#: coverage items: while the list is empty).
+GATE_CRITERIA: tuple[str, ...] = (
+    "min_runs",
+    "min_success_rate",
+    "min_case_coverage",
+    "min_scenario_coverage",
+    "min_odd_coverage",
+    "coverage_items",
+    "max_lateral_spread_m",
+    "max_speed_spread_mps",
+)
+
+
+class GateCoverageItem(_Node):
+    """One cover item a gate asks a grade of.
+
+    Attributes:
+        item: The cover item's (or cross's) name, as the coverage report
+            names it (``speed_at_cut_in``, ``odd.scenery.speed_limit``).
+        min: The grade it needs, 0..1: its covered buckets over its buckets.
+    """
+
+    item: str = Field(min_length=1)
+    min: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
+class GateSpec(_Node):
+    """When a logical scenario passes as a whole: its gate.
+
+    A concrete scenario -- one match of the route search, one run -- passes or
+    fails on its own pass and fail conditions.  The gate judges the *logical*
+    scenario over all its runs: whether there were enough of them, how many
+    passed, how much of the scenario's space they covered, and whether the ego
+    drove the same way through the pattern each time.  Each run records what
+    the gate needs (``{stem}_gate.json``); ``scenario-gate`` judges the records
+    after the runs, so the gate can be re-judged -- with other thresholds
+    too -- without running anything again.  See ``docs/gate.md``.
+
+    Every threshold is optional: one left ``None`` (an empty
+    :attr:`coverage_items`) is not judged.
+
+    Attributes:
+        min_runs: How many runs the gate needs at least, whatever they found.
+        min_success_rate: The share of runs that must pass, 0..1.
+        min_case_coverage: The share of the route search's matches (the
+            logical scenario's concrete cases, per map) that must have run at
+            least once, 0..1.
+        min_scenario_coverage: The grade the runs' scenario coverage group
+            (``register_cover``) must reach, 0..1.
+        min_odd_coverage: The grade the runs' ODD coverage group must reach.
+        coverage_items: Grades single cover items must reach.
+        max_lateral_spread_m: Trajectory consistency: how far apart (standard
+            deviation across runs, m) the ego's lateral offset from the route
+            may be at any station of the pattern.
+        max_speed_spread_mps: Trajectory consistency: the same for its speed
+            (m/s).
+        consistency_stations: How many stations each segment of the pattern is
+            measured at.  A station sits at the same fraction of its segment
+            on every match, so routes of different lengths compare.
+        consistency_min_runs: How many runs must have passed a station for its
+            spread to count.
+    """
+
+    min_runs: int = Field(default=1, ge=1)
+    min_success_rate: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_case_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_scenario_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_odd_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    coverage_items: list[GateCoverageItem] = Field(default_factory=list)
+    max_lateral_spread_m: Optional[float] = Field(
+        default=None, gt=0.0, allow_inf_nan=False
+    )
+    max_speed_spread_mps: Optional[float] = Field(
+        default=None, gt=0.0, allow_inf_nan=False
+    )
+    consistency_stations: int = Field(default=20, ge=1, le=200)
+    consistency_min_runs: int = Field(default=2, ge=2)
+
+    @field_validator(
+        "min_runs", "consistency_stations", "consistency_min_runs", mode="before"
+    )
+    @classmethod
+    def _count_not_a_bool(cls, value: Any) -> Any:
+        """Refuse ``true`` / ``false`` for a count, which pydantic reads as 1 / 0."""
+        if isinstance(value, bool):
+            raise ValueError("must be a whole number, not a boolean")
+        return value
+
+    @property
+    def judges_consistency(self) -> bool:
+        """Whether the gate judges the ego's trajectory at all."""
+        return (
+            self.max_lateral_spread_m is not None
+            or self.max_speed_spread_mps is not None
+        )
+
+    def judged(self) -> list[str]:
+        """The criteria this gate judges, in :data:`GATE_CRITERIA` order.
+
+        ``min_runs`` is always judged: a gate with no run behind it passes
+        nothing.
+        """
+        out: list[str] = []
+        for name in GATE_CRITERIA:
+            value = getattr(self, name)
+            if name == "coverage_items":
+                if value:
+                    out.append(name)
+            elif value is not None:
+                out.append(name)
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        """The gate as the document stores it: unset thresholds left out."""
+        return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+
+    def summary(self) -> list[str]:
+        """One line per judged criterion, for the editor and the report."""
+        lines = [f"at least {self.min_runs} run(s)"]
+        if self.min_success_rate is not None:
+            lines.append(f"success rate >= {self.min_success_rate:.0%}")
+        if self.min_case_coverage is not None:
+            lines.append(f"route matches run >= {self.min_case_coverage:.0%}")
+        if self.min_scenario_coverage is not None:
+            lines.append(f"scenario coverage >= {self.min_scenario_coverage:.0%}")
+        if self.min_odd_coverage is not None:
+            lines.append(f"ODD coverage >= {self.min_odd_coverage:.0%}")
+        for entry in self.coverage_items:
+            lines.append(f"coverage of {entry.item} >= {entry.min:.0%}")
+        if self.max_lateral_spread_m is not None:
+            lines.append(f"lateral spread <= {self.max_lateral_spread_m:g} m")
+        if self.max_speed_spread_mps is not None:
+            lines.append(f"speed spread <= {self.max_speed_spread_mps:g} m/s")
+        return lines
+
+
+# ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
 
@@ -1261,6 +1414,9 @@ class ScenarioDocument(_Node):
     #: A logical scenario's route search; ``None`` for a scenario whose ego
     #: spawns where :attr:`entities` say.
     route: Optional[RouteSearch] = None
+    #: A logical scenario's gate: when it passes over all its runs; ``None``
+    #: judges none (``docs/gate.md``).
+    gate: Optional[GateSpec] = None
     ui: UiLayout = Field(default_factory=UiLayout)
 
     @field_validator("id")
@@ -1636,10 +1792,15 @@ class ScenarioDocument(_Node):
 
         A document with no route search says nothing about one, as it did
         before routes existed; a route search leaves its unset bounds out.
+        Likewise a document with no gate, and a gate its unset thresholds.
         """
         out = self.model_dump(mode="json", by_alias=True)
         if self.route is None:
             out.pop("route", None)
         else:
             out["route"] = self.route.to_sweep_dict()
+        if self.gate is None:
+            out.pop("gate", None)
+        else:
+            out["gate"] = self.gate.to_dict()
         return out

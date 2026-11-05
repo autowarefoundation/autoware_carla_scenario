@@ -202,6 +202,9 @@ scenario-expand = "autoware_carla_scenario.examples.expand:main"
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 # Merge the coverage files of scenario runs into an ODD/scenario coverage report.
 scenario-coverage = "autoware_carla_scenario.coverage.report:main"
+# Judge logical scenarios' gates (runs, success rate, coverage, trajectory
+# consistency) from their runs' gate records (docs/gate.md).
+scenario-gate = "autoware_carla_scenario.gate.evaluate:main"
 # Follow, collect, resubmit or cancel a batch run with launcher=slurm.
 scenario-slurm = "autoware_carla_scenario.slurm.cli:main"
 # Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets.

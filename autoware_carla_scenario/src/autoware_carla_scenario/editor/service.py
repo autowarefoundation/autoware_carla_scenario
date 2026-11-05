@@ -85,7 +85,7 @@ from .forms import field_present, parse_params
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..authoring.models import RouteSearch
+    from ..authoring.models import GateSpec, RouteSearch
     from ..maps import MapEntry
 
 logger = logging.getLogger(__name__)
@@ -93,10 +93,13 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "GATE_FIELDS",
     "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
     "condition_actions",
+    "gate_items_text",
+    "parse_gate_form",
 ]
 
 #: Condition slots that are not attached to an action.
@@ -466,6 +469,8 @@ class EditorService:
             )
         if "route_yaml" in form:
             document.route = parse_route_yaml(str(form["route_yaml"]))
+        if "gate_form" in form:
+            document.gate = parse_gate_form(form)
         before = document.map.model_copy()
         # ``group`` and ``name`` are required strings: a blank one is refused,
         # not filled in.  A fallback would be some other map's name or group
@@ -1782,6 +1787,75 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
         return RouteSearch.model_validate(raw)
     except Exception as exc:  # pydantic validation
         raise EditorError(f"Route search: {exc}") from exc
+
+
+#: The gate's thresholds the inspector edits as plain fields: field, label,
+#: and whether it is a whole number.  Blank leaves a threshold unset.
+GATE_FIELDS: tuple[tuple[str, str, bool], ...] = (
+    ("min_runs", "Minimum runs", True),
+    ("min_success_rate", "Minimum success rate", False),
+    ("min_case_coverage", "Minimum case coverage", False),
+    ("min_scenario_coverage", "Minimum scenario coverage", False),
+    ("min_odd_coverage", "Minimum ODD coverage", False),
+    ("max_lateral_spread_m", "Maximum lateral spread", False),
+    ("max_speed_spread_mps", "Maximum speed spread", False),
+    ("consistency_stations", "Stations per segment", True),
+    ("consistency_min_runs", "Runs per station", True),
+)
+
+
+def gate_items_text(document: ScenarioDocument) -> str:
+    """The gate's coverage items as the inspector edits them: ``item min``
+    per line ("" for none)."""
+    if document.gate is None:
+        return ""
+    return "\n".join(f"{e.item} {e.min:g}" for e in document.gate.coverage_items)
+
+
+def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
+    """The gate the inspector's Gate form states; ``None`` when it is off.
+
+    Each threshold is a field of its own (``gate_<name>``), blank for unset;
+    the coverage items are lines of ``item min`` (``gate_coverage_items``).
+
+    Raises:
+        EditorError: If a value is not a number, or the gate refuses it.
+    """
+    from ..authoring.models import GateSpec  # noqa: PLC0415
+
+    if not form.get("gate_enabled"):
+        return None
+    raw: dict[str, Any] = {}
+    for name, label, whole in GATE_FIELDS:
+        text = str(form.get(f"gate_{name}", "")).strip()
+        if not text:
+            continue
+        if whole:
+            raw[name] = as_int(text, f"Gate: {label}", 0)
+        else:
+            raw[name] = _as_float(text, f"Gate: {label}", 0.0)
+    items: list[dict[str, Any]] = []
+    for number, line in enumerate(
+        str(form.get("gate_coverage_items", "")).splitlines(), start=1
+    ):
+        words = line.replace(",", " ").split()
+        if not words:
+            continue
+        if len(words) != 2:
+            raise EditorError(
+                f"Gate: coverage item line {number} must be 'item min', got {line!r}."
+            )
+        items.append(
+            {
+                "item": words[0],
+                "min": _as_float(words[1], f"Gate: coverage item {words[0]}", 0.0),
+            }
+        )
+    raw["coverage_items"] = items
+    try:
+        return GateSpec.model_validate(raw)
+    except Exception as exc:  # pydantic validation
+        raise EditorError(f"Gate: {exc}") from exc
 
 
 def condition_actions(node: ConditionNode) -> list[str]:

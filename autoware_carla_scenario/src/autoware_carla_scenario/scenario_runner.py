@@ -606,6 +606,39 @@ def _write_result(
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _write_gate_record(
+    output_dir: Path,
+    file_stem: str,
+    scenario: "BaseScenario",
+    result: ScenarioResult,
+) -> None:
+    """Write ``{file_stem}_gate.json``: what a run of a logical scenario with a
+    gate leaves for it (``docs/gate.md``), when the scenario has one to give.
+
+    A scenario gives one with a ``gate_record(result, file_stem)`` method
+    (:meth:`~autoware_carla_scenario.declarative.DeclarativeScenario.gate_record`)
+    returning a :class:`~autoware_carla_scenario.gate.record.GateRecord` or
+    ``None``.  Best effort, as the coverage file: a record that cannot be made
+    or written is logged, and the run's result stands.  Its record is a module
+    the check does not compile (gate.record).
+    """
+    make = getattr(scenario, "gate_record", None)
+    if not callable(make):
+        return
+    from .gate.record import GATE_RECORD_SUFFIX, write_gate_record  # noqa: PLC0415
+
+    path = output_dir / f"{file_stem}{GATE_RECORD_SUFFIX}"
+    try:
+        record = make(result, file_stem)
+        if record is None:
+            return
+        write_gate_record(path, record)
+    except Exception:  # noqa: BLE001 - the run's result matters more than this
+        logger.warning("could not write the gate record %s", path, exc_info=True)
+        return
+    logger.info("Gate record written to: %s", path)
+
+
 def _record_run(
     coverage: CoverageCollector,
     case: Optional[OddCase],
@@ -2225,6 +2258,12 @@ class ScenarioRunner:
                 logger.info(
                     "[%s] Coverage written to: %s", scenario_name, coverage_path
                 )
+            if TYPE_CHECKING:
+                # A logical scenario's gate record (gate.record, not checked;
+                # UNCALLED in typecheck/library.py).
+                pass
+            else:
+                _write_gate_record(self.output_dir, file_stem, scenario, result)
 
         if reset_world:
             self.reset_world(scenario_name)

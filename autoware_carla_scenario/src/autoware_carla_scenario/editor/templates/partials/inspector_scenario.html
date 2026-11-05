@@ -62,6 +62,55 @@
   </div>
 </form>
 
+<h4 class="ed-subheading">{{ ic.icon('map', 12) }} Gate <span class="unit">(logical scenario)</span></h4>
+
+{# When the logical scenario passes over all its runs -- apart from each
+   concrete run's own pass and fail conditions.  Each run records what the
+   gate needs; `scenario-gate` judges it afterwards (docs/gate.md). #}
+{% if document.gate %}
+  <ul class="ed-help" style="padding-left:18px;margin:4px 0 8px">
+    {% for line in document.gate.summary() %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+{% elif document.route %}
+  <p class="ed-help">None: only each run's own conditions are judged.</p>
+{% else %}
+  <p class="ed-help">A gate judges a logical scenario: add a route search first.</p>
+{% endif %}
+<form hx-post="/draft/{{ draft.id }}/scenario"
+      hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="gate_form" value="1">
+  <div class="ed-field">
+    <label class="ed-label">
+      <input type="checkbox" name="gate_enabled" value="1" {% if document.gate %}checked{% endif %}>
+      Judge the logical scenario
+    </label>
+  </div>
+  {% if document.gate %}
+    {% for name, label, whole in gate_fields %}
+      {% set value = document.gate|attr(name) %}
+      <div class="ed-field">
+        <label class="ed-label">
+          {{ label }}
+          <span class="unit">{% if name.endswith('_m') %}(m){% elif name.endswith('_mps') %}(m/s){% elif not whole %}(0-1){% endif %}</span>
+        </label>
+        <input type="number" step="{{ '1' if whole else 'any' }}" name="gate_{{ name }}" class="ed-input"
+               value="{{ '' if value is none else value }}" placeholder="not judged">
+      </div>
+    {% endfor %}
+    <div class="ed-field">
+      <label class="ed-label">Coverage items <span class="unit">item min (0-1), one per line</span></label>
+      <textarea name="gate_coverage_items" rows="3" class="ed-input mono" spellcheck="false"
+                style="font-size:11.5px" placeholder="speed_at_cut_in 0.8">{{ gate_items_text(document) }}</textarea>
+      <p class="ed-help">
+        Blank thresholds are not judged. The spreads are the standard deviation
+        across runs of the ego's lateral offset from the route and of its speed,
+        at stations along the pattern; the coverages are the merged coverage
+        files' grades and the share of the route search's matches that ran.
+      </p>
+    </div>
+  {% endif %}
+</form>
+
 <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
 
 {# The source and its actions come first: a scenario that names a repository

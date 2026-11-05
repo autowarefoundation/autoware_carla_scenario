@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from autoware_carla_scenario import environment, rerun, rerun_lidar, t4_settings
+from autoware_carla_scenario.gate import record as gate_record
 from autoware_carla_scenario.run_outputs import (
     RUN_DIR_SUFFIXES,
     RUN_FILE_SUFFIXES,
@@ -43,6 +44,7 @@ def test_the_suffixes_are_the_writers_own() -> None:
         convert.MAP_SUFFIX,
         environment.ENVIRONMENT_SUFFIX,
         environment.LOCK_SUFFIX,
+        gate_record.GATE_RECORD_SUFFIX,
     }
     assert RUN_DIR_SUFFIXES == (t4_settings.DATASET_SUFFIX,)
     assert not set(RUN_FILE_SUFFIXES) & set(RUN_DIR_SUFFIXES)

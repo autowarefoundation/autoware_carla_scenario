@@ -37,21 +37,44 @@ from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
 from .entity._spawn import SpawnTransform
 from .entity.pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .gate.probe import GateProbe
 from .scenario_base import BaseScenario, EgoConfig
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from .conditions import ScenarioResult
     from .coordinate import OpenDrivePose
+    from .gate.record import GateRecord
     from .route.model import RouteMatch
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DeclarativeScenario", "DeclarativeScenarioConfig", "TURN_LOOKAHEAD_M"]
+__all__ = [
+    "DeclarativeScenario",
+    "DeclarativeScenarioConfig",
+    "TURN_LOOKAHEAD_M",
+    "document_digest",
+]
 
 #: How far (m) before a route junction an ego the TrafficManager drives is told
 #: which way to turn there -- within the turn action's own search distance.
 TURN_LOOKAHEAD_M = 100.0
+
+
+def document_digest(document: ScenarioDocument) -> str:
+    """The SHA-256 of *document*'s content, its ``ui`` layout left out.
+
+    What a gate record names the document by (``docs/gate.md``): records of
+    one scenario id with different digests ran different versions of it.
+    """
+    import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    content = document.to_yaml_dict()
+    content.pop("ui", None)
+    text = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -126,6 +149,12 @@ class DeclarativeScenario(BaseScenario):
         )
         self._config = config or DeclarativeScenarioConfig()
         self._document = document or self._load_document(self._config)
+        # Before the overrides fold a case's lanelets into the document: every
+        # case of one logical scenario has the digest of the one document.
+        self._document_digest = document_digest(self._document)
+        self._route_match: Optional[RouteMatch] = None
+        self._case_count = 0
+        self._gate_probe: Optional[GateProbe] = None
         self._apply_spawn_overrides()
         self._apply_param_overrides()
         self._apply_ego_goal()
@@ -318,6 +347,9 @@ class DeclarativeScenario(BaseScenario):
         lanelet_map, routing_graph = manager.lanelet_map, manager.routing_graph
         spec = parse_route_search(search.to_sweep_dict())
         match = RouteMatch.from_config(self._config.route or {})
+        # How many cases the expansion found on this map: what a gate's case
+        # coverage is counted against (docs/gate.md).
+        self._case_count = int((self._config.route or {}).get("case_count") or 0)
         if match is None:
             from .route.search import find_route_matches  # noqa: PLC0415
 
@@ -334,6 +366,9 @@ class DeclarativeScenario(BaseScenario):
                     "matching route(s)"
                 )
             match = matches[spec.match_index]
+            # Unexpanded, the run counts the matches itself (those the ego
+            # cannot be placed on included, which an expansion skips).
+            self._case_count = len(matches)
             frame = RouteFrame(match, lanelet_map, routing_graph)
             (spawn_id, spawn_s), goal = ego_placement(
                 frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
@@ -350,6 +385,7 @@ class DeclarativeScenario(BaseScenario):
             if goal is not None and self.goal_pose is None:
                 self.goal_pose = Lanelet2Pose(lanelet_id=goal[0], s=goal[1])
         set_scenario_route(match, lanelet_map, routing_graph)
+        self._route_match = match
         logger.info(
             "DeclarativeScenario '%s': route match %d through lanelets %s "
             "(%.1f m, %d segment(s))",
@@ -418,6 +454,11 @@ class DeclarativeScenario(BaseScenario):
     def setup(self) -> None:
         """Spawn the entities and register the document's actions and assertions."""
         self._prepare_route()
+        if self._document.gate is not None and self._route_match is not None:
+            # The ego's drive in the route's frame, for the gate's trajectory
+            # criteria (docs/gate.md).
+            self._gate_probe = GateProbe()
+            self.register_post_tick(self._gate_probe)
         od_pose: OpenDrivePose = self._setup_ego_spawn()
         logger.info(
             "DeclarativeScenario '%s': ego spawned on OpenDRIVE road '%s'",
@@ -478,6 +519,61 @@ class DeclarativeScenario(BaseScenario):
     def is_done(self) -> bool:
         """Always ``False`` -- termination is driven by the pass/fail conditions."""
         return False
+
+    # ------------------------------------------------------------------
+    # Gate
+    # ------------------------------------------------------------------
+
+    def gate_record(
+        self, result: "ScenarioResult", file_stem: str
+    ) -> "Optional[GateRecord]":
+        """What this run leaves for its logical scenario's gate, or ``None``.
+
+        ``None`` for a document with no gate, and for a run that never chose
+        a route (it raised before).  The runner writes the record as
+        ``{file_stem}_gate.json`` (``docs/gate.md``).
+        """
+        from .coordinate.map_manager import MapManager  # noqa: PLC0415
+        from .gate.record import GateCase, GateRecord  # noqa: PLC0415
+
+        gate = self._document.gate
+        match = self._route_match
+        if gate is None or match is None:
+            return None
+        map_name = self._document.map.name
+        try:
+            carla_map = MapManager.get_instance().carla_map
+            if carla_map is not None:
+                map_name = str(carla_map.name).rsplit("/", 1)[-1]
+        except Exception:  # noqa: BLE001 -- the document's name stands in
+            logger.debug("no CARLA map to name the gate case by", exc_info=True)
+        failure = result.failure
+        return GateRecord(
+            scenario=self._document.id,
+            title=self._document.title,
+            digest=self._document_digest,
+            gate=gate.to_dict(),
+            case=GateCase(
+                map=map_name,
+                index=match.index,
+                lanelet_ids=tuple(int(v) for v in match.lanelet_ids),
+                case_count=self._case_count,
+                segment_kinds=tuple(seg.kind for seg in match.segments),
+                segment_ends=tuple(float(seg.end) for seg in match.segments),
+            ),
+            passed=result.passed,
+            message=result.message,
+            elapsed_seconds=result.elapsed_seconds,
+            failure_category=(
+                None if failure is None else failure.category.name.lower()
+            ),
+            files={
+                "result": f"{file_stem}_result.json",
+                "coverage": f"{file_stem}_coverage.json",
+                "trajectory": f"{file_stem}.trajectory.jsonl",
+            },
+            ego=list(self._gate_probe.rows) if self._gate_probe is not None else [],
+        )
 
     # ------------------------------------------------------------------
     # Entity spawning

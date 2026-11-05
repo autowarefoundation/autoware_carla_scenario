@@ -581,8 +581,10 @@ def expand_route(
     returns them: the ego's spawn (``ego.spawn_lanelet_id`` / ``ego.spawn_s``,
     ``ego_spawn_s`` along the route), its goal (``ego.goal_lanelet_id`` /
     ``ego.goal_s``, the route's end less ``ego_goal_margin``) when
-    ``ego_goal`` is set, and the match as the ``scenario.route.*`` keys.  A
-    match the ego cannot be placed on is skipped (and logged).
+    ``ego_goal`` is set, the match as the ``scenario.route.*`` keys, and how
+    many cases the search expanded to (``scenario.route.case_count``).  A
+    match the ego cannot be placed on is skipped (and logged), and not
+    counted.
 
     Raises:
         ValueError: If ``route`` is not a well-formed route search.
@@ -625,8 +627,11 @@ def expand_route(
             f"scenario.route.{key}={_override_value(value)}"
             for key, value in match.to_config().items()
         ]
-        cases.append([*overrides, *arguments])
-    return cases
+        cases.append(overrides)
+    # Every case says how many there are on this map: what a logical
+    # scenario's gate counts its case coverage against (docs/gate.md).
+    count = f"scenario.route.case_count={len(cases)}"
+    return [[*overrides, count, *arguments] for overrides in cases]
 
 
 #: Why a sweep that expands to no case is refused -- by the lanelet sweeper,

@@ -505,6 +505,7 @@ scenario.route.segment_kinds=[lane,junction,lane]
 scenario.route.segment_ends=[60.0,78.5,118.5]           # route s where each segment ends
 scenario.route.segment_lanelet_counts=[2,1,1]
 scenario.route.junction_turns=[left]
+scenario.route.case_count=4                             # cases on this map, for the gate
 ```
 
 A match the ego cannot be placed on (spawn past the end, goal not ahead of the
@@ -529,6 +530,15 @@ and the ego is sent along it:
   TrafficManager drives gets a `TurnAction` per junction segment instead, in
   the junction's actual `turn_direction`, triggered when it is 100 m short of
   the junction (or past the previous one).
+
+## Passing as a whole: the gate
+
+Each match runs as a concrete scenario and passes or fails on its own. A
+`gate:` block in the document says when the logical scenario passes over all
+its runs -- a minimum number of runs, success rate, case and cover coverage,
+and how consistently the ego drives the pattern. Each run records what the
+gate needs (`{stem}_gate.json`) and `scenario-gate` judges it afterwards: see
+[Gates for Logical Scenarios](gate.md).
 
 ## Python API
 
