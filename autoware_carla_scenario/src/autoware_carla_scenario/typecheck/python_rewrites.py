@@ -2117,7 +2117,9 @@ class _Pass(ShadowScopes):
             if not _FORMAT_REFERENCE.fullmatch(rest):
                 self._refuse(node, f"the format field {field!r} cannot be rewritten")
                 return None
-            if first == "" or first.isdigit():
+            # isdecimal(), as str.format reads an index: "٣" is 3, while
+            # "²" is a digit to isdigit() but no number, so a keyword (#1612).
+            if first == "" or first.isdecimal():
                 kind = "auto" if first == "" else "manual"
                 if numbering not in (None, kind):
                     self._refuse(
@@ -2161,8 +2163,8 @@ class _Pass(ShadowScopes):
             for attribute, subscript in _ACCESS.findall(rest):
                 if attribute:
                     access += "." + attribute
-                elif subscript.isdigit():
-                    access += f"[{subscript}]"
+                elif subscript.isdecimal():
+                    access += f"[{int(subscript)}]"
                 elif any(c in subscript for c in "\"'\\"):
                     self._refuse(node, f"the format field {field!r} has odd quoting")
                     return None
