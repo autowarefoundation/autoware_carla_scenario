@@ -4843,8 +4843,11 @@ and its calls of SLURM's command-line tools (<code>sbatch</code>, <code>squeue</
 <code>scontrol</code>, <code>sinfo</code>: <code>slurm.queue</code>, #1634), the naming rules of
 <code>scenario-new</code> (<code>scaffold.names</code>, #1654), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
-(<code>ui.web_viewer_paths</code>, #1672), the frame math of the T4Scene
-converter (CARLA's world frame to Autoware's <code>map</code> frame, and the rotations
+(<code>ui.web_viewer_paths</code>, #1672), what a run names its outputs, the path
+rule of a trajectory log and its recordings among them (<code>run_outputs</code>, #1678:
+the stem a log is of, its recording and its sensor recording, which <code>rerun</code>,
+<code>rerun_lidar</code> and <code>ui.web_viewer_paths</code> all name them with), the frame math
+of the T4Scene converter (CARLA's world frame to Autoware's <code>map</code> frame, and the rotations
 and quaternions of its angles: <code>t4_scene.frames</code>, #1665; the converter
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), and the parts of the
@@ -6309,8 +6312,8 @@ the first:</p>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>) and authoring.models (<code>ScenarioDocument</code>; pydantic), both under <code>TYPE_CHECKING</code>, which are neither checked nor modelled, and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold, and document loaders (<code>Callable[[], ScenarioDocument]</code>) that return a pydantic model as values</li>
-<li><code>rerun</code>: imports concurrent.futures, errno, importlib, types and argparse, and more of os than its shim declares (<code>os.strerror()</code>), and holds the converter package (imported at run time) as <code>Any</code>; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
-<li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; entity.carla_driver_entity (itself excluded), rerun and rerun_metrics (itself excluded) use it</li>
+<li><code>rerun</code>: imports concurrent.futures, errno, importlib, types and argparse, and more of os than its shim declares (<code>os.strerror()</code>), and holds the converter package (imported at run time) as <code>Any</code>; the path rule of a log and its recording (<code>TRAJECTORY_SUFFIX</code>, <code>RECORDING_SUFFIX</code>, <code>_label()</code> and <code>recording_path()</code>) is the checked run_outputs's (#1678), which it re-exports; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
+<li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; the name and place of a run's sensor recording (<code>SENSORS_SUFFIX</code> and <code>lidar_recording_path()</code>) are the checked run_outputs's (#1678), which it re-exports; entity.carla_driver_entity (itself excluded), rerun and rerun_metrics (itself excluded) use it</li>
 <li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>)</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
@@ -8233,7 +8236,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 21:03:29 UTC"><span class="timeago" datetime="2026-11-05T21:03:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 21:03:29 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 21:07:43 UTC"><span class="timeago" datetime="2026-11-05T21:07:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 21:07:43 UTC">2026-11-05</span>
   </span>
 
     
