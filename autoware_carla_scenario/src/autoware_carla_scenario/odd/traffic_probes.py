@@ -36,14 +36,12 @@ from typing import Any, Optional
 
 from openodd import OddKnob
 
-from ..traffic.parameters import (
-    BICYCLE_BOUNDS,
-    PEDESTRIAN_BOUNDS,
-    VEHICLE_BOUNDS,
-    Spread,
-    run_bicycle_parameters,
-    run_parameters,
-)
+from ..traffic.parameters import Spread, run_bicycle_parameters, run_parameters
+from .traffic_ranges import _PREFIX as _PREFIX
+from .traffic_ranges import PARAMETER_RANGES as PARAMETER_RANGES
+from .traffic_ranges import knob_key as knob_key
+from .traffic_ranges import knob_limits as knob_limits
+from .traffic_ranges import probe_name as probe_name
 
 __all__ = [
     "PARAMETER_RANGES",
@@ -52,47 +50,9 @@ __all__ = [
     "ParameterProbe",
 ]
 
-#: ``(space, field)`` -> ``(unit, (mean low, mean high), (std low, std high))``:
-#: the unit of the parameter, and the ranges a knob draws its mean and its
-#: standard deviation from -- what a run can bring about, within the
-#: parameter's bounds.
-PARAMETER_RANGES: dict[
-    tuple[str, str], tuple[str, tuple[float, float], tuple[float, float]]
-] = {
-    ("vehicles", "speed_factor"): ("", (0.5, 1.5), (0.0, 0.3)),
-    ("vehicles", "min_gap_m"): ("m", (0.5, 10.0), (0.0, 3.0)),
-    ("vehicles", "ignore_lights"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "ignore_signs"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "ignore_vehicles"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "ignore_walkers"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "random_lane_changes"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "accel"): ("m/s^2", (0.5, 5.0), (0.0, 1.5)),
-    ("vehicles", "decel"): ("m/s^2", (1.0, 9.0), (0.0, 2.0)),
-    ("vehicles", "reaction_time_s"): ("s", (0.3, 3.0), (0.0, 1.0)),
-    ("vehicles", "imperfection"): ("", (0.0, 1.0), (0.0, 0.5)),
-    ("vehicles", "max_lateral_speed_mps"): ("m/s", (0.2, 2.0), (0.0, 0.5)),
-    ("vehicles", "max_lateral_accel"): ("m/s^2", (0.2, 3.0), (0.0, 0.5)),
-    ("pedestrians", "walking_speed_mps"): ("m/s", (0.5, 2.5), (0.0, 0.5)),
-    ("pedestrians", "min_gap_m"): ("m", (0.1, 2.0), (0.0, 0.5)),
-    ("pedestrians", "red_light_violation_s"): ("s", (0.0, 60.0), (0.0, 30.0)),
-    ("bicycles", "max_speed_mps"): ("m/s", (2.0, 8.0), (0.0, 1.5)),
-    ("bicycles", "accel"): ("m/s^2", (0.5, 2.0), (0.0, 0.5)),
-    ("bicycles", "decel"): ("m/s^2", (1.0, 4.0), (0.0, 1.0)),
-    ("bicycles", "min_gap_m"): ("m", (0.2, 2.0), (0.0, 0.5)),
-    ("bicycles", "reaction_time_s"): ("s", (0.3, 2.0), (0.0, 0.5)),
-    ("bicycles", "imperfection"): ("", (0.0, 1.0), (0.0, 0.3)),
-    ("bicycles", "max_lateral_speed_mps"): ("m/s", (0.2, 2.0), (0.0, 0.5)),
-    ("bicycles", "red_light_violation_s"): ("s", (0.0, 30.0), (0.0, 10.0)),
-}
-
-#: A probe's name begins with the singular of its space.
-_PREFIX = {"vehicles": "vehicle", "pedestrians": "pedestrian", "bicycles": "bicycle"}
-#: Each space's bounds.
-_BOUNDS = {
-    "vehicles": VEHICLE_BOUNDS,
-    "pedestrians": PEDESTRIAN_BOUNDS,
-    "bicycles": BICYCLE_BOUNDS,
-}
+# The naming and the ranges (PARAMETER_RANGES, _PREFIX, probe_name(),
+# knob_key(), knob_limits()) are the checked odd.traffic_ranges'; this module
+# builds the probes and openodd's knobs from them.
 
 
 class ParameterProbe:
@@ -103,7 +63,7 @@ class ParameterProbe:
         self.space = space
         self.field = field
         self.statistic = statistic
-        self.__name__ = f"{_PREFIX[space]}_{field}_{statistic}"
+        self.__name__ = probe_name(space, field, statistic)
 
     def __call__(self, world: Any) -> Optional[float]:
         del world  # the run's, not the world's
@@ -135,15 +95,14 @@ def _probes() -> (
     probes: dict[str, tuple[Callable[[Any], Any], str]] = {}
     knobs: dict[Callable[..., Any], OddKnob] = {}
     for (space, field), (unit, mean_range, std_range) in PARAMETER_RANGES.items():
-        bounds = _BOUNDS[space][field]
         for statistic, value_range in (("mean", mean_range), ("std", std_range)):
             probe = ParameterProbe(space, field, statistic)
             probes[probe.__name__] = (probe, unit)
             knobs[probe] = OddKnob(
-                f"traffic.{space}.{field}.{statistic}",
+                knob_key(space, field, statistic),
                 range=value_range,
                 # The mean must lie within the parameter's own bounds.
-                limits=bounds if statistic == "mean" else (0.0, float("inf")),
+                limits=knob_limits(space, field, statistic),
             )
     return probes, knobs
 
