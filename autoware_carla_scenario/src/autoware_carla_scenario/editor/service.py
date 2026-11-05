@@ -908,7 +908,10 @@ class EditorService:
                 return None
             try:
                 return MapSource.parse(ref.source)
-            except MapSourceError:
+            except ValueError:
+                # MapSourceError, or a plain ValueError from urlsplit (an
+                # unclosed IPv6 bracket).  Unparsable, it is compared as text:
+                # the same map only as the very same string.
                 return ref.source
 
         def origin(ref: MapRef) -> tuple[object, ...]:

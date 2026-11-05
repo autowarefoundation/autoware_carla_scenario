@@ -1962,6 +1962,31 @@ class TestEditorMapChangeForgetsExcludedLanelets:
         service.use_map(document, _A)
         assert document.map.no_3d_model_lanelet_ids == [11, 12]
 
+    def test_a_malformed_stored_source_is_replaced_without_error(
+        self, service: "EditorService"
+    ) -> None:
+        """``MapSource.parse`` raises a plain ValueError on this one, not a
+        MapSourceError; it counts as another map, not as a server error."""
+        document = self._document()
+        document.map.source = "http://[::1"
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.use_map(document, _A)
+        assert document.map.source == _A
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_another_source_on_the_form_clears_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {"map_source": _B, "map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert document.map.source == _B
+        assert document.map.no_3d_model_lanelet_ids == []
+
     def test_a_new_directory_clears_them(
         self, service: "EditorService", local_map: Path
     ) -> None:
