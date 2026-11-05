@@ -258,6 +258,13 @@ _BICYCLE_TYPE = "DEFAULT_BIKETYPE"
 #: motorcycle type, so every run declares this one: of the class
 #: ``motorcycle``, with SUMO's defaults for it (:func:`_write_motorcycle_type`).
 MOTORCYCLE_TYPE = "acs_motorcycle"
+#: A scenario vehicle's blueprint ``base_type`` -> the SUMO vehicle class and
+#: type it joins SUMO as; any other is a passenger car (:data:`_PASSENGER`).
+_SUMO_CLASSES = {
+    "bicycle": ("bicycle", _BICYCLE_TYPE),
+    "motorcycle": ("motorcycle", MOTORCYCLE_TYPE),
+}
+_PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
 #: The bicycle parameters a run can change, each set on every bicycle; the
 #: speed (desiredMaxSpeed) and the red light only on a type, before the run.
 _BICYCLE_SETTERS = {
@@ -329,24 +336,25 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def _base_type(actor: Any) -> str:
+    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case; empty
+    for an actor without one."""
+    try:
+        return str(actor.attributes.get("base_type", "")).lower()
+    except Exception:  # noqa: BLE001 - an actor without attributes is a car
+        return ""
+
+
 def is_bicycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a bicycle: its blueprint's
     ``base_type`` says so, as CARLA's bicycles' do."""
-    try:
-        base_type = str(actor.attributes.get("base_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return base_type.lower() == "bicycle"
+    return _base_type(actor) == "bicycle"
 
 
 def is_motorcycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a motorcycle: its blueprint's
     ``base_type`` says so, as CARLA's motorcycles' do."""
-    try:
-        base_type = str(actor.attributes.get("base_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return base_type.lower() == "motorcycle"
+    return _base_type(actor) == "motorcycle"
 
 
 def _write_motorcycle_type(path: Path) -> Path:
@@ -2278,12 +2286,7 @@ class SumoTrafficBackend(TrafficBackend):
         :data:`MOTORCYCLE_TYPE`, on the nearest lane a motorcycle may use.
         """
         tc = self._traci
-        if is_bicycle(actor):
-            vclass, type_id = "bicycle", _BICYCLE_TYPE
-        elif is_motorcycle(actor):
-            vclass, type_id = "motorcycle", MOTORCYCLE_TYPE
-        else:
-            vclass, type_id = "passenger", "DEFAULT_VEHTYPE"
+        vclass, type_id = _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
         place = self._road_position(self._carla_pose_to_sumo(actor), sumo_id, vclass)
         if place is None:
             return False

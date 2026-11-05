@@ -294,9 +294,6 @@ class MotorcycleEntity(VehicleEntity):
             ValueError: If the world has no motorcycle, or the configured
                 blueprint is not one (:func:`resolve_motorcycle_type`).
         """
-        if _warmup_done:
-            # Before the blueprint is looked up: too late is the error.
-            return super().spawn(world)
         self._config.vehicle_type = resolve_motorcycle_type(
             world, self._config.vehicle_type
         )
