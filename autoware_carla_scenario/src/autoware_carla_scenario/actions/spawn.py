@@ -402,15 +402,16 @@ class SpawnAction(BaseAction):
         self,
         world: "carla.World",
         library: Optional["carla.BlueprintLibrary"] = None,
-        ground: Optional[Callable[[float, float], Optional[float]]] = None,
+        ground: Optional[Callable[[float, float, float], Optional[float]]] = None,
     ) -> bool:
         """Spawn now; whether it was done.
 
         For an action built on this one, which applies it itself rather than
         registering it, and may place many props in one tick: *library* is
         the world's blueprint library and *ground* the road height under a
-        point (:func:`~..trajectory.resolve.road_height`), fetched once for
-        them all.
+        point, read near a hint height
+        (:func:`~..trajectory.resolve.road_height`), fetched once for them
+        all.
         """
         if self._name:
             return self._add_prop(world, library, ground)
@@ -479,7 +480,7 @@ class SpawnAction(BaseAction):
         self,
         world: "carla.World",
         library: Optional["carla.BlueprintLibrary"],
-        ground: Optional[Callable[[float, float], Optional[float]]],
+        ground: Optional[Callable[[float, float, float], Optional[float]]],
     ) -> bool:
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -490,11 +491,13 @@ class SpawnAction(BaseAction):
         height = z
         if self._on_ground:
             # Branched: Codon types no conditional expression of the two.
+            # Read near the place's own height, so that a prop on a road
+            # under an overpass stays on that road (not the deck above).
             if ground is None:
-                surface = road_height(run_carla_map(world))(x, y)
+                surface = road_height(run_carla_map(world))(x, y, z)
             else:
-                given: Callable[[float, float], Optional[float]] = ground
-                surface = given(x, y)
+                given: Callable[[float, float, float], Optional[float]] = ground
+                surface = given(x, y, z)
             if surface is not None:
                 height = float(surface) + _LIFT_M
         blueprints = world.get_blueprint_library() if library is None else library

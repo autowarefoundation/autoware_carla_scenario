@@ -246,6 +246,8 @@ class ConstructionZoneAction(_BackendAction):
                     world, driver, _spans(features, start, min(closed), max(closed))
                 )
         # Fetched once for every prop of the zone, and a missing prop said once.
+        # Each prop reads the road near its lanelet's own height (SpawnAction),
+        # so a zone on a road under an overpass stands on that road.
         library = world.get_blueprint_library()
         ground = road_height(run_carla_map(world))
         available: set[str] = set()
