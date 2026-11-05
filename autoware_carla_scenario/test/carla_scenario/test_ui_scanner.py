@@ -2,7 +2,9 @@
 
 One result JSON that is not an object, not UTF-8, or names no scenario, or a
 ``batch_results.json`` with entries that are not objects, must not break the
-scan of every other session (``scan_sessions`` feeds the session list).
+scan of every other session (``scan_sessions`` feeds the session list). Nor
+must a ``.hydra/overrides.yaml`` that is not UTF-8 break the session and case
+pages (#1631).
 """
 
 from __future__ import annotations
@@ -12,8 +14,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import _read_verdict
+from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import results, scanner
 
 DATE = "2026-01-01"
@@ -218,3 +222,62 @@ def test_a_job_directory_named_by_a_non_ascii_digit_is_skipped(
     assert (summary.passed_count, summary.total_count) == (1, 1)
     assert (item.index, item.scenario_name, item.passed) == (0, "Good", True)
     assert case.passed is True
+
+
+def _multirun_job(base: Path, overrides: bytes) -> Path:
+    """A one-job multirun session whose ``.hydra/overrides.yaml`` is
+    *overrides*."""
+    job = base / "multirun" / DATE / GOOD / "0"
+    (job / ".hydra").mkdir(parents=True)
+    (job / ".hydra" / "overrides.yaml").write_bytes(overrides)
+    (job / "Good_result.json").write_text(
+        json.dumps({"passed": True, "scenario": "Good"})
+    )
+    return job
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [b"- a=\xff\n", b"\xff\xfe- a=1\n", b"- [unclosed\n", b"{a: 1}\n"],
+    ids=["not-utf8", "utf16-bom", "not-yaml", "not-a-list"],
+)
+def test_overrides_that_cannot_be_read_are_none(
+    tmp_path: Path, overrides: bytes
+) -> None:
+    """#1631: ``read_text`` raised ``UnicodeDecodeError`` (a ``ValueError``)
+    out of the session and case pages; ``results`` already read no overrides."""
+    job = _multirun_job(tmp_path, overrides)
+
+    (item,) = scanner.load_session(tmp_path, "multirun", DATE, GOOD)
+    view = scanner.load_scenario(tmp_path, "multirun", DATE, GOOD, 0)
+    (case,) = results.load_results(tmp_path, "multirun", DATE, GOOD, metrics=False)
+
+    assert scanner._read_overrides(job) == results._hydra_overrides(job) == []
+    assert (item.scenario_name, item.passed, item.overrides) == ("Good", True, [])
+    assert view is not None
+    assert view.overrides == []
+    assert case.passed is True
+
+
+def test_override_items_are_read_as_strings(tmp_path: Path) -> None:
+    """Items YAML reads as other types are strings, as ``results`` reads them."""
+    job = _multirun_job(tmp_path, b"- a=1\n- 5\n- null\n")
+
+    assert scanner._read_overrides(job) == ["a=1", "5", "None"]
+    assert scanner._read_overrides(job) == results._hydra_overrides(job)
+
+
+def test_the_pages_of_a_run_with_overrides_not_utf8_are_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1631: one damaged run made the session and case pages answer 500."""
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    _multirun_job(tmp_path, b"- a=\xff\n")
+    client = TestClient(app_module.app)
+
+    session = client.get(f"/session/multirun/{DATE}/{GOOD}")
+    case = client.get(f"/session/multirun/{DATE}/{GOOD}/0")
+
+    assert session.status_code == 200, session.text
+    assert case.status_code == 200, case.text
