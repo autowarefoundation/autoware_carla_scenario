@@ -131,11 +131,10 @@ class HasStopLineConstraint(Constraint):
 def _lanelet_id(owner: str, name: str, value: Any) -> int:
     """*value* as a lanelet id, or ``ValueError`` naming ``owner.name``.
 
-    Read as :class:`EqualsConstraint` reads one: a string of ASCII digits --
-    quoted in YAML, or typed into the editor -- names the lanelet of that id,
-    and so does any whole, finite real number (``1001.0``, numpy's
-    ``float32(1001)``, ``Fraction(1001)`` and ``Decimal("1001")`` all equal
-    ``1001``).  A bool, a number with a fraction, and any other text name no
+    A string of ASCII digits -- quoted in YAML, or typed into the editor --
+    names the lanelet of that id, and so does any whole, finite real number
+    (``1001.0``, numpy's ``float32(1001)``, ``Fraction(1001)`` and
+    ``Decimal("1001")`` all equal ``1001``).  A bool, a number with a fraction, and any other text name no
     lanelet: kept, they would silently match nothing.
     """
     if isinstance(value, bool):
@@ -232,13 +231,29 @@ class EqualsConstraint(Constraint):
     value: int | str = 0
 
     def __post_init__(self) -> None:
-        # An id written as a string -- quoted in YAML, or typed into the
-        # editor's text field -- still names a lanelet.
+        # The id is read as in_set and on_route read theirs (_lanelet_id): a
+        # string of digits -- quoted in YAML, or typed into the editor's text
+        # field -- or a whole number names a lanelet; a bool, a number with a
+        # fraction and any other text are refused, naming equals.value, as
+        # kept they would silently match nothing (or True lanelet 1).
+        # Exactly "any", the wildcard evaluate() matches, and an unresolved
+        # ${...} reference, which the editor and an export parse before Hydra
+        # resolves it, are kept as they are.
         # (`value` is a str there: Codon narrows no union, so it is read
         # through str() -- itself, for a str.)
         value = self.value
-        if isinstance(value, str) and str(value).isascii() and str(value).isdigit():
-            object.__setattr__(self, "value", int(str(value)))
+        if isinstance(value, str) and (str(value) == "any" or _unresolved(str(value))):
+            return
+        if TYPE_CHECKING:
+            # Codon passes no union on as a value of any type: the int or the
+            # str it holds.
+            if isinstance(value, int):
+                number = _lanelet_id("equals", "value", int(value))
+            else:
+                number = _lanelet_id("equals", "value", str(value))
+        else:
+            number = _lanelet_id("equals", "value", value)
+        object.__setattr__(self, "value", number)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         value = self.value

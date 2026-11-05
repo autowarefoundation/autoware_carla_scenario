@@ -168,10 +168,14 @@ def test_the_base_class_is_not_a_constraint_itself() -> None:
         Constraint()  # type: ignore[abstract]
 
 
-def test_an_id_of_non_ascii_digits_stays_a_string() -> None:
-    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+def test_an_id_of_non_ascii_digits_is_refused_by_field() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises.
+
+    #1676: refused by key, as ``in_set`` refuses it, not kept to match nothing.
+    """
     assert EqualsConstraint("12").value == 12
-    assert EqualsConstraint("²").value == "²"
+    with pytest.raises(ValueError, match=r"equals\.value"):
+        EqualsConstraint("²")
 
 
 def test_quoted_ids_name_their_lanelets_in_in_set() -> None:
@@ -338,3 +342,85 @@ def test_an_id_too_long_to_show_is_refused_by_field() -> None:
 
     with pytest.raises(ValueError, match=r"in_set\.values: .*Fraction"):
         InSetConstraint((Fraction(10**5000 + 1, 2),))  # type: ignore[arg-type]
+
+
+def test_equals_keeps_valid_ids_as_before() -> None:
+    """#1676: ints, digit strings and whole numbers still name their lanelet."""
+    from decimal import Decimal
+    from fractions import Fraction
+
+    for value in (2, "2", 2.0, Fraction(2, 1), Decimal("2")):
+        constraint = parse_constraint({"type": "equals", "value": value})
+        assert constraint == EqualsConstraint(2)
+        assert type(constraint.value) is int  # type: ignore[attr-defined]
+        assert _match(constraint) == [2]
+    assert EqualsConstraint().value == 0
+    assert _match(EqualsConstraint(1001.0)) == []  # type: ignore[arg-type]
+
+
+def test_equals_takes_numpy_ids_but_no_bool() -> None:
+    np = pytest.importorskip("numpy")
+    for value in (np.int64(3), np.float32(3.0)):
+        assert _match(EqualsConstraint(value)) == [3]
+    for bad in (np.bool_(True), np.float32(2.5), np.float64("nan")):
+        with pytest.raises(ValueError, match=r"equals\.value"):
+            EqualsConstraint(bad)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        True,
+        False,
+        2.5,
+        float("nan"),
+        float("inf"),
+        " 2",
+        "2 ",
+        "-2",
+        "",
+        "two",
+        "Any",
+        "ANY",
+        " any",
+        "any ",
+        None,
+        [2],
+    ],
+)
+def test_equals_refuses_an_invalid_id_by_field(bad: Any) -> None:
+    """#1676: as ``in_set`` and ``on_route`` refuse it since #1670.
+
+    ``True`` (YAML 1.1's ``yes`` / ``on``) no longer matches lanelet 1, and
+    text other than the exact ``"any"`` wildcard no longer matches nothing.
+    """
+    with pytest.raises(ValueError, match=r"equals\.value"):
+        parse_constraint({"type": "equals", "value": bad})
+
+
+def test_equals_any_is_still_the_exact_wildcard() -> None:
+    constraint = parse_constraint({"type": "equals", "value": "any"})
+    assert constraint == EqualsConstraint("any")
+    assert _match(constraint) == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize("reference", ["${sweep.lanelet}", " ${sweep.lanelet} "])
+def test_equals_keeps_an_unresolved_reference(reference: str) -> None:
+    """The editor and an export parse before Hydra resolves ``${...}``."""
+    constraint = parse_constraint({"type": "equals", "value": reference})
+    assert constraint.value == reference  # type: ignore[attr-defined]
+    assert _match(constraint) == []
+
+
+@pytest.mark.parametrize("bad", ["${x} junk", "${a}${b}", "${}"])
+def test_equals_refuses_more_than_one_whole_reference(bad: str) -> None:
+    with pytest.raises(ValueError, match=r"equals\.value"):
+        parse_constraint({"type": "equals", "value": bad})
+
+
+def test_an_invalid_equals_inside_a_tree_is_refused() -> None:
+    """Inside ``not``, an id matching nothing would have matched everything."""
+    with pytest.raises(ValueError, match=r"equals\.value"):
+        parse_constraint(
+            {"type": "not", "constraint": {"type": "equals", "value": "Any"}}
+        )
