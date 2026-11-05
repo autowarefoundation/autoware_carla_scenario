@@ -101,6 +101,7 @@ __all__ = [
     "scenario_map_refusal",
     "slot_lanelet_key",
     "spawn_lanelet_key",
+    "spawn_s_binding",
     "spawn_s_key",
     "swept_entity",
     "swept_slot",
@@ -189,6 +190,28 @@ def swept_slot(document: ScenarioDocument) -> LaneletSlot | None:
         if slot_lanelet_key(document, slot) is not None:
             return slot
     return None
+
+
+def spawn_s_binding(
+    document: ScenarioDocument, slot: LaneletSlot
+) -> tuple[str, dict[str, Any]] | None:
+    """Return the binding that derives the swept *slot*'s spawn offset, if any.
+
+    The offset binding belongs to the spawn whose lanelet is being enumerated:
+    it derives "15 m before *this* lanelet's stop line", so it says nothing
+    when the sweep is driving some other slot.  The answer is the ``s`` key it
+    writes and the binding as ``sweep.bindings`` carries it, or ``None`` when
+    *slot* is not a spawn or its ``s`` is not derived.  One rule for the sweep
+    the export writes and for the editor's map, which draws one of its runs.
+    """
+    target = document.entity(slot.owner_id) if slot.field == "spawn" else None
+    if (
+        target is None
+        or target.spawn.s.mode != "derived"
+        or target.spawn.s.binding is None
+    ):
+        return None
+    return spawn_s_key(target), target.spawn.s.binding.to_sweep_dict()
 
 
 def swept_entity(document: ScenarioDocument) -> Entity | None:
@@ -618,17 +641,10 @@ def build_scenario_config(
         sweep: dict[str, Any] = {
             "constraints": {target_key: slot.choice.sweep_constraint_dicts()}
         }
-        # The offset binding belongs to the spawn whose lanelet is being
-        # enumerated: it derives "15 m before *this* lanelet's stop line", so it
-        # says nothing when the sweep is driving some other slot.
-        target = document.entity(slot.owner_id) if slot.field == "spawn" else None
         bindings: dict[str, Any] = {}
-        if (
-            target is not None
-            and target.spawn.s.mode == "derived"
-            and target.spawn.s.binding is not None
-        ):
-            bindings[spawn_s_key(target)] = target.spawn.s.binding.to_sweep_dict()
+        offset = spawn_s_binding(document, slot)
+        if offset is not None:
+            bindings[offset[0]] = offset[1]
         # Every lanelet derived from the pick is a binding onto its own key:
         # the sweeper resolves each one against the lanelet it picked.
         for derived in document.derived_lanelet_slots():

@@ -637,7 +637,8 @@ def test_the_vehicle_entity_model_re_exports_the_checked_spawn_and_vehicle() -> 
     assert out["_vehicle_entity"].splitlines() == [
         f"from {workspace_module(spawn)} import SpawnLocation, SpawnPointIndex, "
         "SpawnTransform",
-        f"from {workspace_module(vehicle)} import VehicleEntity, VehicleEntityConfig",
+        f"from {workspace_module(vehicle)} import ANY_MOTORCYCLE, MotorcycleEntity, "
+        "MotorcycleEntityConfig, VehicleEntity, VehicleEntityConfig",
     ]
 
 

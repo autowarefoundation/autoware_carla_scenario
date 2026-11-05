@@ -253,6 +253,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | Symbol | Description |
 |--------|-------------|
 | `VehicleEntity`, `VehicleEntityConfig` | Generic vehicle actor with retry-aware spawn. |
+| `MotorcycleEntity`, `MotorcycleEntityConfig` | NPC motorcycle: a `VehicleEntity` whose blueprint must be a motorcycle's (`base_type` `motorcycle`); with no `vehicle_type`, the first motorcycle of the server. Driven by the TrafficManager as any vehicle, and by SUMO as a `motorcycle` (docs/traffic_backends.md). |
 | `EgoVehicle` | Subclass with the fixed `EGO_ROLE_NAME`, plus the `on_scenario_start` / `on_tick` / `on_scenario_end` lifecycle hooks `ScenarioRunner` calls. |
 | `ExternallyDrivenEgo` | Base of every ego driven by a stack of its own rather than the TrafficManager: opts out of autopilot, refuses TrafficManager manoeuvres, and carries the termination request. |
 | `BridgeHandshake` | The mission and readiness handshake with a stack over the `AutowareBridge`, optionally launching it per scenario; held by an ego (`entity.bridged_ego`). |

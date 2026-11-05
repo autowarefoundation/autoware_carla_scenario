@@ -126,6 +126,18 @@
         </p>
       {% endif %}
 
+      {% if view.dropped %}
+        {# A pick whose offset binding fails is not one of the runs: the sweep
+           skips it, so the drawing below is of no run at all. #}
+        <div class="ed-notice ed-notice-warn" style="padding:8px 10px; font-size:12px">
+          {{ ic.icon('alert', 14) }}<div>
+            The sweep drops pattern {{ view.pattern + 1 }}, so no run looks like
+            this: its spawn's offset binding fails here.
+            {{ view.dropped }}
+          </div>
+        </div>
+      {% endif %}
+
       {% if view.error %}
         <div class="ed-notice ed-notice-warn" style="padding:8px 10px; font-size:12px">
           {{ ic.icon('alert', 14) }}<div>{{ view.error }}</div>

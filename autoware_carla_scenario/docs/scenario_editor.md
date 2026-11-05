@@ -114,6 +114,13 @@ and the same constraint engine the sweep evaluates -- and the panel says which
 of how many is on screen. The arrows step through the runs a `--multirun` sweep
 would perform, one concrete scenario at a time.
 
+A spawn whose `s` is derived from the map (a `stop_line_offset`, say) is placed
+by that binding, resolved for the bound match by the sweeper's own code: a
+match too short for the offset walks the spawn back onto a predecessor, and the
+pin goes there with the offset the run gets. A match the binding fails on is
+one the sweep drops, so the panel says so rather than drawing a run that never
+happens (#1524).
+
 Everything else keeps the id stored beside it, because that is exactly what a
 run that does not sweep uses: the sweeper enumerates a single target key, so at
 most one lanelet in a document is ever bound.
