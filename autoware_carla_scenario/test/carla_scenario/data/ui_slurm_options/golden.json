@@ -329,7 +329,26 @@
     "launcher.start_stagger_seconds=15.0"
    ]
   },
-  "gres-bad": "ValueError: gres 'gpu:1,shard' has characters sbatch does not take",
+  "gres-bad": "ValueError: gres 'gpu:1,' has characters sbatch does not take",
+  "gres-list": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": "gpu:1,shard",
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.gres='gpu:1,shard'"
+   ]
+  },
   "gres-unicode": "ValueError: gres 'ä' has characters sbatch does not take",
   "int-bool": "ValueError: array_parallelism must be a number, not 'True'",
   "int-float": "ValueError: array_parallelism must be a number, not '1.5'",
@@ -356,6 +375,7 @@
   "int-word": "ValueError: cases_per_task must be a number, not 'two'",
   "int-zero": "ValueError: cases_per_task must be at least 1",
   "mem-bad": "ValueError: mem '12 G' has characters sbatch does not take",
+  "mem-list": "ValueError: mem '12G,4G' has characters sbatch does not take",
   "node-path-space": "ValueError: python 'a b' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
   "node-paths": {
    "fields": {
@@ -426,7 +446,7 @@
   "order-paths-before-setup": "ValueError: python 'a b' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
   "order-setup-before-numbers": "ValueError: setup line '${X}': write $NAME rather than ${NAME} (or set launcher.setup in a config)",
   "order-text-before-paths": "ValueError: gres 'a b' has characters sbatch does not take",
-  "order-time-before-partition": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not 'x'",
+  "order-time-before-partition": "ValueError: time is sbatch's --time (minutes, minutes:seconds, hours:minutes:seconds, days-hours, days-hours:minutes, days-hours:minutes:seconds or UNLIMITED), not 'x'",
   "panel": {
    "fields": {
     "array_parallelism": 2,
@@ -457,6 +477,25 @@
    ]
   },
   "partition-bad": "ValueError: partition 'main; rm -rf' has characters sbatch does not take",
+  "partition-list": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": "gpu,cpu",
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": null
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.partition='gpu,cpu'"
+   ]
+  },
   "setup-backslash-end": "ValueError: setup line 'module load a \\\\' ends in a backslash: write each command on one line",
   "setup-inner-backslash": {
    "fields": {
@@ -548,8 +587,8 @@
   },
   "tilde-twice": "ValueError: python '~~' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
   "tilde-user": "ValueError: remote_cwd '~bob/work' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
-  "time-bad": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not 'tomorrow'",
-  "time-bad-tail": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not '01:00:00x'",
+  "time-bad": "ValueError: time is sbatch's --time (minutes, minutes:seconds, hours:minutes:seconds, days-hours, days-hours:minutes, days-hours:minutes:seconds or UNLIMITED), not 'tomorrow'",
+  "time-bad-tail": "ValueError: time is sbatch's --time (minutes, minutes:seconds, hours:minutes:seconds, days-hours, days-hours:minutes, days-hours:minutes:seconds or UNLIMITED), not '01:00:00x'",
   "time-forms": {
    "fields": {
     "array_parallelism": null,
@@ -567,6 +606,25 @@
    "overrides": [
     "launcher=slurm",
     "launcher.time=1-2:03:04"
+   ]
+  },
+  "time-hours": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": "168:00:00"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.time=168:00:00"
    ]
   },
   "time-minutes": {
@@ -588,7 +646,26 @@
     "launcher.time='90'"
    ]
   },
-  "time-seconds-only": "ValueError: time is sbatch's --time ([D-]HH:MM:SS or minutes), not '1:2'"
+  "time-seconds-only": "ValueError: time is sbatch's --time (minutes, minutes:seconds, hours:minutes:seconds, days-hours, days-hours:minutes, days-hours:minutes:seconds or UNLIMITED), not '1:2'",
+  "time-unlimited": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": "unlimited"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.time=unlimited"
+   ]
+  }
  },
  "overrides": {
   "bools": [
