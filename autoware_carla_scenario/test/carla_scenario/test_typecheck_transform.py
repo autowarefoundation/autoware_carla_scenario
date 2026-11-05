@@ -3222,6 +3222,72 @@ def test_str_format_with_a_non_decimal_digit_field_is_a_keyword() -> None:
     assert "keyword '²'" in refused[0][1]
 
 
+class _Attributes:
+    """An object every attribute of which is its own name, for ``{0.a.b}``."""
+
+    def __getattr__(self, name: str) -> _Attributes:
+        return self
+
+    def __format__(self, spec: str) -> str:
+        return "attributes"
+
+
+class _Named:
+    attr = "a"
+    size = (0, 1)
+    a = _Attributes()
+
+
+@pytest.mark.parametrize(
+    ("template", "argument"),
+    [
+        ("{0.attr}", _Named()),
+        ("{0.a.b}", _Named()),
+        ("{0.size[1]}", _Named()),
+        ("{0[1].a}", [0, _Named()]),
+        ("{0[k.1]}", {"k.1": 1}),
+        ("{0[a:b]}", {"a:b": 2}),
+    ],
+)
+def test_str_format_with_an_access_matches_cpython(
+    template: str, argument: object
+) -> None:
+    """#1614: the rewritten f-string reads what str.format reads."""
+    text = _rewritten(f's = "{template}".format(x)\n')
+    namespace: dict[str, object] = {"x": argument}
+    exec(text, namespace)  # noqa: S102 - the rewritten test source
+    assert namespace["s"] == template.format(argument)
+
+
+@pytest.mark.parametrize(
+    ("template", "hint"),
+    [
+        ("{0.1}", "attribute '1', which is no Python identifier"),
+        ("{0.²}", "attribute '²', which is no Python identifier"),
+        ("{0.class}", "attribute 'class', which is no Python identifier"),
+        ("{0.ﬁ}", "attribute 'ﬁ', which is no Python identifier"),
+        ("{0.a b}", "attribute 'a b', which is no Python identifier"),
+        ("{0.ab]}", "attribute 'ab]', which is no Python identifier"),
+        ("{0..a}", "is invalid: Empty attribute"),
+        ("{0.}", "is invalid: Empty attribute"),
+        ("{0[]}", "is invalid: Empty attribute"),
+        ("{0[1]a}", "is invalid: Only '.' or '['"),
+        ("{0[}]}", "a key an f-string cannot spell"),
+    ],
+)
+def test_str_format_with_an_access_fstrings_cannot_spell_is_refused(
+    template: str, hint: str
+) -> None:
+    """#1614: ``"{0.1}".format(x)`` is ``getattr(x, "1")``, and became the
+    invalid ``f"{x.1}"``; odd fields are refused, as CPython splits them."""
+    source = f'x = 1\ns = "{template}".format(x)\n'
+    refused = python_rewrite_refusals(source)
+    assert [line for line, _ in refused] == [2]
+    assert hint in refused[0][1]
+    text, _ = python_rewrites(source)
+    ast.parse(text)
+
+
 def test_str_format_evaluates_a_complex_argument_once() -> None:
     text = _rewritten('s = "{0}{0}{k}".format(f(1), k=g("q"))\n')
     assert text == (
