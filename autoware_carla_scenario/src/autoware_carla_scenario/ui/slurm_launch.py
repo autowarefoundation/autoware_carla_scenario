@@ -72,7 +72,10 @@ __all__ = [
 #: must not have uv sync an environment).
 _ENV_COMMAND = "VIEWER_SCENARIO_COMMAND"
 
-_OUTPUTS_IN = re.compile(r"outputs in (?P<dir>\S+)")
+#: The batch directory ``slurm/submit.py`` prints at the end of its line
+#: (``...; outputs in <batch_dir>``): the rest of the line, as the directory
+#: may contain spaces.
+_OUTPUTS_IN = re.compile(r"outputs in (?P<dir>.+?)\s*$", re.MULTILINE)
 
 
 def scenario_command() -> list[str]:
