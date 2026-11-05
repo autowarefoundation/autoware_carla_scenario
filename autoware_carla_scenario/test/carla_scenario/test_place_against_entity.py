@@ -101,7 +101,14 @@ def looked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, float, float]]:
     seen: list[tuple[float, float, float]] = []
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append((x, y, yaw))
         return -1

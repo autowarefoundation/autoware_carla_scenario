@@ -150,12 +150,12 @@ def test_a_spawn_checks_its_own_box_where_it_will_stand() -> None:
         }
     )
     # Its front at -0.3 (and 0.3 m margin): on the walker, at -0.3 to 0.3.
-    assert spawn_module._taken(world, 2, -4.0, 0.0, 0.0, 2.4, 1.0) == 1  # type: ignore[arg-type]
+    assert spawn_module._taken(world, 2, -4.0, 0.0, 0.0, 2.4, 1.0, z=0.0) == 1  # type: ignore[arg-type]
     # Its front at -0.8: clear.
-    assert spawn_module._taken(world, 2, -4.5, 0.0, 0.0, 2.4, 1.0) == -1  # type: ignore[arg-type]
+    assert spawn_module._taken(world, 2, -4.5, 0.0, 0.0, 2.4, 1.0, z=0.0) == -1  # type: ignore[arg-type]
     # Its rear at 1.4, though its origin is within 2.4 m of the walker.
-    assert spawn_module._taken(world, 2, 2.5, 0.0, 0.0, 2.4, 1.0) == -1  # type: ignore[arg-type]
-    assert spawn_module._taken(world, 2, 1.3, 0.0, 0.0, 2.4, 1.0) == 1  # type: ignore[arg-type]
+    assert spawn_module._taken(world, 2, 2.5, 0.0, 0.0, 2.4, 1.0, z=0.0) == -1  # type: ignore[arg-type]
+    assert spawn_module._taken(world, 2, 1.3, 0.0, 0.0, 2.4, 1.0, z=0.0) == 1  # type: ignore[arg-type]
 
 
 def test_a_spot_held_is_held_where_the_box_will_stand() -> None:
@@ -165,7 +165,7 @@ def test_a_spot_held_is_held_where_the_box_will_stand() -> None:
     clearance._CACHE.claims = []
     clearance._CACHE.claims_frame = -1
     try:
-        spawn_module._hold(world, 2, 10.0, 0.0, 0.0, 2.4, 1.0)  # type: ignore[arg-type]
+        spawn_module._hold(world, 2, 10.0, 0.0, 0.0, 2.4, 1.0, z=0.0)  # type: ignore[arg-type]
         # Its body from 8.9 to 13.7: a walker at 13.3 stands in it.
         assert clearance.overlaps(world, 99, 13.3, 0.0, 0.0, 0.3, 0.3, 0.0) == 2
         assert clearance.overlaps(world, 99, 8.3, 0.0, 0.0, 0.3, 0.3, 0.0) is None
@@ -180,8 +180,8 @@ def test_a_place_clear_condition_sees_a_car_s_front_on_its_place() -> None:
     from autoware_carla_scenario.conditions import place_clear as place_module
 
     world = _parked_car()
-    assert place_module._occupant(world, 3.3, 0.0, 0.0, 0.5, 0.5, 0.0) == 1  # type: ignore[arg-type]
-    assert place_module._occupant(world, -2.0, 0.0, 0.0, 0.5, 0.5, 0.0) == -1  # type: ignore[arg-type]
+    assert place_module._occupant(world, 3.3, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0) == 1  # type: ignore[arg-type]
+    assert place_module._occupant(world, -2.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0) == -1  # type: ignore[arg-type]
 
 
 def test_first_in_way_finds_a_car_by_its_box_and_reports_its_centre() -> None:
@@ -284,6 +284,7 @@ def test_a_vehicle_led_out_looks_on_from_its_box_s_centre(
         kind: str,
         distance: float,
         half_width: float,
+        **kwargs: Any,
     ) -> None:
         looked.append(x + distance)
         return None

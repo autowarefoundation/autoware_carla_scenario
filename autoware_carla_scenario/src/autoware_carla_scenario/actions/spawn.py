@@ -591,10 +591,10 @@ class SpawnAction(BaseAction):
             return due  # a prop not asked to look for a clear place
         x, y, z, yaw = due
         blocker = _taken(
-            world, actor_id, x, y, yaw, half_length, half_width, self._ahead
+            world, actor_id, x, y, yaw, half_length, half_width, self._ahead, z=z
         )
         if blocker >= 0 and self._ahead > 0.0:
-            if _taken(world, actor_id, x, y, yaw, half_length, half_width) < 0:
+            if _taken(world, actor_id, x, y, yaw, half_length, half_width, z=z) < 0:
                 # Only the room to stop in is taken, by one ahead: shifted on
                 # it would be put past that one (vehicle_135 past vehicle_117,
                 # bicycle_89 past bicycle_87).  It keeps its place, entering
@@ -633,6 +633,7 @@ class SpawnAction(BaseAction):
                     half_length,
                     half_width,
                     self._ahead,
+                    z=there[2],
                 )
                 if other < 0:
                     logger.warning(
@@ -667,7 +668,7 @@ class SpawnAction(BaseAction):
         """Slow the entry speed until the room it needs behind *blocker* --
         to brake to *blocker*'s speed and the gap kept -- is clear (said),
         down to standing."""
-        x, y, _z, yaw = due
+        x, y, z, yaw = due
         braking = self._speed * self._speed / (2.0 * _ENTRY_BRAKING_MPS2)
         gap = max(self._ahead - braking, 0.0)
         ahead_speed = _speed_ahead(world, blocker, yaw)
@@ -676,7 +677,9 @@ class SpawnAction(BaseAction):
             trying = self._speed * factor
             room = max(trying * trying - ahead_speed * ahead_speed, 0.0)
             room = room / (2.0 * _ENTRY_BRAKING_MPS2) + gap
-            taken = _taken(world, actor_id, x, y, yaw, half_length, half_width, room)
+            taken = _taken(
+                world, actor_id, x, y, yaw, half_length, half_width, room, z=z
+            )
             if taken < 0:
                 slower = trying
                 break
@@ -699,7 +702,16 @@ class SpawnAction(BaseAction):
         half_length: float,
         half_width: float,
     ) -> None:
-        _hold(world, actor_id, place[0], place[1], place[3], half_length, half_width)
+        _hold(
+            world,
+            actor_id,
+            place[0],
+            place[1],
+            place[3],
+            half_length,
+            half_width,
+            z=place[2],
+        )
 
 
 def _along_lane(
@@ -804,11 +816,14 @@ def _taken(
     half_length: float,
     half_width: float,
     ahead: float = 0.0,
+    *,
+    z: float,
 ) -> int:
     """The id of a road user whose outline overlaps the rectangle of
     *actor_id* put with its origin at CARLA ``(x, y)`` facing *yaw* -- centred
     on its bounding box, a car's ahead of its origin -- stretched *ahead* m
-    further forward (the room to stop in), with a 0.3 m margin; or ``-1``."""
+    further forward (the room to stop in), with a 0.3 m margin; or ``-1``.
+    Only one on the level of road at height *z* there (#1588)."""
     from ..utils.clearance import box_centre, overlaps  # noqa: PLC0415
 
     heading = math.radians(yaw)
@@ -820,7 +835,7 @@ def _taken(
     cy = by + math.sin(heading) * ahead / 2.0
     try:
         found = overlaps(
-            world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width
+            world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width, z=z
         )
     except (AttributeError, RuntimeError):
         return -1
@@ -866,14 +881,16 @@ def _hold(
     yaw: float,
     half_length: float,
     half_width: float,
+    *,
+    z: float,
 ) -> None:
-    """Hold the place -- *actor_id*'s box, its origin put at ``(x, y)`` --
-    for this frame (two put on one place on one tick do not both land
-    there)."""
+    """Hold the place -- *actor_id*'s box, its origin put at ``(x, y)`` on
+    the road at height *z* -- for this frame (two put on one place on one
+    tick do not both land there)."""
     from ..utils.clearance import box_centre, claim_spot  # noqa: PLC0415
 
     try:
         cx, cy = box_centre(world, actor_id, x, y, yaw)
-        claim_spot(world, actor_id, cx, cy, yaw, half_length, half_width)
+        claim_spot(world, actor_id, cx, cy, yaw, half_length, half_width, z=z)
     except (AttributeError, RuntimeError):
         pass
