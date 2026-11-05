@@ -29,14 +29,11 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 
 from .skeleton import CARLA_BONES, Vector
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +152,7 @@ class SomaMotion:
 
     fps: float
     joints: tuple[str, ...]
-    directions: "NDArray[np.float64]"
+    directions: np.ndarray[tuple[int, int, int], np.dtype[np.float64]]
 
     @property
     def frame_count(self) -> int:
@@ -265,7 +262,9 @@ def _default_joint_names(count: int) -> list[str]:
     return names[:count]
 
 
-def _as_matrices(poses: "NDArray[np.float64]", file: Path) -> "NDArray[np.float64]":
+def _as_matrices(
+    poses: np.ndarray[Any, np.dtype[np.float64]], file: Path
+) -> np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]]:
     """*poses* as ``(N, J, 3, 3)`` rotation matrices."""
     if poses.ndim == 4 and poses.shape[-2:] == (3, 3):
         return poses
@@ -277,7 +276,9 @@ def _as_matrices(poses: "NDArray[np.float64]", file: Path) -> "NDArray[np.float6
     )
 
 
-def _rotvec_to_matrix(rotvec: "NDArray[np.float64]") -> "NDArray[np.float64]":
+def _rotvec_to_matrix(
+    rotvec: np.ndarray[tuple[int, int, int], np.dtype[np.float64]],
+) -> np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]]:
     """Rodrigues' formula over every ``(..., 3)`` axis-angle vector."""
     angle = np.linalg.norm(rotvec, axis=-1, keepdims=True)
     axis = np.divide(rotvec, angle, out=np.zeros_like(rotvec), where=angle > 1e-12)
@@ -294,15 +295,17 @@ def _rotvec_to_matrix(rotvec: "NDArray[np.float64]") -> "NDArray[np.float64]":
     sin = np.sin(angle)[..., None]
     cos = np.cos(angle)[..., None]
     eye = np.broadcast_to(np.eye(3), k.shape)
-    result: "NDArray[np.float64]" = eye + sin * k + (1.0 - cos) * (k @ k)
+    result: np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]] = (
+        eye + sin * k + (1.0 - cos) * (k @ k)
+    )
     return result
 
 
 def _forward_kinematics(
-    rotations: "NDArray[np.float64]",
+    rotations: np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]],
     names: Sequence[str],
-    orient: "Optional[NDArray[np.float64]]",
-) -> dict[str, "NDArray[np.float64]"]:
+    orient: Optional[np.ndarray[tuple[int, int, int], np.dtype[np.float64]]],
+) -> dict[str, np.ndarray[tuple[int, int, int], np.dtype[np.float64]]]:
     """Each followed joint's world orientation, ``(N, 3, 3)``, by name.
 
     *rotations* are relative to the parent: absolute ones, or, given the
@@ -323,7 +326,7 @@ def _forward_kinematics(
     missing = sorted(needed - set(index))
     if missing:
         raise ValueError(f"the motion lacks joints a walker follows: {missing}")
-    relative: dict[str, "NDArray[np.float64]"] = {}
+    relative: dict[str, np.ndarray[tuple[int, int, int], np.dtype[np.float64]]] = {}
     for joint in sorted(needed, key=_SOMA_ORDER.__getitem__):
         parent = _SOMA_PARENT[joint]
         if parent == "Root":
@@ -331,7 +334,7 @@ def _forward_kinematics(
         else:
             above = relative[parent]
         relative[joint] = above @ rotations[:, index[joint]]
-    world: dict[str, "NDArray[np.float64]"] = {}
+    world: dict[str, np.ndarray[tuple[int, int, int], np.dtype[np.float64]]] = {}
     for joint in sorted(followed, key=_SOMA_ORDER.__getitem__):
         if orient is None:
             world[joint] = relative[joint]
@@ -341,8 +344,8 @@ def _forward_kinematics(
 
 
 def _body_directions(
-    world: dict[str, "NDArray[np.float64]"],
-) -> "NDArray[np.float64]":
+    world: dict[str, np.ndarray[tuple[int, int, int], np.dtype[np.float64]]],
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.float64]]:
     """Each joint's bone direction, in the body frame of the first frame.
 
     SOMA is Y-up with the character facing ``+Z`` and its left ``+X``; a
@@ -370,5 +373,7 @@ def _body_directions(
         columns.append(bone @ to_body.T)
     stacked = np.stack(columns, axis=1)
     norms = np.linalg.norm(stacked, axis=-1, keepdims=True)
-    result: "NDArray[np.float64]" = stacked / np.maximum(norms, 1e-12)
+    result: np.ndarray[tuple[int, int, int], np.dtype[np.float64]] = (
+        stacked / np.maximum(norms, 1e-12)
+    )
     return result
