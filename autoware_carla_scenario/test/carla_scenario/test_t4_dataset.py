@@ -235,6 +235,69 @@ def test_a_skewed_lens_has_no_opencv_model() -> None:
         t4.opencv_of_ftheta(lens, 832, 480)
 
 
+def _skewed_lens_camera(logical_id: str = "cam_front") -> DriverCameraConfig:
+    """A camera whose F-theta lens is skewed in its rows: no OpenCV model."""
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    lens = DriverCameraLens.from_mapping(
+        {**COSMOS3_FRONT_WIDE, "linear_cde": [1.0, 0.0, 0.01]}
+    )
+    return DriverCameraConfig(
+        logical_id=logical_id, image_width=832, image_height=480, lens=lens
+    )
+
+
+def test_settings_refuse_a_lens_the_dataset_cannot_hold() -> None:
+    # Refused as the settings are built, naming the camera, not as every
+    # run's dataset starts (#1686).
+    with pytest.raises(
+        ValueError, match=r"camera 'cam_wide'.*linear_cde e != 0 has no OpenCV model"
+    ):
+        T4Settings.from_driver(_driver(cameras=(_skewed_lens_camera("cam_wide"),)), {})
+
+
+def test_settings_do_not_check_a_lens_of_no_camera() -> None:
+    # A lens whose logical id names no camera is not written: as before, it
+    # is not refused.
+    (camera,) = _driver().cameras
+    lens = _skewed_lens_camera().lens
+    assert lens is not None
+    settings = T4Settings(
+        cameras=(("cam_front", camera.to_sensor_config()),),
+        lenses=(("cam_elsewhere", lens),),
+    )
+    assert settings.lenses == (("cam_elsewhere", lens),)
+
+
+def test_a_run_refuses_a_lens_the_dataset_cannot_hold_before_it_starts() -> None:
+    from autoware_carla_scenario.examples import run  # noqa: PLC0415
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+    from .test_video_removed import _shipped
+
+    cfg = OmegaConf.merge(
+        _shipped(["t4.enabled=true"]),
+        {
+            "driver": {
+                "cameras": [
+                    {
+                        "logical_id": "cam_front",
+                        "image_width": 832,
+                        "image_height": 480,
+                        "lens": {**COSMOS3_FRONT_WIDE, "linear_cde": [1.0, 0.0, 0.01]},
+                    }
+                ]
+            }
+        },
+    )
+    with pytest.raises(
+        run.RunConfigError, match=r"^t4: the lens of camera 'cam_front'"
+    ):
+        run.check_run_config(cfg)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("type_id", "base_type", "wheels", "category"),
     [
@@ -801,6 +864,52 @@ def test_a_recording_that_cannot_start_is_none(tmp_path: Path) -> None:
     recording = recorder.start(out, "Run", world, world.ego, 100)  # type: ignore[arg-type]
     assert recording is None
     assert world.sensors == []
+
+
+def test_a_lens_the_writer_cannot_express_leaves_nothing_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings built past their check (the issue's repro once was): the
+    recording is refused before the writer makes its directory (#1686)."""
+    monkeypatch.setattr(T4Settings, "_check_lenses", lambda self: None)
+    settings = T4Settings.from_driver(_driver(cameras=(_skewed_lens_camera(),)), {})
+    out = tmp_path / "out"
+    world = _World()
+    recording = T4Recorder(settings).start(out, "Run", world, world.ego, 100)  # type: ignore[arg-type]
+    assert recording is None
+    assert not dataset_path(out, "Run").exists()
+    assert world.sensors == []
+
+
+def test_a_recording_that_fails_after_its_writer_leaves_nothing_on_disk(
+    tmp_path: Path,
+) -> None:
+    class _NoSensorWorld(_World):
+        def spawn_actor(self, blueprint: Any, transform: Any, attach_to: Any) -> Any:
+            if blueprint.name.startswith("sensor.camera"):
+                raise RuntimeError("no camera in this world")
+            return super().spawn_actor(blueprint, transform, attach_to)
+
+    out = tmp_path / "out"
+    world = _NoSensorWorld()
+    recorder = T4Recorder(T4Settings.from_driver(_driver(), {}))
+    recording = recorder.start(out, "Run", world, world.ego, 100)  # type: ignore[arg-type]
+    assert recording is None
+    assert not dataset_path(out, "Run").exists()
+    assert world.sensors and all(sensor.destroyed for sensor in world.sensors)
+
+
+def test_a_recording_that_cannot_start_keeps_a_directory_it_did_not_make(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "out"
+    kept = dataset_path(out, "Run") / "0" / "annotation" / "kept.json"
+    kept.parent.mkdir(parents=True)
+    kept.write_text("{}")
+    world = _World()
+    recorder = T4Recorder(T4Settings.from_driver(_driver(), {}))
+    assert recorder.start(out, "Run", world, world.ego, 100) is None  # type: ignore[arg-type]
+    assert kept.read_text() == "{}"
 
 
 def test_a_driver_policys_ego_feeds_the_dataset(
