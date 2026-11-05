@@ -240,6 +240,89 @@ def test_a_log_without_center_centres_boxes_at_the_origin(tmp_path: Path) -> Non
     assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.3)
 
 
+def _levels_log(path: Path, *, other_z: float, with_z: bool = True) -> Path:
+    """A one-tick log: an ego 4.8 m by 2 m by 1.5 m standing at the origin,
+    and a car of the same size right above or below it, its origin at
+    *other_z* (both boxes 0.75 m above their origins).  No z in ``extent``
+    and ``center`` when not *with_z*, as older logs."""
+    extent = [2.4, 1.0, 0.75] if with_z else [2.4, 1.0]
+    center = [0.0, 0.0, 0.75] if with_z else [0.0, 0.0]
+    lines = [
+        json.dumps({"type": "world", "schema_version": 2}),
+        json.dumps(
+            {
+                "type": "actor",
+                "id": 1,
+                "role": "Ego",
+                "extent": extent,
+                "center": center,
+            }
+        ),
+        json.dumps(
+            {
+                "type": "actor",
+                "id": 2,
+                "role": "npc1",
+                "extent": extent,
+                "center": center,
+            }
+        ),
+        json.dumps(
+            {
+                "type": "tick",
+                "frame": 0,
+                "t": 0.0,
+                "actors": [
+                    [1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [2, 0.0, 0.0, other_z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ],
+                "control": {"1": [0.0, 0.0, 0.0, 1]},
+            }
+        ),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_road_user_overhead_is_as_far_as_the_clearance(tmp_path: Path) -> None:
+    """A car on a bridge 6 m over the ego overlaps it on the ground (#1598):
+    the gap is the 4.5 m between the ego's roof and its wheels, not 0."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=6.0)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(4.5)
+
+
+def test_a_road_user_beneath_is_as_far_as_the_clearance(tmp_path: Path) -> None:
+    """In an underpass 7 m under the ego: 5.5 m between its roof and the
+    ego's wheels."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=-7.0)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(5.5)
+
+
+def test_a_road_user_on_the_same_level_is_measured_on_the_ground(
+    tmp_path: Path,
+) -> None:
+    """Half a metre higher, on a slope or a kerb, is the ego's level of road
+    (``utils.clearance._SAME_LEVEL_MARGIN_M``): the boxes meet."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=0.5)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.0)
+    beside = _boxed_log(
+        tmp_path / "Beside.trajectory.jsonl",
+        ego_center=[0.0, 0.0, 0.75],
+        ego_yaw=0.0,
+        walker=(3.0, 0.0),
+    )
+    assert results.case_metrics(beside)["min_gap_m"] == pytest.approx(0.3)
+
+
+def test_a_log_without_z_measures_gaps_on_the_ground(tmp_path: Path) -> None:
+    """An older log records no z in ``extent`` or ``center``: its gaps are
+    planar, as before, and it still reads."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=6.0, with_z=False)
+    metrics = results.case_metrics(log)
+    assert metrics["min_gap_m"] == pytest.approx(0.0)
+    assert metrics["max_speed_kmh"] == pytest.approx(0.0)
+
+
 def test_records_other_than_ticks_and_actors_are_skipped(tmp_path: Path) -> None:
     """A record that merely names "tick" or "actor" (a label, a role) is not
     read as a tick: a spawn or despawn line, or a collision's role list."""
