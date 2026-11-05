@@ -248,7 +248,26 @@ def _workers_for(carla_map: Any) -> list[CommonRoadWorker]:
         close_commonroad_workers()
         started = _start_workers(carla_map, name)
         _POOL.workers, _POOL.map_name = started, name
+        _close_at_exit()
         return started
+
+
+#: The process that registered :func:`close_commonroad_workers` with
+#: ``atexit``, if any.
+_CLOSE_AT_EXIT_PID: Optional[int] = None
+
+
+def _close_at_exit() -> None:
+    """Have this process close its workers at exit, once.
+
+    Per process, not at import: a sweep's case, forked
+    (``sweeper/isolation.py``), runs none of the ``atexit`` handlers it
+    inherited from the sweep, only those it registered itself (#1568).
+    """
+    global _CLOSE_AT_EXIT_PID
+    if _CLOSE_AT_EXIT_PID != os.getpid():
+        _CLOSE_AT_EXIT_PID = os.getpid()
+        atexit.register(close_commonroad_workers)
 
 
 def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
@@ -358,6 +377,3 @@ def _close_all(workers: list[CommonRoadWorker]) -> None:
             worker.close()
         except Exception:  # noqa: BLE001
             logger.warning("could not close a CommonRoad worker", exc_info=True)
-
-
-atexit.register(close_commonroad_workers)

@@ -222,6 +222,41 @@ def _die_with_parent(parent_pid: int) -> None:
         os._exit(128 + int(signal.SIGTERM))
 
 
+def _forget_inherited_exit_handlers() -> None:
+    """Drop the ``atexit`` handlers the forked child inherited from the sweep.
+
+    They are the sweep's: the CARLA server it started, the policy server it
+    serves, the Docker containers it runs.  Run in the child, they would stop
+    them under the sweep (#1568).  CPython's own ``atexit._clear()``, which
+    Codon has nothing for (its shim declares ``register()`` and
+    ``unregister()`` only): :func:`_run_in_child` calls this in the ``else``
+    branch of ``if TYPE_CHECKING:``.
+    """
+    import atexit  # noqa: PLC0415
+
+    atexit._clear()
+
+
+def _run_own_exit_handlers() -> None:
+    """Run the ``atexit`` handlers the case registered, as an exit would.
+
+    ``os._exit`` runs none, so without this a case would leave what it
+    registered them to clean up: the directory of the Unix socket it served
+    its policy on (``driver.transport=unix``), the Docker containers it
+    started, its CommonRoad workers (#1568).  An exception a handler raises
+    is reported and the next one runs, as at an exit; none may stop the
+    child before its ``os._exit``.  CPython's ``atexit._run_exitfuncs()``,
+    which Codon has nothing for: :func:`_run_in_child` calls this in the
+    ``else`` branch of ``if TYPE_CHECKING:``.
+    """
+    import atexit  # noqa: PLC0415
+
+    try:
+        atexit._run_exitfuncs()
+    except BaseException:  # noqa: BLE001 - the child must reach os._exit
+        logger.exception("An exit handler of the job raised in child process")
+
+
 def _run_in_child(
     run_case: Callable[[], int],
     parent_pid: int,
@@ -234,7 +269,18 @@ def _run_in_child(
     frames, which it shares with the parent after the fork.  It starts with
     :data:`_STOP_SIGNALS` blocked and restores *signal_mask* once its
     handlers are in place.
+
+    Before its ``os._exit`` the child runs the ``atexit`` handlers the case
+    registered (:func:`_run_own_exit_handlers`), with the stop signals
+    blocked, and none of those it inherited from the sweep, which it drops
+    first thing (:func:`_forget_inherited_exit_handlers`).
     """
+    # Before anything that could reach the `finally` below: the sweep's
+    # handlers must never run in the child.
+    if TYPE_CHECKING:
+        pass
+    else:
+        _forget_inherited_exit_handlers()
     code = 1
     try:
         # A process group of its own, so the parent can signal the whole tree.
@@ -265,6 +311,10 @@ def _run_in_child(
     finally:
         # No stop signal may raise past here and skip os._exit.
         signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
+        if TYPE_CHECKING:
+            pass
+        else:
+            _run_own_exit_handlers()
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
