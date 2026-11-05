@@ -42,6 +42,12 @@ import numpy as np
 
 from .constants import FIXED_DELTA_SECONDS
 
+# What a run's sensor recording is named, ``{stem}.sensors.rrd``, and where it
+# is: the path rule is the checked run_outputs's (#1678); the names they had
+# here stay importable from here.
+from .run_outputs import SENSORS_SUFFIX as SENSORS_SUFFIX
+from .run_outputs import sensors_recording_path as lidar_recording_path
+
 __all__ = [
     "APPLICATION_ID",
     "SENSORS_SUFFIX",
@@ -64,8 +70,6 @@ logger = logging.getLogger(__name__)
 
 #: The converter's application id, so the viewer merges the two recordings.
 APPLICATION_ID = "autoware_carla_scenario"
-#: What a run's sensor recording is named: ``{stem}.sensors.rrd``.
-SENSORS_SUFFIX = ".sensors.rrd"
 #: The name it had when it held the LiDAR alone.
 LIDAR_SUFFIX = SENSORS_SUFFIX
 #: How to install what this module needs.
@@ -96,11 +100,6 @@ def require_sdk() -> Any:
             "rerun.lidar=false rerun.cameras=false)"
         ) from exc
     return rerun
-
-
-def lidar_recording_path(directory: Path, stem: str) -> Path:
-    """``{directory}/{stem}.sensors.rrd``."""
-    return Path(directory) / f"{stem}{SENSORS_SUFFIX}"
 
 
 def _cli() -> Path:

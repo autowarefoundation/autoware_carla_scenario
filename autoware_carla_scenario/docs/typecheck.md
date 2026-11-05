@@ -2424,8 +2424,11 @@ and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
 `scenario-new` (`scaffold.names`, #1654), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
-(`ui.web_viewer_paths`, #1672), the frame math of the T4Scene
-converter (CARLA's world frame to Autoware's `map` frame, and the rotations
+(`ui.web_viewer_paths`, #1672), what a run names its outputs, the path
+rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
+the stem a log is of, its recording and its sensor recording, which `rerun`,
+`rerun_lidar` and `ui.web_viewer_paths` all name them with), the frame math
+of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles: `t4_scene.frames`, #1665; the converter
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), and the parts of the

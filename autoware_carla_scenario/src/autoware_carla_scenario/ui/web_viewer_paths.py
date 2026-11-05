@@ -4,10 +4,10 @@ The path rules of the viewer's recordings and of its copy of Rerun's web viewer:
 the viewer's cache directory (``VIEWER_CACHE_DIR``, else under
 ``XDG_CACHE_HOME`` or ``~/.cache``), where a fetched copy of a web viewer
 version is kept there (:func:`web_viewer_cache_dir`), the recording beside a
-trajectory log (:func:`recording_path`); and the choice of the web viewer
-``VIEWER_RERUN_WEB_VIEWER`` makes: none, a URL (:func:`configured_viewer`), or
-an unpacked package on this machine (:func:`local_package`), with the CDN
-(:func:`cdn_url`) as the fallback.
+trajectory log (:func:`recording_path`, ``run_outputs``'s rule); and the
+choice of the web viewer ``VIEWER_RERUN_WEB_VIEWER`` makes: none, a URL
+(:func:`configured_viewer`), or an unpacked package on this machine
+(:func:`local_package`), with the CDN (:func:`cdn_url`) as the fallback.
 
 Split out of ``ui.recordings``, which re-exports every name moved here and
 keeps what reads the package's JSON, hashes a log's path, downloads and
@@ -21,6 +21,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+# The recording beside a trajectory log is the checked run_outputs's rule
+# (#1678), the one rerun names it with; ui.recordings re-exports both names.
+from ..run_outputs import TRAJECTORY_SUFFIX
+from ..run_outputs import recording_path as recording_path
 
 __all__ = [
     "DEFAULT_WEB_VIEWER_VERSION",
@@ -47,7 +52,7 @@ _WEB_VIEWER_FILES = ("index.js", "re_viewer.js", "re_viewer_bg.wasm", "package.j
 _ENV_WEB_VIEWER = "VIEWER_RERUN_WEB_VIEWER"
 _ENV_CACHE = "VIEWER_CACHE_DIR"
 
-_TRAJECTORY = ".trajectory.jsonl"
+_TRAJECTORY = TRAJECTORY_SUFFIX
 
 
 @dataclass(frozen=True)
@@ -89,13 +94,6 @@ def _complete(directory: Path) -> bool:
         if not (directory / name).is_file():
             return False
     return True
-
-
-def recording_path(trajectory: Path) -> Path:
-    """``X.rrd`` beside ``X.trajectory.jsonl``, where the converter writes it."""
-    name = trajectory.name
-    stem = name[: -len(_TRAJECTORY)] if name.endswith(_TRAJECTORY) else trajectory.stem
-    return trajectory.with_name(f"{stem}.rrd")
 
 
 def cdn_url(version: str) -> str:

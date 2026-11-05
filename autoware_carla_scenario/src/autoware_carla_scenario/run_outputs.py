@@ -19,7 +19,11 @@ whole list, and all read it from here:
 The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
 ``traffic.sumo.backend.OUTPUT_SUFFIX`` ...);
-``test_run_outputs.py`` keeps them equal to the ones here.
+``test_run_outputs.py`` keeps them equal to the ones here.  The path rule of
+a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
+:func:`recording_path`, :func:`sensors_recording_path`), so that the checked
+``ui.web_viewer_paths`` shares it with ``rerun`` and ``rerun_lidar``, which
+re-export it under the names they had.
 
 Free of imports beyond ``pathlib`` and ``shutil``: the SLURM worker and the
 library check read it.
@@ -31,14 +35,27 @@ import shutil
 from pathlib import Path
 
 __all__ = [
+    "RECORDING_SUFFIX",
     "RUN_DIR_SUFFIXES",
     "RUN_FILE_SUFFIXES",
     "RUN_SUFFIXES",
+    "SENSORS_SUFFIX",
+    "TRAJECTORY_SUFFIX",
+    "recording_path",
     "run_output_paths",
     "run_outputs_exist",
     "remove_run_outputs",
     "run_output_stems",
+    "sensors_recording_path",
+    "trajectory_stem",
 ]
+
+#: A run's trajectory log: ``{stem}.trajectory.jsonl``.
+TRAJECTORY_SUFFIX = ".trajectory.jsonl"
+#: The Rerun recording made of it: ``{stem}.rrd``.
+RECORDING_SUFFIX = ".rrd"
+#: The sensors recorded during the run: ``{stem}.sensors.rrd``.
+SENSORS_SUFFIX = ".sensors.rrd"
 
 #: The files a run writes as ``{stem}{suffix}``.
 RUN_FILE_SUFFIXES: tuple[str, ...] = (
@@ -79,6 +96,28 @@ RUN_SUFFIXES: tuple[str, ...] = tuple(
         reverse=True,
     )
 )
+
+
+def trajectory_stem(trajectory: Path) -> str:
+    """The run *trajectory* is the log of: its file stem (``X`` of
+    ``X.trajectory.jsonl``)."""
+    name = trajectory.name
+    if name.endswith(TRAJECTORY_SUFFIX):
+        return name[: -len(TRAJECTORY_SUFFIX)]
+    return trajectory.stem
+
+
+def recording_path(trajectory: Path) -> Path:
+    """The recording made of *trajectory*: ``X.rrd`` beside
+    ``X.trajectory.jsonl``, where the converter writes it by default."""
+    path = Path(trajectory)
+    return path.with_name(trajectory_stem(path) + RECORDING_SUFFIX)
+
+
+def sensors_recording_path(directory: Path, stem: str) -> Path:
+    """``{directory}/{stem}.sensors.rrd``: the sensors a run named *stem*
+    recorded."""
+    return Path(directory) / f"{stem}{SENSORS_SUFFIX}"
 
 
 def run_output_paths(directory: Path, stem: str) -> list[Path]:

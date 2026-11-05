@@ -7,7 +7,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from autoware_carla_scenario import environment, rerun, rerun_lidar, t4_settings
+from autoware_carla_scenario import (
+    environment,
+    rerun,
+    rerun_lidar,
+    run_outputs,
+    t4_settings,
+)
 from autoware_carla_scenario.gate import record as gate_record
 from autoware_carla_scenario.run_outputs import (
     RUN_DIR_SUFFIXES,
@@ -19,6 +25,7 @@ from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm import manifest
 from autoware_carla_scenario.slurm.worker import _remove_outputs
 from autoware_carla_scenario.t4_scene import convert
+from autoware_carla_scenario.ui import recordings, web_viewer_paths
 from autoware_carla_scenario.traffic.base import TrafficContext
 from autoware_carla_scenario.traffic.sumo import backend as sumo_backend
 
@@ -53,6 +60,30 @@ def test_the_suffixes_are_the_writers_own() -> None:
         sumo_backend.OUTPUT_SUFFIX,
     )
     assert not set(RUN_FILE_SUFFIXES) & set(RUN_DIR_SUFFIXES)
+
+
+def test_the_log_and_recording_path_rule_is_run_outputs_s() -> None:
+    # One rule for every module that names a log's recordings (#1678); the
+    # names they had stay importable from them.
+    assert rerun.TRAJECTORY_SUFFIX is run_outputs.TRAJECTORY_SUFFIX
+    assert rerun.RECORDING_SUFFIX is run_outputs.RECORDING_SUFFIX
+    assert rerun._label is run_outputs.trajectory_stem
+    assert rerun_lidar.SENSORS_SUFFIX is run_outputs.SENSORS_SUFFIX
+    assert rerun_lidar.lidar_recording_path is run_outputs.sensors_recording_path
+    assert web_viewer_paths.recording_path is run_outputs.recording_path
+    assert web_viewer_paths._TRAJECTORY is run_outputs.TRAJECTORY_SUFFIX
+    assert recordings.recording_path is run_outputs.recording_path
+    for name in ("Case-3.trajectory.jsonl", "odd.jsonl", "a.b.trajectory.jsonl"):
+        log = Path("/x") / name
+        assert rerun.recording_path(log) == run_outputs.recording_path(log)
+        assert rerun.recording_path(str(log)) == run_outputs.recording_path(log)
+    log = Path("/x/Case-3.trajectory.jsonl")
+    assert run_outputs.trajectory_stem(log) == "Case-3"
+    assert run_outputs.recording_path(log) == Path("/x/Case-3.rrd")
+    assert run_outputs.trajectory_stem(Path("/x/odd.jsonl")) == "odd"
+    assert run_outputs.sensors_recording_path(Path("/x"), "Case-3") == Path(
+        "/x/Case-3.sensors.rrd"
+    )
 
 
 def test_sumos_outputs_are_the_runs_own(tmp_path: Path) -> None:
