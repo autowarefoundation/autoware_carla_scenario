@@ -2889,7 +2889,7 @@ vehicle parameters are a driver's and never reach a bicycle:</p>
 </table>
 <p>SUMO's default bicycle type (<code>DEFAULT_BIKETYPE</code>) is redefined as a
 distribution of 100 types, each its own draw of them
-(<code>&lt;output&gt;/sumo/bicycle_type.add.xml</code>, loaded before the demand), which
+(<code>&lt;output&gt;/{stem}.sumo/bicycle_type.add.xml</code>, loaded before the demand), which
 SUMO's own bicycles (<code>traffic.options.bicycles</code>), a <code>route_path</code> demand's of
 that type and the scenario's bicycles are all of.</p>
 <h3 id="parameter-reference">Parameter reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h3>
@@ -3058,7 +3058,7 @@ defaults.</p>
 <h4 id="trafficpedestrians-sumo-only"><code>traffic.pedestrians</code> (<code>sumo</code> only)<a class="headerlink" href="#trafficpedestrians-sumo-only" title="Permanent link">&para;</a></h4>
 <p>SUMO's default pedestrian type is redefined as a distribution of 100 types,
 each its own draw of them (<code>vTypeDistribution</code>, in
-<code>&lt;output&gt;/sumo/pedestrian_type.add.xml</code> loaded before the demand); SUMO gives
+<code>&lt;output&gt;/{stem}.sumo/pedestrian_type.add.xml</code> loaded before the demand); SUMO gives
 each person one of them as it is added, so each walks as its own draw says.
 They apply to SUMO's own pedestrians (<code>traffic.options.pedestrians</code>) and to a
 <code>route_path</code> demand's that names no type of its own. On types, not on each
@@ -3666,8 +3666,18 @@ before anything is spawned.</p>
 <a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
 <a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
 <a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/{stem}.sumo/fcd.xml</span>
 </code></pre></div>
+<p><strong>Its outputs</strong> are the run's own: everything the backend writes -- SUMO's
+log (<code>sumo.log</code>), the demand it generates (<code>ambient.rou.xml</code>,
+<code>pedestrians.rou.xml</code>, <code>bicycles.rou.xml</code>), the type files below and, with
+<code>fcd_output</code>, the floating car data (<code>fcd.xml</code>) and the SUMO time of each CARLA
+tick (<code>clock.csv</code>) -- goes in <code>&lt;output&gt;/{stem}.sumo/</code>, named by the run's file
+stem like its <code>_result.json</code> (<code>CutInScenario.sumo/</code>, then
+<code>CutInScenario-1.sumo/</code> ...). A batch shares one output directory, so each run
+keeps its own; the directory counts as one of the run's outputs, so a later
+run never takes its stem and a retried run clears it first
+(<code>run_outputs.RUN_DIR_SUFFIXES</code>).</p>
 <p><strong>The network</strong> is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
 <code>world.get_map().to_opendrive()</code>), converts it with
@@ -4137,7 +4147,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 06:42:59 UTC"><span class="timeago" datetime="2026-11-05T06:42:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 06:42:59 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 08:39:03 UTC"><span class="timeago" datetime="2026-11-05T08:39:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 08:39:03 UTC">2026-11-05</span>
   </span>
 
     
