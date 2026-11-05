@@ -2401,9 +2401,11 @@ modules ({{ library.checked_percent }}%; about {{ library.checked_lines }} of
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
-base, its runner and its queue, the traffic backends' interface, the signal
-controllers, the adversity math, the measures, the metrics and the ODD's
-probes, the gate package's `__init__` and its per-run record and probe (not
+base, its runner and its queue, the traffic backends' interface, the
+plain-typed parts of the SUMO backend (its geometry, its physics control, the
+signal states it sets, and its command-line options, mode bits, vehicle types
+and type files), the signal controllers, the adversity math, the measures,
+the metrics and the ODD's probes, the gate package's `__init__` and its per-run record and probe (not
 its evaluator), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec (not the YAML reading around it), the
 example scenarios and their configs, and the parts of the
