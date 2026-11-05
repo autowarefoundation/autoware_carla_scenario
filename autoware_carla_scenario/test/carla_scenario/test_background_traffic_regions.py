@@ -67,7 +67,7 @@ class _Backend(TrafficBackend):
     name = "fake"
 
     def __init__(self) -> None:
-        self.vehicles: dict[str, tuple[float, float, float]] = {}
+        self.vehicles: dict[str, tuple[float, float, Optional[float]]] = {}
         self.removed: list[str] = []
 
     def spawn_background(
@@ -86,7 +86,9 @@ class _Backend(TrafficBackend):
         )
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float, float]]:
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:

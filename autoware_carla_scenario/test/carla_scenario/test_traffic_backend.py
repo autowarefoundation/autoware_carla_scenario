@@ -796,7 +796,7 @@ class _BackgroundActor:
         pass
 
     def get_location(self) -> Any:
-        return SimpleNamespace(x=1.0, y=2.0, z=0.0)
+        return SimpleNamespace(x=1.0, y=2.0, z=6.8)
 
     def destroy(self) -> None:
         self.destroyed += 1
@@ -849,7 +849,7 @@ class TestTrafficManagerBackground:
         backend = TrafficManagerBackend()
         handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
         assert handle is not None
-        assert backend.background_vehicles(world) == {handle: (1.0, 2.0, 0.0)}
+        assert backend.background_vehicles(world) == {handle: (1.0, 2.0, 6.8)}
         backend.remove_background(world, "no-such-handle")
         backend.remove_background(world, handle)
         backend.remove_background(world, handle)

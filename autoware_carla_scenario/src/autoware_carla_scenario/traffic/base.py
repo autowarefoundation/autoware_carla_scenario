@@ -1010,10 +1010,13 @@ class TrafficBackend:
 
     def background_vehicles(
         self, world: "carla.World"
-    ) -> dict[str, tuple[float, float, float]]:
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
         """Every live background vehicle, by handle, at its CARLA
         ``(x, y, z)``: the elevation tells the road under an overpass from
-        the one over it (:func:`~autoware_carla_scenario.coordinate.on_lanelet`)."""
+        the one over it (:func:`~autoware_carla_scenario.coordinate.on_lanelet`).
+        ``z`` is ``None`` where the backend does not know it -- a vehicle the
+        SUMO backend's queue model holds, on a lane's 2D shape -- and the
+        vehicle is then placed in plan view alone."""
         return {}
 
     def remove_background(self, world: "carla.World", handle: str) -> None:

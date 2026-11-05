@@ -2805,6 +2805,31 @@ def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
 
 
 @needs_sumo
+def test_a_background_vehicle_the_queue_model_holds_has_no_height(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    # The queue model places a vehicle on a lane's 2D shape: its height is
+    # not known (None), so a sink or a construction zone places it in plan
+    # view (#1586).  One SUMO drives has its height.
+    backend, world, _entity, _ego = _mesoscopic(crossroads, tmp_path)
+    try:
+        near = backend.spawn_background(
+            world, _carla_transform(-100.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        far = backend.spawn_background(
+            world, _carla_transform(-20.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        assert near is not None and far is not None
+        _tick_until(backend, world, lambda: far in backend._meso)
+        vehicles = backend.background_vehicles(world)
+        assert vehicles[far][2] is None
+        assert near not in backend._meso
+        assert isinstance(vehicles[near][2], float)
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_only_the_traffic_near_the_ego_is_in_sumo_and_carla(
     crossroads: Path, tmp_path: Path
 ) -> None:

@@ -298,9 +298,11 @@ class ConstructionZoneAction(_BackendAction):
     ) -> None:
         """Take the backend's background vehicles in *spans* off the road."""
         for handle, (x, y, z) in backend.background_vehicles(world).items():
-            pose = CarlaWorldPose(x, y, z)
+            # Without its height (None), the vehicle is placed in plan view.
+            by_height = z is not None
+            pose = CarlaWorldPose(x, y, z if z is not None else 0.0)
             for lanelet_id, s_from, s_to in spans:
-                if not on_lanelet(pose, lanelet_id):
+                if not on_lanelet(pose, lanelet_id, by_height=by_height):
                     continue
                 s = project_onto_lanelet(pose, lanelet_id).s
                 if s_from <= s <= s_to:

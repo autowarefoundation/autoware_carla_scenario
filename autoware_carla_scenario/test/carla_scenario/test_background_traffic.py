@@ -33,7 +33,7 @@ class _Backend(TrafficBackend):
     name = "fake"
 
     def __init__(self) -> None:
-        self.vehicles: dict[str, tuple[float, float, float]] = {}
+        self.vehicles: dict[str, tuple[float, float, Optional[float]]] = {}
         self.removed: list[str] = []
 
     def spawn_background(
@@ -52,7 +52,9 @@ class _Backend(TrafficBackend):
         )
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float, float]]:
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
@@ -206,7 +208,7 @@ class TestSource:
                 assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 20.0
 
     def test_the_same_seed_places_the_same_vehicles(self) -> None:
-        def placed(seed: int) -> list[tuple[float, float, float]]:
+        def placed(seed: int) -> list[tuple[float, float, Optional[float]]]:
             backend = _Backend()
             source = TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=5, seed=seed)
             source.set_traffic_backend(backend)

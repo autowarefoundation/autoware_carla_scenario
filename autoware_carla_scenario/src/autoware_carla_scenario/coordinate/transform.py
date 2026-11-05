@@ -199,10 +199,14 @@ def on_lanelet(
     if not by_height:
         return True
     z = pose.z + mm.z_offset
-    own = _project_with_height(lanelet, x, y, z)[0]
+    # How far the point is from this lanelet's surface: worked out only once
+    # another lanelet holds the point too, which most points have none of.
+    own = -1.0
     for _distance, other in lanelet2.geometry.findWithin2d(layer, point, 0.0):
         if other.id == lanelet_id or not lanelet2.geometry.inside(other, point):
             continue
+        if own < 0.0:
+            own = _project_with_height(lanelet, x, y, z)[0]
         if _project_with_height(other, x, y, z)[0] + _STACKED_HEIGHT_TOLERANCE < own:
             return False
     return True
