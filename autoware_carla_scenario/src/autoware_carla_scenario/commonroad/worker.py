@@ -47,6 +47,18 @@ class CommonRoadWorkerError(RuntimeError):
     """The worker could not be started, or failed to answer."""
 
 
+#: How much of an answer out of protocol an error quotes.
+_EXCERPT_CHARS = 200
+
+
+def _excerpt(line: str) -> str:
+    """*line*, stripped and cut to :data:`_EXCERPT_CHARS`, quoted."""
+    text = line.strip()
+    if len(text) > _EXCERPT_CHARS:
+        text = text[:_EXCERPT_CHARS] + "..."
+    return repr(text)
+
+
 def _checkout_project() -> Optional[Path]:
     """``commonroad_metrics/`` of the repository this package was installed
     from in place (``uv sync`` installs the workspace editable), if any."""
@@ -113,16 +125,23 @@ class CommonRoadWorker:
             raise CommonRoadWorkerError(
                 f"could not start the CommonRoad worker {self.command}: {exc}"
             ) from exc
-        answer = self.request(
-            {"op": "init", "map": str(map_path), "settings": settings or {}}
-        )
+        try:
+            answer = self.request(
+                {"op": "init", "map": str(map_path), "settings": settings or {}}
+            )
+        except CommonRoadWorkerError:
+            # Not handed to the caller, so not left running.
+            self.close()
+            raise
         self.measures: list[str] = list(answer.get("measures", []))
 
     def request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Send *request*; its answer.
 
         Raises:
-            CommonRoadWorkerError: The worker is gone, or answered not ok.
+            CommonRoadWorkerError: The worker is gone, answered out of
+                protocol (a line that is not a JSON object), or answered not
+                ok.
         """
         process = self._process
         if (
@@ -143,7 +162,19 @@ class CommonRoadWorker:
             raise CommonRoadWorkerError(
                 f"the CommonRoad worker exited ({process.wait()}) without answering"
             )
-        answer: dict[str, Any] = json.loads(line)
+        try:
+            parsed = json.loads(line)
+        except ValueError as exc:
+            raise CommonRoadWorkerError(
+                f"the CommonRoad worker answered {request.get('op')!r} out of "
+                f"protocol, not with JSON: {_excerpt(line)}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise CommonRoadWorkerError(
+                f"the CommonRoad worker answered {request.get('op')!r} out of "
+                f"protocol, not with a JSON object: {_excerpt(line)}"
+            )
+        answer: dict[str, Any] = parsed
         if not answer.get("ok"):
             raise CommonRoadWorkerError(
                 f"the CommonRoad worker refused {request.get('op')!r}: "
