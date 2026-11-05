@@ -501,6 +501,14 @@ class EditorService:
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
+        if (
+            not self._same_map(document.map, before)
+            and document.map.no_3d_model_lanelet_ids == before.no_3d_model_lanelet_ids
+        ):
+            # Lanelet ids of the map just left mean nothing on the new one, so
+            # the list the form sent back unchanged goes with it, as the file
+            # paths do in _adopt_directory; one typed in alongside stays.
+            document.map.no_3d_model_lanelet_ids = []
 
     # ------------------------------------------------------------------
     # Traffic signals
@@ -884,6 +892,38 @@ class EditorService:
         return KNOWN_REPOSITORIES
 
     @staticmethod
+    def _same_map(after: MapRef, before: MapRef) -> bool:
+        """Whether *after* still names the map *before* did.
+
+        What decides it is what the map resolves from: a local directory,
+        which wins over a source, else a source -- two spellings of one source
+        being the same map -- else the built-in group.  An explicit Lanelet2
+        file overrides any of them, so it counts too.  The excluded lanelet
+        ids belong to that map: they are lanelet ids, and another map numbers
+        its lanelets its own way.
+        """
+
+        def source(ref: MapRef) -> object:
+            if not ref.source:
+                return None
+            try:
+                return MapSource.parse(ref.source)
+            except ValueError:
+                # MapSourceError, or a plain ValueError from urlsplit (an
+                # unclosed IPv6 bracket).  Unparsable, it is compared as text:
+                # the same map only as the very same string.
+                return ref.source
+
+        def origin(ref: MapRef) -> tuple[object, ...]:
+            if ref.directory:
+                return ("directory", ref.directory, ref.lanelet2_path)
+            if ref.source:
+                return ("source", source(ref), ref.lanelet2_path)
+            return ("group", ref.group, ref.lanelet2_path)
+
+        return origin(after) == origin(before)
+
+    @staticmethod
     def _adopt_directory(document: ScenarioDocument, before: MapRef) -> None:
         """Make a newly named map directory the map *document* resolves to.
 
@@ -916,6 +956,7 @@ class EditorService:
         Raises:
             EditorError: If the map could not be fetched.
         """
+        before = document.map.model_copy()
         document.map.source = self._canonical_source(uri)
         # A source supersedes whatever map the document named before it --
         # files or a local directory, which would otherwise win over it --
@@ -923,6 +964,11 @@ class EditorService:
         document.map.directory = None
         document.map.lanelet2_path = None
         document.map.xodr_path = None
+        # So do the lanelets excluded from 3D models: they are the old map's
+        # lanelet ids, and the export's own map group would ship them with
+        # this one.  Choosing the same map again keeps them.
+        if not self._same_map(document.map, before):
+            document.map.no_3d_model_lanelet_ids = []
         self.fetch_map(document)
 
     def fetch_map(self, document: ScenarioDocument, *, refresh: bool = False) -> str:
