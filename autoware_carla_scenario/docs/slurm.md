@@ -167,9 +167,25 @@ command line (`launcher.mem=12G`), or in a config.
 | `cancel_on_interrupt` | `true` | Ctrl-C while waiting cancels the batch's jobs |
 | `collect_job` | `true` | with `wait: false`, a job that collects once the array ends |
 | `collect_mem` | `2G` | its `--mem` |
-| `signal_grace_seconds` | `120` | `--signal=B:TERM@N` |
-| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_slots` at least 1 |
+| `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
+| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
 | `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp` ([Ports](#ports)) |
+
+Each value is checked before anything is written, and one of the wrong type is
+refused with an error naming its key (`launcher.<key>`), never quietly read
+as something else:
+
+- The counts (`cpus_per_task`, `array_parallelism`, `cases_per_task`),
+  `signal_grace_seconds`, `port_base` and `port_slots` are whole numbers: `2`,
+  `2.0` or `"2"`, not `2.7`, `true`, NaN or infinity. The counts and
+  `port_slots` are at least 1.
+- The seconds (`start_stagger_seconds`, `poll_seconds`) are finite numbers, at
+  least 0, not `true`.
+- The flags (`wait`, `headless`, `collect_job`, `cancel_on_interrupt`) are
+  `true` or `false`, or one of their spellings as text (`"false"`, `"no"`,
+  `"off"`, `"0"`, and `"true"`, `"yes"`, `"on"`, `"1"`); `"false"` is false.
+- The text keys are text or a number, not a boolean, a list or a mapping;
+  `extra_sbatch_args` and `setup` are lists (or one string), `env` a mapping.
 
 `cases_per_task` trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
