@@ -2584,9 +2584,15 @@ adds to these totals):</p>
 <li>
 <p><strong>The <code>slim</code> pass</strong> (on by default, <code>slim: "false"</code> to disable) drops
   byte-code caches, vendored test suites, C headers, Cython sources and type
-  stubs (29 MB), then runs <code>strip --strip-unneeded</code> over every bundled shared
-  object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV ship
-  unstripped. Stripping leaves the dynamic symbol table intact.</p>
+  stubs (about 26 MB), then runs <code>strip --strip-unneeded</code> over every bundled
+  shared object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV
+  ship unstripped. Stripping leaves the dynamic symbol table intact. The
+  stubs of mypy's bundled typeshed (<code>mypy/typeshed/</code>, about 3 MB) are kept:
+  the image runs mypy for the scenario check's None check, and without the
+  standard library's stubs mypy stops with <em>"Failed to find builtin module
+  'typing', perhaps typeshed is broken?"</em>, which the check reports only as
+  skipped. The build checks a small program with mypy and fails if mypy does
+  not report its error.</p>
 <p>GNU binutils up to 2.40 — the version in Debian bookworm — rewrites some
 objects into a layout the kernel's ELF loader rejects with <em>"ELF load
 command address/offset not page-aligned"</em>; scipy's bundled OpenBLAS is one.
@@ -2800,7 +2806,7 @@ the image runs as UID 1000, which must be able to write to it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 08:19:59 UTC"><span class="timeago" datetime="2026-11-05T08:19:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 08:19:59 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 08:39:41 UTC"><span class="timeago" datetime="2026-11-05T08:39:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 08:39:41 UTC">2026-11-05</span>
   </span>
 
     
