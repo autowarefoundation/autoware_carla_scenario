@@ -4770,7 +4770,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 271 of the package's 393
 modules (69%; about 83,900 of
-146,700 lines) are <code>CHECKED</code>: the kinematics, the
+146,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6184,7 +6184,7 @@ the first:</p>
 <li><code>ui.scanner</code>: imports yaml, the registry (omegaconf, importlib), which is not checked, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>)</li>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports <code>OddDraws</code> from odd.sampler (under <code>TYPE_CHECKING</code>), which the odd model does not declare</li>
-<li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields) and takes the options as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), takes the options as <code>Mapping[str, Any]</code> and, in checked_str_list(), a list setting of any type (<code>value: Any</code>), which Codon cannot express</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it</li>
 </ul>
 </details>
