@@ -283,6 +283,17 @@ def test_a_command_that_cannot_be_run_fails_the_submission(tmp_path: Path) -> No
     assert "Could not run" in record.output
 
 
+def test_a_batch_directory_with_spaces_is_read_whole(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "My Runs" / "outputs" / "2026-01-01" / "00-00-00"
+    line = f"SLURM job 1: 1 case(s) in 1 task(s) of up to 1 case(s); outputs in {batch_dir}"
+    record = slurm_launch.Submission(
+        command=[sys.executable, "-c", f"print({line!r}); print('more output')"]
+    )
+    slurm_launch._submit(record.command, tmp_path, record)
+    assert record.batch_dir == str(batch_dir)
+    assert record.state == "submitted"
+
+
 def test_the_command_submits_and_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VIEWER_SCENARIO_COMMAND", raising=False)
     options = SlurmOptions(partition="main")
