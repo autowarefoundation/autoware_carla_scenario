@@ -25,6 +25,8 @@ from autoware_carla_scenario.gate.evaluate import (
     EXIT_ERROR,
     EXIT_FAILED,
     EXIT_PASSED,
+    compare,
+    compare_all,
     consistency,
     judge,
     judge_all,
@@ -431,3 +433,114 @@ class TestCli:
         path = tmp_path / "document.yaml"
         save_document(new_document(), path)
         assert main([str(tmp_path), "--document", str(path)]) == EXIT_ERROR
+
+
+class TestRegression:
+    """Two sets of runs: a baseline's and a candidate's (degradation checks)."""
+
+    GATE = {"min_success_rate": 0.5, "max_lateral_spread_m": 0.6}
+
+    def _runs(self, *passed: bool, lateral: float = 0.0) -> list[GateRecord]:
+        return [
+            _record(
+                gate=self.GATE,
+                passed=ok,
+                lanelets=(i,),
+                ego=_drive(lateral=lateral * i),
+            )
+            for i, ok in enumerate(passed)
+        ]
+
+    def test_nothing_changed_is_no_regression(self) -> None:
+        comparison = compare(self._runs(True, True), self._runs(True, True))
+        assert not comparison.regressed
+        assert comparison.passed
+        assert {c.change for c in comparison.criteria} == {"same"}
+
+    def test_a_criterion_that_passed_and_fails_regressed(self) -> None:
+        comparison = compare(
+            self._runs(True, True, True), self._runs(True, False, False)
+        )
+        by_name = {c.name: c for c in comparison.criteria}
+        assert by_name["min_success_rate"].change == "regressed"
+        assert by_name["min_success_rate"].delta == pytest.approx(1 / 3 - 1)
+        assert comparison.regressed and not comparison.passed
+
+    def test_a_case_that_passed_and_fails_regressed_inside_the_gate(self) -> None:
+        # Still above the success rate: the gate passes, the case regressed.
+        comparison = compare(
+            self._runs(True, True, True), self._runs(True, True, False)
+        )
+        assert comparison.candidate is not None and comparison.candidate.passed
+        (case,) = comparison.newly_failing
+        assert (case.lanelet_ids, case.baseline, case.candidate) == (
+            (2,),
+            (1, 1),
+            (0, 1),
+        )
+        assert comparison.regressed
+
+    def test_a_fixed_case_is_reported(self) -> None:
+        comparison = compare(self._runs(True, False), self._runs(True, True))
+        assert [c.lanelet_ids for c in comparison.fixed] == [(1,)]
+        by_name = {c.name: c for c in comparison.criteria}
+        assert by_name["min_success_rate"].change == "better"
+        assert not comparison.regressed
+
+    def test_a_wider_spread_is_worse(self) -> None:
+        comparison = compare(
+            self._runs(True, True, lateral=0.2), self._runs(True, True, lateral=0.8)
+        )
+        by_name = {c.name: c for c in comparison.criteria}
+        assert by_name["max_lateral_spread_m"].change == "worse"
+        assert not comparison.regressed  # still within 0.6 m
+
+    def test_both_are_judged_against_the_candidates_gate(self) -> None:
+        baseline = [_record(gate={"min_success_rate": 0.1}, passed=False)]
+        candidate = [_record(gate={"min_success_rate": 0.0}, passed=False)]
+        comparison = compare(baseline, candidate)
+        assert comparison.baseline is not None and comparison.baseline.passed
+        assert any("another gate" in w for w in comparison.warnings)
+
+    def test_a_scenario_the_candidate_did_not_run_regressed(self) -> None:
+        (comparison,) = compare_all(self._runs(True), [])
+        assert comparison.candidate is None
+        assert comparison.regressed
+
+    def test_a_scenario_new_to_the_candidate_is_judged_alone(self) -> None:
+        (comparison,) = compare_all([], self._runs(True, True))
+        assert comparison.baseline is None
+        assert {c.change for c in comparison.criteria} == {"new"}
+        assert comparison.passed
+
+
+class TestRegressionCli:
+    def _set(self, root: Path, *passed: bool) -> Path:
+        root.mkdir()
+        for i, ok in enumerate(passed):
+            _write(root, f"r{i}", _record(passed=ok, lanelets=(i,)))
+        return root
+
+    def test_two_sets_with_no_regression_exit_0(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        base = self._set(tmp_path / "base", True, True)
+        cand = self._set(tmp_path / "cand", True, True)
+        out = tmp_path / "c.json"
+        assert main([str(base), str(cand), "--json", str(out)]) == EXIT_PASSED
+        assert "no regression" in capsys.readouterr().out
+        payload = json.loads(out.read_text())
+        assert payload["comparisons"][0]["regressed"] is False
+
+    def test_a_newly_failing_case_exits_1(self, tmp_path: Path) -> None:
+        base = self._set(tmp_path / "base", True, True)
+        cand = self._set(tmp_path / "cand", True, False)
+        markdown = tmp_path / "c.md"
+        assert main([str(base), str(cand), "--markdown", str(markdown)]) == EXIT_FAILED
+        text = markdown.read_text()
+        assert "REGRESSED" in text and "Newly failing cases" in text
+
+    def test_more_than_two_sets_are_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exited:
+            main([str(tmp_path), str(tmp_path), str(tmp_path)])
+        assert exited.value.code == 2

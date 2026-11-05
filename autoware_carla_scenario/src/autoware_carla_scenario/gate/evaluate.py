@@ -21,6 +21,11 @@ The criteria, each judged only when the gate sets it:
   segment on every match, the standard deviation across runs of the ego's
   lateral offset from the route and of its speed; the largest is judged.
 
+Given two sets of runs -- a baseline's and a candidate's, of the same
+logical scenarios -- both are judged against one gate, and the report says
+what regressed: a criterion that passed and fails now, and the cases every
+baseline run of passed and a candidate run of failed.
+
 See ``docs/gate.md``.
 """
 
@@ -39,7 +44,13 @@ from ..authoring.models import GateSpec
 from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
 
 __all__ = [
+    "CHANGES",
+    "CaseChange",
     "ConsistencyResult",
+    "CriterionChange",
+    "GateComparison",
+    "compare",
+    "compare_all",
     "CriterionResult",
     "GateVerdict",
     "consistency",
@@ -492,6 +503,329 @@ def judge_all(
 
 
 # ---------------------------------------------------------------------------
+# Regression: a baseline's runs against a candidate's
+# ---------------------------------------------------------------------------
+
+#: How a criterion changed from the baseline to the candidate.
+#: ``regressed`` / ``improved``: it passed and fails now, or the other way;
+#: ``worse`` / ``better`` / ``same``: its verdict held and its value moved
+#: (or not); ``new`` / ``dropped``: only the candidate / the baseline judged it.
+CHANGES: tuple[str, ...] = (
+    "regressed",
+    "improved",
+    "worse",
+    "better",
+    "same",
+    "new",
+    "dropped",
+)
+
+
+@dataclass(frozen=True)
+class CriterionChange:
+    """One criterion, judged on the baseline's runs and on the candidate's."""
+
+    name: str
+    baseline: Optional[CriterionResult]
+    candidate: Optional[CriterionResult]
+
+    @property
+    def change(self) -> str:
+        """One of :data:`CHANGES`."""
+        before, after = self.baseline, self.candidate
+        if after is None:
+            return "dropped"
+        if before is None:
+            return "new"
+        if before.passed and not after.passed:
+            return "regressed"
+        if after.passed and not before.passed:
+            return "improved"
+        if before.value is None or after.value is None:
+            if before.value is None and after.value is None:
+                return "same"
+            return "worse" if after.value is None else "better"
+        delta = after.value - before.value
+        if abs(delta) <= 1e-12:
+            return "same"
+        # ">=": higher is better; "<=": lower is.
+        higher_is_better = after.comparison == ">="
+        return "better" if (delta > 0) == higher_is_better else "worse"
+
+    @property
+    def delta(self) -> Optional[float]:
+        """The candidate's value less the baseline's, when both have one."""
+        if self.baseline is None or self.candidate is None:
+            return None
+        if self.baseline.value is None or self.candidate.value is None:
+            return None
+        return self.candidate.value - self.baseline.value
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "change": self.change,
+            "delta": self.delta,
+            "baseline": None if self.baseline is None else self.baseline.to_dict(),
+            "candidate": None if self.candidate is None else self.candidate.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class CaseChange:
+    """A case whose outcome changed: its runs in the baseline and the candidate.
+
+    Attributes:
+        map: The case's map.
+        lanelet_ids: Its route's lanelets.
+        baseline: ``(passed runs, runs)`` in the baseline.
+        candidate: ``(passed runs, runs)`` in the candidate.
+    """
+
+    map: str
+    lanelet_ids: tuple[int, ...]
+    baseline: tuple[int, int]
+    candidate: tuple[int, int]
+
+    def label(self) -> str:
+        ids = ",".join(str(v) for v in self.lanelet_ids)
+        return f"{self.map or '?'} [{ids}]"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "map": self.map,
+            "lanelet_ids": list(self.lanelet_ids),
+            "baseline": {"passed": self.baseline[0], "runs": self.baseline[1]},
+            "candidate": {"passed": self.candidate[0], "runs": self.candidate[1]},
+        }
+
+
+def _outcomes(
+    records: Sequence[GateRecord],
+) -> dict[tuple[str, tuple[int, ...]], tuple[int, int]]:
+    """``(passed runs, runs)`` of each case."""
+    out: dict[tuple[str, tuple[int, ...]], tuple[int, int]] = {}
+    for record in records:
+        passed, runs = out.get(record.case.key, (0, 0))
+        out[record.case.key] = (passed + int(record.passed), runs + 1)
+    return out
+
+
+@dataclass
+class GateComparison:
+    """One logical scenario's gate on a baseline's runs and a candidate's.
+
+    The candidate is judged against the same gate as the baseline, so what
+    moved is the runs, not the thresholds.
+
+    Attributes:
+        scenario: The logical scenario's id.
+        title: Its title.
+        baseline: The gate on the baseline's runs; ``None`` when it has none.
+        candidate: The gate on the candidate's runs; ``None`` when it has none.
+        criteria: Each criterion, compared.
+        newly_failing: Cases every baseline run of passed, and a candidate run
+            of failed.
+        fixed: Cases a baseline run of failed, and every candidate run of
+            passed.
+        warnings: What the comparison noticed and went on past.
+    """
+
+    scenario: str
+    title: str
+    baseline: Optional[GateVerdict]
+    candidate: Optional[GateVerdict]
+    criteria: list[CriterionChange] = field(default_factory=list)
+    newly_failing: list[CaseChange] = field(default_factory=list)
+    fixed: list[CaseChange] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def regressed(self) -> bool:
+        """Whether the candidate is worse off: the scenario did not run, a
+        criterion that passed fails, or a case that passed fails."""
+        if self.candidate is None:
+            return True
+        return bool(self.newly_failing) or any(
+            c.change == "regressed" for c in self.criteria
+        )
+
+    @property
+    def passed(self) -> bool:
+        """Whether the candidate passes the gate and did not regress."""
+        return (
+            self.candidate is not None and self.candidate.passed and not self.regressed
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scenario": self.scenario,
+            "title": self.title,
+            "passed": self.passed,
+            "regressed": self.regressed,
+            "baseline": None if self.baseline is None else self.baseline.to_dict(),
+            "candidate": None if self.candidate is None else self.candidate.to_dict(),
+            "criteria": [c.to_dict() for c in self.criteria],
+            "newly_failing": [c.to_dict() for c in self.newly_failing],
+            "fixed": [c.to_dict() for c in self.fixed],
+            "warnings": list(self.warnings),
+        }
+
+    def to_markdown(self) -> str:
+        if self.candidate is None:
+            verdict = "NOT RUN"
+        else:
+            verdict = "PASSED" if self.candidate.passed else "FAILED"
+        trend = "REGRESSED" if self.regressed else "no regression"
+        lines = [
+            f"## {self.title or self.scenario} (`{self.scenario}`): "
+            f"{verdict}, {trend}",
+            "",
+        ]
+        for name, verdict_of in (
+            ("Baseline", self.baseline),
+            ("Candidate", self.candidate),
+        ):
+            if verdict_of is None:
+                lines.append(f"- {name}: no run")
+            else:
+                mark = "passed" if verdict_of.passed else "failed"
+                lines.append(
+                    f"- {name}: {verdict_of.passed_runs} of {verdict_of.runs} "
+                    f"run(s) passed; gate {mark}"
+                )
+        lines += [
+            "",
+            "| Criterion | Required | Baseline | Candidate | Change |",
+            "|---|---|---|---|---|",
+        ]
+        for c in self.criteria:
+            ref = c.candidate or c.baseline
+            assert ref is not None  # noqa: S101 -- one side judged it
+            required = f"{ref.comparison} {_number(ref.threshold)}"
+            change = c.change
+            if change == "regressed":
+                change = "**regressed**"
+            lines.append(
+                f"| {c.name} | {required} | {_cell(c.baseline)} | "
+                f"{_cell(c.candidate)} | {change} |"
+            )
+        for title, cases in (
+            ("Newly failing cases", self.newly_failing),
+            ("Fixed cases", self.fixed),
+        ):
+            if cases:
+                lines += ["", f"{title}:", ""]
+                lines += [
+                    f"- {case.label()}: baseline {case.baseline[0]}/"
+                    f"{case.baseline[1]} passed, candidate {case.candidate[0]}/"
+                    f"{case.candidate[1]}"
+                    for case in cases
+                ]
+        if self.warnings:
+            lines.append("")
+            lines.extend(f"- warning: {w}" for w in self.warnings)
+        return "\n".join(lines)
+
+
+def _cell(result: Optional[CriterionResult]) -> str:
+    if result is None:
+        return "-"
+    value = "n/a" if result.value is None else _number(result.value)
+    return value if result.passed else f"{value} (fail)"
+
+
+def compare(
+    baseline: Sequence[GateRecord],
+    candidate: Sequence[GateRecord],
+    gate: Optional[GateSpec] = None,
+) -> GateComparison:
+    """Compare one logical scenario's runs: *baseline*'s against *candidate*'s.
+
+    Both are judged against one gate: *gate*, else the one the candidate's
+    latest record states (the baseline's when the candidate has no run).  A
+    baseline whose runs stated another gate gets a warning: its runs are
+    re-judged, not taken as they were judged then.
+
+    Raises:
+        ValueError: If both are empty, or they hold more than one scenario.
+    """
+    ids = {r.scenario for r in [*baseline, *candidate]}
+    if len(ids) != 1:
+        raise ValueError(f"expected the runs of one scenario, got {sorted(ids)}")
+    warnings: list[str] = []
+    after = judge(candidate, gate) if candidate else None
+    used = gate if gate is not None else (after.gate if after is not None else None)
+    before = judge(baseline, used) if baseline else None
+    if gate is None and after is not None and before is not None:
+        stated = {json.dumps(r.gate, sort_keys=True) for r in baseline}
+        if stated != {json.dumps(after.gate.to_dict(), sort_keys=True)}:
+            warnings.append(
+                "the baseline's runs stated another gate; both are judged "
+                "against the candidate's"
+            )
+    if before is not None and after is not None:
+        if {r.digest for r in baseline} != {r.digest for r in candidate}:
+            warnings.append(
+                "the baseline and the candidate ran different versions of the "
+                "document"
+            )
+    named = {(c.name): c for c in (before.criteria if before else [])}
+    order = [c.name for c in (after.criteria if after else [])]
+    order += [name for name in named if name not in order]
+    after_named = {c.name: c for c in (after.criteria if after else [])}
+    criteria = [
+        CriterionChange(name, named.get(name), after_named.get(name)) for name in order
+    ]
+    newly_failing: list[CaseChange] = []
+    fixed: list[CaseChange] = []
+    before_cases, after_cases = _outcomes(baseline), _outcomes(candidate)
+    for key in sorted(before_cases.keys() & after_cases.keys()):
+        b, a = before_cases[key], after_cases[key]
+        change = CaseChange(key[0], key[1], b, a)
+        if b[0] == b[1] and a[0] < a[1]:
+            newly_failing.append(change)
+        elif b[0] < b[1] and a[0] == a[1]:
+            fixed.append(change)
+    missing = len(before_cases.keys() - after_cases.keys())
+    if missing and after is not None:
+        warnings.append(f"{missing} case(s) the baseline ran did not run")
+    latest = after or before
+    assert latest is not None  # noqa: S101 -- one side has runs
+    return GateComparison(
+        scenario=latest.scenario,
+        title=latest.title,
+        baseline=before,
+        candidate=after,
+        criteria=criteria,
+        newly_failing=newly_failing,
+        fixed=fixed,
+        warnings=[*(before.warnings if before else []), *warnings],
+    )
+
+
+def compare_all(
+    baseline: Sequence[GateRecord],
+    candidate: Sequence[GateRecord],
+    gate: Optional[GateSpec] = None,
+    scenario: Optional[str] = None,
+) -> list[GateComparison]:
+    """Compare every logical scenario either side ran, one comparison each,
+    sorted by id; only *scenario* when it is given."""
+    names = {r.scenario for r in [*baseline, *candidate]}
+    if scenario is not None:
+        names &= {scenario}
+    return [
+        compare(
+            [r for r in baseline if r.scenario == name],
+            [r for r in candidate if r.scenario == name],
+            gate,
+        )
+        for name in sorted(names)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -502,14 +836,21 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
         description=(
             "Judge logical scenarios' gates from their runs' gate records "
             "({stem}_gate.json): minimum runs, success rate, case and cover "
-            "coverage, and trajectory consistency (docs/gate.md)."
+            "coverage, and trajectory consistency (docs/gate.md). Given two "
+            "sets of runs, judge both against one gate and report what "
+            "regressed from the first (the baseline) to the second (the "
+            "candidate)."
         ),
     )
     parser.add_argument(
-        "paths",
+        "runs",
         nargs="+",
         type=Path,
-        help="gate records, or directories searched for *_gate.json",
+        metavar="RUNS",
+        help=(
+            "a set of runs: a directory searched for *_gate.json, or one gate "
+            "record. One set is judged; two are BASELINE CANDIDATE"
+        ),
     )
     parser.add_argument(
         "--document",
@@ -527,12 +868,28 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
     return parser
 
 
+def _load(path: Path, errors: list[str]) -> list[GateRecord]:
+    records, failed = load_gate_records(find_gate_records([path]))
+    errors.extend(failed)
+    return records
+
+
 def main(
     argv: Optional[Sequence[str]] = None, prog: Optional[str] = "scenario-gate"
 ) -> int:
-    """``scenario-gate``: 0 when every gate passes, 1 when one fails, 2 when
-    there is nothing to judge or a file cannot be read."""
-    args = _parser(prog).parse_args(argv)
+    """``scenario-gate RUNS`` or ``scenario-gate BASELINE CANDIDATE``.
+
+    0 when every gate passes (and, with two sets, nothing regressed), 1 when
+    one fails (or regressed), 2 when there is nothing to judge or a file
+    cannot be read.
+    """
+    parser = _parser(prog)
+    args = parser.parse_args(argv)
+    if len(args.runs) > 2:
+        parser.error(
+            "takes one set of runs, or two to compare (BASELINE CANDIDATE); "
+            f"got {len(args.runs)}"
+        )
     gate: Optional[GateSpec] = None
     scenario: Optional[str] = args.scenario
     if args.document is not None:
@@ -551,28 +908,36 @@ def main(
             return EXIT_ERROR
         gate = document.gate
         scenario = scenario or document.id
-    records, errors = load_gate_records(find_gate_records(args.paths))
+    errors: list[str] = []
+    sets = [_load(path, errors) for path in args.runs]
     for error in errors:
         print(f"scenario-gate: {error}", file=sys.stderr)
-    verdicts = judge_all(records, gate, scenario)
-    if not verdicts:
+    reports: Sequence[GateVerdict | GateComparison]
+    if len(sets) == 1:
+        reports = judge_all(sets[0], gate, scenario)
+        title = "# Logical scenario gates"
+        payload: dict[str, Any] = {"verdicts": [r.to_dict() for r in reports]}
+    else:
+        reports = compare_all(sets[0], sets[1], gate, scenario)
+        title = f"# Logical scenario gates: {args.runs[1]} against {args.runs[0]}"
+        payload = {
+            "baseline": str(args.runs[0]),
+            "candidate": str(args.runs[1]),
+            "comparisons": [r.to_dict() for r in reports],
+        }
+    if not reports:
         print("scenario-gate: no gate record to judge", file=sys.stderr)
         return EXIT_ERROR
-    markdown = "# Logical scenario gates\n\n" + "\n\n".join(
-        v.to_markdown() for v in verdicts
-    )
+    markdown = title + "\n\n" + "\n\n".join(r.to_markdown() for r in reports)
     if args.markdown is not None:
         args.markdown.write_text(markdown + "\n", encoding="utf-8")
     else:
         print(markdown)
     if args.json is not None:
-        args.json.write_text(
-            json.dumps({"verdicts": [v.to_dict() for v in verdicts]}, indent=2),
-            encoding="utf-8",
-        )
+        args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if errors:
         return EXIT_ERROR
-    return EXIT_PASSED if all(v.passed for v in verdicts) else EXIT_FAILED
+    return EXIT_PASSED if all(r.passed for r in reports) else EXIT_FAILED
 
 
 if __name__ == "__main__":  # pragma: no cover
