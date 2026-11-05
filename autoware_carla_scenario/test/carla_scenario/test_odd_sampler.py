@@ -38,6 +38,7 @@ from autoware_carla_scenario.odd.sampler import (
     sample_seed,
     sampler_from_config,
     search_from_config,
+    weights_from_config,
 )
 from autoware_carla_scenario.seed import DEFAULT_SEED
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
@@ -403,6 +404,43 @@ def test_weights_in_a_hydra_sweep_config() -> None:
 def test_bad_weights_are_refused(weights: Any, message: str, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=message):
         sampler_from_config({"weights": weights}, odd=_regions_odd(), base_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"urban: [0.5\n", id="unclosed-flow-sequence"),
+        pytest.param(b"urban: 0.5\n  rural: 0.2\n", id="bad-indentation"),
+        pytest.param(b"urban: \xff\n", id="not-utf-8"),
+        pytest.param(b"urban: " + b"1" * 5000 + b"\n", id="huge-integer"),
+    ],
+)
+def test_an_unreadable_weights_file_is_refused_with_the_key(
+    content: bytes, tmp_path: Path
+) -> None:
+    """#1703: a weights file that is not YAML, not UTF-8, or holds an integer
+    too long to read is the keyed one-line ``ValueError`` the docstring
+    promises, not a ``yaml.YAMLError`` (a traceback in scenario-expand) or a
+    bare ``UnicodeDecodeError`` or ``ValueError``."""
+    path = tmp_path / "shares.yaml"
+    path.write_bytes(content)
+    with pytest.raises(
+        ValueError, match="^sweep.odd_sample.weights: cannot read "
+    ) as e:
+        weights_from_config("shares.yaml", tmp_path)
+    assert str(path) in str(e.value)
+    # One line: a YAML error's text (a caret diagram) is collapsed.
+    assert "\n" not in str(e.value)
+    with pytest.raises(ValueError, match="^sweep.odd_sample.weights: cannot read "):
+        sampler_from_config({"weights": str(path)}, odd=_regions_odd())
+
+
+def test_a_valid_weights_file_reads_as_before(tmp_path: Path) -> None:
+    (tmp_path / "shares.yaml").write_text("rainy: 0.25\ndark: 1\n", encoding="utf-8")
+    assert weights_from_config("shares.yaml", tmp_path) == {"rainy": 0.25, "dark": 1.0}
+    assert weights_from_config(tmp_path / "shares.yaml") == {"rainy": 0.25, "dark": 1.0}
+    assert weights_from_config(None) is None
+    assert weights_from_config({"rainy": 0.5}) == {"rainy": 0.5}
 
 
 def test_weights_need_the_weighted_strategy() -> None:
