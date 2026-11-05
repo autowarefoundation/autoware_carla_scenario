@@ -185,3 +185,11 @@ class MotorcycleEntity(VehicleEntity):
 
     def spawn(self, world: carla.World) -> carla.Actor:
         raise NotImplementedError()
+
+
+# VehicleEntity and VehicleEntityConfig have subclasses here, so each is built
+# once, as conditions.codon builds a BaseCondition: `Optional[VehicleEntity]`
+# None compiles in a program that builds none (#263). After their first
+# subclasses, so that a scenario's own (`class Npc(VehicleEntity)`) or
+# EgoConfig is never the first; the check never runs the program.
+MotorcycleEntity(MotorcycleEntityConfig("", SpawnPointIndex(0)))
