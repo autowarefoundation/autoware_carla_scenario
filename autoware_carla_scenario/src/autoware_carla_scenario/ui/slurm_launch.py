@@ -337,8 +337,8 @@ def _case_states(
             queued = None if states is None else states.get(task)
             status = layout.read_task(sub_index, task) or {}
             job_id = f"{sub.get('job_id')}"
-            # Only what case_state's branch reads of the status: a task file
-            # that holds no JSON object fails only where it always failed.
+            # Only what case_state's branch reads of the status; a task file
+            # that holds no JSON object reads as no status at all (#1630).
             if queued in ACTIVE_STATES:
                 at_case = queued == "RUNNING" and bool(status.get("current") == index)
             elif squeue_known:
