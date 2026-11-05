@@ -172,7 +172,8 @@ class _Actor:
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
-            location=self._location, rotation=SimpleNamespace(yaw=self._yaw)
+            location=self._location,
+            rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=self._yaw),
         )
 
     def get_velocity(self) -> Any:

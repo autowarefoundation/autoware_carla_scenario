@@ -44,6 +44,7 @@ from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
+from .metric_frames import FrameRecorder
 from .metrics import (
     BUILT_IN_METRICS,
     ego_progress,
@@ -386,15 +387,12 @@ def _npc_collision_monitor(backend: TrafficBackend) -> "NpcCollisionMonitor":
     return NpcCollisionMonitor(traffic_backend=backend)
 
 
-def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
+def _metric_recorder(scenario: BaseScenario) -> Optional[FrameRecorder]:
     """What records the run's frames for its MetricConditions, judged once it
     is over (:mod:`~autoware_carla_scenario.metric_batch`); ``None`` when it
-    has none.  Recorded frames are duck-typed actors, which the check
-    (docs/typecheck.md) does not compile."""
+    has none."""
     if not any(is_post_run(c) for c in scenario._fail_conditions):
         return None
-    from .metric_batch import FrameRecorder  # noqa: PLC0415
-
     return FrameRecorder()
 
 
@@ -1856,12 +1854,7 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
-            metric_recorder: Optional[Any] = None
-            if TYPE_CHECKING:
-                # Duck-typed recorded actors (UNCALLED in typecheck/library.py).
-                pass
-            else:
-                metric_recorder = _metric_recorder(scenario)
+            metric_recorder = _metric_recorder(scenario)
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
@@ -1964,17 +1957,12 @@ class ScenarioRunner:
                 set_importance_sampling_weight(scenario.importance_sampling_weight)
                 # The ego's motion, which the weaving metrics read.
                 track_ego_motion(world, elapsed)
-                if TYPE_CHECKING:
-                    # Duck-typed recorded actors (UNCALLED in
-                    # typecheck/library.py).
-                    pass
-                else:
-                    # The frames the MetricConditions are judged on once the
-                    # run is over.
-                    if metric_recorder is not None:
-                        metric_recorder.record(
-                            world, elapsed, scenario.importance_sampling_weight
-                        )
+                # The frames the MetricConditions are judged on once the run
+                # is over.
+                if metric_recorder is not None:
+                    metric_recorder.record(
+                        world, elapsed, scenario.importance_sampling_weight
+                    )
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -2098,8 +2086,9 @@ class ScenarioRunner:
                 )
 
             if TYPE_CHECKING:
-                # Duck-typed recorded actors, and worker processes spoken to
-                # in JSON (UNCALLED in typecheck/library.py).
+                # Recorded frames replayed as a world of duck-typed actors,
+                # and worker processes spoken to in JSON (UNCALLED in
+                # typecheck/library.py).
                 pass
             else:
                 # The MetricConditions, on the metrics of the recorded frames,
