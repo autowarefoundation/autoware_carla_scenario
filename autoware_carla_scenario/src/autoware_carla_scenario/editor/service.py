@@ -177,7 +177,9 @@ class EditorService:
         Args:
             store: Where drafts are read and written.
             export_dir: Where a finished export's wheelhouse ``.zip`` is staged
-                until the browser has fetched it.  The editor hands packages to
+                for download, and kept until the draft is deleted or exported
+                again, so its link can be followed more than once.  The editor
+                hands packages to
                 whoever is using it rather than leaving them on the machine it
                 happens to run on -- over a LAN those are not the same machine
                 -- so this is a holding area, not a destination anyone browses.
@@ -234,6 +236,10 @@ class EditorService:
         """
         return self.export_dir / draft_id
 
+    def _archive_lock(self, draft_id: str) -> threading.Lock:
+        """Return the lock that staging and removing *draft_id*'s archive hold."""
+        return self._lock(f"{draft_id}/archive")
+
     def archive_path(self, draft: Draft) -> Path:
         """Return where an export of *draft* stages its wheelhouse now.
 
@@ -270,13 +276,21 @@ class EditorService:
         a half-written archive, and two exports running at once each write
         their own file: whichever renames last is staged, whole.  An archive
         staged under an earlier scenario id is removed in the same step.
+
+        A draft deleted while its export ran gets nothing staged: the rename
+        is made under the lock :meth:`delete_draft` removes the archive under,
+        and only if the draft is still stored, so a late export cannot leave
+        behind an archive no route can reach any more.
         """
         archive = self.archive_path(draft)
         archive.parent.mkdir(parents=True, exist_ok=True)
         partial = archive.parent / f".{uuid.uuid4().hex}.zip.partial"
         try:
             _zip_directory(source, partial)
-            with self._lock(f"{draft.id}/archive"):
+            with self._archive_lock(draft.id):
+                if not self.store.path_for(draft.id).is_file():
+                    shutil.rmtree(archive.parent, ignore_errors=True)
+                    return archive
                 os.replace(partial, archive)
                 for stale in archive.parent.glob(f"*{_ARCHIVE_SUFFIX}"):
                     if stale != archive:
@@ -376,7 +390,14 @@ class EditorService:
         return self.store.save(draft)
 
     def delete_draft(self, draft_id: str) -> bool:
-        """Delete a draft.  Returns whether anything was removed.
+        """Delete a draft and its staged wheelhouse.  Returns whether anything
+        was removed.
+
+        The archive is a few hundred MB, and once the draft is gone no route
+        can reach it, so it goes with the draft.  Both are removed under the
+        lock staging holds, so an export finishing meanwhile either staged
+        before this (and is removed) or sees the draft gone (and stages
+        nothing).
 
         Raises:
             EditorError: If *draft_id* is not a valid draft id, or names a
@@ -384,7 +405,11 @@ class EditorService:
         """
         with self.editing(draft_id):
             try:
-                return self.store.delete(draft_id)
+                with self._archive_lock(draft_id):
+                    deleted = self.store.delete(draft_id)
+                    if deleted:
+                        shutil.rmtree(self._archive_dir(draft_id), ignore_errors=True)
+                    return deleted
             except ValueError as exc:
                 raise EditorError(str(exc)) from exc
 
