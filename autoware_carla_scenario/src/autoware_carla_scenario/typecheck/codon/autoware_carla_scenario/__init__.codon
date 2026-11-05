@@ -9,7 +9,7 @@
 from .actions import (ConstructionSettings, ConstructionZoneAction, URBAN_CONSTRUCTION, AdversarialBrakeAction, AdversarialCutInAction, AdversarialMergeAction,
                       AdversarialTrafficAction, NadeAdversity, NadeSettings, BaseAction,
                       CommunicationLossAction,
-                      DespawnAction, SpawnAction, EnvironmentAction, HeadOnAction, IgnoreLeaderAction,
+                      DespawnAction, EmergencyAction, SpawnAction, EnvironmentAction, HeadOnAction, IgnoreLeaderAction,
                       JaywalkAction, LaneChangeAbortAction, LaneChangeAction, PedestrianRunRedLightAction,
                       RunTrafficRuleAction, StopCrossingAction, RoutingAction, RoutingMode,
                       SetSpeedAction, StalledObjectAction, TickTiming, collision_objects, TrafficLightTarget, TrafficSignalAction,
@@ -50,7 +50,8 @@ from .coordinate import (CarlaWorldPose, CoordinateFrame, FrameMismatchError,
                          lanelets_ahead, snap_to_carla_road, to_carla_location, to_carla_world, to_lanelet2,
                          to_map_frame, to_opendrive)
 from .driver.egodriver_client import EgoDriverGrpcClient
-from .entity import (CarlaDriverEntity, EgoVehicle, MotorcycleEntity, MotorcycleEntityConfig,
+from .entity import (CarlaDriverEntity, EgoVehicle, EmergencyVehicleEntity, EmergencyVehicleEntityConfig,
+                     MotorcycleEntity, MotorcycleEntityConfig,
                      PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
                      SpawnPointIndex, SpawnTransform, VehicleEntity, VehicleEntityConfig)
 from .entity_role import EntityRole

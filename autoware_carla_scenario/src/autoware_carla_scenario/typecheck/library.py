@@ -69,6 +69,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.communication_loss",
     "autoware_carla_scenario.actions.construction_zone",
     "autoware_carla_scenario.actions.despawn",
+    "autoware_carla_scenario.actions.emergency",
     "autoware_carla_scenario.actions.environment",
     "autoware_carla_scenario.actions.lane_change",
     "autoware_carla_scenario.actions.play_motion",

@@ -1119,6 +1119,35 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="emergency",
+        title="Emergency",
+        category="Vehicle / Lights",
+        builder="build_emergency_action",
+        target="..actions:EmergencyAction",
+        actor_kinds=("vehicle",),
+        visual_kind="instant",
+        fields=(
+            FieldSpec(
+                name="active",
+                label="On a call",
+                kind="bool",
+                default=True,
+                help=(
+                    "Checked: the emergency vehicle goes on a call -- siren "
+                    "lights on, through red lights, other traffic making way "
+                    "under SUMO.  Unchecked: it goes off duty again."
+                ),
+            ),
+        ),
+        description=(
+            "Put an emergency vehicle (police car, ambulance, fire engine) on "
+            "a call or off duty; it stays so until set again."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="communication_loss",
         title="Communication Loss",
         category="Vehicle / HILS",

@@ -139,6 +139,7 @@ tree internally:
 | `TickTiming` | Enum: `PRE_TICK` / `POST_TICK`. |
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `TurnIndicatorAction` | Light a vehicle's turn indicators (`TurnIndicatorState`: `OFF` / `LEFT` / `RIGHT` / `HAZARD`), its other lights as they are; they stay so until set again. |
+| `EmergencyAction` | Put an `EmergencyVehicleEntity` on a call (`active=True`, the default: siren lights on, driven as an emergency vehicle by the traffic backend) or off duty (`active=False`); it stays so until set again. A vehicle that is not an emergency vehicle is left as it is, with a warning. |
 | `CommunicationLossAction` | Stop data between the HILS bridge and an ECU under test (`ego.entity=hils`) while the action runs (until `until` fires or `duration` passes, else to the scenario's end): `messages` by name (a CAN frame, a LiDAR's `scan`) or everything of a `device` (or of every device), `to_ecu` / `from_ecu` / `both`; no effect on any other ego. See [HILS](hils.md#communication-loss). |
 | `LaneChangeAction`, `LaneChangeDirection` | Ask a vehicle's traffic backend for a lane change (TrafficManager `force_lane_change`, SUMO `changeLane`); an ego driven by its own stack refuses. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
@@ -254,6 +255,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 |--------|-------------|
 | `VehicleEntity`, `VehicleEntityConfig` | Generic vehicle actor with retry-aware spawn. |
 | `MotorcycleEntity`, `MotorcycleEntityConfig` | NPC motorcycle: a `VehicleEntity` whose blueprint must be a motorcycle's (`base_type` `motorcycle`); with no `vehicle_type`, the first motorcycle of the server. Driven by the TrafficManager as any vehicle, and by SUMO as a `motorcycle` (docs/traffic_backends.md). |
+| `EmergencyVehicleEntity`, `EmergencyVehicleEntityConfig` | NPC emergency vehicle (police car, ambulance, fire engine): a `VehicleEntity` whose blueprint must be an emergency vehicle's (`special_type` `emergency`); with no `vehicle_type`, the first one of the server. `set_emergency(True)` puts it on a call -- its siren lights (`VehicleLightState.Special1`) on, and driven as one by the traffic backend (`TrafficBackend.set_emergency`): through red lights and stop signs under the TrafficManager, and with a SUMO rescue lane under SUMO (docs/traffic_backends.md). `EmergencyVehicleEntityConfig(emergency=True)` spawns it on a call. |
 | `EgoVehicle` | Subclass with the fixed `EGO_ROLE_NAME`, plus the `on_scenario_start` / `on_tick` / `on_scenario_end` lifecycle hooks `ScenarioRunner` calls. |
 | `ExternallyDrivenEgo` | Base of every ego driven by a stack of its own rather than the TrafficManager: opts out of autopilot, refuses TrafficManager manoeuvres, and carries the termination request. |
 | `BridgeHandshake` | The mission and readiness handshake with a stack over the `AutowareBridge`, optionally launching it per scenario; held by an ego (`entity.bridged_ego`). |

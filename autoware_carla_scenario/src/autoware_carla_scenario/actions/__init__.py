@@ -3,6 +3,7 @@
 from .base import BaseAction, TickTiming
 from .communication_loss import CommunicationLossAction
 from .despawn import DespawnAction
+from .emergency import EmergencyAction
 from .spawn import SpawnAction
 from .environment import EnvironmentAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
@@ -26,6 +27,7 @@ __all__ = [
     "BaseAction",
     "CommunicationLossAction",
     "DespawnAction",
+    "EmergencyAction",
     "SpawnAction",
     "EnvironmentAction",
     "LaneChangeAction",

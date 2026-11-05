@@ -59,7 +59,7 @@ from .scenario_base import BaseScenario
 from .signals.registry import clear_signal_controllers
 from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
-from .traffic.base import TrafficBackend, TrafficContext
+from .traffic.base import DrivenEntity, TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
 from .world_reset import (
     RESET_RELOAD,
@@ -1702,7 +1702,10 @@ class ScenarioRunner:
                 ego_actor.id,
                 ego_actor.type_id,
             )
-            backend.adopt(ego)
+            # A typed local: Codon passes a subclass to a method a backend
+            # overrides only once it is that type (docs/typecheck.md).
+            adopted: DrivenEntity = ego
+            backend.adopt(adopted)
 
             # Register ego existence fail condition so the scenario fails
             # immediately if the ego is destroyed (e.g. falls through map).
