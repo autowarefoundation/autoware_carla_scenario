@@ -1419,8 +1419,8 @@ is resolved against the working directory the command is started from (a
 `--multirun`, a batch, `scenario-expand`), not the directory of the scenario's
 config, as `coverage_from` is: the path is given on the command line, or in a
 config the command line composes. Give an absolute path for a file next to a
-scenario package. A file that cannot be read or parsed, or that names no module
-of the ODD, refuses the sweep before any case runs, with one line
+scenario package. A file that cannot be read or parsed, or that names a module
+the ODD does not have, refuses the sweep before any case runs, with one line
 `Error: <scenario>: <why>` and exit 1.
 
 Each module holds its share of the cases, however the modules overlap: with

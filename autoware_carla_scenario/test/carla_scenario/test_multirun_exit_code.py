@@ -489,16 +489,31 @@ def test_lanelet_sweeper_refuses_a_bad_config_value_before_any_case(
     assert output.count(message) == 1, output
 
 
-def _scenario_app(tmp_path: Path) -> str:
+#: The stubs of :data:`_SWEEPER_APP` that stand in for the sweeper's checks
+#: before it expands the sweep: without them the real ones run.
+_PRE_EXPANSION_STUBS = (
+    "lcs.check_constraint_keys = lambda sweep: None\n",
+    "lcs.load_sweep_map = lambda map_cfg, **_: object()\n",
+)
+
+
+def _scenario_app(tmp_path: Path, *, real_checks: bool = False) -> str:
     """:data:`_SWEEPER_APP` with a ``scenario`` config group holding
     ``cut_in/left``, so ``+scenario=cut_in/left`` is the sweep's scenario
-    choice, as ``scenario=cut_in/left`` is a real sweep's."""
+    choice, as ``scenario=cut_in/left`` is a real sweep's.  With
+    *real_checks*, the sweep's constraint keys are checked and its map
+    loaded by the sweeper's own functions, not stubs."""
     group = tmp_path / "conf" / "scenario" / "cut_in"
     group.mkdir(parents=True)
     (group / "left.yaml").write_text("{}\n", encoding="utf-8")
     old = "config_path=None"
     assert old in _SWEEPER_APP
-    return _SWEEPER_APP.replace(old, 'config_path="conf"')
+    app = _SWEEPER_APP.replace(old, 'config_path="conf"')
+    if real_checks:
+        for stub in _PRE_EXPANSION_STUBS:
+            assert stub in app
+            app = app.replace(stub, "")
+    return app
 
 
 def test_lanelet_sweeper_refuses_an_invalid_sweep_with_one_line(
@@ -521,6 +536,45 @@ def test_lanelet_sweeper_refuses_an_invalid_sweep_with_one_line(
     assert proc.stderr.splitlines() == [line], output
     assert "Traceback" not in output, output
     assert "case 1" not in output, output
+    assert "Launching" not in output, output
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ("+sweep.constraints={a: [{}], b: [{}]}",),
+            "sweep.constraints sweeps one parameter; got keys ['a', 'b']",
+        ),
+        (
+            (
+                "+sweep.constraints={ego.spawn_lanelet_id: [{}]}",
+                "+map.directory=/nonexistent/no_map",
+            ),
+            "LaneletConstraintSweeper: Map directory /nonexistent/no_map "
+            "does not exist",
+        ),
+    ],
+    ids=["second-constraint-key", "missing-map"],
+)
+def test_lanelet_sweeper_refuses_a_sweep_before_expanding_it_with_one_line(
+    tmp_path: Path, args: tuple[str, ...], message: str
+) -> None:
+    """#1705: the sweeper's own checks before it expands the sweep (the
+    constraint keys, the map) refuse it in one line too, exit 1."""
+    proc = _run(
+        _scenario_app(tmp_path, real_checks=True),
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+scenario=cut_in/left",
+        *args,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    lines = proc.stderr.splitlines()
+    assert len(lines) == 1, output
+    assert lines[0].startswith(f"Error: cut_in/left: {message}"), output
+    assert "Traceback" not in output, output
     assert "Launching" not in output, output
 
 

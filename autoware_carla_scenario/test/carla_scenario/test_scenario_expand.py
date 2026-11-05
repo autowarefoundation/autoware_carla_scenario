@@ -426,12 +426,14 @@ class TestExpandConfig:
             expand_config(cfg)
 
     def test_the_sweeper_refuses_a_second_key_before_the_map_is_fetched(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from unittest.mock import MagicMock, patch
 
         from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
 
+        # The ValueError itself, not the one line it is reported as (#1705).
+        monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
         sweeper = mod.LaneletConstraintSweeper()
         sweeper.config = OmegaConf.create(
             {"sweep": {"constraints": {"a.id": [{}], "b.id": [{}]}}}
@@ -448,7 +450,8 @@ class TestExpandConfig:
     # sweeper (a single scenario's --multirun) as scenario-expand refuses it:
     # a ValueError naming the map, its cause kept, before any case runs
     # (#1447).  It used to escape as a MapResolutionError, a MapCacheError or
-    # Lanelet2's RuntimeError.
+    # Lanelet2's RuntimeError.  HYDRA_FULL_ERROR=1 raises that ValueError
+    # rather than print it as one line and exit 1 (#1705).
     @staticmethod
     def _sweep_on(
         map_cfg: dict, monkeypatch: pytest.MonkeyPatch
@@ -461,6 +464,7 @@ class TestExpandConfig:
             raise AssertionError("a refused map must not be expanded")
 
         monkeypatch.setattr(mod, "expand_sweep", _no_expansion)
+        monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
         sweeper = mod.LaneletConstraintSweeper()
         sweeper.config = OmegaConf.create(
             {"map": map_cfg, "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}}}
@@ -504,6 +508,55 @@ class TestExpandConfig:
         caught = self._sweep_on({"lanelet2_path": str(tmp_path)}, monkeypatch)
         assert f"Could not read the Lanelet2 map {tmp_path}" in str(caught.value)
         assert isinstance(caught.value.__cause__, (OSError, RuntimeError))
+
+    @pytest.mark.parametrize(
+        ("config", "message"),
+        [
+            ({"map": {}}, "No 'sweep' section found in config."),
+            (
+                {"sweep": {"constraints": {"a.id": [{}], "b.id": [{}]}}},
+                "one parameter",
+            ),
+            (
+                {
+                    "map": {"directory": "/nonexistent/no_map"},
+                    "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}},
+                },
+                "LaneletConstraintSweeper: Map directory /nonexistent/no_map "
+                "does not exist",
+            ),
+        ],
+    )
+    def test_the_sweeper_reports_an_invalid_sweep_in_one_line(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+        config: dict,
+        message: str,
+    ) -> None:
+        """#1705: without HYDRA_FULL_ERROR, `Error: <scenario>: <why>` on
+        stderr and exit 1, as scenario-expand prints it."""
+        from unittest.mock import MagicMock
+
+        from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+        monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+        sweeper = mod.LaneletConstraintSweeper()
+        sweeper.config = OmegaConf.create(
+            {
+                **config,
+                "hydra": {"runtime": {"choices": {"scenario": "cut_in/left"}}},
+            }
+        )
+        sweeper.launcher = MagicMock()
+        with pytest.raises(SystemExit) as caught:
+            sweeper.sweep([])
+        assert caught.value.code == 1
+        lines = capsys.readouterr().err.splitlines()
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("Error: cut_in/left: "), lines
+        assert message in lines[0], lines
+        sweeper.launcher.launch.assert_not_called()
 
     def test_a_map_cache_root_that_is_no_directory_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
