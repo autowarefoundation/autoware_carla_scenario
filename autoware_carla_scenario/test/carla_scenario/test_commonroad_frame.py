@@ -296,6 +296,18 @@ def test_a_road_user_on_another_level_of_road_is_out_of_the_scene() -> None:
     assert [o["id"] for o in frame.others] == [4]
 
 
+def test_a_road_user_up_a_slope_is_on_the_ego_s_level() -> None:
+    """A lead 30 m ahead on a 10 % grade stands 3 m above the ego, its box
+    clear of the ego's by 1.4 m: the same road climbing, not another level,
+    while a road 8 m overhead 20 m away is (#1597)."""
+    ego = _Actor(1, (0.0, 0.0, 0.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)})
+    lead = _Actor(2, (30.0, 0.0, 3.0), 0.0)
+    overhead = _Actor(3, (20.0, 0.0, 8.0), 0.0)
+    frame = cr_frame.read_frame(_World([ego, lead, overhead]), 100.0)  # type: ignore[arg-type]
+    assert frame is not None
+    assert [o["id"] for o in frame.others] == [2]
+
+
 @pytest.mark.parametrize("radius", [0.0, 5.0])
 def test_alone(radius: float) -> None:
     ego = _Actor(1, (0.0, 0.0, 0.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)})

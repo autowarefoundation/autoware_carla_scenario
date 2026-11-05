@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import find_actor_in_world
-from ..utils.clearance import _HIDDEN_BELOW_M, _level_gap, _vertical_span
+from ..utils.clearance import _HIDDEN_BELOW_M, _vertical_span, on_another_level
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -151,6 +151,8 @@ def _road_users_near(
     CommonRoad's scenario is planar: a road user on a bridge over the ego, or
     in an underpass beneath it, would be on its lane there, and a TTC or a
     headway to it would read a collision the two can never have (#1580).
+    One up or down a slope from the ego, within the road's grade over the
+    distance between them, is on its level (#1597).
     """
     near: list["carla.Actor"] = []
     placed = ego.get_transform()
@@ -167,9 +169,10 @@ def _road_users_near(
         # A road user parked under the map (hidden) is out of the scene.
         if location.z < _HIDDEN_BELOW_M:
             continue
-        if math.hypot(location.x - centre.x, location.y - centre.y) > radius_m:
+        planar = math.hypot(location.x - centre.x, location.y - centre.y)
+        if planar > radius_m:
             continue
-        if _level_gap(ego_span, _vertical_span(actor, transform)) > 0.0:
+        if on_another_level(ego_span, _vertical_span(actor, transform), planar):
             continue
         near.append(actor)
     return near
