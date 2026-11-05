@@ -3736,6 +3736,11 @@ by roadgen's validation.</p>
 <td>SUMO</td>
 <td>native; mirrored into CARLA as bicycles near the ego</td>
 </tr>
+<tr>
+<td>Scenario motorcycles (<code>MotorcycleEntity</code>, or any vehicle whose blueprint's <code>base_type</code> is <code>motorcycle</code>)</td>
+<td>as the scenario's other vehicles</td>
+<td>published or driven, as a SUMO <code>motorcycle</code></td>
+</tr>
 </tbody>
 </table>
 <p>A published vehicle has SUMO's speed and lane-change control switched off, so
@@ -3841,6 +3846,31 @@ drives (<code>scenario_vehicles=sumo</code>) only where bicycles may go.</p>
 <a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">    </span>traffic.options.bicycles.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>traffic.options.bicycles.max_bicycles<span class="o">=</span><span class="m">20</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">    </span>traffic.bicycles.max_speed_mps.mean<span class="o">=</span><span class="m">4</span>.0<span class="w"> </span>traffic.bicycles.max_speed_mps.std<span class="o">=</span><span class="m">0</span>.8
 </code></pre></div>
+<p><strong>Motorcycles</strong>: a scenario's motorcycle -- a <code>MotorcycleEntity</code>, or any
+vehicle whose blueprint's <code>base_type</code> is <code>motorcycle</code> -- joins SUMO as a
+vehicle of the class <code>motorcycle</code>, of the type <code>acs_motorcycle</code> that every run
+declares (SUMO has no default one; it has SUMO's defaults for the class), with
+its CARLA bounding box as its length and width. It rides the carriageway, is
+published or driven like the scenario's other vehicles, takes the drivers'
+parameters (<code>traffic.vehicles</code>) as a car does, and may leave for the
+mesoscopic model like them. Under the TrafficManager backend a motorcycle is a
+vehicle like any other: put on autopilot at the start of the run and given its
+manoeuvres (speed, lane changes, turns, routes) as every NPC is.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>    <span class="n">MotorcycleEntity</span><span class="p">,</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">MotorcycleEntityConfig</span><span class="p">,</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">SpawnPointIndex</span><span class="p">,</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="p">)</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="c1"># Whichever motorcycle the CARLA server has (`vehicle_type` names none) ...</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="n">rider</span> <span class="o">=</span> <span class="n">MotorcycleEntity</span><span class="p">(</span><span class="n">MotorcycleEntityConfig</span><span class="p">(</span><span class="s2">"rider"</span><span class="p">,</span> <span class="n">SpawnPointIndex</span><span class="p">(</span><span class="mi">6</span><span class="p">)))</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="c1"># ... or one by name, refused at spawn if it is not a motorcycle's blueprint.</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="n">named</span> <span class="o">=</span> <span class="n">MotorcycleEntity</span><span class="p">(</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>    <span class="n">MotorcycleEntityConfig</span><span class="p">(</span><span class="s2">"rider2"</span><span class="p">,</span> <span class="n">SpawnPointIndex</span><span class="p">(</span><span class="mi">7</span><span class="p">),</span> <span class="n">vehicle_type</span><span class="o">=</span><span class="s2">"vehicle.yamaha.yzf"</span><span class="p">)</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="p">)</span>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="n">rider</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_entity</span><span class="p">(</span><span class="n">rider</span><span class="p">)</span>
+</code></pre></div>
 <p><strong>Stepping</strong>: one SUMO step per CARLA tick, with the step length set to the
 world's <code>fixed_delta_seconds</code> and the seed to the scenario's. CARLA poses are
 published before SUMO steps; SUMO's result is applied to the actors after it.
@@ -3861,10 +3891,10 @@ change still moves across continuously, over <code>lane_change_duration_s</code>
 unset, <code>--lanechange.duration</code>) and no faster than <code>max_lateral_speed_mps</code>.
 SUMO takes one or the other, so <code>lane_change_duration_s</code> with a sublane width
 is an error.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
 </code></pre></div>
 <p>How a CARLA vehicle follows its SUMO vehicle is <code>vehicle_control</code>:</p>
 <ul>
@@ -3952,8 +3982,8 @@ drives, and CARLA holds an actor only for that, so a large demand costs what
 the traffic around the ego costs. This is a <code>sumo</code> option only: the
 TrafficManager backend keeps every vehicle in CARLA
 (<a href="#simulating-far-traffic-mesoscopically">why</a>).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
 </code></pre></div>
 <table>
 <thead>
@@ -4107,7 +4137,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 02:57:27 UTC"><span class="timeago" datetime="2026-11-05T02:57:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 02:57:27 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 06:42:59 UTC"><span class="timeago" datetime="2026-11-05T06:42:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 06:42:59 UTC">2026-11-05</span>
   </span>
 
     
