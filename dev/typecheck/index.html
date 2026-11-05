@@ -4815,8 +4815,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 272 of the package's 398
-modules (68%; about 84,400 of
-149,400 lines) are <code>CHECKED</code>: the kinematics, the
+modules (68%; about 84,500 of
+149,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6336,8 +6336,8 @@ the transform, with no change to a module:</p>
   <code>NoneType</code>, which has no elements and no call, and a body that tests it
   for <code>None</code> first is compiled with it all the same. The transform makes
   such a default the <code>None</code> of the <code>Optional</code> the library check calls with:
-  <code>Optional[List[Lanelet2Pose]]()</code>, <code>Optional[Callable[[float, float],
-  Optional[float]]]()</code>, and for a <code>Callable</code> with a union among its
+  <code>Optional[List[Lanelet2Pose]]()</code>, <code>Optional[Callable[[float, float,
+  float], Optional[float]]]()</code>, and for a <code>Callable</code> with a union among its
   arguments <code>Optional[_acs_Returning[CarlaWorldPose, 1]]()</code> (the transform's
   prelude imports <code>_acs_Returning</code>; the check's own function does not import
   it again, which Codon 0.19 cannot type: "cannot typecheck").</li>
@@ -8070,7 +8070,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 10:40:43 UTC"><span class="timeago" datetime="2026-11-05T10:40:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 10:40:43 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 12:44:12 UTC"><span class="timeago" datetime="2026-11-05T12:44:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 12:44:12 UTC">2026-11-05</span>
   </span>
 
     
