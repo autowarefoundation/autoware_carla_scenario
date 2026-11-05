@@ -361,6 +361,19 @@ class TestConsistency:
         assert spread.lateral_spread_m == pytest.approx(0.0)
         assert spread.speed_spread_mps == pytest.approx(0.0)
 
+    def test_a_station_with_a_value_that_is_not_finite_is_not_measured(
+        self,
+    ) -> None:
+        # Built directly, past the bound read_gate_record holds a record to:
+        # interpolating between -1e308 and 1e308 overflows to inf (and nan).
+        rows = _drive()
+        rows[5] = (rows[5][0], rows[5][1], 1e308, 10.0)
+        rows[6] = (rows[6][0], rows[6][1], -1e308, 10.0)
+        spread = consistency([_record(ego=rows), _record()], 10, 2)
+        assert spread.stations == 29
+        assert spread.lateral_spread_m is not None
+        assert math.isfinite(spread.lateral_spread_m)
+
     def test_the_largest_spread_is_found(self) -> None:
         wide = _drive(lateral=1.0, speed=12.0)
         spread = consistency([_record(), _record(ego=wide)], 10, 2)
@@ -590,13 +603,81 @@ class TestCli:
         assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
 
     def test_a_huge_integer_literal_names_the_file(self, tmp_path: Path) -> None:
-        # Past Python 3.11+'s digit limit json.loads raises ValueError; on
-        # 3.10 it parses and the schema is refused. Either names the file.
+        # Past Python's integer digit limit (4300 digits; 3.11, backported to
+        # 3.10.7) json.loads raises ValueError, which names the file.
         path = tmp_path / "b_gate.json"
         path.write_text('{"schema": ' + "1" * 5000 + "}")
         with pytest.raises(ValueError, match="b_gate.json: "):
             read_gate_record(path)
         assert main([str(tmp_path)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize("column", [1, 2, 3])
+    @pytest.mark.parametrize("value", [1e160, -1e308])
+    def test_a_huge_ego_value_exits_2(
+        self, tmp_path: Path, capsys: Any, column: int, value: float
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        gate = {"max_lateral_spread_m": 1.0, "max_speed_spread_mps": 1.0}
+        _write(tmp_path, "a", _record(gate=gate))
+        _write(tmp_path, "c", _record(gate=gate))
+        path = _write(tmp_path, "b", _record(gate=gate))
+        raw = json.loads(path.read_text())
+        raw["ego"]["rows"][3][column] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="b_gate.json: ego row .* beyond 1e"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 2
+
+    def test_a_lone_surrogate_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        markdown = tmp_path / "gate.md"
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        # json.dumps escapes it as \ud800, which json.loads reads back as a
+        # lone surrogate.
+        path.write_text(path.read_text().replace('"Left turn"', '"\\ud800"'))
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        argv = [str(tmp_path), "--json", str(verdict), "--markdown", str(markdown)]
+        assert main(argv) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_lone_surrogate_in_two_sets_exits_2(self, tmp_path: Path) -> None:
+        base, cand = tmp_path / "base", tmp_path / "cand"
+        _write(base, "a", _record())
+        _write(cand, "a", _record())
+        path = _write(cand, "b", _record())
+        path.write_text(path.read_text().replace('"Left turn"', '"\\ud800"'))
+        assert main([str(base), str(cand)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize("content", [b"{", b"\xff", b"[1]"])
+    def test_a_corrupt_coverage_file_exits_2(
+        self, tmp_path: Path, capsys: Any, content: bytes
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        gate = {"min_odd_coverage": 0.0}
+        _write(tmp_path, "a", _record(gate=gate))
+        _write(tmp_path, "b", _record(gate=gate))
+        (tmp_path / "b_coverage.json").write_bytes(content)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_coverage.json: the coverage file cannot be read" in (
+            capsys.readouterr().err
+        )
+        judged = json.loads(verdict.read_text())["verdicts"][0]
+        # Both records are still judged; the error is in the verdict.
+        assert judged["runs"] == 2
+        assert any("b_coverage.json" in e for e in judged["errors"])
+
+    def test_a_corrupt_coverage_file_exits_2_in_two_sets(self, tmp_path: Path) -> None:
+        base, cand = tmp_path / "base", tmp_path / "cand"
+        gate = {"min_odd_coverage": 0.0}
+        _write(base, "a", _record(gate=gate))
+        _write(cand, "a", _record(gate=gate))
+        (base / "a_coverage.json").write_text("{")
+        assert main([str(base), str(cand)]) == EXIT_ERROR
 
     def test_a_file_not_in_utf8_exits_2(self, tmp_path: Path, capsys: Any) -> None:
         verdict = tmp_path / "v.json"

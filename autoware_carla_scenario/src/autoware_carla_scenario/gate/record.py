@@ -50,6 +50,11 @@ GATE_RECORD_SUFFIX = "_gate.json"
 #: (m/s).
 EGO_COLUMNS: tuple[str, ...] = ("t", "s", "lateral_m", "speed_mps")
 
+#: The largest route s, lateral offset (m) and speed (m/s) an ego row may
+#: hold, either sign.  No route, lane or vehicle comes near it; a record past
+#: it is corrupt, and its values would overflow the spread the gate measures.
+EGO_VALUE_LIMIT = 1e7
+
 
 def _object(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """The JSON object *raw* holds at *key*; empty when it holds none.
@@ -237,6 +242,11 @@ class GateRecord:
                 math.isfinite(v) for v in values
             ):
                 raise ValueError(f"malformed ego row {row!r}")
+            if any(abs(v) > EGO_VALUE_LIMIT for v in values[1:]):
+                raise ValueError(
+                    f"ego row {row!r} beyond {EGO_VALUE_LIMIT:g} (route s, "
+                    "lateral offset or speed)"
+                )
             rows.append((values[0], values[1], values[2], values[3]))
         category = outcome.get("failure_category")
         return cls(
@@ -273,9 +283,12 @@ def read_gate_record(path: Path) -> GateRecord:
     """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        # A string with a lone surrogate ("\ud800") parses, but cannot be
+        # written out again (stdout, the reports): refuse it here.
+        json.dumps(raw, ensure_ascii=False).encode("utf-8")
     except (OSError, RecursionError, ValueError) as exc:
-        # ValueError: not JSON, not UTF-8, or an integer literal past
-        # Python's digit limit; RecursionError: nested too deeply.
+        # ValueError: not JSON, not UTF-8 (either way), or an integer literal
+        # past Python's digit limit; RecursionError: nested too deeply.
         raise ValueError(f"{path}: cannot be read ({exc})") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: not a gate record (not a JSON object)")

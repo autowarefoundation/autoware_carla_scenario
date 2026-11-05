@@ -139,8 +139,10 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
 - `gate` is the gate the document stated when the run ran. A record without
   one is refused, as is one whose gate is not a valid gate (a field a gate
   does not have, a value of the wrong type or out of range), or whose
-  `case`, `outcome`, `files` or `ego` is not a JSON object, or whose lists
-  are not JSON arrays: `scenario-gate` reports it as unreadable (exit code 2)
+  `case`, `outcome`, `files` or `ego` is not a JSON object, whose lists
+  are not JSON arrays, whose ego rows hold a route s, lateral offset or
+  speed beyond 1e7, or whose text cannot be written back as UTF-8 (a lone
+  surrogate): `scenario-gate` reports it as unreadable (exit code 2)
   and judges the other records. A malformed gate is refused with
   `--document` too, though the document's gate replaces it: the record is
   corrupt all the same.
@@ -245,7 +247,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
+| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
