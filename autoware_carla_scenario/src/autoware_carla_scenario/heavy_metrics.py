@@ -17,6 +17,7 @@ import math
 import os
 from typing import Optional
 
+from .metrics import CRIME_TTR_S
 from .value_text import shown
 
 __all__ = [
@@ -29,11 +30,10 @@ __all__ = [
 
 #: The CommonRoad metrics that take seconds a frame: CriMe's TTR simulates
 #: the ego's evasive manoeuvres, about 2 s a frame with a collision ahead.
-#: The key is written out, not imported from ``metrics``
-#: (``metrics.CRIME_TTR_S``): Codon 0.19 reports a constant imported from
-#: ``metrics`` and read at module level as not defined (#1689);
-#: ``test_commonroad_metrics.py`` keeps the two equal.
-HEAVY_METRICS: frozenset[str] = frozenset({"crime_ttr_s"})
+#: The library check reads ``CRIME_TTR_S`` through ``metrics``, as Codon 0.19
+#: can report a constant imported by name and read at module level as not
+#: defined (#1693, ``typecheck.transform.redirect_imports``).
+HEAVY_METRICS: frozenset[str] = frozenset({CRIME_TTR_S})
 
 #: The metrics evaluated less often than every
 #: :attr:`~autoware_carla_scenario.commonroad.session.CommonRoadSettings.period_s`

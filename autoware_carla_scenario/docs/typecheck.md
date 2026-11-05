@@ -2873,6 +2873,26 @@ function: `autoware_stack.bridge_node` finds the installed
 Codon has no module object, so `from .. import autoware_bridge` and
 `autoware_bridge.__file__` do not compile.
 
+A **constant** imported from another checked module is read through that
+module (#1693): Codon 0.19 can report a constant imported with `from M import
+NAME` and read at module level as not defined, depending on what precedes it
+in `M` (`heavy_metrics` reading `metrics.CRIME_TTR_S`). So, on the import's
+own line, `from .metrics import CRIME_TTR_S, ego_progress` becomes
+
+```python
+from _acs_lib.autoware_carla_scenario__metrics import ego_progress; import _acs_lib.autoware_carla_scenario__metrics as _acs_const_12; CRIME_TTR_S = _acs_const_12.CRIME_TTR_S
+```
+
+(`from M import X as NAME` binds `NAME`). A constant is an UPPER_CASE name of
+more than one letter (not a `T` TypeVar) that the imported module binds with a
+plain assignment at module level (`NAME = ...` or `NAME: type = ...`, not
+`NAME: TypeAlias = ...`), or re-exports from another checked module that has
+it as a constant (`from .metrics import CRIME_TTR_S as CRIME_TTR_S`);
+`module_constants()` in `typecheck/transform.py` finds them. Every other name,
+and an import through the model (`MODELLED_IMPORTS`), stays a `from M import`.
+An UPPER_CASE assignment that holds a type (`JSON = dict[str, Any]`) would
+read as a variable, not a type, through the module: annotate it `TypeAlias`.
+
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
 Measure]` at class level, and `measures` declares the running scenario
