@@ -2204,7 +2204,9 @@ class TestScenarioMap:
         body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
 
         assert "Pattern <b>1</b> of" in body
-        assert "bound: match 1 of" in body
+        # "bound: match 1 of", or "match 1 of N is dropped by the sweep" when
+        # the starter's stop_line_offset fails on it (#1524).
+        assert "match 1 of" in body
         # The bound lanelet is a match of the search, not the stored default.
         highlight = body.split('data-highlight="', 1)[1].split('"', 1)[0]
         assert "183" in highlight and "141" in highlight
@@ -2329,6 +2331,92 @@ class TestScenarioMap:
         client.get(f"/draft/{draft_id}/map-view")
 
         assert len(scans) == 2
+
+    @staticmethod
+    def _offset_from_the_stop_line(store: DraftStore, draft_id: str) -> None:
+        """Derive NPC1's spawn s 40 m before its lanelet's stop line (#1524).
+
+        On the fixture map that walks some picks back onto a predecessor and
+        fails on others, which have no stop line ahead -- the two ways the
+        sweep's binding moves or drops a run.
+        """
+        from autoware_carla_scenario.authoring.models import BindingRef
+
+        draft = _draft(store, draft_id)
+        spawn = _present(draft.document.entity("npc1"), "npc1").spawn
+        spawn.s.mode = "derived"
+        spawn.s.binding = BindingRef(type="stop_line_offset", params={"offset": 40.0})
+        store.save(draft)
+
+    def test_each_pattern_is_the_run_the_sweep_performs(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A derived spawn offset places the spawn where the sweep puts it (#1524).
+
+        The pattern used to pin the spawn on the pick, while the sweep resolves
+        its binding: a walk-back moves it to a predecessor, and a pick whose
+        binding fails is no run at all.  Stepping every pattern must give the
+        sweep's cases, in order, with the dropped picks said to be dropped.
+        """
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_scenario_config,
+            swept_slot,
+        )
+        from autoware_carla_scenario.editor import map_preview, scenario_map
+        from autoware_carla_scenario.sweeper.expand import _expand_lanelets
+
+        self._offset_from_the_stop_line(store, draft_id)
+        document = _document(store, draft_id)
+        slot = _present(swept_slot(document), "the swept slot")
+        sweep = build_scenario_config(document)["sweep"]
+        (key,) = sweep["constraints"]
+        sweep["constraints"][key] = map_preview.materialize_constraints(
+            slot.choice.constraints, document
+        )
+        loaded = map_preview._load(document, map_preview.map_paths(document))
+        cases = [
+            dict(item.split("=", 1) for item in case)
+            for case in _expand_lanelets(sweep, loaded.lanelet_map)
+        ]
+
+        count = scenario_map.build_map_view(document, load_map=True).pattern_count
+        runs: list[tuple[str, str]] = []
+        walked_back = dropped = 0
+        for pattern in range(count):
+            view = scenario_map.build_map_view(document, pattern=pattern)
+            (spawn,) = [
+                p for p in view.points if p.owner_id == "npc1" and p.role == "spawn"
+            ]
+            if view.dropped:
+                dropped += 1
+                assert "dropped by the sweep" in spawn.note
+                assert not spawn.bound
+                continue
+            walked_back += "walked back" in spawn.note
+            runs.append((str(spawn.lanelet_id), spawn.detail))
+
+        assert dropped and walked_back, "the fixture no longer exercises #1524"
+        assert dropped == count - len(cases)
+        assert [lanelet for lanelet, _ in runs] == [case[key] for case in cases]
+        assert [detail.split(" m ", 1)[0] for _, detail in runs] == [
+            f"{float(case['scenario.spawn_overrides.npc1.s']):.1f}" for case in cases
+        ]
+
+    def test_a_pattern_the_sweep_drops_says_so(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._offset_from_the_stop_line(store, draft_id)
+        first = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        count = int(first.split("Pattern <b>1</b> of ", 1)[1].split("\n", 1)[0].strip())
+
+        bodies = (
+            client.get(f"/draft/{draft_id}/map-view?pattern={pattern}").text
+            for pattern in range(count)
+        )
+        body = next(b for b in bodies if "The sweep drops pattern" in b)
+        assert "is dropped by the sweep: its offset binding fails" in body
+        # The binding's own reason, which is what the sweep logs.
+        assert "stop_line_offset" in body
 
     def test_the_script_places_the_pins_it_is_handed(self) -> None:
         """The labels are the server's; only the coordinates are the viewer's."""
