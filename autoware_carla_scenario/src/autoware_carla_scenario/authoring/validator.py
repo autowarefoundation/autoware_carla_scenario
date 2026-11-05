@@ -38,6 +38,7 @@ from ..trajectory.authoring import (
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
 from .hydra_config import MAP_EXCLUSION_REF
+from .package_names import framework_name_problem
 from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
@@ -1630,6 +1631,19 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
             )
 
 
+def _check_id(out: _Collector, scenario_id: str) -> None:
+    """Check the package the id *scenario_id* exports as (#1695).
+
+    An error when that package would be the framework's own
+    (``autoware_carla`` and ``autoware_carla_scenario``), so the editor shows
+    it before an export starts rather than ``uv lock`` failing on a package
+    that depends on itself.
+    """
+    problem = framework_name_problem(scenario_id)
+    if problem is not None:
+        out.error("id", problem)
+
+
 def validate_document(document: ScenarioDocument) -> ValidationReport:
     """Return every problem found in *document*.
 
@@ -1637,6 +1651,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     incomplete draft is still saveable).
     """
     out = _Collector()
+    _check_id(out, document.id)
 
     entity_ids: set[str] = set()
     for index, entity in enumerate(document.entities):

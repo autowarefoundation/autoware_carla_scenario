@@ -878,6 +878,30 @@ The scenario's document and Hydra config travel **inside** its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept
 beside it.
 
+### The package's name
+
+The package is named after the document's **id**, which is lower-case letters,
+digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). Repeated and
+trailing `_` are collapsed and `_scenario` is appended unless the id already
+ends with it: `cut_in` exports the package `cut_in_scenario` (distribution
+`cut-in-scenario`, directory `cut_in_scenario/`), and the id itself stays the
+scenario's name (`scenario=cut_in`).
+
+The validator (`authoring/package_names.py`) **refuses** an id whose package
+would be the framework's own, `autoware_carla_scenario`: the ids
+`autoware_carla` and `autoware_carla_scenario`. Such a package depends on
+itself and replaces the installed framework, so it is an `id` error, shown
+before an export starts, by the same rule `scenario-new` refuses that name
+with.
+
+Ids that differ only by a trailing `_scenario`, or by doubled or trailing
+`_`, export to the same package and so the same directory: `cut_in`,
+`cut_in_scenario`, `cut__in` and `cut_in_` all export as `cut_in_scenario/`.
+Exporting one of them with force (replacing an existing package) replaces the
+package another of them exported there. The validator does not warn about
+this, since it cannot know whether the other package exists; pick one id per
+scenario and keep to it.
+
 ### What the wheelhouse is built from
 
 The exporter still generates the uv project it always did -- `pyproject.toml`

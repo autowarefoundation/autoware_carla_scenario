@@ -28,7 +28,6 @@ built in a temporary directory and moved into place only once the checks pass.
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +47,12 @@ from .hydra_config import (
     run_map_group,
 )
 from .models import ScenarioDocument
+from .package_names import (  # noqa: F401  (re-exported)
+    _pin_note,
+    _pin_summary,
+    _sanitize_identifier,
+    names_for_id,
+)
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
@@ -128,37 +133,14 @@ class ExportResult:
 # ---------------------------------------------------------------------------
 
 
-def _sanitize_identifier(raw: str) -> str:
-    """Return *raw* reduced to a valid lower_snake_case Python identifier."""
-    snake = re.sub(r"[^0-9a-zA-Z]+", "_", raw).strip("_").lower()
-    snake = re.sub(r"__+", "_", snake)
-    if not snake or snake[0].isdigit():
-        snake = f"scenario_{snake}" if snake else "scenario"
-    return snake
-
-
 def package_names(document: ScenarioDocument) -> dict[str, str]:
-    """Return the naming variants a generated package needs.
+    """Return the naming variants a package exported from *document* needs.
 
-    ``scenario_id`` is ``document.id`` unchanged: it is the registered builder
-    name, the conf file name and the conf's ``scenario.name`` alike, and they
-    must agree for ``scenario=<id>`` to select the scenario.  The model already
-    restricts it to ``^[a-z][a-z0-9_]*$``, and it is only ever used as a
-    string, never as a Python identifier, so a keyword such as ``class`` is
-    harmless.  Only the Python package and distribution names are sanitised;
-    the package name always ends in ``_scenario``, so it is never a keyword.
+    :func:`.package_names.names_for_id` of ``document.id``; raises
+    ``ValueError`` for an id whose package would be the framework's own, which
+    :func:`.validator.validate_document` reports as an error first.
     """
-    scenario_id = document.id
-    module_id = _sanitize_identifier(scenario_id)
-    package_name = (
-        module_id if module_id.endswith("_scenario") else f"{module_id}_scenario"
-    )
-    return {
-        "scenario_id": scenario_id,
-        "package_name": package_name,
-        "distribution_name": package_name.replace("_", "-"),
-        "document_path_env": f"{package_name.upper()}_DOCUMENT_PATH",
-    }
+    return names_for_id(document.id)
 
 
 # ---------------------------------------------------------------------------
@@ -219,33 +201,6 @@ def _render_source_entry(pin: Pin) -> str:
         else:
             parts.append(f"{key} = {toml_string(str(value))}")
     return ", ".join(parts)
-
-
-def _pin_note(pin: Pin) -> str:
-    """Return the comment written above the framework dependency."""
-    if pin.kind == "version":
-        return (
-            "Pinned to an exact release: a scenario package is only "
-            "reproducible if the framework underneath it cannot move."
-        )
-    if pin.kind == "git":
-        return (
-            "Pinned to an exact commit (see [tool.uv.sources]) rather than a "
-            "branch, which would move under the package."
-        )
-    return (
-        "Development export: a local path, which does NOT resolve on another "
-        "machine. Re-export without development mode before sharing."
-    )
-
-
-def _pin_summary(pin: Pin) -> str:
-    """Return a one-line, human-readable description of *pin* for the README."""
-    if pin.kind == "version":
-        return f"version `{pin.version}` (exact)"
-    if pin.kind == "git":
-        return f"commit `{pin.commit}` of `{pin.repository}`"
-    return f"local path `{pin.path}` -- **not portable**"
 
 
 def _write_package_tree(

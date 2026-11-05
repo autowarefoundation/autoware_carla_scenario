@@ -4,7 +4,9 @@ How :mod:`scaffold.generator` turns the raw name it is given into the import,
 distribution, scenario and class names of the package it writes, and what it
 refuses as an identifier.  Kept apart from the generator, which imports
 argparse, ast, importlib.metadata and jinja2, so the static check compiles
-these rules (#1654); the generator re-exports them.
+these rules (#1654); the generator re-exports them.  The rule that a package
+must not take the framework's own name is shared with the Scenario Editor's
+export (:mod:`authoring.package_names`, #1695), so the two paths agree.
 """
 
 from __future__ import annotations
@@ -54,6 +56,23 @@ def _to_hyphen(snake: str) -> str:
 def _normalise_distribution(name: str) -> str:
     """Return *name* normalised as PEP 503 does (``A_b.c`` -> ``a-b-c``)."""
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+#: The framework's distribution name, which a generated package depends on.
+_FRAMEWORK_DISTRIBUTION = "autoware-carla-scenario"
+
+
+def _is_framework_name(name: str) -> bool:
+    """Return whether *name* is the framework's own package or distribution name.
+
+    Compared as PEP 503 normalises names, so ``autoware_carla_scenario``,
+    ``autoware-carla-scenario`` and ``Autoware.Carla_Scenario`` all count.  A
+    package of that name depends on itself and replaces the installed
+    framework (#1451, #1695).
+    """
+    return _normalise_distribution(name) == _normalise_distribution(
+        _FRAMEWORK_DISTRIBUTION
+    )
 
 
 def _validate_identifier(name: str, *, kind: str) -> str:
