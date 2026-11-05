@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import io
 import json
@@ -15,7 +16,7 @@ from collections.abc import Iterator
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 import urllib.error
 
 import pytest
@@ -698,3 +699,56 @@ def test_ctrl_c_while_waiting_for_the_lock_stops_the_run(
         signal.signal(signal.SIGALRM, previous)
     assert installed_executable() is None
     assert install(url) == install_dir() / LAUNCHER  # the lock is free again
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_a_read_only_install_is_still_checked(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    parent = install_dir().parent
+    parent.chmod(0o555)
+    try:
+        for lock_left in (True, False):
+            if not lock_left:
+                parent.chmod(0o755)
+                install_dir().with_name("carla.lock").unlink()
+                parent.chmod(0o555)
+            capsys.readouterr()
+            assert install(url) == install_dir() / LAUNCHER
+            assert "up to date" in capsys.readouterr().out
+    finally:
+        parent.chmod(0o755)
+
+
+@pytest.mark.parametrize("lock_left", [True, False])
+def test_an_unwritable_lock_file_does_not_stop_a_check(
+    lock_left: bool,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """As the test above, for root too: opening the lock for writing is refused."""
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    lock = install_dir().with_name("carla.lock")
+    if not lock_left:
+        lock.unlink()
+    opened: list[str] = []
+
+    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
+        opened.append(mode)
+        if mode != "r":
+            raise PermissionError(errno.EACCES, "Permission denied", str(file))
+        return open(file, mode)  # noqa: SIM115
+
+    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+    capsys.readouterr()
+    assert install(url) == install_dir() / LAUNCHER
+    captured = capsys.readouterr()
+    assert "up to date" in captured.out
+    assert opened == ["a", "r"]
+    assert ("going ahead unlocked" in captured.err) is not lock_left
+    assert lock.exists() is lock_left

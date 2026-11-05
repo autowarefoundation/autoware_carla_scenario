@@ -219,6 +219,11 @@ _NO_FLOCK_ERRNOS = frozenset(
 )
 
 
+#: The errors of a lock file that cannot be created or written: a read-only
+#: file system, or a directory of another user's.
+_UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
 def _lock_path(target: Path) -> Path:
     """The file whose ``flock`` lets one run at a time install into *target*."""
     return target.with_name(target.name + ".lock")
@@ -233,12 +238,21 @@ def _locked(target: Path) -> Iterator[None]:
     before the deletion would lock a file no later run sees. Waiting is a
     blocking ``flock``, which a Ctrl-C ends with ``KeyboardInterrupt``. Where
     the file system has no ``flock``, the install goes ahead unlocked.
+
+    Checking an install needs no write access: where the lock file cannot be
+    opened for writing (a read-only or another user's install), an existing one
+    is locked through a read-only descriptor, which ``flock`` takes as well, and
+    without one the run goes ahead unlocked, as it can only find the install up
+    to date or fail to write it.
     """
     import fcntl  # noqa: PLC0415
 
     lock = _lock_path(target)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a") as stream:
+    stream = _open_lock(lock)
+    if stream is None:
+        yield
+        return
+    with stream:
         try:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -257,6 +271,31 @@ def _locked(target: Path) -> Iterator[None]:
                 file=sys.stderr,
             )
         yield
+
+
+def _open_lock(lock: Path) -> Optional[IO[str]]:
+    """*lock* opened to ``flock``: for writing, else read-only, else nothing.
+
+    Raises:
+        OSError: *lock* cannot be created for a reason other than permissions
+            or a read-only file system.
+    """
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        return open(lock, "a")  # noqa: SIM115 -- the caller closes it
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_ERRNOS:
+            raise
+        error = exc
+    try:
+        return open(lock)  # noqa: SIM115 -- flock takes a read-only descriptor too
+    except OSError:
+        print(
+            f"scenario-setup: cannot create {lock} ({error}); going ahead "
+            "unlocked, so run only one scenario-setup for it at a time",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _staging(target: Path) -> Path:
