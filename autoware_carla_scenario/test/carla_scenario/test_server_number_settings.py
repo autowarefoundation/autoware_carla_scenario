@@ -53,6 +53,11 @@ def test_the_shipped_settings_and_valid_ones_are_accepted() -> None:
             ("fog_density_scale", v)
             for v in ["0", "-0.01", "nan", "inf", "false", "'0.01'"]
         ],
+        # Too big for a float (#1652).
+        *[
+            pytest.param(key, str(10**400), id=f"{key}-huge")
+            for key in ("cooldown_seconds", "max_tick_rate_hz")
+        ],
     ],
 )
 def test_a_run_config_with_a_bad_server_number_is_refused(key: str, value: str) -> None:

@@ -437,6 +437,13 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
         ("radius_m", -1.0, "radius_m must be positive and finite, got -1.0"),
         ("radius_m", math.nan, "radius_m must be positive and finite, got nan"),
         ("radius_m", math.inf, "radius_m must be positive and finite, got inf"),
+        # Too big for a float (#1652).
+        pytest.param(
+            "dt",
+            10**400,
+            f"dt must be positive and finite, got {10**400}",
+            id="dt-huge",
+        ),
     ],
 )
 def test_the_settings_refuse_a_bad_value(field: str, value: Any, message: str) -> None:

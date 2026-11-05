@@ -131,6 +131,7 @@ from autoware_carla_scenario.registry import (
 )
 from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
 from autoware_carla_scenario.scenario_runner import _run_file_stem
+from autoware_carla_scenario.value_text import shown
 
 from .argv import (
     BatchCase,
@@ -309,6 +310,11 @@ def build_ground_projection(cfg: DictConfig) -> GroundProjectionConfig:
             distances.append(float(value))
         except (TypeError, ValueError):
             raise ValueError(f"{key} must be a number, got {value!r}") from None
+        except OverflowError:
+            # An int too big for a float (10**400): not finite (#1652).
+            raise ValueError(
+                f"{key} must be non-negative and finite, got {shown(value)}"
+            ) from None
     upper, lower = distances
     check_ray_distances(upper, lower, _RAY_UPPER_KEY, _RAY_LOWER_KEY)
     return GroundProjectionConfig(ray_distance_upper=upper, ray_distance_lower=lower)
@@ -518,6 +524,20 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     return launcher
 
 
+def _finite_number(value: Any) -> bool:
+    """Whether *value* is a finite number: an int or a float, not a bool.
+
+    An int too big for a float (``10**400``) is not: ``math.isfinite()``
+    raises ``OverflowError`` on it (#1652).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
     """``autoware.launcher.stop_timeout_s`` of *settings*, checked: a finite
     number of seconds -- an int or a float, not a bool, a string or null --
@@ -531,15 +551,10 @@ def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
         ValueError: naming the key.
     """
     value = settings.get("stop_timeout_s", 20.0)
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if not _finite_number(value) or value <= 0:
         raise ValueError(
             "autoware.launcher.stop_timeout_s must be a finite number > 0 "
-            f"(got {value!r})"
+            f"(got {shown(value)})"
         )
     return float(value)
 
@@ -1023,14 +1038,9 @@ def _server_number(
     if value is None:
         return None
     bound = "> 0" if positive else ">= 0"
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or (value <= 0 if positive else value < 0)
-    ):
+    if not _finite_number(value) or (value <= 0 if positive else value < 0):
         raise ValueError(
-            f"server.{key} must be a finite number {bound} (got {value!r})"
+            f"server.{key} must be a finite number {bound} (got {shown(value)})"
         )
     return float(value)
 
@@ -2684,7 +2694,13 @@ def environment_settings(cfg: DictConfig) -> dict[str, float]:
         # A bool is an int to Python, and ``float("15")`` would read a string.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"environment.{key} must be a number, got {value!r}")
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            # An int too big for a float (10**400): not finite (#1652).
+            raise ValueError(
+                f"environment.{key} must be finite, got {shown(value)}"
+            ) from None
         refusal = _refusal(str(key), number)
         if refusal != "":
             raise ValueError(f"environment.{key} {refusal}")

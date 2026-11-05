@@ -175,6 +175,11 @@ def test_the_shipped_entity_values_are_accepted() -> None:
             "entity.ground_projection_ray_distance_upper=abc",
             "entity.ground_projection_ray_distance_upper must be a number",
         ),
+        pytest.param(
+            f"entity.ground_projection_ray_distance_lower={10**400}",
+            "entity.ground_projection_ray_distance_lower must be non-negative",
+            id="too-big-for-a-float",  # #1652
+        ),
     ],
 )
 def test_a_run_config_with_a_ray_that_cannot_hit_is_refused(

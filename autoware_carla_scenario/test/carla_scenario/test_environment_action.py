@@ -244,6 +244,14 @@ class TestTheEnvironmentConfig:
         with pytest.raises(ValueError, match=rf"environment\.{key} must be finite"):
             self._add({key: float(value)})
 
+    @pytest.mark.parametrize("value", [10**400, -(10**400)], ids=["huge", "-huge"])
+    def test_a_whole_number_too_big_for_a_float_names_the_key(self, value: int) -> None:
+        """#1652: ``float()`` raised OverflowError on it."""
+        with pytest.raises(
+            ValueError, match=r"^environment\.fog_density must be finite, got -?1000+$"
+        ):
+            self._add({"fog_density": value})
+
     def test_a_share_out_of_range_names_the_key(self) -> None:
         with pytest.raises(
             ValueError, match=r"environment\.cloudiness must be within \[0, 100\]"

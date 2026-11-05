@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from ..metrics import COMMONROAD_METRICS, CRIME_TTR_S
 from .frame import read_frame
 from .map import commonroad_map
+from ..value_text import shown
 from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
 
 if TYPE_CHECKING:
@@ -97,7 +98,14 @@ def _heavy_metrics_default() -> bool:
 
 
 def _check_period(name: str, period: float) -> None:
-    if not (math.isfinite(period) and period > 0.0):
+    try:
+        finite = math.isfinite(period)
+    except OverflowError:
+        # An int too big for a float (10**400), which str() may refuse (#1652).
+        raise ValueError(
+            f"{name} must be positive and finite, got {shown(period)}"
+        ) from None
+    if not (finite and period > 0.0):
         raise ValueError(f"{name} must be positive and finite, got {period}")
 
 

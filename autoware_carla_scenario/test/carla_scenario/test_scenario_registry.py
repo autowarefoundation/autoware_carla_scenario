@@ -433,7 +433,11 @@ class TestBuildAutowareLauncher:
 
     @pytest.mark.parametrize("kind", ["docker", "command"])
     @pytest.mark.parametrize(
-        "value", [float("nan"), float("inf"), -5, 0, "abc", None, True]
+        "value",
+        [
+            *(float("nan"), float("inf"), -5, 0, "abc", None, True),
+            pytest.param(10**400, id="huge"),  # too big for a float (#1652)
+        ],
     )
     def test_a_stop_timeout_that_is_not_positive_and_finite_is_refused(
         self, kind: str, value: object

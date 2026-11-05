@@ -535,7 +535,11 @@ def test_job_timeout_seconds_reads_a_whole_number_or_the_default(
 
 @pytest.mark.parametrize(
     "value",
-    [0.5, 90.5, -1, -0.5, float("nan"), float("inf"), True, "abc", [1], 2**31, 1e10],
+    [
+        *(0.5, 90.5, -1, -0.5, float("nan"), float("inf"), True, "abc", [1], 2**31),
+        1e10,
+        pytest.param(10**400, id="huge"),  # too big for a float (#1652)
+    ],
 )
 def test_job_timeout_seconds_refuses_what_is_not_a_whole_number_of_seconds(
     value: Any,

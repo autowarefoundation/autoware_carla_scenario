@@ -491,6 +491,12 @@ class TestDockerSettingsAreChecked:
             ("startup_timeout_s", float("inf"), "must be finite and above 0"),
             ("startup_timeout_s", "600", "must be a number of seconds"),
             ("startup_timeout_s", True, "must be a number of seconds"),
+            pytest.param(  # too big for a float (#1652)
+                "startup_timeout_s",
+                10**400,
+                "must be finite and above 0",
+                id="startup_timeout_s-huge",
+            ),
             ("timeout_s", float("nan"), "must be finite and above 0"),
             ("timeout_s", -5.0, "must be finite and above 0"),
             ("timeout_s", None, "must be a number of seconds"),

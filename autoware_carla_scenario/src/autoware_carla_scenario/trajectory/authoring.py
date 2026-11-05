@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
+from ..value_text import shown
 from .authored import (
     LANELET_PATH_STEP_M,
     PATH_SOURCES,
@@ -130,6 +131,11 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
         number = float(cell)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"vertex {index}: {cell!r} is not a number") from exc
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(
+            f"vertex {index}: {shown(cell)} is not a finite number"
+        ) from None
     if not math.isfinite(number):
         raise ValueError(f"vertex {index}: {cell!r} is not a finite number")
     return number
