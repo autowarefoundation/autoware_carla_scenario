@@ -239,6 +239,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.pedestrian.skeleton",
     "autoware_carla_scenario.placement",
     "autoware_carla_scenario.prepare",
+    "autoware_carla_scenario.prepare.docker",
     "autoware_carla_scenario.prepare.host",
     "autoware_carla_scenario.ros2",
     "autoware_carla_scenario.ros2.commands",
@@ -377,6 +378,12 @@ _LAUNCHER_VALUE = (
 _YAML = (
     "reads a YAML mapping of values of any type (`Any`: numbers, strings, "
     "booleans, lists, mappings or None), which Codon cannot express"
+)
+
+#: The reason of what reads a value of a backend's block of the run's config.
+_BACKEND_VALUE = (
+    "takes a value of a backend's block of the run's config of any type "
+    "(`Any`: a Hydra node's), which Codon cannot express"
 )
 
 #: Functions and methods of checked modules the check does not call,
@@ -521,6 +528,10 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.trajectory.model._whole": "checks that a value of any type (`value: Any`: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them",
     "autoware_carla_scenario.trajectory.model._vertex_advance": "takes a TrajectoryVertex call's `*args` and `**kwargs` as written (`tuple[Any, ...]`, `dict[str, Any]`), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it",
     "autoware_carla_scenario.scenario_runner._build_condition_status": "builds a ConditionStatus, which holds the condition's details (`dict[str, Any]`), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it",
+    "autoware_carla_scenario.prepare.docker.positive_seconds": f"{_BACKEND_VALUE} (a timeout); only read_docker_settings, itself uncalled, and the excluded pedestrian.ardy call it",
+    "autoware_carla_scenario.prepare.docker.whole_mib": f"{_BACKEND_VALUE} (an amount of memory); only read_docker_settings, itself uncalled, calls it",
+    "autoware_carla_scenario.prepare.docker.string_list": f"{_BACKEND_VALUE} (a list setting, `docker_args`); only read_docker_settings, itself uncalled, calls it",
+    "autoware_carla_scenario.prepare.docker.read_docker_settings": "takes a backend's block of the run's config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express; only the excluded pedestrian.ardy calls it",
 }
 
 #: Every other module, with the reason it is not compiled.
@@ -597,11 +608,10 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2": "imports google.protobuf",
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2_grpc": "imports grpc",
-    "autoware_carla_scenario.pedestrian.ardy": "imports grpc, and prepare.docker, which is not checked",
+    "autoware_carla_scenario.pedestrian.ardy": "imports grpc",
     "autoware_carla_scenario.pedestrian.motion_client": "imports grpc and the generated protobuf modules (google.protobuf)",
     "autoware_carla_scenario.pedestrian.soma": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it",
     "autoware_carla_scenario.prepare.declare": "sets and reads a class attribute by name (setattr, `type.__dict__`, `__mro__`) and imports a module by name (importlib), which Codon cannot",
-    "autoware_carla_scenario.prepare.docker": "runs docker through subprocess.Popen with a file object for its output (`IO[bytes]`) and more of subprocess and socket than their shims declare",
     "autoware_carla_scenario.prepare.pool": "builds backends from the classes it is handed, by attribute name (`getattr(cls, ...)`), which Codon cannot",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
     "autoware_carla_scenario.registry": "imports omegaconf (`DictConfig`) and authoring.models (`ScenarioDocument`; pydantic), both under `TYPE_CHECKING`, which are neither checked nor modelled, and more of importlib.metadata than its shim declares (`entry_points()`); holds scenario classes (`type[BaseScenario]`) and their config classes as values, which Codon cannot hold, and document loaders (`Callable[[], ScenarioDocument]`) that return a pydantic model as values",
@@ -618,7 +628,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.slurm.manifest": "imports errno, and more of os than its shim declares (`os.fdopen()`, `os.link()`, `os.stat()`, `os.open()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`); reads and writes JSON documents of values of any type (`Any`); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'",
     "autoware_carla_scenario.slurm.ports": "imports fcntl, socket, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.access()`, `os.O_CREAT`, `os.O_RDONLY`); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'",
     "autoware_carla_scenario.slurm.submit": "imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (`os.open()`, `os.fdopen()`, `os.O_CREAT`, `os.O_WRONLY`, `os.O_TRUNC`); takes the manifest as `dict[str, Any]` and a function as `Callable[..., Any]`, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts",
-    "autoware_carla_scenario.slurm.worker": "imports socket, traceback, errno, uuid, fcntl (inside a function), `contextlib.contextmanager`, more of os, threading and importlib than their shims declare (`os.open()`, `os.fstat()`, `os.write()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports `RerunConverter` (under `TYPE_CHECKING`) and, inside a function, `report()` from rerun, which is not checked, and the rerun model declares neither `report()` nor the `RerunConverter.wait()` and `RerunConverter.close()` it calls; compares config values of any type (`Any`); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's",
+    "autoware_carla_scenario.slurm.worker": "imports traceback, errno, uuid, fcntl (inside a function), `contextlib.contextmanager`, more of os, threading and importlib than their shims declare (`os.open()`, `os.fstat()`, `os.write()`, `os.O_CREAT`, `os.O_EXCL`, `os.O_WRONLY`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports `RerunConverter` (under `TYPE_CHECKING`) and, inside a function, `report()` from rerun, which is not checked, and the rerun model declares neither `report()` nor the `RerunConverter.wait()` and `RerunConverter.close()` it calls; compares config values of any type (`Any`); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's",
     "autoware_carla_scenario.sweeper": "re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)",
     "autoware_carla_scenario.sweeper.expand": "imports omegaconf, and openodd inside a function; imports `OddDraws` (under `TYPE_CHECKING`) and `ODD_CASE_KEY`, `check_sample_settings()`, `encode_case()`, `sample_seed()`, `search_from_config()`, `seed_setting()`, `with_tire_friction()` and `with_visibility()` from odd.sampler (inside _with_odd_samples(), _config_seed() and expand_config()), `lanelet_readings()` from odd.route (inside _case_readings()) and `ControlsError` and `validate_controls()` from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as `Any` and `Mapping[..., Any]`, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's",
     "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper": "imports omegaconf, hydra, tqdm, sweeper.expand (omegaconf) and hydra_compat (argparse, hydra), and, inside a function, examples.run (hydra, omegaconf), which are neither checked nor modelled; derives hydra's `Sweeper` and `CompactHydraException`; imports `RerunUnavailableError` from rerun, which the rerun model does not declare, and, inside a function, `T4UnavailableError` from t4, which the t4 model does not declare; its cases are forked, stopped and waited for by the checked sweeper.isolation",
