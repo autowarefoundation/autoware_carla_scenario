@@ -2428,6 +2428,20 @@ Boxes are those of vehicles (<code>vehicle.*</code>) and pedestrians (<code>walk
 are not road users. <code>collision_*</code> reads the boxes, not CARLA's collision
 sensor (<code>CollisionCondition</code>): it sees a collision as AlpaSim does, and tells
 the front from the rear.</p>
+<p>The boxes are compared on the ground, as AlpaSim's are, on the ego's level of
+road. A road user whose box is more than 1 m above or below the ego's (each
+box from its centre's height, the actor's origin plus the box's offset, less
+and plus its half height) is on a bridge over the ego or in an underpass
+beneath it: it is in no collision with the ego, and
+<code>min_distance_to_obstacle_m</code> measures to it across the height between the
+boxes too -- a car on a bridge 8 m over the ego, their boxes 1.6 m tall, is
+6.4 m from it, not <code>0</code>. The CommonRoad metrics leave it out. The metre lets a
+road user just up or down a slope from the ego, whose box is level here,
+still meet it. The lanes -- <code>offroad</code>, <code>wrong_lane</code>,
+<code>min_distance_to_lane_boundary_m</code> and the <a href="#weaving">weaving</a> drift -- are
+asked for at the height of the ego, as <code>OffRoadFractionCondition</code> asks at the
+entity's, so that where roads cross at different heights the lane is the one
+the ego drives on, not the road under or over it.</p>
 <h3 id="weaving">Weaving<a class="headerlink" href="#weaving" title="Permanent link">&para;</a></h3>
 <p>Three metrics read how the ego weaves from side to side, and a fourth how
 often its turn indicators changed. Unlike the others they read the run so far,
@@ -2485,7 +2499,9 @@ reachable set (<code>COMMONROAD_METRICS</code>). Each is read on the ego against
 users around it, every one going on as it goes -- its velocity and
 acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe
 measures against other road users are the most critical over them, as CriMe
-folds them.</p>
+folds them. CommonRoad's scenario is planar, so the road users on another
+level of road than the ego's -- more than 1 m above or below its box -- are
+left out of it, as they are of the collisions.</p>
 <table>
 <thead>
 <tr>
@@ -2857,7 +2873,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 12:15:23 UTC"><span class="timeago" datetime="2026-11-05T12:15:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 12:15:23 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 12:16:16 UTC"><span class="timeago" datetime="2026-11-05T12:16:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 12:16:16 UTC">2026-11-05</span>
   </span>
 
     
