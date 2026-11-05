@@ -2742,7 +2742,13 @@ def environment_settings(cfg: DictConfig) -> dict[str, float]:
         # A bool is an int to Python, and ``float("15")`` would read a string.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"environment.{key} must be a number, got {value!r}")
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            # An int too big for a float (10**400): not finite (#1652).
+            raise ValueError(
+                f"environment.{key} must be finite, got {shown(value)}"
+            ) from None
         refusal = _refusal(str(key), number)
         if refusal != "":
             raise ValueError(f"environment.{key} {refusal}")
