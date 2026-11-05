@@ -333,6 +333,8 @@ class FinalApproach:
             world = self._actor.get_world()
             own = int(self._actor.id)
             transform = self._actor.get_transform()
+            # On its own level of road (#1588).
+            height = float(transform.location.z)
             centre = _box_centre(self._actor, transform)
             # How far its box's centre is ahead of its origin, whose place
             # along the path _here is: *reach* and its front half are
@@ -396,6 +398,8 @@ class FinalApproach:
                 looked,
                 behind,
                 body,
+                height,
+                max(distance - self._here, 0.0),
             )
             if found >= 0:
                 if found != self._waits_for:

@@ -3991,7 +3991,9 @@ def test_a_car_sumo_drives_stops_for_what_stands_in_its_way_in_carla(
     npc.get_world = lambda: world  # type: ignore[attr-defined]
     standing: list[Any] = []
 
-    def in_way(world_: Any, self_id: int, x: float, y: float, *rest: Any) -> Any:
+    def in_way(
+        world_: Any, self_id: int, x: float, y: float, *rest: Any, **kwargs: Any
+    ) -> Any:
         if not standing or rest[1] != "vehicle":
             return None
         found = clearance.Obstacle(7, standing[0], 5.25, 2.5, 0.0)

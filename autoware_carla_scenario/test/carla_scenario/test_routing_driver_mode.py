@@ -1015,6 +1015,8 @@ class _SnapshotWorld:
         return _Snapshot(seen(i, x, y, v) for i, (_, x, y, v) in self.actors.items())
 
     def get_actor(self, actor_id: int) -> Any:
+        if actor_id not in self.actors:
+            return None  # as CARLA's world says of one not in it
         type_id = self.actors[actor_id][0]
         extent = (2.0, 1.0) if type_id.startswith("vehicle.") else (0.3, 0.3)
         return SimpleNamespace(
@@ -1403,13 +1405,15 @@ def test_a_spawn_whose_place_is_taken_takes_one_further_on_if_allowed(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: (
             5 if x < taken_until["m"] else -1
         ),
     )
     held: list[float] = []
     monkeypatch.setattr(
-        spawn_module, "_hold", lambda world, actor_id, x, y, yaw, hl, hw: held.append(x)
+        spawn_module,
+        "_hold",
+        lambda world, actor_id, x, y, yaw, hl, hw, z: held.append(x),
     )
 
     def place(shift: float) -> Any:
@@ -1493,7 +1497,14 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
     occupant = {"id": 7}
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append((x, y, yaw, hl, hw, m))
         return occupant["id"]
@@ -1532,7 +1543,14 @@ def test_a_place_clear_condition_on_a_route_pose(
     seen: list[tuple[float, float, float]] = []
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append((x, y, yaw))
         return -1
@@ -1582,7 +1600,14 @@ def test_a_place_with_no_heading_faces_along_its_lane(
     seen: list[float] = []
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append(yaw)
         return -1
@@ -1626,16 +1651,18 @@ def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: 5 if x < 14.0 else -1,
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: 5
+        if x < 14.0
+        else -1,
     )
-    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args, **kwargs: None)
     action = SpawnAction("npc1", position=pose, shift_max=30.0)
     assert action._place(None, 1, 2.0, 1.0)[0] == 14.0  # type: ignore[arg-type,index]
     # Its own place, clear, faces along its lane: 90 deg here.
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: -1,
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: -1,
     )
     assert action._place(None, 1, 2.0, 1.0) == (10.0, 0.0, 0.0, 90.0)  # type: ignore[arg-type]
 
@@ -1789,7 +1816,15 @@ def test_a_spawn_at_speed_needs_room_to_stop_ahead(
     looked: list[tuple[float, float, float]] = []
 
     def overlaps(
-        world: Any, actor_id: int, x: float, y: float, yaw: float, hl: float, hw: float
+        world: Any,
+        actor_id: int,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        *,
+        z: Optional[float] = None,
     ) -> Any:
         looked.append((round(x, 3), round(hl, 3), round(hw, 3)))
         return None
@@ -1797,7 +1832,7 @@ def test_a_spawn_at_speed_needs_room_to_stop_ahead(
     from autoware_carla_scenario.utils import clearance
 
     monkeypatch.setattr(clearance, "overlaps", overlaps)
-    assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0) == -1  # type: ignore[arg-type]
+    assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0, z=0.0) == -1  # type: ignore[arg-type]
     assert looked == [(13.0, 5.3, 1.0)]
 
 
@@ -2270,11 +2305,11 @@ def test_a_spawn_at_speed_keeps_its_place_behind_one_driving_away(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: (
             5 if x <= ahead_x <= x + hl + ahead + 2.3 else -1
         ),
     )
-    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args, **kwargs: None)
     speed = {"x": 7.6}
     world = SimpleNamespace(
         get_actor=lambda actor_id: SimpleNamespace(
