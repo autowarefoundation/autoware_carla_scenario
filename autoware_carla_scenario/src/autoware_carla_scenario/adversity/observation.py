@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.geometry
 
+from ..coordinate.transform import _STACKED_HEIGHT_TOLERANCE, _project_with_height
 from ..odd.probes import lanelet_speed_limit
 from ..route.geometry import LaneSpan, MapFeatures
 from ..trajectory.relative_lane import _arc, _centreline, _point_at, reference_lane_pose
@@ -509,22 +510,41 @@ class Scene:
         crosswalk: Optional[ConstLanelet] = None
         near: Optional[NearCrosswalk] = None
         road: Optional[RoadPoint] = None
+        found = [
+            (float(distance), lanelet)
+            for distance, lanelet in lanelet2.geometry.findNearest(
+                self.features.map.laneletLayer, point, 20
+            )
+            if float(distance) <= road_radius
+        ]
+        # Only those at its level: no more than _STACKED_HEIGHT_TOLERANCE
+        # farther from the bottom of its box than the surface nearest it in
+        # height, each surface read on its centreline at its foot in plan
+        # view, as coordinate.transform.on_lanelet reads it.  A road and the
+        # crosswalk across it all stay; of a footbridge and the street
+        # beneath it, only the one it stands on does (#1606).  All stay where
+        # its elevation is not known.
+        span = vertical_span(agent)
+        if span is not None and found:
+            standing: tuple[float, float] = span
+            heights = [
+                _project_with_height(lanelet, agent.x, agent.y, standing[0])[0]
+                for _distance, lanelet in found
+            ]
+            level = min(heights) + _STACKED_HEIGHT_TOLERANCE
+            found = [found[i] for i in range(len(found)) if heights[i] <= level]
         # Sorted by distance: the first crosswalk is the nearest, and the
         # one underfoot if any is.
-        for distance, lanelet in lanelet2.geometry.findNearest(
-            self.features.map.laneletLayer, point, 20
-        ):
-            if float(distance) > road_radius:
-                break
+        for distance, lanelet in found:
             if MapFeatures.is_crosswalk(lanelet):
                 if near is None:
                     # A typed local: Codon upcasts a Lanelet to a ConstLanelet,
                     # not to an Optional of one.
                     nearest: ConstLanelet = lanelet
                     near = NearCrosswalk(
-                        nearest, float(distance), self._crosswalk_signal(nearest)
+                        nearest, distance, self._crosswalk_signal(nearest)
                     )
-                    if float(distance) <= 0.0:
+                    if distance <= 0.0:
                         crosswalk = nearest
             elif road is None and MapFeatures.is_road(lanelet):
                 s, _t = _arc(lanelet, agent.x, agent.y)

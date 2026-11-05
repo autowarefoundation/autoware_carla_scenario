@@ -253,3 +253,70 @@ def test_without_an_elevation_an_agent_is_on_every_level() -> None:
     assert vertical_span(over) == (8.0, 8.0)
     assert not on_another_level(ego, over)
     assert on_another_level(dataclasses.replace(ego, z=0.0), over)
+
+
+# -- a pedestrian on stacked levels (#1606) -----------------------------------
+
+#: A pedestrian's box: 1.8 m high, its centre 0.9 m above where it stands.
+_PERSON_HEIGHT = 1.8
+
+
+def _walker(name: str, x: float, ground_z: float | None) -> AgentSnapshot:
+    """A pedestrian at *x* on the stacked lanes, standing at *ground_z*
+    (None: its elevation not known)."""
+    z = None if ground_z is None else ground_z + _PERSON_HEIGHT / 2
+    return AgentSnapshot(
+        name, x, 0.0, math.pi / 2, 1.0, 0.0, PERSON, z=z, height=_PERSON_HEIGHT
+    )
+
+
+@pytest.fixture(scope="module")
+def stacked_crossings() -> MapFeatures:
+    lanelet_map = rm.stacked(8.0, crosswalks=True)
+    return MapFeatures(lanelet_map, rm.routing_graph(lanelet_map))
+
+
+def test_a_pedestrian_on_the_deck_is_not_on_the_crosswalk_below(
+    stacked_crossings: MapFeatures,
+) -> None:
+    # Over the street's crosswalk, in plan view on it.
+    seen = Scene(stacked_crossings, [_walker("p", 100.0, 8.0)], {}).pedestrian("p")
+    assert seen.crosswalk is None
+    assert seen.nearest_crosswalk is None
+    assert seen.nearest_road is not None
+    assert int(seen.nearest_road.lanelet.id) == rm.DECK
+
+
+def test_a_pedestrian_on_the_deck_finds_the_deck_crosswalk(
+    stacked_crossings: MapFeatures,
+) -> None:
+    # The street's crosswalk is 49 m nearer in plan view; the deck's is its own.
+    scene = Scene(stacked_crossings, [_walker("p", 100.0, 8.0)], {})
+    near = scene.pedestrian("p", road_radius=60.0).nearest_crosswalk
+    assert near is not None and int(near.lanelet.id) == rm.DECK_CROSSWALK
+    assert near.distance == pytest.approx(49.0)
+    on = Scene(stacked_crossings, [_walker("p", 150.0, 8.0)], {}).pedestrian("p")
+    assert on.crosswalk is not None and int(on.crosswalk.id) == rm.DECK_CROSSWALK
+
+
+def test_a_pedestrian_on_the_street_is_on_its_crosswalk(
+    stacked_crossings: MapFeatures,
+) -> None:
+    seen = Scene(stacked_crossings, [_walker("p", 100.0, 0.0)], {}).pedestrian("p")
+    assert seen.crosswalk is not None
+    assert int(seen.crosswalk.id) == rm.STREET_CROSSWALK
+    assert seen.nearest_road is not None
+    assert int(seen.nearest_road.lanelet.id) == rm.STREET
+    # Under the deck's crosswalk, the street has none to be on.
+    under = Scene(stacked_crossings, [_walker("p", 150.0, 0.0)], {}).pedestrian("p")
+    assert under.crosswalk is None
+
+
+def test_without_an_elevation_a_pedestrian_looks_around_in_plan_view(
+    stacked_crossings: MapFeatures,
+) -> None:
+    seen = Scene(stacked_crossings, [_walker("p", 100.0, None)], {}).pedestrian("p")
+    assert seen.crosswalk is not None
+    assert int(seen.crosswalk.id) == rm.STREET_CROSSWALK
+    assert seen.nearest_road is not None
+    assert int(seen.nearest_road.lanelet.id) in (rm.STREET, rm.DECK)

@@ -341,3 +341,26 @@ def test_the_thresholds_can_be_overridden(features: MapFeatures) -> None:
         features, _car("ego", -40.0), _car("ahead", -25.0, speed=5.0)
     ).vehicle("ego")
     assert ignore_leader(seen, TriggerThresholds(acceleration_gain=50.0)) is None
+
+
+def test_a_pedestrian_on_a_deck_does_not_stop_on_the_crosswalk_below() -> None:
+    # #1606: on a deck over the street's crosswalk, the crosswalk is not its.
+    lanelet_map = rm.stacked(8.0, crosswalks=True)
+    stacked = MapFeatures(lanelet_map, rm.routing_graph(lanelet_map))
+
+    def walker(ground_z: float) -> AgentSnapshot:
+        return AgentSnapshot(
+            "p", 100.0, 0.0, math.pi / 2, 1.0, 0.0, PERSON, z=ground_z + 0.9, height=1.8
+        )
+
+    def command(ground_z: float, kind: AdversityKind) -> object:
+        scene = Scene(stacked, [walker(ground_z)], {})
+        return adversity_command(
+            kind, scene, "p", AdversityLocation.ANY, random.Random(0)
+        )
+
+    assert command(8.0, AdversityKind.STOP_CROSSING) is None
+    assert command(0.0, AdversityKind.STOP_CROSSING) is not None
+    # Off any crosswalk of its own, it may jaywalk across the deck.
+    assert command(8.0, AdversityKind.JAYWALKING) is not None
+    assert command(0.0, AdversityKind.JAYWALKING) is None
