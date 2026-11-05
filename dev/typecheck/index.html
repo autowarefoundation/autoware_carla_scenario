@@ -4816,8 +4816,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-291 of the package's 413
-modules (70%; about 89,200 of
+292 of the package's 414
+modules (71%; about 89,300 of
 152,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4827,7 +4827,10 @@ plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files, with the command line of <code>randomTrips.py</code> and the options of
 each demand it generates: <code>traffic.sumo.options</code>, #1679), the signal
-controllers, the adversity math, the measures, the metrics and the ODD's
+controllers, the adversity math, the measures, the metrics (and which of the
+CommonRoad metrics are heavy, the environment that turns them off and the
+checks of their periods: <code>heavy_metrics</code>, #1689; not <code>commonroad.session</code>,
+which runs the workers and re-exports it) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: <code>odd.traffic_ranges</code>, #1680; not the probes themselves,
 <code>odd.traffic_probes</code>, which builds openodd's knobs), the gate package's
@@ -4861,7 +4864,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 291 CHECKED modules</summary>
+<summary>The 292 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5501,6 +5504,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>gate.record</code></td>
 <td>What one run of a logical scenario leaves for its gate: <code>{stem}_gate.json</code>.</td>
+</tr>
+<tr>
+<td><code>heavy_metrics</code></td>
+<td>Which CommonRoad metrics are heavy, and whether a run evaluates them.</td>
 </tr>
 <tr>
 <td><code>hils.lidar_revolution</code></td>
@@ -6266,7 +6273,7 @@ the first:</p>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file, needed room, swap, and the decision whether an install is current and the conditional request that asks so, are the checked carla_install_paths's, which it re-exports</li>
 <li><code>commonroad</code>: re-exports commonroad.session and commonroad.worker, which are not checked</li>
-<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>)</li>
+<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports</li>
 <li><code>commonroad.worker</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); imports <code>types.SimpleNamespace</code>, which Codon has nothing for; the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
@@ -8245,7 +8252,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 21:41:25 UTC"><span class="timeago" datetime="2026-11-05T21:41:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 21:41:25 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 22:01:21 UTC"><span class="timeago" datetime="2026-11-05T22:01:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 22:01:21 UTC">2026-11-05</span>
   </span>
 
     
