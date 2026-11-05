@@ -148,10 +148,13 @@ def test_a_batch_refuses_a_wrong_value_before_reading_the_config(
         raise AssertionError("the map was resolved before the scenarios were checked")
 
     monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
-    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.timeout_seconds")):
+    # A value only the static check refuses: scenario.timeout_seconds, which
+    # this test used to set, is refused earlier by check_batch_configs
+    # (run_timeout_seconds), as a RunConfigError, so the check never ran.
+    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.s_margin")):
         run.run_batch(
-            ["lane_change/left", "lane_change/right"],
-            ["scenario.timeout_seconds=fast"],
+            ["temporary_stop/temporary_stop", "temporary_stop/temporary_stop"],
+            ["scenario.s_margin=wide"],
         )
 
 
