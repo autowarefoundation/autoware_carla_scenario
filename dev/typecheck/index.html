@@ -4768,8 +4768,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-270 of the package's 393
-modules (69%; about 83,300 of
+271 of the package's 393
+modules (69%; about 83,800 of
 146,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4782,7 +4782,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 270 CHECKED modules</summary>
+<summary>The 271 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5528,6 +5528,10 @@ first paragraph of its docstring:</p>
 <td>Backends a run needs started before it: declared, found, started, stopped.</td>
 </tr>
 <tr>
+<td><code>prepare.docker</code></td>
+<td>A backend run as a docker container on this host.</td>
+</tr>
+<tr>
 <td><code>prepare.host</code></td>
 <td>What the host has free for backends: GPU memory and host memory.</td>
 </tr>
@@ -5874,7 +5878,7 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>134 functions and methods of those modules are <code>UNCALLED</code>
+<p>138 functions and methods of those modules are <code>UNCALLED</code>
 (40 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -5887,7 +5891,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 134 UNCALLED functions and methods, and why</summary>
+<summary>The 138 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5950,6 +5954,10 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it</li>
 <li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it</li>
 <li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express</li>
+<li><code>prepare.docker.positive_seconds</code>: takes a value of a backend's block of the run's config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express (a timeout); only read_docker_settings, itself uncalled, and the excluded pedestrian.ardy call it</li>
+<li><code>prepare.docker.read_docker_settings</code>: takes a backend's block of the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express; only the excluded pedestrian.ardy calls it</li>
+<li><code>prepare.docker.string_list</code>: takes a value of a backend's block of the run's config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express (a list setting, <code>docker_args</code>); only read_docker_settings, itself uncalled, calls it</li>
+<li><code>prepare.docker.whole_mib</code>: takes a value of a backend's block of the run's config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express (an amount of memory); only read_docker_settings, itself uncalled, calls it</li>
 <li><code>ros2.config.CommandSourceConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
 <li><code>ros2.config.Ros2CameraConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
 <li><code>ros2.config.Ros2EgoConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
@@ -6025,7 +6033,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 </ul>
 </details>
-<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 122 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6054,7 +6062,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 123 EXCLUDED modules, and why</summary>
+<summary>The 122 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads into values of any type (<code>Any</code>)</li>
@@ -6128,11 +6136,10 @@ the first:</p>
 <li><code>odd.units</code>: re-exports openodd's units (a Rust extension)</li>
 <li><code>pedestrian._proto.pedestrian_motion_pb2</code>: imports google.protobuf</li>
 <li><code>pedestrian._proto.pedestrian_motion_pb2_grpc</code>: imports grpc</li>
-<li><code>pedestrian.ardy</code>: imports grpc, and prepare.docker, which is not checked</li>
+<li><code>pedestrian.ardy</code>: imports grpc and pedestrian.motion_client (grpc), which is neither checked nor modelled; ArdyBackend.from_settings() reads the backend's settings as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>pedestrian.motion_client</code>: imports grpc and the generated protobuf modules (google.protobuf)</li>
 <li><code>pedestrian.soma</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it</li>
 <li><code>prepare.declare</code>: sets and reads a class attribute by name (setattr, <code>type.__dict__</code>, <code>__mro__</code>) and imports a module by name (importlib), which Codon cannot</li>
-<li><code>prepare.docker</code>: runs docker through subprocess.Popen with a file object for its output (<code>IO[bytes]</code>) and more of subprocess and socket than their shims declare</li>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>) and authoring.models (<code>ScenarioDocument</code>; pydantic), both under <code>TYPE_CHECKING</code>, which are neither checked nor modelled, and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold, and document loaders (<code>Callable[[], ScenarioDocument]</code>) that return a pydantic model as values</li>
@@ -6149,7 +6156,7 @@ the first:</p>
 <li><code>slurm.manifest</code>: imports errno, and more of os than its shim declares (<code>os.fdopen()</code>, <code>os.link()</code>, <code>os.stat()</code>, <code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, socket, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
-<li><code>slurm.worker</code>: imports socket, traceback, errno, uuid, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor the <code>RerunConverter.wait()</code> and <code>RerunConverter.close()</code> it calls; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
+<li><code>slurm.worker</code>: imports traceback, errno, uuid, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor the <code>RerunConverter.wait()</code> and <code>RerunConverter.close()</code> it calls; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and <code>ODD_CASE_KEY</code>, <code>check_sample_settings()</code>, <code>encode_case()</code>, <code>sample_seed()</code>, <code>search_from_config()</code>, <code>seed_setting()</code>, <code>with_tire_friction()</code> and <code>with_visibility()</code> from odd.sampler (inside _with_odd_samples(), _config_seed() and expand_config()), <code>lanelet_readings()</code> from odd.route (inside _case_readings()) and <code>ControlsError</code> and <code>validate_controls()</code> from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm, sweeper.expand (omegaconf) and hydra_compat (argparse, hydra), and, inside a function, examples.run (hydra, omegaconf), which are neither checked nor modelled; derives hydra's <code>Sweeper</code> and <code>CompactHydraException</code>; imports <code>RerunUnavailableError</code> from rerun, which the rerun model does not declare, and, inside a function, <code>T4UnavailableError</code> from t4, which the t4 model does not declare; its cases are forked, stopped and waited for by the checked sweeper.isolation</li>
@@ -6895,7 +6902,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   which Codon's <code>re</code> has no syntax for); <code>fnmatch()</code> takes a <code>str</code> or an
   <code>os.PathLike</code> for either, read through <code>os.fspath()</code> as CPython's
   <code>normcase()</code> reads it on POSIX, and <code>fnmatchcase()</code> two <code>str</code>s, as
-  CPython's does. <code>filter()</code> and <code>translate()</code> are not declared (#728). <code>sys</code> replaces Codon's, keeping all of it (<code>argv</code>,
+  CPython's does. <code>filter()</code> and <code>translate()</code> are not declared (#728).
+  <code>socket</code> declares <code>create_connection(address, timeout=None)</code>,
+  <code>gethostname()</code>, <code>AF_INET</code>, <code>SOCK_STREAM</code> and <code>socket(family=AF_INET,
+  type=SOCK_STREAM, proto=0)</code>, whose socket has <code>bind(address, /)</code> and
+  <code>getsockname()</code> of an AF_INET (host, port) pair, <code>close()</code> and <code>with</code>;
+  nothing connects or binds, and <code>fileno</code> and the rest of the module are not
+  declared (#1498). <code>sys</code> replaces Codon's, keeping all of it (<code>argv</code>,
   the standard streams, <code>exit()</code>, <code>maxsize</code>), and adds <code>platform</code>
   (<code>"linux"</code>) and <code>executable</code> (a <code>str</code>). <code>atexit</code>
   declares <code>register(func, *args, **kwargs)</code>, which takes the function by
@@ -7999,7 +8012,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 14:42:25 UTC"><span class="timeago" datetime="2026-11-04T14:42:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 14:42:25 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 04:25:48 UTC"><span class="timeago" datetime="2026-11-05T04:25:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 04:25:48 UTC">2026-11-05</span>
   </span>
 
     
