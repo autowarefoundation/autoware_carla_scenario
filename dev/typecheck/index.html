@@ -4814,8 +4814,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-283 of the package's 406
-modules (70%; about 87,500 of
+284 of the package's 407
+modules (70%; about 87,600 of
 151,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4833,13 +4833,14 @@ and its configuration's sensor spec (not the YAML reading around it), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (<code>slurm.scripts</code>, #1648),
 and its calls of SLURM's command-line tools (<code>sbatch</code>, <code>squeue</code>, <code>scancel</code>,
-<code>scontrol</code>, <code>sinfo</code>: <code>slurm.queue</code>, #1634), and the parts of the
+<code>scontrol</code>, <code>sinfo</code>: <code>slurm.queue</code>, #1634), the naming rules of
+<code>scenario-new</code> (<code>scaffold.names</code>, #1654), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 283 CHECKED modules</summary>
+<summary>The 284 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5681,6 +5682,10 @@ with the first paragraph of its docstring:</p>
 <td><code>scenario.timeout_seconds</code>, the run's own fail-safe, read and checked.</td>
 </tr>
 <tr>
+<td><code>scaffold.names</code></td>
+<td>The naming rules of <code>scenario-new</code>: package, scenario and class names.</td>
+</tr>
+<tr>
 <td><code>scenario_base</code></td>
 <td>Base class for CARLA scenarios.</td>
 </tr>
@@ -6266,7 +6271,7 @@ the first:</p>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
-<li><code>scaffold.generator</code>: imports argparse, ast, functools, importlib.metadata, keyword, templating (jinja2) and, inside functions, packaging and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked</li>
+<li><code>scaffold.generator</code>: imports argparse, ast, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules are the checked scaffold.names'</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
@@ -6803,7 +6808,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 </ul>
 <!-- shims:start -->
 <p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>fnmatch</code>, <code>hashlib</code>,
-  <code>importlib.metadata</code>, <code>json</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>queue</code>,
+  <code>importlib.metadata</code>, <code>json</code>, <code>keyword</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>queue</code>,
   <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>socket</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
   <code>typing</code>, <code>typing_extensions</code> and <code>urllib.parse</code>
   <!-- shims:end -->
@@ -7031,6 +7036,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>os.PathLike</code> for either, read through <code>os.fspath()</code> as CPython's
   <code>normcase()</code> reads it on POSIX, and <code>fnmatchcase()</code> two <code>str</code>s, as
   CPython's does. <code>filter()</code> and <code>translate()</code> are not declared (#728).
+  <code>keyword</code> declares <code>kwlist</code>, CPython's hard keywords (the same on every
+  supported Python, generated from <code>keyword.kwlist</code>), and <code>iskeyword(s)</code>,
+  which takes one value by position, as CPython's
+  <code>frozenset(kwlist).__contains__</code> does, and is <code>False</code> for any value that is
+  no <code>str</code>; <code>softkwlist</code> and <code>issoftkeyword()</code>, which differ between
+  versions, are not declared (#1654).
   <code>socket</code> declares <code>create_connection(address, timeout=None)</code>,
   <code>gethostname()</code>, <code>AF_INET</code>, <code>SOCK_STREAM</code> and <code>socket(family=AF_INET,
   type=SOCK_STREAM, proto=0)</code>, whose socket has <code>bind(address, /)</code> and
@@ -7090,7 +7101,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   as attributes and as a tuple, <code>hostname</code>, <code>port</code>, <code>username</code>, <code>password</code>
   and <code>geturl()</code>). A scenario sees the same shims: it may import <code>pathlib</code>,
   <code>hashlib</code>, <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>importlib.metadata</code>,
-  <code>urllib.parse</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code>, <code>fnmatch</code> and <code>sys</code> and call what they
+  <code>urllib.parse</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code>, <code>fnmatch</code>, <code>keyword</code> and <code>sys</code> and call what they
   declare,
   file-system queries and the two writes included (<code>Path(...).exists()</code>, <code>Path(...).write_text(...)</code>), read
   and set the environment (<code>os.environ.get()</code>), copy, move and remove files
@@ -8151,7 +8162,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 17:06:05 UTC"><span class="timeago" datetime="2026-11-05T17:06:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 17:06:05 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 17:42:39 UTC"><span class="timeago" datetime="2026-11-05T17:42:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 17:42:39 UTC">2026-11-05</span>
   </span>
 
     
