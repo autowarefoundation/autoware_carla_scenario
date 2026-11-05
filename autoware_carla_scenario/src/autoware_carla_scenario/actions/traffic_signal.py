@@ -170,8 +170,6 @@ class TrafficSignalAction(BaseAction):
 
     def _route_light_ids(self) -> list[int]:
         """The route target's lights on the map the run is on (said if none)."""
-        if TYPE_CHECKING:
-            return []  # the route's frame is not compiled (docs/typecheck.md)
         from ..route.active import scenario_route_frame  # noqa: PLC0415
         from ..route.positions import junction_traffic_lights  # noqa: PLC0415
 
@@ -187,13 +185,16 @@ class TrafficSignalAction(BaseAction):
             logger.warning("TrafficSignalAction [%s]: %s", self.label, exc)
             return []
         if not ids:
+            shown = "any way"
+            if turn:
+                shown = turn
             logger.warning(
                 "TrafficSignalAction [%s]: no traffic light on the paths into route "
                 "junction %d from %s turning %s",
                 self.label,
                 self._route_junction,
                 self._route_approach,
-                turn or "any way",
+                shown,
             )
         return ids
 

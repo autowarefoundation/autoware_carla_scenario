@@ -1140,15 +1140,13 @@ class RoutingAction(TrajectoryRun):
                 (location.x, location.y),
             )
         if actor is not None:
-            if TYPE_CHECKING:
-                pass  # utils.clearance is not compiled (docs/typecheck.md)
-            else:
-                from ._trajectory_run import _vehicle_before_walker  # noqa: PLC0415
+            from ._trajectory_run import _vehicle_before_walker  # noqa: PLC0415
 
-                if _vehicle_before_walker(actor):
-                    # A vehicle in its way (a car stopped where a cyclist rides
-                    # on): it waits for it rather than walk into it.
-                    speed = 0.0
+            walking_actor: "carla.Actor" = actor
+            if _vehicle_before_walker(walking_actor):
+                # A vehicle in its way (a car stopped where a cyclist rides
+                # on): it waits for it rather than walk into it.
+                speed = 0.0
         if speed is None:
             walker.walk_on()
         else:

@@ -91,8 +91,6 @@ def get_signal_ids_for_controller(controller_id: int) -> list[str]:
 def _loaded_map() -> "Optional[tuple[lanelet2.core.LaneletMap, tuple[float, float]]]":
     """The Lanelet2 map the run loaded, and its offset from CARLA's frame;
     ``None`` when none is loaded."""
-    if TYPE_CHECKING:
-        return None  # the Lanelet2 map's geometry is not compiled (docs/typecheck.md)
     try:
         manager = MapManager.get_instance()
         lanelet_map = manager.lanelet_map
