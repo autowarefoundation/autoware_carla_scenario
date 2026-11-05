@@ -360,8 +360,27 @@ docker run --rm \
   --env NISHISHINJUKU_XODR_PATH=/maps/nishishinjuku_carla.xodr \
   --env NISHISHINJUKU_LANELET2_PATH=/maps/nishishinjuku.osm \
   my-scenario:latest \
-  scenario=my_scenario/default map=nishishinjuku
+  scenario=my_scenario/default map=nishishinjuku map.overwrite_xodr=false
 ```
+
+`map=nishishinjuku` turns `map.overwrite_xodr` on: before loading the map it
+copies `map.xodr_path` over the `.xodr` inside the server's CARLA installation,
+the file `NISHISHINJUKU_MAP_PATH` names. The container cannot see that
+installation, so the example turns the overwrite off and the server keeps the
+road network its map already has; the mounted files are still what the scenario
+reads. The map turns the overwrite on because NishishinjukuMap's assets ship
+without a matching OpenDRIVE; to install it from a container on the server's
+host, mount the server's file read-write and name it, in place of
+`map.overwrite_xodr=false` (`$SERVER_XODR` is the path `NISHISHINJUKU_MAP_PATH`
+would hold on the host):
+
+```bash
+  --volume "$SERVER_XODR:/carla/NishishinjukuMap.xodr" \
+  --env NISHISHINJUKU_MAP_PATH=/carla/NishishinjukuMap.xodr \
+```
+
+The copy keeps the source's timestamps, which only the file's owner may set, so
+the container's user (UID 1000, or `--user`) must own that file.
 
 Without `--network host`, pass the server address explicitly with
 `server.host=<address> server.port=2000`. Hydra writes under the working
