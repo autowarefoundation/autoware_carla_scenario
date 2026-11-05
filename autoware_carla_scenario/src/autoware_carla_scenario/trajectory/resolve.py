@@ -46,8 +46,9 @@ __all__ = [
 # The signatures below spell these aliases out: the static check
 # (docs/typecheck.md) reads a callable or a union through an alias as no type.
 
-#: ``(x, y) -> z`` of the ground at a CARLA world point.
-GroundHeight = Callable[[float, float], Optional[float]]
+#: ``(x, y, z_hint) -> z`` of the ground at a CARLA world point: of the road
+#: nearest *z_hint* there, where roads are stacked.
+GroundHeight = Callable[[float, float, float], Optional[float]]
 
 #: ``(x, y, z, yaw_deg)`` of a vertex in CARLA world coordinates.
 ResolvedPosition = Tuple[float, float, Optional[float], Optional[float]]
@@ -423,14 +424,23 @@ def resolve_along_lane(
     return resolve_position(position, reference)
 
 
-def road_height(carla_map: carla.Map) -> Callable[[float, float], Optional[float]]:
-    """The road surface's height under a point, read from *carla_map*."""
+def road_height(
+    carla_map: carla.Map,
+) -> Callable[[float, float, float], Optional[float]]:
+    """The road surface's height under a point, read from *carla_map*.
+
+    The callable returned takes ``(x, y, z_hint)``.  CARLA projects a point
+    onto the road nearest it in 3D, so where roads are stacked (an overpass
+    over a lower road) the deck read is the one nearest *z_hint*: give it the
+    height the caller already knows of the point (a resolved pose's, the last
+    known vertex's), or 0 when it knows none.
+    """
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
-    def height(x: float, y: float) -> Optional[float]:
+    def height(x: float, y: float, z_hint: float = 0.0) -> Optional[float]:
         try:
             waypoint = carla_map.get_waypoint(
-                carla.Location(x=x, y=y, z=0.0), project_to_road=True
+                carla.Location(x=x, y=y, z=z_hint), project_to_road=True
             )
         except (AttributeError, RuntimeError, TypeError):
             return None
@@ -443,7 +453,7 @@ def road_height(carla_map: carla.Map) -> Callable[[float, float], Optional[float
 
 def resolve_trajectory(
     trajectory: Trajectory,
-    ground: Optional[Callable[[float, float], Optional[float]]] = None,
+    ground: Optional[Callable[[float, float, float], Optional[float]]] = None,
     *,
     resolve: Optional[
         Callable[
@@ -473,8 +483,12 @@ def resolve_trajectory(
     Args:
         trajectory: The trajectory as written.
         ground: Height of the ground at a CARLA point, for the vertices that
-            state none.  ``None`` -- or a point it cannot answer for -- puts
-            such a vertex at the last height known along the path, or at 0.
+            state none, called with ``(x, y, z_hint)`` where *z_hint* is the
+            last height known along the path (or 0), so that the road read
+            where roads are stacked is the one the path is on
+            (:func:`road_height`).  ``None`` -- or a point it cannot answer
+            for -- puts such a vertex at the last height known along the path,
+            or at 0.
         resolve: Turns one position into ``(x, y, z, yaw_deg)``; the default
             uses the loaded map (:func:`position_resolver`).  Injected by the
             tests.
@@ -494,7 +508,7 @@ def resolve_trajectory(
 
 def _resolve_vertices(
     trajectory: Trajectory,
-    ground: Optional[Callable[[float, float], Optional[float]]],
+    ground: Optional[Callable[[float, float, float], Optional[float]]],
     resolve: Callable[
         [
             Union[
@@ -525,12 +539,29 @@ def _resolve_vertices(
             raise ValueError(
                 f"trajectory {trajectory.name!r}, vertex {index}: {exc}"
             ) from exc
-        if z is None and ground is not None:
-            z = ground(x, y)
         xs.append(x)
         ys.append(y)
         zs.append(z)
         yaws.append(yaw)
+    if ground is not None:
+        surface: Callable[[float, float, float], Optional[float]] = ground
+        # The ground is read near the height last known along the path (before
+        # the first, the first stated, or 0), so a vertex with none stays on
+        # the road the path is on where roads are stacked.
+        hint = 0.0
+        for value in zs:
+            if value is not None:
+                hint = float(value)
+                break
+        for index in range(len(zs)):
+            stated = zs[index]
+            if stated is None:
+                read = surface(xs[index], ys[index], hint)
+                zs[index] = read
+                if read is not None:
+                    hint = float(read)
+            else:
+                hint = float(stated)
     # The first height known, or 0; then each vertex's, or the last known.
     # Statements rather than next() and conditional expressions, each of
     # whose values Codon would have to type as one (docs/typecheck.md).
