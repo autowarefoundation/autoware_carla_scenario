@@ -5,7 +5,9 @@ Two passes, both aimed at third-party manylinux wheels rather than at anything
 this repository controls:
 
 * delete what only a test runner, compiler or type checker reads -- byte-code
-  caches, vendored test suites, C headers, Cython sources and type stubs;
+  caches, vendored test suites, C headers, Cython sources and type stubs --
+  except the type checker the image runs itself: mypy reads the standard
+  library's stubs from its bundled typeshed (:data:`PRUNE_KEEP_TREES`);
 * run ``strip --strip-unneeded`` over the bundled shared objects, which the
   wheels for scipy, numpy and OpenCV ship unstripped.
 
@@ -48,6 +50,13 @@ PRUNE_SUFFIXES = (".pyi", ".pyx", ".pxd", ".a")
 #: that imports ``numpy.testing``, scipy among them.  The directory has no
 #: ``__init__.py``; the one file is enough for the import to resolve.
 PRUNE_KEEP = frozenset({"numpy/_core/tests/_natype.py"})
+#: Directories, relative to site-packages, that neither pass touches.  The
+#: image runs mypy (the scenario check's None check), and mypy reads the
+#: standard library from the typeshed it bundles -- ``.pyi`` stubs plus the
+#: ``stdlib/VERSIONS`` table.  Without the stubs every mypy run stops with
+#: "Failed to find builtin module 'typing', perhaps typeshed is broken?", which
+#: the check reports as skipped rather than failed (#1542).
+PRUNE_KEEP_TREES = frozenset({"mypy/typeshed"})
 #: The page sizes a Linux kernel maps segments at, smallest first: x86-64 has
 #: 4 KiB pages, while an aarch64 kernel may be built for 4, 16 or 64 KiB, and
 #: an image runs under whichever its host has.
@@ -109,7 +118,7 @@ def is_loadable(path: Path) -> bool:
 
 
 def prune_directory(directory: Path, keep: set[Path]) -> None:
-    """Delete *directory*, except the files in *keep* and their parents."""
+    """Delete *directory*, except the paths in *keep* and their parents."""
     if not any(directory in path.parents for path in keep):
         shutil.rmtree(directory, ignore_errors=True)
         return
@@ -124,9 +133,22 @@ def prune_directory(directory: Path, keep: set[Path]) -> None:
 
 def prune(site: Path) -> None:
     """Delete the build-time-only files under *site*."""
+    trees = {site / relative for relative in PRUNE_KEEP_TREES}
+    trees = {tree for tree in trees if tree.is_dir() and not tree.is_symlink()}
+
+    def kept_tree(path: Path) -> bool:
+        return path in trees or any(tree in path.parents for tree in trees)
+
+    # A kept tree is kept whole: prune_directory spares a kept directory, and
+    # neither pass descends into one.
     keep = {site / relative for relative in PRUNE_KEEP if (site / relative).is_file()}
+    keep |= trees
     for directory in sorted(
-        (p for p in site.rglob("*") if p.is_dir() and p.name in PRUNE_DIRS),
+        (
+            p
+            for p in site.rglob("*")
+            if p.is_dir() and p.name in PRUNE_DIRS and not kept_tree(p)
+        ),
         key=lambda p: len(p.parts),
         reverse=True,
     ):
@@ -134,7 +156,11 @@ def prune(site: Path) -> None:
     # Materialised before deleting: unlinking while the walk is still open is
     # asking the directory iterator to cope with entries vanishing under it.
     for path in list(site.rglob("*")):
-        if path.is_file() and path.name.endswith(PRUNE_SUFFIXES):
+        if (
+            path.is_file()
+            and path.name.endswith(PRUNE_SUFFIXES)
+            and not kept_tree(path)
+        ):
             path.unlink(missing_ok=True)
 
 
