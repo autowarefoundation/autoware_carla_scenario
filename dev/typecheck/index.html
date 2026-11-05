@@ -6575,18 +6575,21 @@ the moment Codon reads it: <code>BaseScenario</code> declares <code>_measures: d
 Measure]</code> at class level, and <code>measures</code> declares the running scenario
 (<code>_MEASURED: dict[str, Optional[BaseScenario]]</code>) as a global, so neither can
 be read first. <code>MODELLED_IMPORTS</code> in <code>typecheck/library.py</code> breaks such a
-cycle: the module it names (<code>measures</code>, <code>entity.ego</code>) imports the other
+cycle: the module it names (<code>measures</code>, <code>odd.route_plan</code>) imports the other
 (<code>scenario_base</code>) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
+A cycle that only a definition in the wrong module made is better broken by
+moving the definition: <code>EgoConfig</code> is defined in <code>entity.ego</code>, next to the
+<code>EgoVehicle.spawn()</code> that takes it, and <code>scenario_base</code> re-exports it, so
+<code>entity.ego</code> imports nothing from <code>scenario_base</code> and needs no entry, and the
+runner's <code>ego.spawn(world, scenario.ego_config)</code> is checked as it runs.
 The egos derived from <code>EgoVehicle</code> (<code>entity.bridged_ego</code>,
-<code>entity.autoware_entity</code>) do not override <code>EgoVehicle.spawn()</code>, so they never
-name <code>EgoConfig</code> and need no entry: Codon 0.19 cannot call <code>super().spawn()</code>
-through an intermediate class ("'EgoVehicle' does not match expected type"
-in its dispatch thunk), and an override that repeated the spawn instead would
-take <code>scenario_base</code> through the model as <code>entity.ego</code> does. Through the
-checked <code>scenario_base</code>, a run with an example scenario in it failed in Codon
-0.19's code generation (<code>LLVM: error: value doesn't match function result
-type '{ ptr, ptr }'</code>, in <code>opt_ref_new</code> of the model's <code>BaseScenario</code>).</p>
+<code>entity.autoware_entity</code>) do not override <code>EgoVehicle.spawn()</code>: Codon 0.19
+cannot call <code>super().spawn()</code> through an intermediate class ("'EgoVehicle'
+does not match expected type" in its dispatch thunk). Through the checked
+<code>scenario_base</code>, a run with an example scenario in it failed in Codon 0.19's
+code generation (<code>LLVM: error: value doesn't match function result type
+'{ ptr, ptr }'</code>, in <code>opt_ref_new</code> of the model's <code>BaseScenario</code>).</p>
 <p>A model module that stands in for unchecked code declares only what the
 checked modules and scenarios use of it. <code>coordinate.codon</code> still declares,
 of <code>coordinate.projection</code>, the <code>map_origin()</code>, <code>resolve_projector()</code> and
@@ -7979,10 +7982,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>A value of a type the model holds</strong>: a checked module that hands a checked
   value to a checked module that imports it through the model
   (<code>MODELLED_IMPORTS</code>) hands the wrong type. <code>scenario_runner</code> hands the
-  checked <code>BaseScenario</code> to <code>measures.set_measured_scenario()</code>, and its
-  <code>EgoConfig</code> to <code>EgoVehicle.spawn()</code>, which take the model's: it makes those
-  calls in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>, and takes the spawned
-  actor from <code>ego.actor</code> in the first.
+  checked <code>BaseScenario</code> to <code>measures.set_measured_scenario()</code>, which takes
+  the model's: it makes that call in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>.
 - <strong>No module object to assign a global through</strong>
   (<code>vehicle_entity._warmup_done = True</code>): Codon 0.19 imports no module as a
   value. The module sets its global in a function of its own
@@ -8063,7 +8064,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 09:08:43 UTC"><span class="timeago" datetime="2026-11-05T09:08:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 09:08:43 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 10:40:43 UTC"><span class="timeago" datetime="2026-11-05T10:40:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 10:40:43 UTC">2026-11-05</span>
   </span>
 
     
