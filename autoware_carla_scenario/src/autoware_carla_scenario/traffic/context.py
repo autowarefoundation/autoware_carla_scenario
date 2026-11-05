@@ -43,7 +43,17 @@ class TrafficContext:
         random_seed: The scenario's seed.  A backend with any randomness of its
             own derives it from this, so a repeated run repeats.
         output_dir: Where this run's artefacts go; a backend writes its own logs
-            under it rather than into the working directory.
+            under it rather than into the working directory.  A batch shares
+            one, so a backend writing more than its logs names what it writes
+            by :attr:`file_stem`.
+        file_stem: The stem the run's own files are named by
+            (``CutInScenario``, then ``CutInScenario-1`` ...), as the runner
+            names its result and trajectory log.  A backend's per-run outputs
+            go under it -- ``{output_dir}/{file_stem}{suffix}``, with the
+            suffix listed in :mod:`~autoware_carla_scenario.run_outputs` -- so
+            the runs of a batch do not overwrite each other's, a run's stem is
+            never reused while they exist and a retried run clears them.
+            Empty when no run is named (a backend prepared on its own).
     """
 
     client: Optional["carla.Client"] = None
@@ -53,3 +63,4 @@ class TrafficContext:
     fixed_delta_seconds: float = 0.05
     random_seed: int = 0
     output_dir: Path = field(default_factory=lambda: Path("scenario_outputs"))
+    file_stem: str = ""

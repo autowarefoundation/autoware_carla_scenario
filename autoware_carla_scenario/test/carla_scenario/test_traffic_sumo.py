@@ -513,6 +513,7 @@ def _prepared(
 
     vehicles = options.pop("vehicles", None)
     box_location = options.pop("box_location", None)
+    file_stem = options.pop("file_stem", "")
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -532,6 +533,7 @@ def _prepared(
             fixed_delta_seconds=0.05,
             random_seed=3,
             output_dir=tmp_path / "out",
+            file_stem=file_stem,
         )
     )
     npc = _FakeActor(
@@ -1792,6 +1794,31 @@ def test_fcd_output_records_how_sumo_time_maps_onto_carla_time(
     assert sumo_t == pytest.approx(1.05)
     assert (carla_t, frame) == (pytest.approx(100.05), 1)
     assert len(rows) == 11
+
+
+@needs_sumo
+def test_each_run_of_a_batch_keeps_its_own_fcd_and_clock(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    # A batch shares one output directory: each run's SUMO outputs go under its
+    # file stem, so the second run does not overwrite the first's (#1544).
+    runs = (("CutInScenario", 4), ("CutInScenario-1", 8))
+    for stem, ticks in runs:
+        backend, world, _npc, _ego = _prepared(
+            crossroads, tmp_path, fcd_output=True, file_stem=stem
+        )
+        try:
+            for i in range(ticks):
+                backend.tick(world, i * 0.05)
+        finally:
+            backend.close()
+    out = tmp_path / "out"
+    assert not (out / "sumo").exists()
+    for stem, ticks in runs:
+        assert (out / f"{stem}.sumo" / "fcd.xml").is_file()
+        assert (out / f"{stem}.sumo" / "sumo.log").is_file()
+        rows = (out / f"{stem}.sumo" / "clock.csv").read_text().splitlines()
+        assert len(rows) == 1 + ticks
 
 
 # ---------------------------------------------------------------------------
