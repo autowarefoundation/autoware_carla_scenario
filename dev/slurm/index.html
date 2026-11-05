@@ -2391,17 +2391,17 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 <tr>
 <td><code>partition</code>, <code>account</code>, <code>qos</code></td>
 <td><code>null</code></td>
-<td><code>sbatch --partition/--account/--qos</code></td>
+<td><code>sbatch --partition/--account/--qos</code>; <code>partition</code> may list several (<code>gpu,cpu</code>)</td>
 </tr>
 <tr>
 <td><code>time</code></td>
 <td><code>null</code></td>
-<td><code>sbatch --time</code>; the task is sent SIGTERM <code>signal_grace_seconds</code> before it runs out</td>
+<td><code>sbatch --time</code> in any of its forms (<code>90</code>, <code>120:00</code>, <code>168:00:00</code>, <code>2-00</code>, <code>1-12:30</code>, <code>1-00:00:00</code>, <code>UNLIMITED</code>); the task is sent SIGTERM <code>signal_grace_seconds</code> before it runs out</td>
 </tr>
 <tr>
 <td><code>mem</code>, <code>cpus_per_task</code>, <code>gres</code></td>
 <td><code>null</code></td>
-<td><code>sbatch --mem/--cpus-per-task/--gres</code> (<code>gpu:1</code>, or <code>shard:1</code> to share a GPU)</td>
+<td><code>sbatch --mem/--cpus-per-task/--gres</code> (<code>gpu:1</code>, or <code>shard:1</code> to share a GPU; a list: <code>gpu:1,shard:2</code>)</td>
 </tr>
 <tr>
 <td><code>array_parallelism</code></td>
@@ -2753,7 +2753,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 02:05:48 UTC"><span class="timeago" datetime="2026-11-05T02:05:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 02:05:48 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 09:08:02 UTC"><span class="timeago" datetime="2026-11-05T09:08:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 09:08:02 UTC">2026-11-05</span>
   </span>
 
     
