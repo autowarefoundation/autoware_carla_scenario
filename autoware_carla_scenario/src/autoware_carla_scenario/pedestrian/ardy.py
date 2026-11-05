@@ -25,8 +25,14 @@ Settings (``backends.ardy`` of the run's config), each optional:
                      downloads ~20 GB of weights).
 ``timeout_s``        How long one Step may take (120).
 ``pull``             ``missing``, ``always`` or ``never``.
-``docker_args``      More ``docker run`` arguments.
+``docker_args``      More ``docker run`` arguments: a list.
 ==================== ========================================================
+
+The timeouts must be finite and above 0, the memories whole numbers, not
+negative; a value refused is a ``ValueError`` naming its key
+(``backends.ardy.<key>``), raised by :meth:`ArdyBackend.from_settings`
+before any image is pulled or container started
+(:func:`~autoware_carla_scenario.prepare.docker.read_docker_settings`).
 """
 
 from __future__ import annotations
@@ -35,8 +41,13 @@ from typing import Any, ClassVar, Mapping
 
 import grpc
 
-from ..prepare import Resources
-from ..prepare.docker import DockerBackend, DockerSettings
+from ..prepare.docker import (
+    DockerBackend,
+    DockerSettings,
+    positive_seconds,
+    read_docker_settings,
+    setting_key,
+)
 from .motion_client import PedestrianMotionClient
 
 __all__ = ["DEFAULT_IMAGE", "ArdyBackend"]
@@ -66,32 +77,36 @@ class ArdyBackend(DockerBackend):
 
     @classmethod
     def from_settings(cls, settings: Mapping[str, Any]) -> "ArdyBackend":
+        """ARDY configured by *settings* (``backends.ardy``), checked.
+
+        Raises:
+            ValueError: naming the key (``backends.ardy.<key>``) of the first
+                value refused, before any image is pulled or container
+                started.
+        """
+        name = cls.backend_name
         hf_home = str(settings.get("hf_home", "~/.cache/huggingface"))
         env = {
             "ARDY_MODEL": str(settings.get("model", "soma")),
             "ARDY_ACCELERATION": str(settings.get("acceleration", "none")),
             "HF_HOME": "/hf",
         }
-        return cls(
-            DockerSettings(
-                image=str(settings.get("image", DEFAULT_IMAGE)),
-                container_port=CONTAINER_PORT,
-                gpus=str(settings.get("gpus", "auto")),
-                env=env,
-                pass_env=("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
-                mounts=(f"{hf_home}:/hf",),
-                docker_args=tuple(
-                    str(a) for a in settings.get("docker_args", ()) or ()
-                ),
-                pull=str(settings.get("pull", "missing")),
-                startup_timeout_s=float(settings.get("startup_timeout_s", 1800.0)),
-                resources=Resources(
-                    gpu_memory_mb=int(settings.get("gpu_memory_mb", 24000)),
-                    memory_mb=int(settings.get("memory_mb", 16000)),
-                ),
-            ),
-            timeout_s=float(settings.get("timeout_s", 120.0)),
+        docker = read_docker_settings(
+            name,
+            settings,
+            image=DEFAULT_IMAGE,
+            container_port=CONTAINER_PORT,
+            env=env,
+            pass_env=("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"),
+            mounts=(f"{hf_home}:/hf",),
+            startup_timeout_s=1800.0,
+            gpu_memory_mb=24000,
+            memory_mb=16000,
         )
+        timeout_s = positive_seconds(
+            setting_key(name, "timeout_s"), settings.get("timeout_s", 120.0)
+        )
+        return cls(docker, timeout_s=timeout_s)
 
     def ready(self, timeout_s: float) -> bool:
         client = PedestrianMotionClient(self.address(), timeout_s=timeout_s)

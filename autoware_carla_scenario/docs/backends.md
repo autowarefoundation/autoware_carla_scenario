@@ -131,6 +131,21 @@ backends:
 scenario-run scenario=... backends.ardy.image=ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 ```
 
+The settings every container backend shares are checked when the backend is
+built, before any image is pulled or container started:
+
+- `pull` is `missing`, `always` or `never`;
+- `startup_timeout_s` (and ARDY's `timeout_s`) is a finite number of seconds
+  above 0;
+- `gpu_memory_mb` and `memory_mb` are whole numbers, not negative;
+- `docker_args` is a list (`[--shm-size=8g]`), never a string.
+
+A value refused is an error naming its key, such as
+`backends.ardy.startup_timeout_s must be finite and above 0, got -1`. A
+run refuses the settings of a backend this package ships (`backends.ardy`)
+before anything starts, along with the rest of its config. A backend of
+another package has its settings checked when its scenario is prepared.
+
 The ARDY text encoder is Llama-3-8B, which is gated on Hugging Face. The
 container gets the host's Hugging Face cache, where the token and the weights
 are, at `hf_home`. It also gets `HF_TOKEN` when this process has one.
@@ -144,6 +159,9 @@ A backend class has two parts:
 
 What it builds implements `prepare.Backend`: `name`, `resources()`,
 `start(log_dir, gpu)`, `address()` and `close()`. For a container, subclass
-`prepare.docker.DockerBackend`, build its `DockerSettings`, and implement
+`prepare.docker.DockerBackend`, build its `DockerSettings` with
+`prepare.docker.read_docker_settings(name, settings, ...)`, which reads and
+checks the shared keys above (check your own keys with its helpers, such as
+`positive_seconds`), and implement
 `ready(timeout_s)` to say when the service answers. Then put
 `@need_prepare(YourBackend)` on the action, scenario or renderer that needs it.

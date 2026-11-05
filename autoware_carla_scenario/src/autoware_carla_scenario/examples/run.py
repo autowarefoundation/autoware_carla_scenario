@@ -2080,8 +2080,9 @@ def check_batch_configs(
     ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
     ``ego.entity=carla_driver`` case (:func:`_check_driver_settings`), ``ros2``
     settings of an ``ego.entity=ros2`` case (:func:`_check_ros2_settings`), the
-    ``scenario`` settings its config class refuses
-    (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
+    ``backends`` settings of the backends this package ships
+    (:func:`_check_backend_settings`), the ``scenario`` settings its config
+    class refuses (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
     scenario is built or the map is resolved (#1430): a local one would refuse
@@ -2120,6 +2121,7 @@ def check_batch_configs(
             _check_weather_rules(cfg)
             _check_driver_settings(cfg)
             _check_ros2_settings(cfg)
+            _check_backend_settings(cfg)
             _check_scenario_config(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
@@ -2523,6 +2525,34 @@ def _check_ros2_settings(cfg: DictConfig) -> None:
         Ros2EgoConfig.from_mapping(ros2_dict)
     except ValueError as exc:
         raise ValueError(f"ros2: {exc}") from None
+
+
+def _check_backend_settings(cfg: DictConfig) -> None:
+    """Refuse the ``backends`` settings of a backend this package ships
+    (``backends.ardy``) as the queue's preparer would once a scenario needed
+    it (``startup_timeout_s: -1``, ``pull: sometimes``, ``docker_args`` as a
+    string, ...): its ``from_settings`` only reads them -- it pulls no image
+    and starts no container.  A backend of another package is built, and its
+    settings checked, by the preparer.
+
+    Raises:
+        ValueError: naming the key (``backends.<name>.<key>``).
+    """
+    backends_cfg = cfg.get("backends")
+    if backends_cfg is None:
+        return
+    if not isinstance(backends_cfg, DictConfig):
+        raise ValueError(f"backends must be a mapping, got {backends_cfg!r}")
+    from autoware_carla_scenario.pedestrian.ardy import ArdyBackend  # noqa: PLC0415
+
+    for backend in (ArdyBackend,):
+        name = backend.backend_name
+        settings = backends_cfg.get(name)
+        if settings is None:
+            continue
+        if not isinstance(settings, DictConfig):
+            raise ValueError(f"backends.{name} must be a mapping, got {settings!r}")
+        backend.from_settings(_to_dict(settings))
 
 
 def _check_scenario_config(cfg: DictConfig) -> None:

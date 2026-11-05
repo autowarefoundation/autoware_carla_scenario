@@ -12,19 +12,30 @@ host (two SLURM jobs) each keep their own.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import socket
 import subprocess
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import IO, ClassVar, Optional
+from typing import IO, Any, ClassVar, Mapping, Optional
 
+from ..seed import check_whole_number
 from . import BackendError, Resources
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DockerBackend", "DockerSettings"]
+__all__ = [
+    "PULL_POLICIES",
+    "DockerBackend",
+    "DockerSettings",
+    "positive_seconds",
+    "read_docker_settings",
+    "setting_key",
+    "string_list",
+    "whole_mib",
+]
 
 #: The label every backend container carries: ``<host>:<pid>`` of its starter.
 OWNER_LABEL = "autoware_carla_scenario.backend.owner"
@@ -66,6 +77,138 @@ class DockerSettings:
     startup_timeout_s: float = 600.0
     resources: Resources = Resources()
     docker: str = "docker"
+
+
+#: What ``pull`` takes: pull when the host lacks the image, every start, or
+#: never.
+PULL_POLICIES = ("missing", "always", "never")
+
+
+def setting_key(backend: str, key: str) -> str:
+    """The name of *backend*'s setting *key* in a run's config
+    (``backends.<backend>.<key>``), as an error names it."""
+    return f"backends.{backend}.{key}"
+
+
+def positive_seconds(key: str, value: Any) -> float:
+    """*value*, a timeout in seconds, checked: a number, finite and above 0.
+
+    A timeout of 0 or less puts a deadline in the past (a container started,
+    then torn down at once), NaN never ends a comparison, and infinity waits
+    forever.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a number of seconds, got {value!r}")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number of seconds, got {value!r}")
+    if not math.isfinite(seconds) or seconds <= 0.0:
+        raise ValueError(f"{key} must be finite and above 0, got {value!r}")
+    return seconds
+
+
+def whole_mib(key: str, value: Any) -> int:
+    """*value*, an amount of memory in MiB, checked: a whole number
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`), not negative.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    number = check_whole_number(key, value)
+    if number < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return number
+
+
+def string_list(key: str, value: Any) -> tuple[str, ...]:
+    """*value*, a list setting (``docker_args``), as a tuple of strings.
+
+    ``None`` is an empty list.  A string is refused rather than split into
+    its characters (``'--shm-size=8g'``), and so is a mapping, or an item
+    that is itself a list or a mapping.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or isinstance(value, Mapping):
+        raise ValueError(f"{key} must be a list, got {value!r}")
+    try:
+        items = list(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a list, got {value!r}")
+    for item in items:
+        if isinstance(item, Mapping) or isinstance(item, (list, tuple)):
+            raise ValueError(f"{key} must be a list of strings, got {value!r}")
+    return tuple(str(item) for item in items)
+
+
+def read_docker_settings(
+    backend: str,
+    settings: Mapping[str, Any],
+    *,
+    image: str,
+    container_port: int,
+    env: Optional[Mapping[str, str]] = None,
+    pass_env: tuple[str, ...] = (),
+    mounts: tuple[str, ...] = (),
+    startup_timeout_s: float = 600.0,
+    gpu_memory_mb: int = 0,
+    memory_mb: int = 0,
+) -> DockerSettings:
+    """The :class:`DockerSettings` of a backend's block of the run's config
+    (``backends.<backend>``), every key optional, checked.
+
+    It reads the keys every container backend shares: ``image``, ``gpus``,
+    ``pull`` (one of :data:`PULL_POLICIES`), ``docker_args`` (a list),
+    ``startup_timeout_s`` (finite, above 0), ``gpu_memory_mb`` and
+    ``memory_mb`` (whole numbers, not negative).  The keyword arguments are
+    its defaults, and what the backend sets itself (its port, environment and
+    mounts); a backend checks its own keys.  Checking reads nothing of the
+    host and starts nothing, so a run can refuse a setting before any image
+    is pulled or container started.
+
+    Raises:
+        ValueError: naming the key (``backends.<backend>.<key>``) of the
+            first value refused.
+    """
+    pull = settings.get("pull", "missing")
+    if not isinstance(pull, str) or pull not in PULL_POLICIES:
+        raise ValueError(
+            f"{setting_key(backend, 'pull')} must be one of "
+            f"{', '.join(PULL_POLICIES)}, got {pull!r}"
+        )
+    return DockerSettings(
+        image=str(settings.get("image", image)),
+        container_port=container_port,
+        gpus=str(settings.get("gpus", "auto")),
+        env=dict(env or {}),
+        pass_env=pass_env,
+        mounts=mounts,
+        docker_args=string_list(
+            setting_key(backend, "docker_args"), settings.get("docker_args")
+        ),
+        pull=pull,
+        startup_timeout_s=positive_seconds(
+            setting_key(backend, "startup_timeout_s"),
+            settings.get("startup_timeout_s", startup_timeout_s),
+        ),
+        resources=Resources(
+            gpu_memory_mb=whole_mib(
+                setting_key(backend, "gpu_memory_mb"),
+                settings.get("gpu_memory_mb", gpu_memory_mb),
+            ),
+            memory_mb=whole_mib(
+                setting_key(backend, "memory_mb"),
+                settings.get("memory_mb", memory_mb),
+            ),
+        ),
+    )
 
 
 class DockerBackend:
