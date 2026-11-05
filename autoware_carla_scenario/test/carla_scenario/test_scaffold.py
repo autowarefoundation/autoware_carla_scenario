@@ -454,6 +454,63 @@ class TestCreateScenarioPackage:
         assert after == before
         assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
 
+    @staticmethod
+    def _occupy_while_rendering(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+        """Make another process's directory appear at *root* on the first write."""
+        real = Path.write_text
+
+        def write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            if not root.exists():
+                root.mkdir()
+                real(root / "theirs.txt", "not ours", encoding="utf-8")
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", write_text)
+
+    def test_a_directory_that_appears_meanwhile_is_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``force``, a target created during rendering is not replaced."""
+        from autoware_carla_scenario.scaffold import PackageExistsError  # noqa: PLC0415
+
+        root = tmp_path / "dup_pkg"
+        self._occupy_while_rendering(monkeypatch, root)
+        with pytest.raises(PackageExistsError):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert sorted(p.name for p in root.iterdir()) == ["theirs.txt"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_the_move_itself_refuses_an_occupied_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A target appearing after the last check is refused by the rename."""
+        from autoware_carla_scenario.scaffold import (  # noqa: PLC0415
+            PackageExistsError,
+            generator,
+        )
+
+        root = tmp_path / "dup_pkg"
+        monkeypatch.setattr(generator, "_occupied", lambda _root: False)
+        self._occupy_while_rendering(monkeypatch, root)
+        with pytest.raises(PackageExistsError):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert sorted(p.name for p in root.iterdir()) == ["theirs.txt"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_output_dir_expands_the_home_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        result = create_scenario_package("dup_pkg", output_dir="~/pkgs")
+        assert result.root == tmp_path / "pkgs" / "dup_pkg"
+        assert result.root.is_dir()
+
+        assert main(["dup_pkg", "-o", "~/cli"]) == 0
+        assert (tmp_path / "cli" / "dup_pkg" / "pyproject.toml").is_file()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["cli", "pkgs"]
+
     def test_main_reports_an_os_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

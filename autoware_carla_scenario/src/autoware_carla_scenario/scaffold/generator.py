@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import errno
 import functools
 import importlib.metadata
 import os
@@ -50,12 +51,12 @@ class PackageExistsError(FileExistsError):
     """The target directory of :func:`create_scenario_package` already exists.
 
     Its message names the Python API's ``force=True``; :attr:`root` lets a
-    caller with another way to overwrite (``scenario-new --force``) say so.
+    caller with another way to replace it (``scenario-new --force``) say so.
     """
 
     def __init__(self, root: Path) -> None:
         super().__init__(
-            f"Target directory already exists: {root} (pass force=True to overwrite)."
+            f"Target directory already exists: {root} (pass force=True to replace it)."
         )
         #: The package directory that already exists.
         self.root = root
@@ -427,9 +428,9 @@ def create_scenario_package(
         package is left as it was.
     """
     names = resolve_names(name, scenario_name, description)
-    root = Path(output_dir) / names["package_name"]
+    root = Path(output_dir).expanduser() / names["package_name"]
 
-    if root.exists() or root.is_symlink():
+    if _occupied(root):
         if not force:
             raise PackageExistsError(root)
         if not root.is_dir():
@@ -456,21 +457,46 @@ def create_scenario_package(
             out_path.parent.mkdir(parents=True, exist_ok=True)
             rendered = env.get_template(template_name).render(**names)
             out_path.write_text(rendered, encoding="utf-8")
-        _move_into_place(staging, root)
+        _move_into_place(staging, root, force=force)
     finally:
         shutil.rmtree(holder, ignore_errors=True)
 
     return ScaffoldResult(root=root, names=names)
 
 
-def _move_into_place(staging: Path, root: Path) -> None:
-    """Move the complete package *staging* to *root*, replacing what is there.
+def _occupied(root: Path) -> bool:
+    """Whether anything, a dangling symlink included, is at *root*."""
+    return root.exists() or root.is_symlink()
 
-    An existing *root* is first renamed aside, beside it, and removed only once
-    *staging* is in place, so a failed move restores it instead of leaving
-    neither package behind.
+
+#: What a rename onto an occupied *root* fails with: a non-empty directory
+#: (``ENOTEMPTY``, or ``EEXIST`` on some systems) or a non-directory.
+_RENAME_ONTO_OCCUPIED = frozenset({errno.EEXIST, errno.ENOTEMPTY, errno.ENOTDIR})
+
+
+def _move_into_place(staging: Path, root: Path, *, force: bool) -> None:
+    """Move the complete package *staging* to *root*.
+
+    Without *force*, whatever appeared at *root* while the package was being
+    rendered is left alone and :class:`PackageExistsError` raised: *root* is
+    checked again just before the move, and the move is a plain rename, which
+    refuses a non-empty directory or a file that appears after that check.
+
+    With *force*, an existing *root* is first renamed aside, beside it, and
+    removed only once *staging* is in place, so a failed move restores it
+    instead of leaving neither package behind.
     """
-    if not (root.exists() or root.is_symlink()):
+    if not force:
+        if _occupied(root):
+            raise PackageExistsError(root)
+        try:
+            os.rename(staging, root)
+        except OSError as exc:
+            if exc.errno in _RENAME_ONTO_OCCUPIED:
+                raise PackageExistsError(root) from exc
+            raise
+        return
+    if not _occupied(root):
         os.replace(staging, root)
         return
     aside = Path(tempfile.mkdtemp(prefix=f".{root.name}.old-", dir=root.parent))
@@ -538,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
         root, names = create_scenario_package(
             args.name,
             scenario_name=args.scenario_name,
-            output_dir=args.output_dir,
+            output_dir=Path(args.output_dir).expanduser(),
             description=args.description,
             force=args.force,
         )
