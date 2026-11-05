@@ -110,7 +110,6 @@ from __future__ import annotations
 import logging
 import math
 import random
-import re
 from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
@@ -164,6 +163,36 @@ from .network import (
     generate_walks,
     sumo_home,
 )
+
+# Re-exported: what the backend's callers and tests import from it lives in
+# the checked .options (#1633).
+from .options import (
+    EMERGENCY_TYPE as EMERGENCY_TYPE,
+    LANE_CHANGE_DURATION_S as LANE_CHANGE_DURATION_S,
+    LANE_CHANGE_SETTLED_M as LANE_CHANGE_SETTLED_M,
+    MOTORCYCLE_TYPE as MOTORCYCLE_TYPE,
+    OUTPUT_SUFFIX as OUTPUT_SUFFIX,
+    _ADDITIONAL_OPTIONS as _ADDITIONAL_OPTIONS,
+    _BICYCLE_TYPE as _BICYCLE_TYPE,
+    _EMERGENCY as _EMERGENCY,
+    _LANE_CHANGE_MODE_DEFAULT as _LANE_CHANGE_MODE_DEFAULT,
+    _LANE_CHANGE_MODE_EXTERNAL as _LANE_CHANGE_MODE_EXTERNAL,
+    _LANE_CHANGE_MODE_STRATEGIC as _LANE_CHANGE_MODE_STRATEGIC,
+    _PASSENGER as _PASSENGER,
+    _ROUTE_OPTIONS as _ROUTE_OPTIONS,
+    _SPEED_MODE_DEFAULT as _SPEED_MODE_DEFAULT,
+    _SPEED_MODE_EXTERNAL as _SPEED_MODE_EXTERNAL,
+    _SPEED_MODE_RED_LIGHT as _SPEED_MODE_RED_LIGHT,
+    _SPEED_MODE_RIGHT_OF_WAY as _SPEED_MODE_RIGHT_OF_WAY,
+    _SPEED_MODE_THROUGH_JUNCTION as _SPEED_MODE_THROUGH_JUNCTION,
+    _SUMO_CLASSES as _SUMO_CLASSES,
+    _merge_file_options as _merge_file_options,
+    _net_offset as _net_offset,
+    _with_siren as _with_siren,
+    _write_scenario_types as _write_scenario_types,
+    _write_type_distribution as _write_type_distribution,
+    run_output_dir as run_output_dir,
+)
 from .physics_control import (
     longitudinal,
     lookahead_distance,
@@ -194,43 +223,8 @@ __all__ = [
     "run_output_dir",
 ]
 
-#: What a run's SUMO outputs (its log, the generated demand, the FCD and the
-#: clock) are named by: the directory ``{output_dir}/{file_stem}.sumo``, listed
-#: in ``run_outputs.RUN_DIR_SUFFIXES``.
-OUTPUT_SUFFIX = ".sumo"
-
-
-def run_output_dir(context: TrafficContext) -> Path:
-    """Where the run *context* names writes its SUMO outputs.
-
-    ``{output_dir}/{file_stem}.sumo``: a batch shares the output directory, so
-    each run keeps its own, beside its result (#1544).  A context naming no run
-    (a backend prepared on its own) writes to ``{output_dir}/sumo``.
-    """
-    if context.file_stem:
-        return Path(context.output_dir) / f"{context.file_stem}{OUTPUT_SUFFIX}"
-    return Path(context.output_dir) / "sumo"
-
-
-#: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
-LANE_CHANGE_DURATION_S: float = 3.0
-#: How close to its lane's centre a vehicle must be for a lane change to count
-#: as settled, metres.
-LANE_CHANGE_SETTLED_M: float = 0.3
 #: How many edges ahead a turn looks for a junction offering it.
 TURN_SEARCH_EDGES: int = 8
-#: Speed mode bits of a vehicle SUMO does not control (all checks off).
-_SPEED_MODE_EXTERNAL = 0
-#: Lane-change mode bits of a vehicle SUMO does not control (none).
-_LANE_CHANGE_MODE_EXTERNAL = 0
-#: Lane-change mode bits of a vehicle that changes lane only where its route
-#: needs it: SUMO's default (1621) without the cooperative, speed-gain and
-#: keep-right changes.
-_LANE_CHANGE_MODE_STRATEGIC = 1537
-#: SUMO's own lane-change mode bits, which ``lane_changes: true`` puts back.
-_LANE_CHANGE_MODE_DEFAULT = 1621
-#: SUMO's own speed mode bits (every check on).
-_SPEED_MODE_DEFAULT = 31
 #: A vehicle this far (m) below the map is parked out of the world (spawned
 #: hidden): it joins SUMO only once a spawn brings it up.
 _HIDDEN_BELOW_M = -100.0
@@ -259,16 +253,6 @@ _GUARD_PIECE_M = 2.0
 _JUNCTION_WAIT_S = 2.0
 # How often (s) a vehicle standing that long asks SUMO what it gives way to.
 _JUNCTION_FOES_EVERY_S = 1.0
-#: The speed mode bit by which a vehicle disregards the right of way of
-#: vehicles already in the junction, and the one by which it regards that of
-#: vehicles coming to it (off: vehicle_40, waiting short of its left turn's
-#: own stop, took those standing across the turn for ones coming).
-_SPEED_MODE_THROUGH_JUNCTION = 32
-_SPEED_MODE_RIGHT_OF_WAY = 8
-#: The speed mode bit by which a vehicle brakes for a red light: off for an
-#: emergency vehicle SUMO drives while on a call, which still gives way at
-#: the junction (:data:`_SPEED_MODE_RIGHT_OF_WAY`).
-_SPEED_MODE_RED_LIGHT = 16
 #: The pedestrian parameters a run can change: the walking speed and the gap
 #: are set on each person, but ``jmDriveAfterRedTime`` only on a type, and
 #: the types are written before SUMO starts.
@@ -292,24 +276,6 @@ PEDESTRIAN_TYPES = 100
 #: The same for SUMO's default bicycle type, and the vType attribute each
 #: bicycle parameter (``traffic.bicycles``) sets.
 BICYCLE_TYPES = 100
-_BICYCLE_TYPE = "DEFAULT_BIKETYPE"
-#: The type a scenario's motorcycle joins SUMO as.  SUMO has no default
-#: motorcycle type, so every run declares this one: of the class
-#: ``motorcycle``, with SUMO's defaults for it (:func:`_write_motorcycle_type`).
-MOTORCYCLE_TYPE = "acs_motorcycle"
-#: A scenario vehicle's blueprint ``base_type`` -> the SUMO vehicle class and
-#: type it joins SUMO as; any other is a passenger car (:data:`_PASSENGER`).
-_SUMO_CLASSES = {
-    "bicycle": ("bicycle", _BICYCLE_TYPE),
-    "motorcycle": ("motorcycle", MOTORCYCLE_TYPE),
-}
-_PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
-#: The type a scenario's emergency vehicle joins SUMO as: of the class
-#: ``emergency``, with a bluelight device (:func:`_write_scenario_types`),
-#: whatever its blueprint's ``base_type`` (a police car, an ambulance's van,
-#: a fire engine's truck).
-EMERGENCY_TYPE = "acs_emergency"
-_EMERGENCY = ("emergency", EMERGENCY_TYPE)
 #: How far (m) SUMO's vehicles react to an emergency vehicle on a call
 #: (its bluelight device's ``reactiondist``; SUMO's default).  Off duty, 0:
 #: none does.
@@ -374,18 +340,6 @@ def _load_traci(use_libsumo: bool) -> Any:
         ) from exc
 
 
-def _net_offset(net_file: Path) -> tuple[float, float]:
-    """The ``netOffset`` of *net_file*, read from its ``<location>``."""
-    with net_file.open() as f:
-        for line in f:
-            found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
-            if found:
-                return float(found[1]), float(found[2])
-            if "<edge" in line:
-                break
-    return 0.0, 0.0
-
-
 def _blueprint_attribute(actor: Any, name: str) -> str:
     """The CARLA vehicle *actor*'s blueprint attribute *name*, lower case;
     empty for an actor without one."""
@@ -429,101 +383,6 @@ def _sumo_class(actor: Any) -> tuple[str, str]:
     if is_emergency(actor):
         return _EMERGENCY
     return _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
-
-
-def _with_siren(mode: int, on: bool) -> int:
-    """Speed mode *mode* of an emergency vehicle on a call (*on*: it does not
-    brake for red lights) or off duty (it does again: every emergency vehicle
-    joins with SUMO's own speed mode, which does)."""
-    if on:
-        return mode & ~_SPEED_MODE_RED_LIGHT
-    return mode | _SPEED_MODE_RED_LIGHT
-
-
-def _write_scenario_types(path: Path) -> Path:
-    """Declare in *path* (an additional file) the types SUMO has no default
-    for that a scenario's vehicle may join as: :data:`MOTORCYCLE_TYPE`, of the
-    class ``motorcycle``, and :data:`EMERGENCY_TYPE`, of the class
-    ``emergency`` with a bluelight device; every other attribute SUMO's
-    default for the class."""
-    path.write_text(
-        "<additional>\n"
-        f'    <vType id="{MOTORCYCLE_TYPE}" vClass="motorcycle" guiShape="motorcycle"/>\n'
-        f'    <vType id="{EMERGENCY_TYPE}" vClass="emergency" guiShape="emergency">\n'
-        '        <param key="has.bluelight.device" value="true"/>\n'
-        "    </vType>\n"
-        "</additional>\n"
-    )
-    return path
-
-
-#: SUMO's spellings of the options naming its additional and route files.
-_ADDITIONAL_OPTIONS = ("-a", "--additional-files", "--additional")
-_ROUTE_OPTIONS = ("-r", "--route-files", "--routes")
-
-
-def _merge_file_options(
-    sumo_args: list[str], additional: list[str], routes: list[str]
-) -> list[str]:
-    """SUMO's command-line arguments for the backend's own *additional* and
-    *routes* files and a configuration's extra *sumo_args*.
-
-    SUMO refuses an option given twice, so an additional or route file option
-    in *sumo_args* (``-a X``, ``--additional-files X``, ``--additional X`` or
-    ``--additional-files=X``; likewise ``-r``, ``--route-files`` and
-    ``--routes``) is taken out of it and its comma-separated files appended to
-    the backend's own: theirs first, so the files given in *sumo_args* can use
-    the types they declare.  Every other argument keeps its order, after the
-    files.  An option without a value is passed on as it is, for SUMO to
-    reject.
-    """
-    files: dict[str, list[str]] = {"-a": list(additional), "-r": list(routes)}
-    rest: list[str] = []
-    index = 0
-    while index < len(sumo_args):
-        arg = sumo_args[index]
-        index += 1
-        name, equals, value = arg.partition("=")
-        if name in _ADDITIONAL_OPTIONS:
-            key = "-a"
-        elif name in _ROUTE_OPTIONS:
-            key = "-r"
-        else:
-            rest.append(arg)
-            continue
-        if not equals:
-            if index >= len(sumo_args):
-                rest.append(arg)
-                continue
-            value = sumo_args[index]
-            index += 1
-        files[key] += [f for f in value.split(",") if f]
-    merged: list[str] = []
-    for key in ("-a", "-r"):
-        if files[key]:
-            merged += [key, ",".join(files[key])]
-    return merged + rest
-
-
-def _write_type_distribution(
-    path: Path, type_id: str, vclass: str, members: list[dict[str, float]]
-) -> Path:
-    """Write *type_id* as a distribution of one type of *vclass* per member,
-    each with that member's attributes, to *path* (an additional file)."""
-    lines = []
-    for index, attributes in enumerate(members):
-        written = " ".join(f'{key}="{value:.4g}"' for key, value in attributes.items())
-        lines.append(
-            f'        <vType id="{vclass}{index}" vClass="{vclass}" {written}/>'
-        )
-    path.write_text(
-        "<additional>\n"
-        f'    <vTypeDistribution id="{type_id}">\n'
-        + "\n".join(lines)
-        + "\n    </vTypeDistribution>\n"
-        "</additional>\n"
-    )
-    return path
 
 
 def _parked(actor: Any) -> bool:

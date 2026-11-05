@@ -3798,8 +3798,8 @@ def test_a_typed_star_args_is_called_with_one_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The signal and atexit shims, a Popen's pipes, and the dotenv and
-# carla_install models (#119)
+# The signal and atexit shims, a Popen's pipes, the dotenv model (#119), and
+# the checked carla_install_paths, compiled from its source (#1635)
 # ---------------------------------------------------------------------------
 
 
@@ -3816,7 +3816,7 @@ from typing import Any, Optional
 import numpy as np
 from dotenv import load_dotenv
 
-from .carla_install import installed_executable
+from .carla_install_paths import installed_executable
 
 
 class Recorder:
