@@ -2405,8 +2405,11 @@ base, its runner and its queue, the traffic backends' interface, the
 plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files), the signal controllers, the adversity math, the measures,
-the metrics and the ODD's probes, the gate package's `__init__` and its per-run record and probe (not
-its evaluator), the HILS bridge's wire format (a command's values included)
+the metrics and the ODD's probes, the gate package's `__init__`, its per-run record and probe,
+and the typed criteria its evaluator judges (`gate.criteria`: the criterion
+results, the trajectory consistency, the case coverage and the changes from a
+baseline; not the evaluator itself, which reads the gate's pydantic model and
+openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec (not the YAML reading around it), the
 example scenarios and their configs, the SLURM launcher's job scripts and its
 calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
