@@ -251,8 +251,9 @@ Newly failing cases:
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
-`passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings` and
-the records' paths. Of two sets, it holds the `baseline` and `candidate`
+`passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings`, the
+`errors` (coverage files that could not be read; the run then exits `2` even
+if `passed`) and the records' paths. Of two sets, it holds the `baseline` and `candidate`
 paths and a comparison per scenario (`comparisons`): `passed` (the candidate's gate), `regressed`,
 both verdicts, each criterion's `change` and `delta` (candidate less
 baseline), the `newly_failing` and `fixed` cases, and the `warnings`.
