@@ -2433,11 +2433,12 @@ the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
 names a case's log and recording with it too), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
-entities are the sensors' and the parse of `rerun rrd print`:
-`rerun_sensor_mount`, #1688; not `rerun_lidar`, which holds the Rerun SDK as
+entities are the sensors', the parse of `rerun rrd print` and the scan of a
+recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
 `Any` and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
-and quaternions of its angles: `t4_scene.frames`, #1665; the converter
+and quaternions of its angles, and the check of the ego's rear-axle offset:
+`t4_scene.frames`, #1665, #1697; the converter
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's

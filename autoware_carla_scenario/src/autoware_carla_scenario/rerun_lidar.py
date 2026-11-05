@@ -59,6 +59,11 @@ from .rerun_sensor_mount import _height_colours as _height_colours
 from .rerun_sensor_mount import _is_sensor_entity as _is_sensor_entity
 from .rerun_sensor_mount import chunk_entities as chunk_entities
 
+# The scan for the sensors' entity paths is the checked rerun_sensor_mount's
+# too (#1697); the names it had here stay importable from here.
+from .rerun_sensor_mount import _SCAN_BLOCK as _SCAN_BLOCK
+from .rerun_sensor_mount import carries_sensors as carries_sensors
+
 __all__ = [
     "APPLICATION_ID",
     "SENSORS_SUFFIX",
@@ -139,34 +144,6 @@ def merge_into(recording: Path, lidar: Path) -> Path:
         merged.unlink(missing_ok=True)
     lidar.unlink()
     return recording
-
-
-#: How much of a recording :func:`carries_sensors` reads at a time.
-_SCAN_BLOCK = 1 << 20
-
-
-def carries_sensors(recording: Path) -> bool:
-    """Whether *recording* seems to hold sensor entities
-    (:data:`SENSOR_ENTITIES`), without the Rerun SDK.
-
-    A heuristic, for when :func:`extract_sensors` cannot tell: it scans the
-    file's bytes for the sensors' entity paths.  Each chunk names its entity
-    in its Arrow schema, whose first mention of the path stays legible even
-    in an LZ4-compressed chunk (checked with the SDK's 0.38 encoding), and the
-    recording's footer names them again.  A recording that merely mentions
-    such a path elsewhere is a false positive: it is kept rather than
-    replaced, which errs on the safe side.
-    """
-    needles = [f"{root}/".encode() for root in SENSOR_ENTITIES]
-    overlap = max(len(needle) for needle in needles) - 1
-    tail = b""
-    with open(recording, "rb") as stream:
-        while block := stream.read(_SCAN_BLOCK):
-            window = tail + block
-            if any(needle in window for needle in needles):
-                return True
-            tail = window[-overlap:]
-    return False
 
 
 def extract_sensors(recording: Path, sensors: Path) -> bool:

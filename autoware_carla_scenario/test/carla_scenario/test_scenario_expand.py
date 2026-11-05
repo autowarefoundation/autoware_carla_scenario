@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from omegaconf import OmegaConf
 
+from autoware_carla_scenario.sweeper import bindings as bindings_module
 from autoware_carla_scenario.sweeper import expand as expand_module
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
 
@@ -995,3 +996,10 @@ def test_the_cli_help_is_the_usage_on_stdout(
     assert captured.out.strip() == (expand.__doc__ or "").strip()
     assert "scenario-expand scenario=" in captured.out
     assert captured.err == ""
+
+
+def test_expand_re_exports_the_checked_walk_back_lanelet_key() -> None:
+    """#1697: the function moved to the checked sweeper.bindings."""
+    assert (
+        expand_module._walk_back_lanelet_key is bindings_module._walk_back_lanelet_key
+    )

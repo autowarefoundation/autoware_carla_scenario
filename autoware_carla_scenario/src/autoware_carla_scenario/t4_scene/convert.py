@@ -46,6 +46,10 @@ from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.light_lanes import LightLanes, elements_ahead, light_lanes
 from ._proto import t4_scene_pb2 as pb
 from .frames import FLIP_Y as _FLIP_Y
+
+# The check of a rear-axle offset is the checked frames's (#1697); live and
+# __main__ import it from here.
+from .frames import checked_rear_axle_offset as checked_rear_axle_offset
 from .frames import map_angles, map_positions
 from .frames import quaternions as _quaternions
 from .frames import rotations as _rotations
@@ -238,32 +242,6 @@ class _Log:
         sight up to its ``SpawnAction``'s frame (whose tick may have been
         logged before the action moved it) or from its ``DespawnAction``'s."""
         return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
-
-
-def checked_rear_axle_offset(
-    rear_axle_offset_m: float, key: str = "rear_axle_offset_m"
-) -> float:
-    """*rear_axle_offset_m* as a float, which must be finite.
-
-    The offset is where the ego's rear axle (its ``base_link``) is from its
-    actor origin along its x axis: negative behind the origin -- the usual
-    case, and the default's ``-0.5 * extent.x`` -- 0 at it, positive ahead of
-    it, so any finite value is a place.  NaN or infinity would put the ego's
-    every pose and ``base_link_to_front`` at NaN, so either is refused before
-    a scene is written.  A bool is refused too: ``true`` is not an offset,
-    though ``float()`` would read it as 1 m.
-
-    Args:
-        rear_axle_offset_m: The offset, metres.
-        key: The setting's name, which the error names (``--rear-axle-offset``).
-
-    Raises:
-        ValueError: If *rear_axle_offset_m* is a bool, or not finite.
-    """
-    value = float(rear_axle_offset_m)
-    if isinstance(rear_axle_offset_m, bool) or not math.isfinite(value):
-        raise ValueError(f"{key} must be finite, not {rear_axle_offset_m}")
-    return value
 
 
 def _read_log(path: Path, step_frames: int) -> _Log:
