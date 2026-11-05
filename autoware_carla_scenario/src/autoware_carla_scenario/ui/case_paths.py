@@ -6,12 +6,14 @@ through :func:`contained`, which refuses a path that resolves outside the
 viewer's base; the files one case leaves (:class:`CaseFiles`), and the stems
 of the cases in a directory, in the order a runner hands them out
 (:func:`stem_order`), and the one case of a directory that holds one run
-(whose result :func:`result_path` finds).
+(whose result :func:`result_path` finds); what a batch's caches are kept by
+(:func:`batch_stamp`) and whether its summary is current; and the job indices
+of a session and the ``scenario=`` override among a case's overrides.
 
-Split out of ``ui.cases``, which re-exports every name here and keeps what
-reads the JSON documents of any type (``Any``) a batch leaves, so that the
-library check compiles it (``docs/typecheck.md``, "Checking the framework
-itself").
+Split out of ``ui.cases`` and ``ui.results``, which re-export every name
+moved here and keep what reads the JSON documents of any type (``Any``) a
+batch leaves, so that the library check compiles it (``docs/typecheck.md``,
+"Checking the framework itself").
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from typing import Optional
 __all__ = [
     "SESSION_TYPES",
     "CaseFiles",
+    "batch_stamp",
     "contained",
     "job_dir",
     "last_result_path",
@@ -186,3 +189,79 @@ def _mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _stat(path: Path) -> tuple[int, int]:
+    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
+    try:
+        info = path.stat()
+    except OSError:
+        return (0, -1)
+    return (info.st_mtime_ns, info.st_size)
+
+
+def batch_stamp(directory: Path) -> tuple[tuple[int, int], ...]:
+    """What a batch's entries and case files are read from, cheaply: the
+    modification time and size of its ``batch_results.json``, of a SLURM
+    batch's manifest and ``collected.json``, and of the directories its
+    submissions and case outcomes are written to, and of *directory* itself.
+
+    A few ``stat`` calls, whatever the size of the batch: the launcher writes
+    every record by renaming a new file over it (``slurm.manifest.write_json``)
+    and a task removes a case's old outcome before it runs it again, so a
+    record added, replaced or removed changes its directory's time.  The
+    viewer's caches of a batch (``ui.cases.batch_case_files``, and the session and
+    case pages' in ``ui.scanner``) are kept while this stays the same.
+    """
+    slurm = directory / "slurm"
+    # tuple() of a list: the library check reads a variable-length tuple
+    # returned as a list, which a tuple display is not.
+    return tuple(
+        [
+            _stat(directory / "batch_results.json"),
+            _stat(slurm / "manifest.json"),
+            _stat(slurm / "collected.json"),
+            _stat(slurm / "submissions"),
+            _stat(slurm / "results"),
+            _stat(directory),
+        ]
+    )
+
+
+def _summary_is_current(directory: Path) -> bool:
+    """Whether a batch's ``batch_results.json`` is its latest summary: not
+    older than a SLURM batch's last submission or case outcome.
+
+    A resubmission (``scenario-slurm resubmit``, the viewer's "Resubmit")
+    leaves the summary of the earlier collect in place until its own collect
+    rewrites it; until then the summary is stale, and the cases are read from
+    what the tasks record (``slurm/results``).  A local batch has no
+    ``slurm/``, so its summary is always current.
+    """
+    slurm = directory / "slurm"
+    summary = _stat(directory / "batch_results.json")[0]
+    collected = _stat(slurm / "collected.json")
+    if collected[1] >= 0:
+        # A collect writes the summary, then collected.json.
+        summary = min(summary, collected[0])
+    latest = max(_stat(slurm / "submissions")[0], _stat(slurm / "results")[0])
+    return latest <= summary
+
+
+def _job_indices(directory: Path, session_type: str) -> list[int]:
+    """The case indices of a multirun or single session in *directory*."""
+    if session_type != "multirun":
+        return [0]
+    indices: list[int] = []
+    for p in directory.iterdir():
+        if p.is_dir() and p.name.isascii() and p.name.isdigit():
+            indices.append(int(p.name))
+    return sorted(indices)
+
+
+def _override_label(overrides: list[str]) -> str | None:
+    """The ``scenario=`` override among *overrides*, if any."""
+    for o in overrides:
+        if o.startswith("scenario="):
+            return o.split("=", 1)[1]
+    return None

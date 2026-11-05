@@ -1,6 +1,7 @@
 """ui.case_paths, split out of ui.cases so the library check compiles it
 (#741): the viewer's path guard still refuses every way out of its base, and
-ui.cases still exports every name it did, as the same objects."""
+ui.cases still exports every name it did, as the same objects (and
+ui.results the helpers moved from it, #1637)."""
 
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from autoware_carla_scenario.ui import case_paths, cases
+from autoware_carla_scenario.ui import case_paths, cases, results
 
 #: What ui.cases held before the split that now lives in ui.case_paths.
 _MOVED = (
@@ -26,12 +27,23 @@ _MOVED = (
     "_stems_in",
     "_only_case",
     "_mtime",
+    "_stat",
+    "batch_stamp",
+    "_summary_is_current",
 )
+
+#: What ui.results held that now lives in ui.case_paths (#1637).
+_MOVED_FROM_RESULTS = ("_job_indices", "_override_label")
 
 
 @pytest.mark.parametrize("name", _MOVED)
 def test_cases_re_exports_the_moved_name(name: str) -> None:
     assert getattr(cases, name) is getattr(case_paths, name)
+
+
+@pytest.mark.parametrize("name", _MOVED_FROM_RESULTS)
+def test_results_re_exports_the_moved_name(name: str) -> None:
+    assert getattr(results, name) is getattr(case_paths, name)
 
 
 def test_cases_still_exports_every_name() -> None:
@@ -231,3 +243,20 @@ def test_the_stems_of_a_directory_in_the_runner_s_order(tmp_path: Path) -> None:
     assert files.odd_archive == tmp_path / "Cut-2_odd.tar.gz"
     assert files.environment == tmp_path / "Cut-2_environment.json"
     assert files.recording == tmp_path / "Cut-2.rrd"
+
+
+def test_job_indices_are_the_numbered_directories_in_number_order(
+    tmp_path: Path,
+) -> None:
+    for name in ("10", "2", "0", "abc", "٣", ".hydra"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "3").write_text("not a directory")
+    assert case_paths._job_indices(tmp_path, "multirun") == [0, 2, 10]
+    assert case_paths._job_indices(tmp_path, "single") == [0]
+
+
+def test_override_label_is_the_first_scenario_override() -> None:
+    label = case_paths._override_label
+    assert label(["a=1", "scenario=x=y", "scenario=z"]) == "x=y"
+    assert label(["+scenario=x", "a=1"]) is None
+    assert label([]) is None
