@@ -36,11 +36,11 @@ from ..trajectory.authoring import (
 )
 from .forms import bool_choice, is_nullable_bool
 from .service import (
+    GATE_CONSISTENCY_FIELDS,
     GATE_FIELDS,
     EditorError,
     EditorService,
     condition_actions,
-    gate_items_text,
     route_yaml,
 )
 
@@ -192,7 +192,7 @@ def create_app(
         route_yaml=route_yaml,
         # A logical scenario's gate, as the fields its inspector edits.
         gate_fields=GATE_FIELDS,
-        gate_items_text=gate_items_text,
+        gate_consistency_fields=GATE_CONSISTENCY_FIELDS,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,

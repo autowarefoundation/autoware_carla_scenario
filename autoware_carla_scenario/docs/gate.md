@@ -249,9 +249,17 @@ baseline), the `newly_failing` and `fixed` cases, and the `warnings`.
 ## In the Scenario Editor
 
 The scenario inspector's **Gate** section, below the route search, turns the
-gate on (**Judge the logical scenario**) and edits each threshold as a field
-of its own -- blank is not judged -- and the coverage items as lines of
-`item min`. A value out of range is refused with the reason, and the draft is
+gate on (**Judge the logical scenario**) and lists one row per threshold: a
+**checkbox** says whether it is judged, a **bar** and a number beside it what
+it asks. The shares -- success rate and the coverages -- are edited in
+**percent** (`95` is `0.95` in the document); the spreads in metres and
+metres per second. Ticking a threshold judges it at a default (success rate
+90 %, case and scenario coverage 80 %, ODD coverage 50 %, lateral spread
+0.5 m, speed spread 1.0 m/s) until it is set; an unticked one is greyed out
+and not judged. While a spread is judged, how it is measured (stations per
+segment, runs per station) is listed under it. Each cover item is a row of its
+own, added by name (at 100 %) and dropped by unticking it. A value out of
+range -- a share over 100 % -- is refused with the reason, and the draft is
 left as it was.
 
 ## Python API

@@ -596,8 +596,9 @@ action state.
 
 The **Gate** section below it says when the logical scenario passes over all
 its runs -- minimum runs, success rate, case and cover coverage, trajectory
-consistency -- each threshold a field of its own, blank for not judged
-([Gates for Logical Scenarios](gate.md)).
+consistency -- each threshold a row with a checkbox (judged or not), a bar and
+a number, the shares in percent
+([Gates for Logical Scenarios](gate.md#in-the-scenario-editor)).
 
 ## Ego: who drives, and where to
 

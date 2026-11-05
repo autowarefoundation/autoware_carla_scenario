@@ -23,6 +23,7 @@ import uuid
 import weakref
 import zipfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -93,12 +94,13 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "GATE_CONSISTENCY_FIELDS",
     "GATE_FIELDS",
+    "GateField",
     "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
     "condition_actions",
-    "gate_items_text",
     "parse_gate_form",
 ]
 
@@ -1789,34 +1791,88 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
         raise EditorError(f"Route search: {exc}") from exc
 
 
-#: The gate's thresholds the inspector edits as plain fields: field, label,
-#: and whether it is a whole number.  Blank leaves a threshold unset.
-GATE_FIELDS: tuple[tuple[str, str, bool], ...] = (
-    ("min_runs", "Minimum runs", True),
-    ("min_success_rate", "Minimum success rate", False),
-    ("min_case_coverage", "Minimum case coverage", False),
-    ("min_scenario_coverage", "Minimum scenario coverage", False),
-    ("min_odd_coverage", "Minimum ODD coverage", False),
-    ("max_lateral_spread_m", "Maximum lateral spread", False),
-    ("max_speed_spread_mps", "Maximum speed spread", False),
-    ("consistency_stations", "Stations per segment", True),
-    ("consistency_min_runs", "Runs per station", True),
+@dataclass(frozen=True)
+class GateField:
+    """One threshold of the gate as the inspector edits it: a checkbox that
+    says whether it is judged, a bar and a number.
+
+    Attributes:
+        name: The :class:`~autoware_carla_scenario.authoring.models.GateSpec`
+            field.
+        label: What the inspector calls it.
+        unit: ``%`` for a share (edited as 0-100, stored as 0-1), ``m``,
+            ``m/s``, or ``""`` for a count.
+        default: The value a threshold gets when its checkbox is ticked with
+            no value of its own, in the unit edited.
+        bar_max: Where the bar ends, in the unit edited (the number may go
+            past it).
+        step: The bar's and the number's step.
+        optional: Whether it has a checkbox at all: a count the gate always
+            reads has none.
+    """
+
+    name: str
+    label: str
+    unit: str
+    default: float
+    bar_max: float
+    step: float
+    optional: bool = True
+
+    @property
+    def percent(self) -> bool:
+        return self.unit == "%"
+
+    def shown(self, stored: Optional[float]) -> Optional[float]:
+        """*stored* in the unit edited (a share as a percentage)."""
+        if stored is None:
+            return None
+        return round(stored * 100.0, 6) if self.percent else stored
+
+
+#: The gate's thresholds the inspector edits, in the order it lists them.
+GATE_FIELDS: tuple[GateField, ...] = (
+    GateField("min_runs", "Minimum runs", "", 1, 100, 1, optional=False),
+    GateField("min_success_rate", "Minimum success rate", "%", 90, 100, 1),
+    GateField("min_case_coverage", "Minimum case coverage", "%", 80, 100, 1),
+    GateField("min_scenario_coverage", "Minimum scenario coverage", "%", 80, 100, 1),
+    GateField("min_odd_coverage", "Minimum ODD coverage", "%", 50, 100, 1),
+    GateField("max_lateral_spread_m", "Maximum lateral spread", "m", 0.5, 2.0, 0.05),
+    GateField("max_speed_spread_mps", "Maximum speed spread", "m/s", 1.0, 5.0, 0.1),
 )
 
+#: How the trajectory spreads are measured: counts, edited only while a spread
+#: is judged.
+GATE_CONSISTENCY_FIELDS: tuple[GateField, ...] = (
+    GateField(
+        "consistency_stations", "Stations per segment", "", 20, 200, 1, optional=False
+    ),
+    GateField("consistency_min_runs", "Runs per station", "", 2, 20, 1, optional=False),
+)
 
-def gate_items_text(document: ScenarioDocument) -> str:
-    """The gate's coverage items as the inspector edits them: ``item min``
-    per line ("" for none)."""
-    if document.gate is None:
-        return ""
-    return "\n".join(f"{e.item} {e.min:g}" for e in document.gate.coverage_items)
+#: What a cover item the inspector adds needs, in percent.
+GATE_ITEM_DEFAULT_PERCENT = 100.0
+
+
+def _gate_number(form: Mapping[str, Any], field: GateField) -> Any:
+    """*field*'s value in *form*, in the unit stored; its default when blank."""
+    label = f"Gate: {field.label}"
+    text = str(form.get(f"gate_{field.name}", "")).strip()
+    if field.unit == "":
+        return as_int(text, label, int(field.default))
+    value = _as_float(text, label, field.default)
+    return value / 100.0 if field.percent else value
 
 
 def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
     """The gate the inspector's Gate form states; ``None`` when it is off.
 
-    Each threshold is a field of its own (``gate_<name>``), blank for unset;
-    the coverage items are lines of ``item min`` (``gate_coverage_items``).
+    Each optional threshold is judged while its checkbox (``gate_on_<name>``)
+    is ticked, at its number (``gate_<name>``; a share in percent), or at its
+    default when it has none -- a threshold just ticked on.  A cover item is
+    a row (``gate_item_name_<i>``, ``gate_item_min_<i>`` in percent) kept
+    while its checkbox (``gate_item_on_<i>``) is ticked; ``gate_item_new``
+    adds one at 100 %.
 
     Raises:
         EditorError: If a value is not a number, or the gate refuses it.
@@ -1826,31 +1882,31 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
     if not form.get("gate_enabled"):
         return None
     raw: dict[str, Any] = {}
-    for name, label, whole in GATE_FIELDS:
-        text = str(form.get(f"gate_{name}", "")).strip()
-        if not text:
+    for field in GATE_FIELDS + GATE_CONSISTENCY_FIELDS:
+        if field.optional and not form.get(f"gate_on_{field.name}"):
             continue
-        if whole:
-            raw[name] = as_int(text, f"Gate: {label}", 0)
-        else:
-            raw[name] = _as_float(text, f"Gate: {label}", 0.0)
+        if not field.optional and f"gate_{field.name}" not in form:
+            continue  # not on the form yet: the model's default
+        raw[field.name] = _gate_number(form, field)
     items: list[dict[str, Any]] = []
-    for number, line in enumerate(
-        str(form.get("gate_coverage_items", "")).splitlines(), start=1
-    ):
-        words = line.replace(",", " ").split()
-        if not words:
-            continue
-        if len(words) != 2:
-            raise EditorError(
-                f"Gate: coverage item line {number} must be 'item min', got {line!r}."
+    index = 0
+    while f"gate_item_name_{index}" in form:
+        name = str(form[f"gate_item_name_{index}"]).strip()
+        if name and form.get(f"gate_item_on_{index}"):
+            percent = _as_float(
+                form.get(f"gate_item_min_{index}", ""),
+                f"Gate: coverage of {name}",
+                GATE_ITEM_DEFAULT_PERCENT,
             )
-        items.append(
-            {
-                "item": words[0],
-                "min": _as_float(words[1], f"Gate: coverage item {words[0]}", 0.0),
-            }
-        )
+            items.append({"item": name, "min": percent / 100.0})
+        index += 1
+    added = str(form.get("gate_item_new", "")).strip()
+    if added:
+        if " " in added:
+            raise EditorError(
+                f"Gate: a cover item's name has no spaces, got {added!r}."
+            )
+        items.append({"item": added, "min": GATE_ITEM_DEFAULT_PERCENT / 100.0})
     raw["coverage_items"] = items
     try:
         return GateSpec.model_validate(raw)
