@@ -546,6 +546,58 @@ class TestCli:
         # The other record is still judged.
         assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
 
+    @pytest.mark.parametrize(
+        "gate",
+        [{"bogus_field": 1}, {"min_success_rate": "x"}, {"min_success_rate": 2.0}],
+    )
+    def test_a_malformed_gate_exits_2(
+        self, tmp_path: Path, capsys: Any, gate: dict[str, Any]
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        _write(tmp_path, "b", _record(gate=gate))
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json: not a valid gate" in capsys.readouterr().err
+        # The other record is still judged.
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_malformed_gate_is_refused_with_a_document_too(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        # The document's gate replaces the records', but a record whose gate
+        # is malformed is corrupt all the same.
+        runs = tmp_path / "runs"
+        _write(runs, "a", _record())
+        _write(runs, "b", _record(gate={"bogus_field": 1}))
+        document = new_document()
+        document.id = "left_turn"
+        document.route = _route()
+        document.gate = GateSpec(min_success_rate=0.0)
+        path = tmp_path / "document.yaml"
+        save_document(document, path)
+        assert main([str(runs), "--document", str(path)]) == EXIT_ERROR
+        assert "b_gate.json: not a valid gate" in capsys.readouterr().err
+
+    def test_deeply_nested_json_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = tmp_path / "b_gate.json"
+        path.write_text("[" * 200_000 + "]" * 200_000)
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_huge_integer_literal_names_the_file(self, tmp_path: Path) -> None:
+        # Past Python 3.11+'s digit limit json.loads raises ValueError; on
+        # 3.10 it parses and the schema is refused. Either names the file.
+        path = tmp_path / "b_gate.json"
+        path.write_text('{"schema": ' + "1" * 5000 + "}")
+        with pytest.raises(ValueError, match="b_gate.json: "):
+            read_gate_record(path)
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
     def test_a_file_not_in_utf8_exits_2(self, tmp_path: Path, capsys: Any) -> None:
         verdict = tmp_path / "v.json"
         _write(tmp_path, "a", _record())

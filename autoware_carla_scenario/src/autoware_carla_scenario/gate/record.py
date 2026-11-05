@@ -273,7 +273,9 @@ def read_gate_record(path: Path) -> GateRecord:
     """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, RecursionError, ValueError) as exc:
+        # ValueError: not JSON, not UTF-8, or an integer literal past
+        # Python's digit limit; RecursionError: nested too deeply.
         raise ValueError(f"{path}: cannot be read ({exc})") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: not a gate record (not a JSON object)")

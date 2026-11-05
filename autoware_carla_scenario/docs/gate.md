@@ -137,9 +137,13 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
   out, taken before a case's overrides are folded in: every case of one
   version of the document has the same digest.
 - `gate` is the gate the document stated when the run ran. A record without
-  one is refused, as is one whose `case`, `outcome`, `files` or `ego` is not
-  a JSON object, or whose lists are not JSON arrays: `scenario-gate` reports
-  it as unreadable (exit code 2) and judges the other records.
+  one is refused, as is one whose gate is not a valid gate (a field a gate
+  does not have, a value of the wrong type or out of range), or whose
+  `case`, `outcome`, `files` or `ego` is not a JSON object, or whose lists
+  are not JSON arrays: `scenario-gate` reports it as unreadable (exit code 2)
+  and judges the other records. A malformed gate is refused with
+  `--document` too, though the document's gate replaces it: the record is
+  corrupt all the same.
 - `files` names the run's other outputs the runner wrote beside the record
   (one it did not write is left out); the coverage criteria merge the
   `coverage` files of the runs judged.

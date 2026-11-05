@@ -215,14 +215,29 @@ def find_gate_records(paths: Iterable[Path]) -> list[Path]:
 
 
 def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str]]:
-    """The records in *paths*, and why any file could not be read."""
+    """The records in *paths*, and why any file could not be read.
+
+    A record whose gate is not a valid :class:`GateSpec` (a field it does not
+    have, a value of the wrong type or out of range) cannot be read either:
+    it is reported here, naming its file, rather than failing the judging of
+    every record later.  It is refused even when a document's gate
+    (``--document``) replaces the gates the records state: a record whose
+    gate is malformed is corrupt, and judging it would hide that.
+    """
     records: list[GateRecord] = []
     errors: list[str] = []
     for path in paths:
         try:
-            records.append(read_gate_record(path))
+            record = read_gate_record(path)
         except ValueError as exc:
             errors.append(str(exc))
+            continue
+        try:
+            GateSpec.model_validate(record.gate)
+        except ValueError as exc:  # pydantic's ValidationError is a ValueError
+            errors.append(f"{path}: not a valid gate ({exc})")
+            continue
+        records.append(record)
     return records, errors
 
 
