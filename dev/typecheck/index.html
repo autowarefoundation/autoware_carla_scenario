@@ -4815,8 +4815,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 271 of the package's 397
-modules (68%; about 84,100 of
-148,900 lines) are <code>CHECKED</code>: the kinematics, the
+modules (68%; about 84,200 of
+149,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5924,8 +5924,8 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>138 functions and methods of those modules are <code>UNCALLED</code>
-(41 of them protected helpers, see <em>What is
+<p>140 functions and methods of those modules are <code>UNCALLED</code>
+(43 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5937,7 +5937,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 138 UNCALLED functions and methods, and why</summary>
+<summary>The 140 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6047,9 +6047,11 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>sweeper.constraints._bind_set_level_constraints</code>: walks a constraint tree of any node (<code>constraint: Any</code>: a Constraint, or any object with <code>constraints</code> or <code>constraint</code>), which Codon cannot express; find_matching_lanelets calls it with each Constraint, so its body is compiled through it</li>
 <li><code>sweeper.constraints._cache_ids</code>: sets <code>_cached_ids</code> on a frozen constraint of any kind with <code>object.__setattr__</code> (<code>constraint: Any</code>), which Codon cannot express; the set-level constraints' _bind_set_level() call it with themselves, so its body is compiled through them</li>
 <li><code>sweeper.constraints.parse_constraint</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
+<li><code>sweeper.isolation._forget_inherited_exit_handlers</code>: calls CPython's atexit._clear() (atexit imported inside it), which the atexit shim does not declare; _run_in_child calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>sweeper.isolation._raise_interrupted</code>: a signal handler, whose frame is CPython's frame object (<code>_frame: Any</code>), which Codon has no type for; _run_in_child installs it with signal.signal(), whose shim calls it as CPython calls a handler, so its body is compiled through that</li>
 <li><code>sweeper.isolation._request_pdeathsig</code>: calls Linux's prctl through ctypes (imported inside it), which Codon has nothing for; _die_with_parent calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>sweeper.isolation._run_in_child</code>: takes the signal mask signal.pthread_sigmask() returns, a <code>set[int | signal.Signals]</code>, which Codon cannot express (a set of a union); _launch_isolated calls it with the mask it holds, so its body is compiled through it</li>
+<li><code>sweeper.isolation._run_own_exit_handlers</code>: calls CPython's atexit._run_exitfuncs() (atexit imported inside it), which the atexit shim does not declare; _run_in_child calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>t4_settings.T4Settings.from_driver</code>: takes the <code>t4</code> config section (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with <code>**</code> of a <code>dict[str, Any]</code></li>
 <li><code>traffic.base.TrafficBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>traffic.build_none</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
