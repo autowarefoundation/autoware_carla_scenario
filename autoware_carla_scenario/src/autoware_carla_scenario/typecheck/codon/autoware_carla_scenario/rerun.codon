@@ -34,3 +34,9 @@ class RerunConverter:
 
     def submit(self, trajectory: Path, label: str) -> Path:
         raise NotImplementedError()
+
+    # Python returns the RerunConversion records, which are not modelled
+    # (their `stats` is a dict of mixed values): the checked scenario_queue
+    # drops them.
+    def wait(self) -> None:
+        raise NotImplementedError()

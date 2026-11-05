@@ -451,11 +451,7 @@ class ScenarioQueue:
                         # background: done before its outputs go, so that it
                         # neither reads this attempt's log nor writes its
                         # recording (or takes the sensors) over this one's.
-                        if TYPE_CHECKING:
-                            # wait() returns the RerunConversion records,
-                            # which rerun.codon does not model.
-                            pass
-                        elif self._rerun is not None:
+                        if self._rerun is not None:
                             self._rerun.wait()
                         # What the failed attempt wrote under the stem (its
                         # trajectory log, a partial T4 dataset the writer
