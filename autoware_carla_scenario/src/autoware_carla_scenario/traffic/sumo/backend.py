@@ -44,6 +44,13 @@ whose blueprint is a bicycle joins SUMO as one, published or driven like the
 rest, and SUMO routes it where bicycles may go.  How SUMO's bicycles ride is
 ``bicycles``' own, not the drivers' parameters.
 
+Motorcycles are SUMO vehicles of the class ``motorcycle``.  A scenario's own
+vehicle whose blueprint is a motorcycle (:func:`is_motorcycle`, a
+:class:`~autoware_carla_scenario.entity.MotorcycleEntity`) joins SUMO as one
+of the run's motorcycle type, which has SUMO's defaults for the class,
+published or driven like the rest; it rides the carriageway, with the drivers'
+parameters, as a car does.
+
 Nothing joins the run that the run did not ask for: SUMO's own vehicles
 (``ambient``), pedestrians (``pedestrians``) and bicycles (``bicycles``) are
 off by default, so the road holds the scenario's vehicles and pedestrians, and
@@ -168,7 +175,7 @@ logger = logging.getLogger(__name__)
 #: turn: the lowest CARLA takes, so it does not drop onto the road (#1003).
 _SPAWN_LIFTS_M = (0.05, 0.2, 0.5)
 
-__all__ = ["SumoTrafficBackend", "is_bicycle"]
+__all__ = ["SumoTrafficBackend", "is_bicycle", "is_motorcycle"]
 
 #: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
 LANE_CHANGE_DURATION_S: float = 3.0
@@ -247,6 +254,17 @@ PEDESTRIAN_TYPES = 100
 #: bicycle parameter (``traffic.bicycles``) sets.
 BICYCLE_TYPES = 100
 _BICYCLE_TYPE = "DEFAULT_BIKETYPE"
+#: The type a scenario's motorcycle joins SUMO as.  SUMO has no default
+#: motorcycle type, so every run declares this one: of the class
+#: ``motorcycle``, with SUMO's defaults for it (:func:`_write_motorcycle_type`).
+MOTORCYCLE_TYPE = "acs_motorcycle"
+#: A scenario vehicle's blueprint ``base_type`` -> the SUMO vehicle class and
+#: type it joins SUMO as; any other is a passenger car (:data:`_PASSENGER`).
+_SUMO_CLASSES = {
+    "bicycle": ("bicycle", _BICYCLE_TYPE),
+    "motorcycle": ("motorcycle", MOTORCYCLE_TYPE),
+}
+_PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
 #: The bicycle parameters a run can change, each set on every bicycle; the
 #: speed (desiredMaxSpeed) and the red light only on a type, before the run.
 _BICYCLE_SETTERS = {
@@ -318,14 +336,36 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def _base_type(actor: Any) -> str:
+    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case; empty
+    for an actor without one."""
+    try:
+        return str(actor.attributes.get("base_type", "")).lower()
+    except Exception:  # noqa: BLE001 - an actor without attributes is a car
+        return ""
+
+
 def is_bicycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a bicycle: its blueprint's
     ``base_type`` says so, as CARLA's bicycles' do."""
-    try:
-        base_type = str(actor.attributes.get("base_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return base_type.lower() == "bicycle"
+    return _base_type(actor) == "bicycle"
+
+
+def is_motorcycle(actor: Any) -> bool:
+    """Whether the CARLA vehicle *actor* is a motorcycle: its blueprint's
+    ``base_type`` says so, as CARLA's motorcycles' do."""
+    return _base_type(actor) == "motorcycle"
+
+
+def _write_motorcycle_type(path: Path) -> Path:
+    """Declare :data:`MOTORCYCLE_TYPE` in *path* (an additional file): of the
+    class ``motorcycle``, every other attribute SUMO's default for it."""
+    path.write_text(
+        "<additional>\n"
+        f'    <vType id="{MOTORCYCLE_TYPE}" vClass="motorcycle" guiShape="motorcycle"/>\n'
+        "</additional>\n"
+    )
+    return path
 
 
 def _write_type_distribution(
@@ -916,10 +956,11 @@ class SumoTrafficBackend(TrafficBackend):
         types = [
             str(path) for path in (pedestrian_type, bicycle_type) if path is not None
         ]
-        if types:
-            # Before the demand: SUMO's default types are redefined only
-            # before anything uses them.
-            cmd += ["-a", ",".join(types)]
+        # Always: a scenario's motorcycle may join at any point of the run.
+        types.append(str(_write_motorcycle_type(out / "motorcycle_type.add.xml")))
+        # Before the demand: SUMO's default types are redefined only before
+        # anything uses them.
+        cmd += ["-a", ",".join(types)]
         if routes:
             cmd += ["-r", ",".join(str(r) for r in routes)]
         if self._config.fcd_output:
@@ -2241,11 +2282,11 @@ class SumoTrafficBackend(TrafficBackend):
 
         A bicycle (:func:`is_bicycle`) as one of SUMO's default bicycle type,
         on the nearest lane a bicycle may use -- a sidewalk's, when bicycles
-        ride them.
+        ride them; a motorcycle (:func:`is_motorcycle`) as one of
+        :data:`MOTORCYCLE_TYPE`, on the nearest lane a motorcycle may use.
         """
         tc = self._traci
-        bicycle = is_bicycle(actor)
-        vclass = "bicycle" if bicycle else "passenger"
+        vclass, type_id = _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
         place = self._road_position(self._carla_pose_to_sumo(actor), sumo_id, vclass)
         if place is None:
             return False
@@ -2274,7 +2315,7 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.add(
                 sumo_id,
                 route_id,
-                typeID=_BICYCLE_TYPE if bicycle else "DEFAULT_VEHTYPE",
+                typeID=type_id,
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
                 departSpeed=f"{speed:.2f}",
