@@ -41,7 +41,7 @@ autoware_carla_scenario/
 │   │   ├── conditions/               # Pass/fail condition evaluators
 │   │   │   └── composition/          # Composed conditions (lane position, area, speed, waypoint, ...)
 │   │   ├── coordinate/               # Lanelet2 / OpenDRIVE / CARLA-world transforms, MapManager, snap
-│   │   ├── entity/                   # VehicleEntity, EgoVehicle, the externally driven egos, spawn helpers
+│   │   ├── entity/                   # VehicleEntity, EgoVehicle, EgoConfig, the externally driven egos, spawn helpers
 │   │   ├── examples/                 # Built-in scenarios + Hydra config tree (conf/)
 │   │   ├── kinematics/               # Frame-tagged Vector3, velocity, acceleration
 │   │   ├── sensor/                   # CameraSensorBase + CARLA RGB camera
@@ -51,7 +51,7 @@ autoware_carla_scenario/
 │   │   ├── utils/                    # Stop-line / traffic-light helpers
 │   │   ├── constants.py, entity_role.py
 │   │   ├── pytest_fixtures.py        # CarlaScenarioFixture
-│   │   ├── scenario_base.py          # BaseScenario, EgoConfig
+│   │   ├── scenario_base.py          # BaseScenario (re-exports EgoConfig)
 │   │   ├── scenario_queue.py         # ScenarioQueue (batch / retry / cooldown)
 │   │   ├── scenario_runner.py        # Single-scenario execution
 │   │   └── server.py                 # CarlaServerManager

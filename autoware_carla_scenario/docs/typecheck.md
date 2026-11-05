@@ -2829,18 +2829,21 @@ the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
 Measure]` at class level, and `measures` declares the running scenario
 (`_MEASURED: dict[str, Optional[BaseScenario]]`) as a global, so neither can
 be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
-cycle: the module it names (`measures`, `entity.ego`) imports the other
+cycle: the module it names (`measures`, `odd.route_plan`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
+A cycle that only a definition in the wrong module made is better broken by
+moving the definition: `EgoConfig` is defined in `entity.ego`, next to the
+`EgoVehicle.spawn()` that takes it, and `scenario_base` re-exports it, so
+`entity.ego` imports nothing from `scenario_base` and needs no entry, and the
+runner's `ego.spawn(world, scenario.ego_config)` is checked as it runs.
 The egos derived from `EgoVehicle` (`entity.bridged_ego`,
-`entity.autoware_entity`) do not override `EgoVehicle.spawn()`, so they never
-name `EgoConfig` and need no entry: Codon 0.19 cannot call `super().spawn()`
-through an intermediate class ("'EgoVehicle' does not match expected type"
-in its dispatch thunk), and an override that repeated the spawn instead would
-take `scenario_base` through the model as `entity.ego` does. Through the
-checked `scenario_base`, a run with an example scenario in it failed in Codon
-0.19's code generation (`LLVM: error: value doesn't match function result
-type '{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
+`entity.autoware_entity`) do not override `EgoVehicle.spawn()`: Codon 0.19
+cannot call `super().spawn()` through an intermediate class ("'EgoVehicle'
+does not match expected type" in its dispatch thunk). Through the checked
+`scenario_base`, a run with an example scenario in it failed in Codon 0.19's
+code generation (`LLVM: error: value doesn't match function result type
+'{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
 checked modules and scenarios use of it. `coordinate.codon` still declares,
@@ -4244,10 +4247,8 @@ What Codon 0.19 needs that Python does not, beyond
 - **A value of a type the model holds**: a checked module that hands a checked
   value to a checked module that imports it through the model
   (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the
-  checked `BaseScenario` to `measures.set_measured_scenario()`, and its
-  `EgoConfig` to `EgoVehicle.spawn()`, which take the model's: it makes those
-  calls in the `else` branch of `if TYPE_CHECKING:`, and takes the spawned
-  actor from `ego.actor` in the first.
+  checked `BaseScenario` to `measures.set_measured_scenario()`, which takes
+  the model's: it makes that call in the `else` branch of `if TYPE_CHECKING:`.
 - **No module object to assign a global through**
   (`vehicle_entity._warmup_done = True`): Codon 0.19 imports no module as a
   value. The module sets its global in a function of its own

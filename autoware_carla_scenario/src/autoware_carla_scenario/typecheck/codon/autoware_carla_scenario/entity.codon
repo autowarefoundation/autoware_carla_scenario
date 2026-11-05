@@ -1,7 +1,7 @@
 # Model of autoware_carla_scenario.entity (docs/typecheck.md).
 #
-# EgoConfig lives in scenario_base in Python; it is defined here, next to the
-# EgoVehicle.spawn() that takes it, and scenario_base re-exports it. The spawn
+# EgoConfig is defined here, next to the EgoVehicle.spawn() that takes it, as
+# in Python's entity.ego, and scenario_base re-exports it. The spawn
 # locations and the NPC vehicle are in _vehicle_entity.codon.
 
 import typesafe_carla.carla as carla
