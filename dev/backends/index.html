@@ -2282,6 +2282,20 @@ is optional:</p>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scenario-run<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>...<span class="w"> </span>backends.ardy.image<span class="o">=</span>ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 </code></pre></div>
+<p>The settings every container backend shares are checked when the backend is
+built, before any image is pulled or container started:</p>
+<ul>
+<li><code>pull</code> is <code>missing</code>, <code>always</code> or <code>never</code>;</li>
+<li><code>startup_timeout_s</code> (and ARDY's <code>timeout_s</code>) is a finite number of seconds
+  above 0;</li>
+<li><code>gpu_memory_mb</code> and <code>memory_mb</code> are whole numbers, not negative;</li>
+<li><code>docker_args</code> is a list (<code>[--shm-size=8g]</code>), never a string.</li>
+</ul>
+<p>A value refused is an error naming its key, such as
+<code>backends.ardy.startup_timeout_s must be finite and above 0, got -1</code>. A
+run refuses the settings of a backend this package ships (<code>backends.ardy</code>)
+before anything starts, along with the rest of its config. A backend of
+another package has its settings checked when its scenario is prepared.</p>
 <p>The ARDY text encoder is Llama-3-8B, which is gated on Hugging Face. The
 container gets the host's Hugging Face cache, where the token and the weights
 are, at <code>hf_home</code>. It also gets <code>HF_TOKEN</code> when this process has one.</p>
@@ -2293,7 +2307,10 @@ are, at <code>hf_home</code>. It also gets <code>HF_TOKEN</code> when this proce
 </ul>
 <p>What it builds implements <code>prepare.Backend</code>: <code>name</code>, <code>resources()</code>,
 <code>start(log_dir, gpu)</code>, <code>address()</code> and <code>close()</code>. For a container, subclass
-<code>prepare.docker.DockerBackend</code>, build its <code>DockerSettings</code>, and implement
+<code>prepare.docker.DockerBackend</code>, build its <code>DockerSettings</code> with
+<code>prepare.docker.read_docker_settings(name, settings, ...)</code>, which reads and
+checks the shared keys above (check your own keys with its helpers, such as
+<code>positive_seconds</code>), and implement
 <code>ready(timeout_s)</code> to say when the service answers. Then put
 <code>@need_prepare(YourBackend)</code> on the action, scenario or renderer that needs it.</p>
 
@@ -2318,7 +2335,7 @@ are, at <code>hf_home</code>. It also gets <code>HF_TOKEN</code> when this proce
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 08:42:22 UTC"><span class="timeago" datetime="2026-11-02T08:42:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 08:42:22 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 02:00:33 UTC"><span class="timeago" datetime="2026-11-05T02:00:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 02:00:33 UTC">2026-11-05</span>
   </span>
 
     
