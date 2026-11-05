@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING, Collection
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["as_vehicle", "hold_vehicles_still", "release_vehicle"]
+__all__ = [
+    "as_vehicle",
+    "hold_vehicles_still",
+    "release_vehicle",
+    "set_siren_lights",
+    "siren_lights_on",
+    "with_siren_lights",
+]
 
 
 def as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
@@ -24,6 +31,36 @@ def as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _siren_bit() -> int:
+    """CARLA's ``VehicleLightState.Special1``: the light bar (the beacons) of
+    an emergency vehicle's blueprint -- a police car's, an ambulance's, a fire
+    engine's.  A vehicle without one shows nothing for it."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    return int(carla.VehicleLightState.Special1)
+
+
+def with_siren_lights(light_state: int, on: bool) -> int:
+    """*light_state* with its siren lights (:func:`_siren_bit`) *on* or off,
+    every other bit kept."""
+    bit = _siren_bit()
+    if on:
+        return light_state | bit
+    return light_state & ~bit
+
+
+def siren_lights_on(actor: "carla.Actor") -> bool:
+    """Whether vehicle *actor* shows its siren lights."""
+    return (int(as_vehicle(actor).get_light_state()) & _siren_bit()) != 0
+
+
+def set_siren_lights(actor: "carla.Actor", on: bool) -> None:
+    """Switch vehicle *actor*'s siren lights *on* or off, its other lights
+    (the turn indicators, the brake lights, ...) as they are."""
+    vehicle = as_vehicle(actor)
+    vehicle.set_light_state(with_siren_lights(int(vehicle.get_light_state()), on))
 
 
 def hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> None:

@@ -633,7 +633,10 @@ def test_sumo_args_may_name_additional_and_route_files(
 ) -> None:
     """SUMO starts with sumo_args' additional and route files, theirs loaded
     with the backend's own (it refused the option twice, issue #1532)."""
-    from autoware_carla_scenario.traffic.sumo.backend import MOTORCYCLE_TYPE
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_TYPE,
+        MOTORCYCLE_TYPE,
+    )
 
     additional = tmp_path / "user.add.xml"
     additional.write_text(
@@ -652,7 +655,12 @@ def test_sumo_args_may_name_additional_and_route_files(
     )
     try:
         types = set(backend._traci.vehicletype.getIDList())
-        assert {"user_additional", "user_route", MOTORCYCLE_TYPE} <= types
+        assert {
+            "user_additional",
+            "user_route",
+            MOTORCYCLE_TYPE,
+            EMERGENCY_TYPE,
+        } <= types
     finally:
         backend.close()
 
@@ -3744,6 +3752,159 @@ def test_a_scenario_motorcycle_joins_sumo_as_a_motorcycle(
         if scenario_vehicles == "sumo":
             # Ridden on by SUMO, and CARLA's motorcycle follows it.
             assert rider.transform.location.x > -80.0
+    finally:
+        backend.close()
+
+
+def test_an_emergency_vehicle_is_a_vehicle_whose_special_type_says_so() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_TYPE,
+        _sumo_class,
+        is_emergency,
+    )
+
+    ambulance = _FakeActor(None, type_id="vehicle.ford.ambulance")
+    ambulance.attributes["base_type"] = "van"
+    ambulance.attributes["special_type"] = "Emergency"
+    assert is_emergency(ambulance)
+    # Whatever its body: an emergency vehicle before a van.
+    assert _sumo_class(ambulance) == ("emergency", EMERGENCY_TYPE)
+    taxi = _FakeActor(None, type_id="vehicle.mercedes.sprinter")
+    taxi.attributes["special_type"] = "taxi"
+    assert not is_emergency(taxi)
+    assert not is_emergency(_FakeActor(None))
+    assert not is_emergency(SimpleNamespace())
+
+
+def test_a_siren_lets_a_vehicle_sumo_drives_through_red_lights() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import _with_siren
+
+    # SUMO's own speed mode (31) without the bit that brakes for a red light,
+    # still giving way at the junction (8).
+    assert _with_siren(31, True) == 15
+    assert _with_siren(15, False) == 31
+    assert _with_siren(31, True) & 8
+
+
+@needs_sumo
+@pytest.mark.parametrize("scenario_vehicles", ["sumo", "traffic_manager"])
+def test_a_scenario_emergency_vehicle_joins_sumo_with_a_silent_siren(
+    crossroads: Path, tmp_path: Path, scenario_vehicles: str
+) -> None:
+    """Of the run's emergency type, its bluelight device silent until it is
+    on a call: then SUMO's vehicles make way for it, and one SUMO drives no
+    longer brakes for red lights; off duty, both as before."""
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_REACTION_DIST_M,
+        EMERGENCY_TYPE,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles=scenario_vehicles,
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    actor = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "ambulance", "vehicle.ford.ambulance"
+    )
+    actor.attributes["base_type"] = "van"
+    actor.attributes["special_type"] = "emergency"
+    world = _FakeWorld([actor])
+    entity = _Entity(actor, "ambulance")
+    backend.adopt(entity)
+    backend.start(world)
+    tc = backend._traci
+    reach = "device.bluelight.reactiondist"
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "ambulance" in v]
+        assert tc.vehicle.getVehicleClass(sumo_id) == "emergency"
+        assert tc.vehicle.getTypeID(sumo_id).split("@", 1)[0] == EMERGENCY_TYPE
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == 0.0
+        mode = int(tc.vehicle.getSpeedMode(sumo_id))
+        if scenario_vehicles == "sumo":
+            # SUMO's own, not the device's 7 (through every red light).
+            assert mode == 31
+        backend.set_emergency(entity, True)
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == pytest.approx(
+            EMERGENCY_REACTION_DIST_M
+        )
+        if scenario_vehicles == "sumo":
+            # Through red lights, still giving way at the junction.
+            assert int(tc.vehicle.getSpeedMode(sumo_id)) == 15
+        else:
+            # Published: CARLA's side drives it, and its speed mode is SUMO's
+            # for a vehicle it does not drive.
+            assert int(tc.vehicle.getSpeedMode(sumo_id)) == mode
+        backend.set_emergency(entity, False)
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == 0.0
+        assert int(tc.vehicle.getSpeedMode(sumo_id)) == mode
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_an_emergency_vehicle_on_a_call_before_the_run_joins_on_one(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_REACTION_DIST_M,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles="sumo",
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    actor = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "police", "vehicle.dodge.charger_police"
+    )
+    actor.attributes["special_type"] = "emergency"
+    world = _FakeWorld([actor])
+    entity = _Entity(actor, "police")
+    backend.adopt(entity)
+    backend.set_emergency(entity, True)
+    backend.start(world)
+    tc = backend._traci
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "police" in v]
+        assert float(
+            tc.vehicle.getParameter(sumo_id, "device.bluelight.reactiondist")
+        ) == pytest.approx(EMERGENCY_REACTION_DIST_M)
+        assert int(tc.vehicle.getSpeedMode(sumo_id)) == 15
     finally:
         backend.close()
 

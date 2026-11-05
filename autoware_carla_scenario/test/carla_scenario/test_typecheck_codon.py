@@ -3197,6 +3197,13 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
             "MotorcycleEntity(): no constructor takes these arguments (required: config)",
         ),
         (
+            "from autoware_carla_scenario import EmergencyVehicleEntity\n"
+            "EmergencyVehicleEntity()\n",
+            "EmergencyVehicleEntity()",
+            "EmergencyVehicleEntity(): no constructor takes these arguments "
+            "(required: config)",
+        ),
+        (
             "from autoware_carla_scenario import PedestrianEntity\nPedestrianEntity()\n",
             "PedestrianEntity()",
             "PedestrianEntity(): no constructor takes these arguments "
@@ -3295,6 +3302,7 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
         "action-label-alone",
         "vehicle-entity-no-arguments",
         "motorcycle-entity-no-arguments",
+        "emergency-vehicle-entity-no-arguments",
         "pedestrian-entity-no-arguments",
         "debug-markers-by-field",
         "cover-item-by-field",
@@ -3333,6 +3341,8 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
     setup = """
         from autoware_carla_scenario import (
             AlwaysTrueCondition,
+            EmergencyVehicleEntity,
+            EmergencyVehicleEntityConfig,
             MotorcycleEntity,
             MotorcycleEntityConfig,
             PedestrianEntity,
@@ -3363,6 +3373,17 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
         )
         self.register_entity(rider)
         logger.info("%s %s", rider.role_name, named.vehicle_type)
+        ambulance = EmergencyVehicleEntity(
+            EmergencyVehicleEntityConfig(
+                "ambulance",
+                SpawnPointIndex(3),
+                vehicle_type="vehicle.ford.ambulance",
+                emergency=True,
+            )
+        )
+        ambulance.set_emergency(False)
+        self.register_entity(ambulance)
+        logger.info("%s %s", ambulance.role_name, str(ambulance.in_emergency))
         walker = PedestrianEntity(
             PedestrianEntityConfig("walker1", SpawnTransform(carla.Transform()))
         )

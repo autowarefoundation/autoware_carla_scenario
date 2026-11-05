@@ -1007,6 +1007,7 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Scenario bicycles (a vehicle whose blueprint's `base_type` is `bicycle`) | as the scenario's other vehicles | published or driven, as a SUMO `bicycle` |
 | SUMO's bicycles (`randomTrips.py --vclass bicycle`, `bicycles.enabled`) | SUMO | native; mirrored into CARLA as bicycles near the ego |
 | Scenario motorcycles (`MotorcycleEntity`, or any vehicle whose blueprint's `base_type` is `motorcycle`) | as the scenario's other vehicles | published or driven, as a SUMO `motorcycle` |
+| Scenario emergency vehicles (`EmergencyVehicleEntity`, or any vehicle whose blueprint's `special_type` is `emergency`) | as the scenario's other vehicles | published or driven, as a SUMO `emergency` vehicle with a bluelight device |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -1151,6 +1152,53 @@ named = MotorcycleEntity(
 )
 rider.spawn(world)
 self.register_entity(rider)
+```
+
+**Emergency vehicles**: a scenario's emergency vehicle -- an
+`EmergencyVehicleEntity`, or any vehicle whose blueprint's `special_type` is
+`emergency` (CARLA's police cars, ambulances and fire engines) -- joins SUMO as
+a vehicle of the class `emergency`, of the type `acs_emergency` that every run
+declares, with SUMO's bluelight device (`has.bluelight.device`).
+It joins off duty: the device silent (`reactiondist` 0) and SUMO's own speed
+mode (31), not the 7 the device gives it, so it stops at red lights as any car
+does. `EmergencyVehicleEntity.set_emergency(True)` puts it on a call:
+
+| | TrafficManager | SUMO |
+|---|---|---|
+| Siren lights (`VehicleLightState.Special1`) | on | on |
+| Red lights, stop signs | runs them (`ignore_lights_percentage` / `ignore_signs_percentage` 100) | one SUMO drives runs red lights (speed mode 15: no red-light braking, still giving way at the junction) |
+| Other traffic | does not make way | SUMO's vehicles within `reactiondist` (25 m) make way: a rescue lane |
+
+`set_emergency(False)` puts it off duty again: lights off, and under the
+TrafficManager back to its own draw of `traffic.vehicles.ignore_lights` /
+`ignore_signs` (else 0). A call before the run starts (the config's
+`emergency=True`, or `set_emergency` in `setup()`) holds: the vehicle joins the
+run on it. A backend that has no notion of an emergency vehicle (`none`) warns
+and drives it as before; the lights are switched all the same.
+
+```python
+from autoware_carla_scenario import (
+    EmergencyVehicleEntity,
+    EmergencyVehicleEntityConfig,
+    SpawnPointIndex,
+)
+
+# Whichever emergency vehicle the CARLA server has, off duty ...
+ambulance = EmergencyVehicleEntity(
+    EmergencyVehicleEntityConfig("ambulance", SpawnPointIndex(8))
+)
+# ... or one by name, on a call from its spawn.
+police = EmergencyVehicleEntity(
+    EmergencyVehicleEntityConfig(
+        "police", SpawnPointIndex(9), vehicle_type="vehicle.dodge.charger_police",
+        emergency=True,
+    )
+)
+ambulance.spawn(world)
+self.register_entity(ambulance)
+
+# Later, when the scenario's emergency begins (on_tick, a condition, ...):
+ambulance.set_emergency(True)
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the

@@ -11,7 +11,9 @@ if TYPE_CHECKING:
     from ..coordinate.poses import OpenDrivePose
     from ..coordinate.snap import GroundProjectionConfig
 
+from ..traffic.base import DrivenEntity, TrafficBackend
 from ..traffic.driven import BackendDriven
+from ..utils.vehicles import set_siren_lights
 from ._spawn import SpawnLocation, spawn_vehicle_actor
 
 #: Module-level flag set by :class:`~autoware_carla_scenario.scenario_runner.ScenarioRunner`
@@ -298,3 +300,197 @@ class MotorcycleEntity(VehicleEntity):
             world, self._config.vehicle_type
         )
         return super().spawn(world)
+
+
+#: The ``special_type`` CARLA gives an emergency vehicle's blueprint (a police
+#: car's, an ambulance's, a fire engine's), whatever its ``base_type``.
+EMERGENCY_SPECIAL_TYPE: str = "emergency"
+#: :class:`EmergencyVehicleEntityConfig`'s ``vehicle_type`` when it names no
+#: blueprint: the first emergency vehicle, by blueprint id, of the server the
+#: run is on -- which ones a CARLA build has differs between builds.
+ANY_EMERGENCY_VEHICLE: str = ""
+
+
+def is_emergency_vehicle_blueprint(blueprint: "carla.ActorBlueprint") -> bool:
+    """Whether *blueprint* is an emergency vehicle's: its ``special_type``
+    says so."""
+    if not blueprint.has_attribute("special_type"):
+        return False
+    special_type = blueprint.get_attribute("special_type").as_str()
+    return special_type.lower() == EMERGENCY_SPECIAL_TYPE
+
+
+def emergency_vehicle_blueprints(world: "carla.World") -> list[str]:
+    """The ids of *world*'s emergency vehicle blueprints, sorted."""
+    found: list[str] = []
+    for blueprint in world.get_blueprint_library().filter("vehicle.*"):
+        if is_emergency_vehicle_blueprint(blueprint):
+            found.append(str(blueprint.id))
+    return sorted(found)
+
+
+def resolve_emergency_vehicle_type(world: "carla.World", vehicle_type: str) -> str:
+    """The emergency vehicle blueprint an :class:`EmergencyVehicleEntity` of
+    *vehicle_type* is spawned as on *world*.
+
+    :data:`ANY_EMERGENCY_VEHICLE` (empty) is the first of
+    :func:`emergency_vehicle_blueprints`; a blueprint named is checked to be
+    one.
+
+    Raises:
+        ValueError: If *world* has no emergency vehicle, or *vehicle_type*
+            names a blueprint that is not one of its emergency vehicles.
+    """
+    emergency_vehicles = emergency_vehicle_blueprints(world)
+    if vehicle_type == ANY_EMERGENCY_VEHICLE:
+        if not emergency_vehicles:
+            raise ValueError(
+                "This CARLA server has no emergency vehicle blueprint (no "
+                "vehicle blueprint has special_type "
+                f"{EMERGENCY_SPECIAL_TYPE!r})"
+            )
+        return emergency_vehicles[0]
+    if vehicle_type not in emergency_vehicles:
+        raise ValueError(
+            f"Vehicle blueprint {vehicle_type!r} is not an emergency vehicle of "
+            f"this CARLA server. Available emergency vehicles: {emergency_vehicles}"
+        )
+    return vehicle_type
+
+
+class EmergencyVehicleEntityConfig(VehicleEntityConfig):
+    """Configuration for spawning an :class:`EmergencyVehicleEntity`.
+
+    A :class:`VehicleEntityConfig` whose ``vehicle_type`` must be an emergency
+    vehicle's blueprint (:func:`is_emergency_vehicle_blueprint`), and is by
+    default :data:`ANY_EMERGENCY_VEHICLE`: whichever one the server has.
+    *emergency* puts it on a call from its spawn: its siren lights on, and
+    driven as :meth:`EmergencyVehicleEntity.set_emergency` drives it.
+    """
+
+    # Declared for the static check (docs/typecheck.md).
+    emergency: bool
+
+    def __init__(
+        self,
+        role_name: str,
+        spawn_location: SpawnLocation,
+        vehicle_type: str = ANY_EMERGENCY_VEHICLE,
+        initial_speed_kmh: float = 0.0,
+        spawn_retry_max_count: int = 0,
+        spawn_retry_t_step: float = 0.1,
+        spawn_retry_z_step: float = 0.5,
+        od_pose: Optional["OpenDrivePose"] = None,
+        ground_projection: Optional["GroundProjectionConfig"] = None,
+        emergency: bool = False,
+    ) -> None:
+        super().__init__(
+            role_name=role_name,
+            spawn_location=spawn_location,
+            vehicle_type=vehicle_type,
+            initial_speed_kmh=initial_speed_kmh,
+            spawn_retry_max_count=spawn_retry_max_count,
+            spawn_retry_t_step=spawn_retry_t_step,
+            spawn_retry_z_step=spawn_retry_z_step,
+            od_pose=od_pose,
+            ground_projection=ground_projection,
+        )
+        self.emergency = emergency
+
+
+class EmergencyVehicleEntity(VehicleEntity):
+    """An NPC emergency vehicle -- a police car, an ambulance, a fire engine:
+    a :class:`VehicleEntity` on an emergency vehicle's blueprint, which can be
+    put on a call (:meth:`set_emergency`).
+
+    On a call its siren lights (CARLA's ``VehicleLightState.Special1``, the
+    light bar) flash, and the run's traffic backend drives it as one
+    (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.set_emergency`):
+    the TrafficManager has it run red lights and stop signs, and SUMO, which
+    takes it on as a vehicle of its ``emergency`` class with a bluelight
+    device, has its own vehicles make way for it too (docs/traffic_backends.md).
+    Off duty it is lit and driven as any other vehicle.
+
+    :meth:`spawn` refuses a blueprint that is not an emergency vehicle's, and
+    picks one when the config names none (:data:`ANY_EMERGENCY_VEHICLE`);
+    :attr:`vehicle_type` is the one spawned from then on.
+    """
+
+    # Declared for the static check (docs/typecheck.md).
+    _emergency: bool
+
+    def __init__(self, config: EmergencyVehicleEntityConfig) -> None:
+        super().__init__(config)
+        self._emergency = config.emergency
+
+    @property
+    def in_emergency(self) -> bool:
+        """Whether it is on a call: its siren lights on, driven as one."""
+        return self._emergency
+
+    def spawn(self, world: "carla.World") -> "carla.Actor":
+        """Spawn the emergency vehicle in the CARLA world, as
+        :meth:`VehicleEntity.spawn` spawns a vehicle, with its siren lights
+        on if it is on a call (:attr:`in_emergency`).
+
+        Raises:
+            ValueError: If the world has no emergency vehicle, or the
+                configured blueprint is not one
+                (:func:`resolve_emergency_vehicle_type`).
+        """
+        self._config.vehicle_type = resolve_emergency_vehicle_type(
+            world, self._config.vehicle_type
+        )
+        actor = super().spawn(world)
+        set_siren_lights(actor, self._emergency)
+        if self._emergency:
+            self._tell_backend()
+        return actor
+
+    def set_emergency(self, active: bool) -> None:
+        """Put it on a call (*active*) or off duty, from now on.
+
+        Switches its siren lights, keeping its other lights as they are, and
+        has the run's traffic backend drive it as an emergency vehicle on a
+        call or as any other vehicle
+        (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.set_emergency`).
+        Before :meth:`spawn` it only sets the state it spawns in.
+        """
+        self._emergency = active
+        actor = self._vehicle
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        set_siren_lights(vehicle, active)
+        entity: DrivenEntity = self
+        self._resolve_backend().set_emergency(entity, active)
+
+    def set_traffic_backend(self, backend: TrafficBackend) -> None:
+        """Inject the backend that drives it, which drives it on a call at
+        once if it is on one (:meth:`set_emergency`)."""
+        super().set_traffic_backend(backend)
+        if self._emergency:
+            self._tell_backend()
+
+    def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
+        """Accept the actor a traffic backend brings it back as
+        (:meth:`VehicleEntity._replace_actor`), lit and driven as it was."""
+        accepted = super()._replace_actor(actor)
+        if actor is not None and self._emergency:
+            # A typed local: Codon unwraps the Optional here.
+            vehicle: "carla.Actor" = actor
+            set_siren_lights(vehicle, True)
+            self._tell_backend()
+        return accepted
+
+    def _tell_backend(self) -> None:
+        """Have the backend drive it as :attr:`in_emergency` says; none is
+        told before one is given (:meth:`set_traffic_backend`,
+        :meth:`set_client`), nor before the actor exists."""
+        if self._vehicle is None:
+            return
+        if self._traffic_backend is None and self._fallback_backend is None:
+            return
+        entity: DrivenEntity = self
+        self._resolve_backend().set_emergency(entity, self._emergency)

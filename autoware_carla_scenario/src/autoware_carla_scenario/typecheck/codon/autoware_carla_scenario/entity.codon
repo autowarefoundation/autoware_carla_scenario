@@ -12,7 +12,8 @@ from .debug_markers import DebugMarkers
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
-from ._vehicle_entity import (ANY_MOTORCYCLE, MotorcycleEntity, MotorcycleEntityConfig, SpawnLocation,
+from ._vehicle_entity import (ANY_EMERGENCY_VEHICLE, ANY_MOTORCYCLE, EmergencyVehicleEntity,
+                              EmergencyVehicleEntityConfig, MotorcycleEntity, MotorcycleEntityConfig, SpawnLocation,
                               SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
 from .entity_role import _expect_role, _expect_role_name

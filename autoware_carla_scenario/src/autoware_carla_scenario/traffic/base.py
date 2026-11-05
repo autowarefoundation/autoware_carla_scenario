@@ -610,6 +610,28 @@ class TrafficBackend:
             "%s: cannot change a vehicle's parameters during a run", self.name
         )
 
+    def set_emergency(self, entity: DrivenEntity, active: bool) -> None:
+        """Have *entity*'s vehicle drive as an emergency vehicle on a call
+        (*active*: its siren on) or as one off duty, from now on.
+
+        On a call it goes through red lights and past stop signs, and a
+        backend whose own traffic can make way for it (SUMO's rescue lane)
+        has that traffic make way; off duty it drives as the run's other
+        vehicles do.  The entity switches the lights itself
+        (:class:`~autoware_carla_scenario.entity.EmergencyVehicleEntity`);
+        this is the driving.  May be called before the run starts, for a
+        vehicle on a call from its spawn.
+
+        Nothing by default, with a warning: a backend that cannot leaves the
+        vehicle driving as it did.
+        """
+        if active:
+            logger.warning(
+                "%s: cannot drive %s as an emergency vehicle; it drives as before",
+                self.name,
+                _entity_name(entity),
+            )
+
     def override_pedestrian_parameters(
         self, world: "carla.World", overrides: PedestrianParameters
     ) -> None:
