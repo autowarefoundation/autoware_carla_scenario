@@ -432,11 +432,20 @@ with the same message, naming the scenario. They refuse an invalid sweep (a
 Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
 way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
-The sweeper refuses such a map too, before anything runs, exit 1:
-`LaneletConstraintSweeper: <why>`, naming the map -- a `map.directory` that
-does not exist, a `map.source` that cannot be fetched, a map cache whose root
-is not a directory (`AUTOWARE_DATA_DIR` naming a file), a
-`map.lanelet2_path` that is missing or that Lanelet2 cannot read.
+The sweeper (`hydra/sweeper=lanelet_constraint`, a single scenario's
+`--multirun`) refuses an invalid sweep the same way, before any case runs:
+one line on stderr, `Error: <scenario>: <why>`, exit 1, no traceback. These
+are a config with no `sweep` section, `sweep.constraints` naming more than
+one key, what the expansion refuses (a `sweep.case_index` past its cases, a
+constraint or binding that does not parse, a `sweep.odd_sample` setting or
+`weights` file it refuses, ...), and a Lanelet2 map it cannot load, whose
+`<why>` is `LaneletConstraintSweeper: <why>`, naming the map: a
+`map.directory` that does not exist, a `map.source` that cannot be fetched, a
+map cache whose root is not a directory (`AUTOWARE_DATA_DIR` naming a file),
+or a `map.lanelet2_path` that is missing or that Lanelet2 cannot read. With
+`HYDRA_FULL_ERROR=1` each is raised instead, traceback and all. Every other
+error the sweeper meets keeps Hydra's traceback, invalid `controls` among
+them.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
 sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,

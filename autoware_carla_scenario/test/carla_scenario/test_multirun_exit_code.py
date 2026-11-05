@@ -19,7 +19,8 @@ import pytest
 
 #: A minimal ``@hydra.main`` app swept by LaneletConstraintSweeper, with the
 #: map loading and the expansion stubbed to two cases (none with
-#: ``+sweep.none=true``).  Its task fails when ``+fail=true`` is given, writing
+#: ``+sweep.none=true``; a ``ValueError`` with ``+sweep.invalid=true``, a
+#: ``RuntimeError`` with ``+sweep.broken=true``).  Its task fails when ``+fail=true`` is given, writing
 #: the result JSON a scenario writes; as ``examples/run.py:_hydra_main`` does in
 #: ``--multirun``, it neither raises nor ``sys.exit``s for a failed scenario.
 #: With ``+raise_once=true`` each case raises the first time it runs, as a run
@@ -46,9 +47,20 @@ from autoware_carla_scenario.run_outputs import run_outputs_exist
 lcs.check_constraint_keys = lambda sweep: None
 lcs.load_sweep_map = lambda map_cfg, **_: object()
 lcs.scenario_controls = lambda cfg: None
-lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: (
-    [] if sweep.get("none") else [["+case=1", *arguments], ["+case=2", *arguments]]
-)
+
+
+def expand_sweep(sweep, lanelet_map, arguments, **_):
+    if sweep.get("invalid"):
+        # What expand_sweep raises for a sweep config it refuses.
+        raise ValueError("OddSampler: ODD default has no module urban")
+    if sweep.get("broken"):
+        raise RuntimeError("an unexpected expansion bug")
+    if sweep.get("none"):
+        return []
+    return [["+case=1", *arguments], ["+case=2", *arguments]]
+
+
+lcs.expand_sweep = expand_sweep
 
 
 @hydra.main(version_base=None, config_path=None, config_name=None)
@@ -475,6 +487,133 @@ def test_lanelet_sweeper_refuses_a_bad_config_value_before_any_case(
     assert "case 1" not in output, output
     assert "Launching" not in output, output
     assert output.count(message) == 1, output
+
+
+#: The stubs of :data:`_SWEEPER_APP` that stand in for the sweeper's checks
+#: before it expands the sweep: without them the real ones run.
+_PRE_EXPANSION_STUBS = (
+    "lcs.check_constraint_keys = lambda sweep: None\n",
+    "lcs.load_sweep_map = lambda map_cfg, **_: object()\n",
+)
+
+
+def _scenario_app(tmp_path: Path, *, real_checks: bool = False) -> str:
+    """:data:`_SWEEPER_APP` with a ``scenario`` config group holding
+    ``cut_in/left``, so ``+scenario=cut_in/left`` is the sweep's scenario
+    choice, as ``scenario=cut_in/left`` is a real sweep's.  With
+    *real_checks*, the sweep's constraint keys are checked and its map
+    loaded by the sweeper's own functions, not stubs."""
+    group = tmp_path / "conf" / "scenario" / "cut_in"
+    group.mkdir(parents=True)
+    (group / "left.yaml").write_text("{}\n", encoding="utf-8")
+    old = "config_path=None"
+    assert old in _SWEEPER_APP
+    app = _SWEEPER_APP.replace(old, 'config_path="conf"')
+    if real_checks:
+        for stub in _PRE_EXPANSION_STUBS:
+            assert stub in app
+            app = app.replace(stub, "")
+    return app
+
+
+def test_lanelet_sweeper_refuses_an_invalid_sweep_with_one_line(
+    tmp_path: Path,
+) -> None:
+    """#1705: a sweep config expand_sweep refuses prints one
+    ``Error: <scenario>: <message>`` line, as scenario-expand does, and exits
+    1 with no traceback and before any case runs."""
+    proc = _run(
+        _scenario_app(tmp_path),
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+scenario=cut_in/left",
+        "+sweep.constraints={}",
+        "+sweep.invalid=true",
+    )
+    output = proc.stdout + proc.stderr
+    line = "Error: cut_in/left: OddSampler: ODD default has no module urban"
+    assert proc.returncode == 1, output
+    assert proc.stderr.splitlines() == [line], output
+    assert "Traceback" not in output, output
+    assert "case 1" not in output, output
+    assert "Launching" not in output, output
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ("+sweep.constraints={a: [{}], b: [{}]}",),
+            "sweep.constraints sweeps one parameter; got keys ['a', 'b']",
+        ),
+        (
+            (
+                "+sweep.constraints={ego.spawn_lanelet_id: [{}]}",
+                "+map.directory=/nonexistent/no_map",
+            ),
+            "LaneletConstraintSweeper: Map directory /nonexistent/no_map "
+            "does not exist",
+        ),
+    ],
+    ids=["second-constraint-key", "missing-map"],
+)
+def test_lanelet_sweeper_refuses_a_sweep_before_expanding_it_with_one_line(
+    tmp_path: Path, args: tuple[str, ...], message: str
+) -> None:
+    """#1705: the sweeper's own checks before it expands the sweep (the
+    constraint keys, the map) refuse it in one line too, exit 1."""
+    proc = _run(
+        _scenario_app(tmp_path, real_checks=True),
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+scenario=cut_in/left",
+        *args,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    lines = proc.stderr.splitlines()
+    assert len(lines) == 1, output
+    assert lines[0].startswith(f"Error: cut_in/left: {message}"), output
+    assert "Traceback" not in output, output
+    assert "Launching" not in output, output
+
+
+def test_lanelet_sweeper_refuses_an_invalid_sweep_without_a_scenario(
+    tmp_path: Path,
+) -> None:
+    """Without a ``scenario`` choice the line names none."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+sweep.invalid=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert proc.stderr.splitlines() == [
+        "Error: OddSampler: ODD default has no module urban"
+    ], output
+    assert "Traceback" not in output, output
+
+
+def test_lanelet_sweeper_keeps_the_traceback_of_an_unexpected_error(
+    tmp_path: Path,
+) -> None:
+    """Only a ValueError is a refusal: any other error is a bug, shown with
+    its traceback as Hydra shows it."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+sweep.broken=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert "Traceback" in output, output
+    assert "RuntimeError: an unexpected expansion bug" in output, output
+    assert "\nError: an unexpected" not in "\n" + output, output
 
 
 @pytest.mark.parametrize(

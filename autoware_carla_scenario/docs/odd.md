@@ -1414,8 +1414,14 @@ The binding file names the regions file with the ODD's
 (`openodd: [urban.yaml, regions.yaml]`), and the ODD names its roots under
 `ODD:`: a module that is a root -- a document with no `ODD:` section takes
 every module that is not a situation as one -- would bound the ODD, and is
-refused a share (every case is in it). A file of shares is relative to the
-directory the sweep is started from.
+refused a share (every case is in it). A relative path to a file of shares
+is resolved against the working directory the command is started from (a
+`--multirun`, a batch, `scenario-expand`), not the directory of the scenario's
+config, as `coverage_from` is: the path is given on the command line, or in a
+config the command line composes. Give an absolute path for a file next to a
+scenario package. A file that cannot be read or parsed, or that names a module
+the ODD does not have, refuses the sweep before any case runs, with one line
+`Error: <scenario>: <why>` and exit 1.
 
 Each module holds its share of the cases, however the modules overlap: with
 `heavy_rain: 0.3` and `night: 0.3`, 30% of the cases are in heavy rain and

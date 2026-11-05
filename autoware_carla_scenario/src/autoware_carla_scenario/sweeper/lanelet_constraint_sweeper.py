@@ -52,7 +52,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
@@ -366,6 +366,49 @@ def _refuse_before_forking(cfg: DictConfig) -> None:
         sys.exit(_REFUSED_EXIT_CODE)
 
 
+def _read_sweep_section(cfg: DictConfig) -> dict[str, Any]:
+    """The config's ``sweep`` section, resolved, its constraint keys checked.
+
+    Raises:
+        ValueError: When the config has no ``sweep`` section, or its
+            constraints name more than one key (:func:`.expand.check_constraint_keys`).
+    """
+    sweep_cfg = OmegaConf.select(cfg, "sweep")
+    if sweep_cfg is None:
+        raise ValueError(
+            "No 'sweep' section found in config. "
+            "LaneletConstraintSweeper requires sweep.constraints, sweep.route "
+            "or sweep.odd_sample."
+        )
+    sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
+    assert isinstance(sweep_dict, dict)
+    check_constraint_keys(sweep_dict)
+    return {str(k): v for k, v in sweep_dict.items()}
+
+
+def _refuse_invalid_sweep(cfg: DictConfig, exc: ValueError) -> NoReturn:
+    """Report *exc*, the sweep's own refusal of its config, and exit 1.
+
+    One line on stderr, ``Error: <scenario>: <message>``, as
+    ``scenario-expand`` and a ``--multirun`` batch print it
+    (``examples/expand.py``), and exit 1: a configuration error
+    (docs/usage.md, "Exit Codes").  The scenario is the config's
+    ``scenario`` choice; without one the line names none.  With
+    ``HYDRA_FULL_ERROR=1`` *exc* is raised again, traceback and all, as
+    ``scenario-expand`` does.
+
+    Raises:
+        ValueError: *exc*, with ``HYDRA_FULL_ERROR=1``.
+        SystemExit: With status 1, otherwise.
+    """
+    if os.environ.get("HYDRA_FULL_ERROR") == "1":
+        raise exc
+    name = OmegaConf.select(cfg, "hydra.runtime.choices.scenario", default=None)
+    where = f"{name}: " if name else ""
+    print(f"Error: {where}{exc}", file=sys.stderr)  # noqa: T201
+    sys.exit(1)
+
+
 class LaneletConstraintSweeper(Sweeper):
     """Sweep over lanelets that satisfy declarative constraints."""
 
@@ -463,10 +506,15 @@ class LaneletConstraintSweeper(Sweeper):
                 datasets without the extra, or when a case is refused;
                 with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
                 sweep is interrupted.
-            ValueError: At once, before any case runs, when the sweep is
-                invalid -- among others, when its Lanelet2 map is not named,
-                is missing, or cannot be resolved, fetched or read
-                (:func:`.expand.load_sweep_map`), the message naming it.
+            SystemExit: With status 1, at once, before any case runs, when
+                the sweep is invalid -- it has no ``sweep`` section, its
+                constraints name more than one key, its Lanelet2 map is not
+                named, is missing, or cannot be resolved, fetched or read
+                (:func:`.expand.load_sweep_map`, the message naming it), or
+                :func:`.expand.expand_sweep` refuses it -- after printing
+                ``Error: <scenario>: <message>`` to stderr, as
+                ``scenario-expand`` does.
+            ValueError: Instead of that exit, with ``HYDRA_FULL_ERROR=1``.
         """
         self._current_case = None
         try:
@@ -507,16 +555,13 @@ class LaneletConstraintSweeper(Sweeper):
         _refuse_before_forking(cfg)
 
         # -- 1. Read the sweep section, before any map is fetched --------
-        sweep_cfg = OmegaConf.select(cfg, "sweep")
-        if sweep_cfg is None:
-            raise ValueError(
-                "No 'sweep' section found in config. "
-                "LaneletConstraintSweeper requires sweep.constraints, sweep.route "
-                "or sweep.odd_sample."
-            )
-        sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
-        assert isinstance(sweep_dict, dict)
-        check_constraint_keys(sweep_dict)
+        # Each refusal of the sweep's own config -- here, loading its map and
+        # expanding it -- is one line, `Error: <scenario>: <why>`, exit 1, as
+        # scenario-expand reports it, not Hydra's traceback (#1705).
+        try:
+            sweep_dict = _read_sweep_section(cfg)
+        except ValueError as exc:
+            _refuse_invalid_sweep(cfg, exc)
         # Checked here, before any map is fetched or case runs, and refused
         # as step 0 refuses a config value: exit 2, naming the key.
         try:
@@ -532,23 +577,36 @@ class LaneletConstraintSweeper(Sweeper):
         # map on this machine and is read in place.  A map that cannot be
         # resolved, fetched or read is refused as an invalid sweep, a
         # ValueError naming it, as scenario-expand and a batch refuse it
-        # (#1447).
-        lanelet_map = load_sweep_map(
-            OmegaConf.select(cfg, "map"), prefix="LaneletConstraintSweeper: "
-        )
+        # (#1447), in one line (#1705).
+        try:
+            lanelet_map = load_sweep_map(
+                OmegaConf.select(cfg, "map"), prefix="LaneletConstraintSweeper: "
+            )
+        except ValueError as exc:
+            _refuse_invalid_sweep(cfg, exc)
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
-        batches: list[tuple[str, ...]] = [
-            tuple(case)
-            for case in expand_sweep(
-                sweep_dict,
-                lanelet_map,
-                arguments,
-                odd=OmegaConf.select(cfg, "odd"),
-                controls=scenario_controls(cfg),
-                seed=_config_seed(cfg),
-            )
-        ]
+        odd = OmegaConf.select(cfg, "odd")
+        controls = scenario_controls(cfg)
+        seed = _config_seed(cfg)
+        try:
+            batches: list[tuple[str, ...]] = [
+                tuple(case)
+                for case in expand_sweep(
+                    sweep_dict,
+                    lanelet_map,
+                    arguments,
+                    odd=odd,
+                    controls=controls,
+                    seed=seed,
+                )
+            ]
+        except ValueError as exc:
+            # An invalid sweep (a weights file that does not parse or names a
+            # module the ODD does not have, a constraint that does not parse,
+            # a case_index past its cases, ...).  Other errors keep their
+            # traceback.
+            _refuse_invalid_sweep(cfg, exc)
         if not batches:
             # Exit 0 means every case passed: a sweep that tests nothing
             # (a misspelt constraint, the wrong map) must not look like one.
