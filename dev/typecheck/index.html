@@ -4769,8 +4769,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 270 of the package's 393
-modules (69%; about 82,800 of
-145,500 lines) are <code>CHECKED</code>: the kinematics, the
+modules (69%; about 82,900 of
+145,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5874,8 +5874,8 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>129 functions and methods of those modules are <code>UNCALLED</code>
-(35 of them protected helpers, see <em>What is
+<p>133 functions and methods of those modules are <code>UNCALLED</code>
+(39 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5887,7 +5887,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 129 UNCALLED functions and methods, and why</summary>
+<summary>The 133 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5981,8 +5981,12 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>slurm.settings.SlurmSettings.from_mapping</code>: takes the <code>launcher</code> config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the settings with <code>**</code> of a <code>dict[str, Any]</code></li>
 <li><code>slurm.settings.SlurmSettings.replace</code>: takes <code>**changes: Any</code> and reads them, merged into to_dict()'s <code>dict[str, Any]</code>, back with from_mapping, which Codon cannot express</li>
 <li><code>slurm.settings.SlurmSettings.to_dict</code>: returns the settings as the manifest stores them (<code>dataclasses.asdict()</code>), a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
-<li><code>slurm.settings._optional_int</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it</li>
-<li><code>slurm.settings._optional_str</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it</li>
+<li><code>slurm.settings._flag</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
+<li><code>slurm.settings._optional_int</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
+<li><code>slurm.settings._optional_str</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
+<li><code>slurm.settings._seconds</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
+<li><code>slurm.settings._str_list</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
+<li><code>slurm.settings._whole_number</code>: takes a value of the <code>launcher</code> config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express; only SlurmSettings.from_mapping, itself uncalled, calls it (or another of its readers)</li>
 <li><code>slurm.settings.launcher_type</code>: takes the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express</li>
 <li><code>sweeper.bindings.parse_binding</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
 <li><code>sweeper.constraints._bind_children</code>: reads the children of a constraint of any kind with hasattr (<code>constraint: Any</code>), which Codon cannot express; the constraints' _bind_set_level() call it with themselves, so its body is compiled through them</li>

@@ -2491,12 +2491,12 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 <tr>
 <td><code>signal_grace_seconds</code></td>
 <td><code>120</code></td>
-<td><code>--signal=B:TERM@N</code></td>
+<td><code>--signal=B:TERM@N</code>; at least 0</td>
 </tr>
 <tr>
 <td><code>port_base</code>, <code>port_slots</code></td>
 <td><code>20000</code>, <code>1000</code></td>
-<td>where the tasks' port slots are (<a href="#ports">Ports</a>); <code>port_slots</code> at least 1</td>
+<td>where the tasks' port slots are (<a href="#ports">Ports</a>); <code>port_base</code> at least 1024, <code>port_slots</code> at least 1, and every slot's ports within 65535</td>
 </tr>
 <tr>
 <td><code>port_lock_dir</code></td>
@@ -2505,6 +2505,22 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 </tr>
 </tbody>
 </table>
+<p>Each value is checked before anything is written, and one of the wrong type is
+refused with an error naming its key (<code>launcher.&lt;key&gt;</code>), never quietly read
+as something else:</p>
+<ul>
+<li>The counts (<code>cpus_per_task</code>, <code>array_parallelism</code>, <code>cases_per_task</code>),
+  <code>signal_grace_seconds</code>, <code>port_base</code> and <code>port_slots</code> are whole numbers: <code>2</code>,
+  <code>2.0</code> or <code>"2"</code>, not <code>2.7</code>, <code>true</code>, NaN or infinity. The counts and
+  <code>port_slots</code> are at least 1.</li>
+<li>The seconds (<code>start_stagger_seconds</code>, <code>poll_seconds</code>) are finite numbers, at
+  least 0, not <code>true</code>.</li>
+<li>The flags (<code>wait</code>, <code>headless</code>, <code>collect_job</code>, <code>cancel_on_interrupt</code>) are
+  <code>true</code> or <code>false</code>, or one of their spellings as text (<code>"false"</code>, <code>"no"</code>,
+  <code>"off"</code>, <code>"0"</code>, and <code>"true"</code>, <code>"yes"</code>, <code>"on"</code>, <code>"1"</code>); <code>"false"</code> is false.</li>
+<li>The text keys are text or a number, not a boolean, a list or a mapping;
+  <code>extra_sbatch_args</code> and <code>setup</code> are lists (or one string), <code>env</code> a mapping.</li>
+</ul>
 <p><code>cases_per_task</code> trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
 and how many a lost task takes with it.</p>
@@ -2737,7 +2753,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 15:14:06 UTC"><span class="timeago" datetime="2026-11-04T15:14:06+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 15:14:06 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 02:05:48 UTC"><span class="timeago" datetime="2026-11-05T02:05:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 02:05:48 UTC">2026-11-05</span>
   </span>
 
     
