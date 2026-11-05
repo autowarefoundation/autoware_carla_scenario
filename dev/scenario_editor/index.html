@@ -3300,12 +3300,25 @@ into <code>sweep.constraints</code> under whichever key addresses the slot:</p>
 <p>The id the field shows stays in the document under a search: it is the default a
 run that does not sweep falls back to, and the value the exported config
 declares so that Hydra's struct mode accepts the override at all.</p>
+<p><strong>Excluded lanelet IDs</strong> (Scenario inspector) is what
+<code>${map.no_3d_model_lanelet_ids}</code> means for this scenario. Left empty, it
+inherits the map group's own list (<code>conf/map/nishishinjuku.yaml</code>'s, for the
+starter), resolved by Hydra at run time. A list typed there replaces the
+group's. On a built-in group the <code>map</code> keys a scenario config writes lose to
+the group, composed after the scenario, so the export writes such a list in
+place of every reference instead -- <code>values: [1, 2]</code> where the document says
+<code>${map.no_3d_model_lanelet_ids}</code> -- and a <code>map.no_3d_model_lanelet_ids=...</code>
+override on the command line no longer reaches those constraints. A scenario
+on its own map group (a source or a <strong>Map directory</strong>, below) writes its list,
+empty or not, into that group. The match count below follows the same rule,
+reading the built-in group's list from its file when the field is empty, so it
+counts what the sweep will enumerate.</p>
 <p><strong>One search per run.</strong> The sweeper enumerates a single target key, so a
 document may search for one lanelet; a second search is a validation <em>warning</em>
 rather than an error — the scenario still runs, with everything else pinned to
 its default — and names which slot is being driven.</p>
 <p><strong>Preview matches</strong> evaluates that tree against the real Lanelet2 map and
-reports, for example, <code>133 matched of 979 lanelets</code>. It is counted when the
+reports, for example, <code>121 matched of 979 lanelets</code>. It is counted when the
 picker is opened, not on every render: each lanelet field on the inspector has a
 picker in the page at once, and counting means parsing a city. Loading a map is
 opt-in and cached; if the map files are missing the count is unavailable but the
@@ -3911,7 +3924,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 06:38:47 UTC"><span class="timeago" datetime="2026-11-05T06:38:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 06:38:47 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 06:53:39 UTC"><span class="timeago" datetime="2026-11-05T06:53:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 06:53:39 UTC">2026-11-05</span>
   </span>
 
     
