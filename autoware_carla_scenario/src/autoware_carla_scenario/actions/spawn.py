@@ -590,16 +590,11 @@ class SpawnAction(BaseAction):
         if self._shift_max <= 0.0 and not self._entity_name:
             return due  # a prop not asked to look for a clear place
         x, y, z, yaw = due
-        if TYPE_CHECKING:
-            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            blocker = _taken(
-                world, actor_id, x, y, yaw, half_length, half_width, self._ahead
-            )
+        blocker = _taken(
+            world, actor_id, x, y, yaw, half_length, half_width, self._ahead
+        )
         if blocker >= 0 and self._ahead > 0.0:
-            if TYPE_CHECKING:
-                pass  # utils.clearance is not compiled (docs/typecheck.md)
-            elif _taken(world, actor_id, x, y, yaw, half_length, half_width) < 0:
+            if _taken(world, actor_id, x, y, yaw, half_length, half_width) < 0:
                 # Only the room to stop in is taken, by one ahead: shifted on
                 # it would be put past that one (vehicle_135 past vehicle_117,
                 # bicycle_89 past bicycle_87).  It keeps its place, entering
@@ -681,12 +676,7 @@ class SpawnAction(BaseAction):
             trying = self._speed * factor
             room = max(trying * trying - ahead_speed * ahead_speed, 0.0)
             room = room / (2.0 * _ENTRY_BRAKING_MPS2) + gap
-            if TYPE_CHECKING:
-                taken = -1
-            else:
-                taken = _taken(
-                    world, actor_id, x, y, yaw, half_length, half_width, room
-                )
+            taken = _taken(world, actor_id, x, y, yaw, half_length, half_width, room)
             if taken < 0:
                 slower = trying
                 break
