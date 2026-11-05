@@ -23,6 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# A case's trajectory log and its recording are named by the checked
+# run_outputs's rule (#1678), as rerun and ui.web_viewer_paths name them.
+from ..run_outputs import RECORDING_SUFFIX, TRAJECTORY_SUFFIX
+
 __all__ = [
     "SESSION_TYPES",
     "CaseFiles",
@@ -43,7 +47,7 @@ SESSION_TYPES = ("multirun", "batch", "single")
 #: fails as "not found" rather than with ENAMETOOLONG.
 _COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]{1,255}$")
 
-_TRAJECTORY = ".trajectory.jsonl"
+_TRAJECTORY = TRAJECTORY_SUFFIX
 _RESULT = "_result.json"
 _STEM_NUMBER = re.compile(r"^(?P<base>.*?)-(?P<n>\d+)$")
 
@@ -82,7 +86,7 @@ class CaseFiles:
     def recording(self) -> Path:
         """The Rerun recording made of the trajectory log (``X.rrd`` beside
         ``X.trajectory.jsonl``, where the converter writes it)."""
-        return self.path(".rrd")
+        return self.path(RECORDING_SUFFIX)
 
 
 def _safe(component: str) -> bool:

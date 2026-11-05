@@ -65,7 +65,8 @@ from ..driver.observation import (
 )
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
-from ..rerun_lidar import CameraMount, active_recorder
+from ..rerun_lidar import active_recorder
+from ..rerun_sensor_mount import CameraMount
 from ..ego_base_link import clear_ego_base_link, set_ego_base_link
 from ..t4 import active_recording, offer_driver_sensors, withdraw_driver_sensors
 from ._policy_warmup import PolicyWarmup, _CarriedActor
