@@ -608,7 +608,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2": "imports google.protobuf",
     "autoware_carla_scenario.pedestrian._proto.pedestrian_motion_pb2_grpc": "imports grpc",
-    "autoware_carla_scenario.pedestrian.ardy": "imports grpc",
+    "autoware_carla_scenario.pedestrian.ardy": "imports grpc and pedestrian.motion_client (grpc), which is neither checked nor modelled; ArdyBackend.from_settings() reads the backend's settings as `Mapping[str, Any]`, which Codon cannot express",
     "autoware_carla_scenario.pedestrian.motion_client": "imports grpc and the generated protobuf modules (google.protobuf)",
     "autoware_carla_scenario.pedestrian.soma": "reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (`NDArray`), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it",
     "autoware_carla_scenario.prepare.declare": "sets and reads a class attribute by name (setattr, `type.__dict__`, `__mro__`) and imports a module by name (importlib), which Codon cannot",
