@@ -892,6 +892,9 @@ def test_validator_refuses_a_bound_the_condition_refuses(
         ],
         ("traffic_source", None, {"vehicles_per_minute": -1.0}, "vehicles_per_minute"),
         ("traffic_source", None, {"initial_vehicles": -1}, "initial_vehicles"),
+        # The seeds' bounds (#1495): a negative seed is refused at construction.
+        ("adversarial_traffic", None, {"seed": -1}, "seed"),
+        ("smart_pedestrian", "ped", {"seed": -1}, "seed"),
         (
             "routing",
             "car",

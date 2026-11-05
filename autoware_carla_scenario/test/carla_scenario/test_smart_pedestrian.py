@@ -501,6 +501,17 @@ class TestSmartPedestrianControllerAction:
         with pytest.raises(ValueError, match=match):
             SmartPedestrianControllerAction("walker1", **kwargs)
 
+    @pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+    def test_a_seed_must_be_a_whole_number_not_negative(self, value: Any) -> None:
+        # #1495: int() read 2.5 as 2 and True as 1, and a negative seed passed.
+        with pytest.raises(ValueError, match="seed"):
+            SmartPedestrianControllerAction("walker1", seed=value)
+
+    def test_a_whole_float_seed_is_read_as_an_int(self) -> None:
+        two: Any = 2.0
+        action = SmartPedestrianControllerAction("walker1", seed=two)
+        assert action._seed == 2 and type(action._seed) is int  # noqa: SLF001
+
     @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
     @pytest.mark.parametrize("name", ["speed_ms", "duration_s", "prompt time_s"])
     def test_non_finite_arguments_are_refused(self, name: str, value: float) -> None:

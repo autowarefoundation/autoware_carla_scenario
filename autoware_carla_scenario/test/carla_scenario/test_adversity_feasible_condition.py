@@ -6,6 +6,7 @@ no offset, so CARLA's frame is the map's with y flipped; the actors are fakes.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,7 @@ from autoware_carla_scenario.conditions.adversity_feasible import (
     AdversityFeasibleCondition,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
+from autoware_carla_scenario.seed import run_seed
 
 from . import _route_maps as rm
 
@@ -148,6 +150,27 @@ def test_a_jaywalker_is_seeded() -> None:
 
     three = run(3)
     assert three == run(3) != run(4)
+
+
+@pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+def test_a_seed_must_be_a_whole_number_not_negative(value: Any) -> None:
+    # #1495: int() read 2.5 as 2 and True as 1, and a negative seed passed.
+    with pytest.raises(ValueError, match="seed"):
+        AdversityFeasibleCondition(
+            "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j", seed=value
+        )
+
+
+def test_a_whole_float_seed_is_read_as_an_int_and_none_is_the_runs() -> None:
+    two: Any = 2.0
+    condition = AdversityFeasibleCondition(
+        "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j", seed=two
+    )
+    assert condition._seed == 2 and type(condition._seed) is int  # noqa: SLF001
+    default = AdversityFeasibleCondition(
+        "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j"
+    )
+    assert default._seed == run_seed()  # noqa: SLF001
 
 
 def test_one_scene_a_frame_for_everyone_who_asks() -> None:

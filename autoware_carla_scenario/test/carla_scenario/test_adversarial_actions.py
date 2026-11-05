@@ -265,6 +265,13 @@ def test_a_jaywalker_walks_its_seeded_path() -> None:
     assert walk(3) == walk(3) != walk(4)
 
 
+@pytest.mark.parametrize("value", [2.5, True, -1])
+def test_an_adversarial_action_s_seed_is_checked(value: Any) -> None:
+    # #1495: the seed reaches the feasibility check, which refuses it.
+    with pytest.raises(ValueError, match="seed"):
+        JaywalkAction("p1", ANY, seed=value)
+
+
 def test_the_location_must_be_given() -> None:
     with pytest.raises(TypeError):
         AdversarialBrakeAction("npc1")  # type: ignore[call-arg]
