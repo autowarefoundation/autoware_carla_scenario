@@ -37,9 +37,25 @@ import tempfile
 import threading
 import urllib.request
 import zlib
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# The web viewer's selection and the path rules, compiled by the library check
+# (ui.web_viewer_paths); the names they had here stay importable from here.
+from .web_viewer_paths import _ENV_CACHE as _ENV_CACHE
+from .web_viewer_paths import _ENV_WEB_VIEWER as _ENV_WEB_VIEWER
+from .web_viewer_paths import _TRAJECTORY as _TRAJECTORY
+from .web_viewer_paths import _WEB_VIEWER_FILES as _WEB_VIEWER_FILES
+from .web_viewer_paths import DEFAULT_WEB_VIEWER_VERSION as DEFAULT_WEB_VIEWER_VERSION
+from .web_viewer_paths import LOCAL_ROUTE as LOCAL_ROUTE
+from .web_viewer_paths import WebViewer as WebViewer
+from .web_viewer_paths import _cache_root as _cache_root
+from .web_viewer_paths import _complete as _complete
+from .web_viewer_paths import cdn_url as cdn_url
+from .web_viewer_paths import configured_viewer as configured_viewer
+from .web_viewer_paths import local_package as local_package
+from .web_viewer_paths import recording_path as recording_path
+from .web_viewer_paths import web_viewer_cache_dir as _web_viewer_cache_dir
 
 __all__ = [
     "CDN_URL",
@@ -60,11 +76,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: The Rerun version recordings are written with when the converter cannot be
-#: asked (it is not installed): the line ``autoware-carla-scenario-rerun`` 0.2
-#: pins (rerun-sdk >=0.38.1,<0.39).
-DEFAULT_WEB_VIEWER_VERSION = "0.38.1"
-
 #: Where the web viewer is loaded from when there is no copy on this machine:
 #: unpkg, which resolves the package's extension-less `import("./re_viewer")`
 #: (jsDelivr does not).
@@ -80,14 +91,7 @@ INSTALL_HINT = (
     "(or pip install autoware-carla-scenario-rerun)"
 )
 
-#: The files of the npm package the viewer loads.
-_WEB_VIEWER_FILES = ("index.js", "re_viewer.js", "re_viewer_bg.wasm", "package.json")
-
-_ENV_WEB_VIEWER = "VIEWER_RERUN_WEB_VIEWER"
 _ENV_MAP_DIR = "VIEWER_RERUN_MAP_DIR"
-_ENV_CACHE = "VIEWER_CACHE_DIR"
-
-_TRAJECTORY = ".trajectory.jsonl"
 
 
 class RecordingError(RuntimeError):
@@ -102,15 +106,6 @@ class ConverterMissingError(RecordingError):
             "Making a Rerun recording of a trajectory log needs the "
             f"autoware_carla_scenario_rerun package: {INSTALL_HINT}"
         )
-
-
-def _cache_root() -> Path:
-    env = os.environ.get(_ENV_CACHE)
-    if env:
-        return Path(env).expanduser()
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-    return base / "autoware_carla_scenario" / "viewer"
 
 
 def _converter() -> Any:
@@ -138,13 +133,6 @@ def web_viewer_version() -> str:
     module = _converter()
     version = getattr(module, "RERUN_VERSION", None) if module is not None else None
     return str(version) if version else DEFAULT_WEB_VIEWER_VERSION
-
-
-def recording_path(trajectory: Path) -> Path:
-    """``X.rrd`` beside ``X.trajectory.jsonl``, where the converter writes it."""
-    name = trajectory.name
-    stem = name[: -len(_TRAJECTORY)] if name.endswith(_TRAJECTORY) else trajectory.stem
-    return trajectory.with_name(f"{stem}.rrd")
 
 
 def _cached_recording(trajectory: Path) -> Path:
@@ -274,28 +262,13 @@ def ensure_recording(trajectory: Path) -> Path:
 # ── The web viewer ──────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class WebViewer:
-    """Where the page loads Rerun's web viewer from."""
-
-    #: ``@rerun-io/web-viewer``'s version.
-    version: str
-    #: The URL of the package's directory (``index.js`` in it), or ``None``
-    #: when no viewer is embedded (``VIEWER_RERUN_WEB_VIEWER=none``).
-    base_url: str | None
-    #: ``local`` (this app serves it), ``url`` (a mirror), ``cdn`` or ``none``.
-    source: str
-    #: The directory this app serves it from, when ``local``.
-    directory: Path | None = None
-
-
 def web_viewer_cache_dir(version: str) -> Path:
-    """Where ``viewer --fetch-rerun-web-viewer`` keeps a copy of *version*."""
-    return _cache_root() / "rerun-web-viewer" / version
+    """Where ``viewer --fetch-rerun-web-viewer`` keeps a copy of *version*.
 
-
-def _complete(directory: Path) -> bool:
-    return all((directory / name).is_file() for name in _WEB_VIEWER_FILES)
+    ui.web_viewer_paths's, under this module's ``_cache_root()``: looked up
+    here at each call, so that a patch of ``recordings._cache_root`` reaches
+    it (and :func:`web_viewer` and :func:`fetch_web_viewer` through it)."""
+    return _web_viewer_cache_dir(version, _cache_root())
 
 
 def _package_version(directory: Path) -> str | None:
@@ -307,36 +280,26 @@ def _package_version(directory: Path) -> str | None:
     return str(version) if version else None
 
 
-#: The route this app serves a local copy under (``app.py``).
-LOCAL_ROUTE = "/rerun-web-viewer"
-
-
 def web_viewer() -> WebViewer:
     """Where the web viewer is loaded from (see the module's docstring)."""
     version = web_viewer_version()
     env = os.environ.get(_ENV_WEB_VIEWER, "").strip()
-    if env.lower() in ("none", "off", "false", "0"):
-        return WebViewer(version, None, "none")
-    if env.startswith(("http://", "https://", "/")) and not Path(env).is_dir():
-        return WebViewer(version, env.rstrip("/"), "url")
-    candidates = [Path(env).expanduser()] if env else []
-    candidates.append(web_viewer_cache_dir(version))
-    for directory in candidates:
-        package = (
-            directory / "package" if (directory / "package").is_dir() else directory
-        )
-        if _complete(package):
-            found = _package_version(package) or version
-            if found.split(".")[:2] != version.split(".")[:2]:
-                logger.warning(
-                    "%s holds web viewer %s; the recordings are Rerun %s, which "
-                    "needs a viewer of the same minor version",
-                    package,
-                    found,
-                    version,
-                )
-            return WebViewer(found, f"{LOCAL_ROUTE}/{found}", "local", package)
-    return WebViewer(version, CDN_URL.format(version=version), "cdn")
+    configured = configured_viewer(env, version)
+    if configured is not None:
+        return configured
+    package = local_package(env, web_viewer_cache_dir(version))
+    if package is not None:
+        found = _package_version(package) or version
+        if found.split(".")[:2] != version.split(".")[:2]:
+            logger.warning(
+                "%s holds web viewer %s; the recordings are Rerun %s, which "
+                "needs a viewer of the same minor version",
+                package,
+                found,
+                version,
+            )
+        return WebViewer(found, f"{LOCAL_ROUTE}/{found}", "local", package)
+    return WebViewer(version, cdn_url(version), "cdn")
 
 
 def _download(url: str) -> bytes:
