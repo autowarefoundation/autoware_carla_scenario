@@ -2406,10 +2406,13 @@ the trajectories, the conditions, the actions and the entities, the scenario
 base, its runner and its queue, the traffic backends' interface, the
 plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
-and type files), the signal controllers, the adversity math, the measures,
-the metrics and the ODD's probes (and the names, knob keys, limits and
-ranges of the traffic parameters' probes: `odd.traffic_ranges`, #1680; not
-the probes themselves, `odd.traffic_probes`, which builds openodd's knobs), the gate package's `__init__`, its per-run record and probe,
+and type files, with the command line of `randomTrips.py` and the options of
+each demand it generates: `traffic.sumo.options`, #1679), the signal
+controllers, the adversity math, the measures, the metrics and the ODD's
+probes (and the names, knob keys, limits and ranges of the traffic
+parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
+`odd.traffic_probes`, which builds openodd's knobs), the gate package's
+`__init__`, its per-run record and probe,
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; not the evaluator itself, which reads the gate's pydantic model and
