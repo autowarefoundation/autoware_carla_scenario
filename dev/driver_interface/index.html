@@ -2683,7 +2683,7 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tcp</span><span class="w">             </span><span class="c1"># tcp | unix | direct; see "How the run reaches the policy"</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">timeout_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">60.0</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">policy_timestep_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span><span class="w">     </span><span class="c1"># a positive multiple of the 0.05 s tick; others are refused</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">image_quality</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">image_quality</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span><span class="w">          </span><span class="c1"># JPEG quality, a whole number in 1-100</span>
 <a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">warmup_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span><span class="w">              </span><span class="c1"># run-up onto the spawn pose; see "Warming up a policy"</span>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="nt">route_horizon_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80.0</span>
 <a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">route_resolution_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span>
@@ -2711,6 +2711,16 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">    </span><span class="nt">delay_compensation_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.17</span><span class="w"> </span><span class="c1"># ... and any of its parameters, by name</span>
 <a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
 </code></pre></div>
+<p>Every number in <code>driver</code> must be a number: an int or a float, never a boolean
+or a string. Hydra reads <code>driver.policy_timestep_s=true</code> as a boolean, which
+would otherwise be taken as 1 (a 1 s policy step), and a quoted <code>"0.1"</code> as a
+string; both are refused as the config is read, naming the key. This holds for
+the seconds and metres (<code>timeout_s</code>, <code>policy_timestep_s</code>, <code>warmup_s</code>,
+<code>route_horizon_m</code>, <code>route_resolution_m</code>, <code>rear_axle_offset_m</code>,
+<code>traffic_light_sight_distance_m</code>, <code>actor_horizon_m</code>, <code>t4_scene_history_s</code>,
+<code>t4_scene_wheel_base_m</code>), for every number of a camera, its lens and a LiDAR,
+and for <code>image_quality</code>, a whole number (see below) in 1-100: <code>90</code>, or <code>90.0</code>
+kept as <code>90</code>.</p>
 <p>Each <code>driver.cameras</code> entry needs its own <code>logical_id</code>; two cameras under one id
 are refused. Its <code>image_width</code> and <code>image_height</code> must be positive whole
 numbers, its <code>fps</code> positive and finite, its <code>fov</code> in (0, 180) degrees -- CARLA
@@ -3345,7 +3355,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 00:32:15 UTC"><span class="timeago" datetime="2026-11-05T00:32:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 00:32:15 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 04:15:48 UTC"><span class="timeago" datetime="2026-11-05T04:15:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 04:15:48 UTC">2026-11-05</span>
   </span>
 
     
