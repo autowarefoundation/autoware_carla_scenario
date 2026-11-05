@@ -626,12 +626,22 @@ def _write_gate_record(
     if not callable(make):
         return
     from .gate.record import GATE_RECORD_SUFFIX, write_gate_record  # noqa: PLC0415
+    from .rerun import TRAJECTORY_SUFFIX  # noqa: PLC0415
 
     path = output_dir / f"{file_stem}{GATE_RECORD_SUFFIX}"
     try:
         record = make(result, file_stem)
         if record is None:
             return
+        # The outputs the run wrote beside it, by role: what the gate reads
+        # (the coverage file) is named only when it is there.
+        for role, suffix in (
+            ("result", "_result.json"),
+            ("coverage", "_coverage.json"),
+            ("trajectory", TRAJECTORY_SUFFIX),
+        ):
+            if (output_dir / f"{file_stem}{suffix}").exists():
+                record.files[role] = f"{file_stem}{suffix}"
         write_gate_record(path, record)
     except Exception:  # noqa: BLE001 - the run's result matters more than this
         logger.warning("could not write the gate record %s", path, exc_info=True)

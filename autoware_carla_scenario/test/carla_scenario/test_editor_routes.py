@@ -3876,6 +3876,26 @@ class TestTheGate:
         assert gate is not None
         assert [e.item for e in gate.coverage_items] == ["gap"]
 
+    def test_every_threshold_of_the_gate_has_a_row(self) -> None:
+        """A new GateSpec threshold must reach the editor, as a share in %
+        exactly when the model bounds it to 0-1."""
+        from annotated_types import Le
+
+        from autoware_carla_scenario.authoring.models import GateSpec
+        from autoware_carla_scenario.editor.service import (
+            GATE_CONSISTENCY_FIELDS,
+            GATE_FIELDS,
+        )
+
+        fields = {f.name: f for f in GATE_FIELDS + GATE_CONSISTENCY_FIELDS}
+        assert set(fields) | {"coverage_items"} == set(GateSpec.model_fields)
+        for name, field in fields.items():
+            share = any(
+                isinstance(m, Le) and m.le == 1.0
+                for m in GateSpec.model_fields[name].metadata
+            )
+            assert field.percent == share, name
+
     def test_turning_the_gate_off_drops_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:

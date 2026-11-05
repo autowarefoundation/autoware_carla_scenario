@@ -565,3 +565,39 @@ class TestRegressionCli:
         with pytest.raises(SystemExit) as exited:
             main([str(tmp_path), str(tmp_path), str(tmp_path)])
         assert exited.value.code == 2
+
+
+class TestTheRunnerWritesTheRecord:
+    """scenario_runner._write_gate_record: the scenario's record, and the
+    outputs the run wrote beside it."""
+
+    class _Scenario:
+        def __init__(self, record: Optional[GateRecord]) -> None:
+            self._record = record
+
+        def gate_record(self, _result: Any, _stem: str) -> Optional[GateRecord]:
+            return self._record
+
+    def test_only_the_outputs_written_are_named(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.scenario_runner import _write_gate_record
+
+        (tmp_path / "Left_result.json").write_text("{}")
+        (tmp_path / "Left.trajectory.jsonl").write_text("")
+        result = ScenarioResult(passed=True, message="", elapsed_seconds=1.0)
+        _write_gate_record(tmp_path, "Left", self._Scenario(_record()), result)  # type: ignore[arg-type]
+        record = read_gate_record(tmp_path / "Left_gate.json")
+        assert record.files == {
+            "result": "Left_result.json",
+            "trajectory": "Left.trajectory.jsonl",
+        }
+        assert record.file("coverage") is None
+
+    def test_a_scenario_without_a_record_writes_none(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.scenario_runner import _write_gate_record
+
+        result = ScenarioResult(passed=True, message="", elapsed_seconds=1.0)
+        _write_gate_record(tmp_path, "X", self._Scenario(None), result)  # type: ignore[arg-type]
+        _write_gate_record(tmp_path, "Y", object(), result)  # type: ignore[arg-type]
+        assert not list(tmp_path.iterdir())

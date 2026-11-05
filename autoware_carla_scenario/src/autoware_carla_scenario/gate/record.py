@@ -211,7 +211,10 @@ class GateRecord:
 def write_gate_record(path: Path, record: GateRecord) -> None:
     """Write *record* to *path* (its directory made if need be)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record.to_dict(), indent=1), encoding="utf-8")
+    # Compact: a row a tick, and one per line would double the file.
+    path.write_text(
+        json.dumps(record.to_dict(), separators=(",", ":")), encoding="utf-8"
+    )
 
 
 def read_gate_record(path: Path) -> GateRecord:

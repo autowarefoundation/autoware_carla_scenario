@@ -34,10 +34,11 @@ See ``docs/gate.md``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import statistics
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -46,7 +47,6 @@ from ..authoring.models import GateSpec
 from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
 
 __all__ = [
-    "CHANGES",
     "CaseChange",
     "ConsistencyResult",
     "CriterionChange",
@@ -92,14 +92,7 @@ class CriterionResult:
     detail: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "passed": self.passed,
-            "value": self.value,
-            "threshold": self.threshold,
-            "comparison": self.comparison,
-            "detail": self.detail,
-        }
+        return dataclasses.asdict(self)
 
 
 @dataclass(frozen=True)
@@ -186,14 +179,22 @@ class GateVerdict:
                 f"| {c.name} | {value}{detail} | {c.comparison} "
                 f"{_number(c.threshold)} | {result} |"
             )
-        if self.warnings:
-            lines.append("")
-            lines.extend(f"- warning: {w}" for w in self.warnings)
+        lines += _warning_lines(self.warnings)
         return "\n".join(lines)
 
 
 def _number(value: float) -> str:
     return f"{value:.4g}"
+
+
+def _warning_lines(warnings: Sequence[str]) -> list[str]:
+    """A report's warnings, after a blank line; none without any."""
+    return ["", *(f"- warning: {w}" for w in warnings)] if warnings else []
+
+
+def _gate_key(gate: Mapping[str, Any]) -> str:
+    """*gate* (as a record stores it) in a form two gates compare equal in."""
+    return json.dumps(gate, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------
@@ -286,23 +287,22 @@ def consistency(
     for record in records:
         for key, at_station in station_values(record, per_segment).items():
             by_station.setdefault(key, []).append(at_station)
-    measured = 0
-    lateral: Optional[float] = None
-    lateral_at: Optional[tuple[int, float]] = None
-    speed: Optional[float] = None
-    speed_at: Optional[tuple[int, float]] = None
-    for (segment, j), passed in sorted(by_station.items()):
-        if len(passed) < min_runs:
-            continue
-        measured += 1
-        where = (segment, (j + 0.5) / per_segment)
-        lat = statistics.pstdev(v[0] for v in passed)
-        spd = statistics.pstdev(v[1] for v in passed)
-        if lateral is None or lat > lateral:
-            lateral, lateral_at = lat, where
-        if speed is None or spd > speed:
-            speed, speed_at = spd, where
-    return ConsistencyResult(measured, lateral, lateral_at, speed, speed_at)
+    # (lateral spread, speed spread, where) of each station enough runs passed.
+    spreads = [
+        (
+            statistics.pstdev(v[0] for v in passed),
+            statistics.pstdev(v[1] for v in passed),
+            (segment, (j + 0.5) / per_segment),
+        )
+        for (segment, j), passed in sorted(by_station.items())
+        if len(passed) >= min_runs
+    ]
+    if not spreads:
+        return ConsistencyResult()
+    # max() keeps the first of equals: the station furthest back.
+    lateral = max(spreads, key=lambda row: row[0])
+    speed = max(spreads, key=lambda row: row[1])
+    return ConsistencyResult(len(spreads), lateral[0], lateral[2], speed[1], speed[2])
 
 
 # ---------------------------------------------------------------------------
@@ -310,18 +310,18 @@ def consistency(
 # ---------------------------------------------------------------------------
 
 
-def _at_least(
-    name: str, value: Optional[float], threshold: float, detail: str
+def _criterion(
+    name: str, value: Optional[float], comparison: str, threshold: float, detail: str
 ) -> CriterionResult:
-    passed = value is not None and value + 1e-12 >= threshold
-    return CriterionResult(name, passed, value, threshold, ">=", detail)
-
-
-def _at_most(
-    name: str, value: Optional[float], threshold: float, detail: str
-) -> CriterionResult:
-    passed = value is not None and value <= threshold + 1e-12
-    return CriterionResult(name, passed, value, threshold, "<=", detail)
+    """*name* judged: *value* held ``>=`` or ``<=`` *threshold* (within
+    1e-12), failing when the runs measured nothing."""
+    if value is None:
+        passed = False
+    elif comparison == ">=":
+        passed = value + 1e-12 >= threshold
+    else:
+        passed = value <= threshold + 1e-12
+    return CriterionResult(name, passed, value, threshold, comparison, detail)
 
 
 def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]:
@@ -346,14 +346,17 @@ def _coverage_criteria(
 ) -> list[CriterionResult]:
     """The coverage grades the gate asks for, from the records' coverage files
     merged."""
-    asked = (
-        gate.min_scenario_coverage is not None
-        or gate.min_odd_coverage is not None
-        or bool(gate.coverage_items)
-    )
-    if not asked:
+    groups = [
+        (name, group, threshold)
+        for name, group, threshold in (
+            ("min_scenario_coverage", "scenario", gate.min_scenario_coverage),
+            ("min_odd_coverage", "odd", gate.min_odd_coverage),
+        )
+        if threshold is not None
+    ]
+    if not groups and not gate.coverage_items:
         return []
-    from openodd.report import load_and_merge  # noqa: PLC0415
+    from ..coverage.report import load_and_merge  # noqa: PLC0415
 
     paths: list[Path] = []
     for record in records:
@@ -363,29 +366,25 @@ def _coverage_criteria(
         else:
             warnings.append(f"{record.path}: no coverage file beside it")
     report = load_and_merge(paths) if paths else None
-    groups = report.groups() if report is not None else []
+    merged_groups = report.groups() if report is not None else []
     detail = f"{len(paths)} coverage file(s)"
     out: list[CriterionResult] = []
-    for name, group, threshold in (
-        ("min_scenario_coverage", "scenario", gate.min_scenario_coverage),
-        ("min_odd_coverage", "odd", gate.min_odd_coverage),
-    ):
-        if threshold is None:
-            continue
-        if report is None or group not in groups:
-            out.append(
-                _at_least(name, None, threshold, f"no {group} cover item in {detail}")
-            )
+    for name, group, threshold in groups:
+        if report is None or group not in merged_groups:
+            value, why = None, f"no {group} cover item in {detail}"
         else:
-            out.append(_at_least(name, report.group_grade(group), threshold, detail))
+            value, why = report.group_grade(group), detail
+        out.append(_criterion(name, value, ">=", threshold, why))
     for entry in gate.coverage_items:
         merged = report.entry(entry.item) if report is not None else None
         label = f"coverage_items[{entry.item}]"
         if merged is None:
-            out.append(_at_least(label, None, entry.min, f"no such item in {detail}"))
+            out.append(
+                _criterion(label, None, ">=", entry.min, f"no such item in {detail}")
+            )
         else:
-            holes = len(merged.holes)
-            out.append(_at_least(label, merged.grade, entry.min, f"{holes} hole(s)"))
+            holes = f"{len(merged.holes)} hole(s)"
+            out.append(_criterion(label, merged.grade, ">=", entry.min, holes))
     return out
 
 
@@ -416,7 +415,7 @@ def judge(
     warnings: list[str] = []
     latest = max(records, key=_written_at)
     if gate is None:
-        stated = {json.dumps(r.gate, sort_keys=True) for r in records}
+        stated = {_gate_key(r.gate) for r in records}
         if len(stated) > 1:
             warnings.append(
                 f"the runs state {len(stated)} different gates; judging the "
@@ -433,53 +432,46 @@ def judge(
         records=list(records),
         warnings=warnings,
     )
-    runs = len(records)
-    passed = sum(1 for r in records if r.passed)
+    runs, passed = verdict.runs, verdict.passed_runs
     out = verdict.criteria
-    out.append(
-        _at_least("min_runs", float(runs), float(gate.min_runs), f"{runs} run(s)")
-    )
+    out.append(_criterion("min_runs", runs, ">=", gate.min_runs, f"{runs} run(s)"))
     if gate.min_success_rate is not None:
+        rate = passed / runs
+        detail = f"{passed} of {runs} passed"
         out.append(
-            _at_least(
-                "min_success_rate",
-                passed / runs,
-                gate.min_success_rate,
-                f"{passed} of {runs} passed",
-            )
+            _criterion("min_success_rate", rate, ">=", gate.min_success_rate, detail)
         )
     if gate.min_case_coverage is not None:
         value, detail = _case_coverage(records)
         out.append(
-            _at_least("min_case_coverage", value, gate.min_case_coverage, detail)
+            _criterion("min_case_coverage", value, ">=", gate.min_case_coverage, detail)
         )
     out.extend(_coverage_criteria(gate, records, warnings))
     if gate.judges_consistency:
         spread = consistency(
             records, gate.consistency_stations, gate.consistency_min_runs
         )
-        if spread.stations == 0:
-            why = f"no station was passed by {gate.consistency_min_runs} run(s)"
-        else:
-            why = ""
-        if gate.max_lateral_spread_m is not None:
-            out.append(
-                _at_most(
-                    "max_lateral_spread_m",
-                    spread.lateral_spread_m,
-                    gate.max_lateral_spread_m,
-                    why or f"{_where(spread.lateral_at)}, {spread.stations} station(s)",
-                )
-            )
-        if gate.max_speed_spread_mps is not None:
-            out.append(
-                _at_most(
-                    "max_speed_spread_mps",
-                    spread.speed_spread_mps,
-                    gate.max_speed_spread_mps,
-                    why or f"{_where(spread.speed_at)}, {spread.stations} station(s)",
-                )
-            )
+        for name, threshold, value, at in (
+            (
+                "max_lateral_spread_m",
+                gate.max_lateral_spread_m,
+                spread.lateral_spread_m,
+                spread.lateral_at,
+            ),
+            (
+                "max_speed_spread_mps",
+                gate.max_speed_spread_mps,
+                spread.speed_spread_mps,
+                spread.speed_at,
+            ),
+        ):
+            if threshold is None:
+                continue
+            if spread.stations == 0:
+                why = f"no station was passed by {gate.consistency_min_runs} run(s)"
+            else:
+                why = f"{_where(at)}, {spread.stations} station(s)"
+            out.append(_criterion(name, value, "<=", threshold, why))
     return verdict
 
 
@@ -497,30 +489,13 @@ def judge_all(
 ) -> list[GateVerdict]:
     """Judge every logical scenario *records* are runs of, one verdict each,
     sorted by id; only *scenario* when it is given."""
-    groups: dict[str, list[GateRecord]] = {}
-    for record in records:
-        if scenario is None or record.scenario == scenario:
-            groups.setdefault(record.scenario, []).append(record)
+    groups = _by_scenario(records, scenario)
     return [judge(groups[name], gate) for name in sorted(groups)]
 
 
 # ---------------------------------------------------------------------------
 # Regression: a baseline's runs against a candidate's
 # ---------------------------------------------------------------------------
-
-#: How a criterion changed from the baseline to the candidate.
-#: ``regressed`` / ``improved``: it passed and fails now, or the other way;
-#: ``worse`` / ``better`` / ``same``: its verdict held and its value moved
-#: (or not); ``new`` / ``dropped``: only the candidate / the baseline judged it.
-CHANGES: tuple[str, ...] = (
-    "regressed",
-    "improved",
-    "worse",
-    "better",
-    "same",
-    "new",
-    "dropped",
-)
 
 
 @dataclass(frozen=True)
@@ -533,7 +508,13 @@ class CriterionChange:
 
     @property
     def change(self) -> str:
-        """One of :data:`CHANGES`."""
+        """How the criterion changed from the baseline to the candidate.
+
+        ``regressed`` / ``improved``: it passed and fails now, or the other
+        way; ``worse`` / ``better`` / ``same``: its verdict held and its value
+        moved (or not); ``new`` / ``dropped``: only the candidate / the
+        baseline judged it.
+        """
         before, after = self.baseline, self.candidate
         if after is None:
             return "dropped"
@@ -543,11 +524,11 @@ class CriterionChange:
             return "regressed"
         if after.passed and not before.passed:
             return "improved"
-        if before.value is None or after.value is None:
+        delta = self.delta
+        if delta is None:
             if before.value is None and after.value is None:
                 return "same"
             return "worse" if after.value is None else "better"
-        delta = after.value - before.value
         if abs(delta) <= 1e-12:
             return "same"
         # ">=": higher is better; "<=": lower is.
@@ -732,9 +713,7 @@ class GateComparison:
                     f"{case.candidate[1]}"
                     for case in cases
                 ]
-        if self.warnings:
-            lines.append("")
-            lines.extend(f"- warning: {w}" for w in self.warnings)
+        lines += _warning_lines(self.warnings)
         return "\n".join(lines)
 
 
@@ -768,8 +747,8 @@ def compare(
     used = gate if gate is not None else (after.gate if after is not None else None)
     before = judge(baseline, used) if baseline else None
     if gate is None and after is not None and before is not None:
-        stated = {json.dumps(r.gate, sort_keys=True) for r in baseline}
-        if stated != {json.dumps(after.gate.to_dict(), sort_keys=True)}:
+        stated = {_gate_key(r.gate) for r in baseline}
+        if stated != {_gate_key(after.gate.to_dict())}:
             warnings.append(
                 "the baseline's runs stated another gate; both are judged "
                 "against the candidate's"
@@ -780,12 +759,13 @@ def compare(
                 "the baseline and the candidate ran different versions of the "
                 "document"
             )
-    named = {(c.name): c for c in (before.criteria if before else [])}
-    order = [c.name for c in (after.criteria if after else [])]
-    order += [name for name in named if name not in order]
-    after_named = {c.name: c for c in (after.criteria if after else [])}
+    before_by_name = {c.name: c for c in (before.criteria if before else [])}
+    after_by_name = {c.name: c for c in (after.criteria if after else [])}
+    # The candidate's order, then what only the baseline judged.
+    order = [*after_by_name, *(n for n in before_by_name if n not in after_by_name)]
     criteria = [
-        CriterionChange(name, named.get(name), after_named.get(name)) for name in order
+        CriterionChange(name, before_by_name.get(name), after_by_name.get(name))
+        for name in order
     ]
     newly_failing: list[CaseChange] = []
     fixed: list[CaseChange] = []
@@ -822,17 +802,22 @@ def compare_all(
 ) -> list[GateComparison]:
     """Compare every logical scenario either side ran, one comparison each,
     sorted by id; only *scenario* when it is given."""
-    names = {r.scenario for r in [*baseline, *candidate]}
-    if scenario is not None:
-        names &= {scenario}
+    before, after = _by_scenario(baseline, scenario), _by_scenario(candidate, scenario)
     return [
-        compare(
-            [r for r in baseline if r.scenario == name],
-            [r for r in candidate if r.scenario == name],
-            gate,
-        )
-        for name in sorted(names)
+        compare(before.get(name, []), after.get(name, []), gate)
+        for name in sorted(before.keys() | after.keys())
     ]
+
+
+def _by_scenario(
+    records: Sequence[GateRecord], scenario: Optional[str] = None
+) -> dict[str, list[GateRecord]]:
+    """*records* grouped by scenario id; only *scenario*'s when it is given."""
+    groups: dict[str, list[GateRecord]] = {}
+    for record in records:
+        if scenario is None or record.scenario == scenario:
+            groups.setdefault(record.scenario, []).append(record)
+    return groups
 
 
 # ---------------------------------------------------------------------------

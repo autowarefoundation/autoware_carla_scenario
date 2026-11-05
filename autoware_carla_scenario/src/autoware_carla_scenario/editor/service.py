@@ -96,12 +96,11 @@ __all__ = [
     "EditorService",
     "GATE_CONSISTENCY_FIELDS",
     "GATE_FIELDS",
-    "GateField",
+    "GATE_ITEM_FIELD",
     "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
     "condition_actions",
-    "parse_gate_form",
 ]
 
 #: Condition slots that are not attached to an action.
@@ -1823,11 +1822,12 @@ class GateField:
     def percent(self) -> bool:
         return self.unit == "%"
 
-    def shown(self, stored: Optional[float]) -> Optional[float]:
-        """*stored* in the unit edited (a share as a percentage)."""
+    def shown(self, stored: Optional[float]) -> str:
+        """*stored* as the number edited (a share as a percentage), its
+        default when unset."""
         if stored is None:
-            return None
-        return round(stored * 100.0, 6) if self.percent else stored
+            return f"{self.default:g}"
+        return f"{round(stored * 100.0, 6) if self.percent else stored:g}"
 
 
 #: The gate's thresholds the inspector edits, in the order it lists them.
@@ -1850,14 +1850,17 @@ GATE_CONSISTENCY_FIELDS: tuple[GateField, ...] = (
     GateField("consistency_min_runs", "Runs per station", "", 2, 20, 1, optional=False),
 )
 
-#: What a cover item the inspector adds needs, in percent.
-GATE_ITEM_DEFAULT_PERCENT = 100.0
+#: A cover item's grade, as each row of them edits it: added at 100 %.
+GATE_ITEM_FIELD = GateField("item", "Coverage", "%", 100, 100, 1)
 
 
-def _gate_number(form: Mapping[str, Any], field: GateField) -> Any:
-    """*field*'s value in *form*, in the unit stored; its default when blank."""
-    label = f"Gate: {field.label}"
-    text = str(form.get(f"gate_{field.name}", "")).strip()
+def _gate_number(
+    form: Mapping[str, Any], field: GateField, key: str = "", label: str = ""
+) -> Any:
+    """*field*'s value in *form* (``gate_<name>``, or *key*), in the unit
+    stored; its default when blank."""
+    label = f"Gate: {label or field.label}"
+    text = str(form.get(key or f"gate_{field.name}", "")).strip()
     if field.unit == "":
         return as_int(text, label, int(field.default))
     value = _as_float(text, label, field.default)
@@ -1893,12 +1896,10 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
     while f"gate_item_name_{index}" in form:
         name = str(form[f"gate_item_name_{index}"]).strip()
         if name and form.get(f"gate_item_on_{index}"):
-            percent = _as_float(
-                form.get(f"gate_item_min_{index}", ""),
-                f"Gate: coverage of {name}",
-                GATE_ITEM_DEFAULT_PERCENT,
+            grade = _gate_number(
+                form, GATE_ITEM_FIELD, f"gate_item_min_{index}", f"coverage of {name}"
             )
-            items.append({"item": name, "min": percent / 100.0})
+            items.append({"item": name, "min": grade})
         index += 1
     added = str(form.get("gate_item_new", "")).strip()
     if added:
@@ -1906,7 +1907,7 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
             raise EditorError(
                 f"Gate: a cover item's name has no spaces, got {added!r}."
             )
-        items.append({"item": added, "min": GATE_ITEM_DEFAULT_PERCENT / 100.0})
+        items.append({"item": added, "min": GATE_ITEM_FIELD.default / 100.0})
     raw["coverage_items"] = items
     try:
         return GateSpec.model_validate(raw)

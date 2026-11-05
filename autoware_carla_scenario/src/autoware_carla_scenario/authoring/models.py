@@ -1360,38 +1360,12 @@ class GateSpec(_Node):
         ``min_runs`` is always judged: a gate with no run behind it passes
         nothing.
         """
-        out: list[str] = []
-        for name in GATE_CRITERIA:
-            value = getattr(self, name)
-            if name == "coverage_items":
-                if value:
-                    out.append(name)
-            elif value is not None:
-                out.append(name)
-        return out
+        # An unset threshold is None, unset cover items an empty list.
+        return [n for n in GATE_CRITERIA if getattr(self, n) not in (None, [])]
 
     def to_dict(self) -> dict[str, Any]:
         """The gate as the document stores it: unset thresholds left out."""
         return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
-
-    def summary(self) -> list[str]:
-        """One line per judged criterion, for the editor and the report."""
-        lines = [f"at least {self.min_runs} run(s)"]
-        if self.min_success_rate is not None:
-            lines.append(f"success rate >= {self.min_success_rate:.0%}")
-        if self.min_case_coverage is not None:
-            lines.append(f"route matches run >= {self.min_case_coverage:.0%}")
-        if self.min_scenario_coverage is not None:
-            lines.append(f"scenario coverage >= {self.min_scenario_coverage:.0%}")
-        if self.min_odd_coverage is not None:
-            lines.append(f"ODD coverage >= {self.min_odd_coverage:.0%}")
-        for entry in self.coverage_items:
-            lines.append(f"coverage of {entry.item} >= {entry.min:.0%}")
-        if self.max_lateral_spread_m is not None:
-            lines.append(f"lateral spread <= {self.max_lateral_spread_m:g} m")
-        if self.max_speed_spread_mps is not None:
-            lines.append(f"speed spread <= {self.max_speed_spread_mps:g} m/s")
-        return lines
 
 
 # ---------------------------------------------------------------------------

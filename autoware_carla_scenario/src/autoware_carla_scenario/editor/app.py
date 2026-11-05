@@ -38,6 +38,7 @@ from .forms import bool_choice, is_nullable_bool
 from .service import (
     GATE_CONSISTENCY_FIELDS,
     GATE_FIELDS,
+    GATE_ITEM_FIELD,
     EditorError,
     EditorService,
     condition_actions,
@@ -193,6 +194,7 @@ def create_app(
         # A logical scenario's gate, as the fields its inspector edits.
         gate_fields=GATE_FIELDS,
         gate_consistency_fields=GATE_CONSISTENCY_FIELDS,
+        gate_item_field=GATE_ITEM_FIELD,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,

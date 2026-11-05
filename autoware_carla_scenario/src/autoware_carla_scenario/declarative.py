@@ -151,7 +151,10 @@ class DeclarativeScenario(BaseScenario):
         self._document = document or self._load_document(self._config)
         # Before the overrides fold a case's lanelets into the document: every
         # case of one logical scenario has the digest of the one document.
-        self._document_digest = document_digest(self._document)
+        # Only a gate record reads it.
+        self._document_digest = (
+            document_digest(self._document) if self._document.gate is not None else ""
+        )
         self._route_match: Optional[RouteMatch] = None
         self._case_count = 0
         self._gate_probe: Optional[GateProbe] = None
@@ -530,11 +533,13 @@ class DeclarativeScenario(BaseScenario):
         """What this run leaves for its logical scenario's gate, or ``None``.
 
         ``None`` for a document with no gate, and for a run that never chose
-        a route (it raised before).  The runner writes the record as
-        ``{file_stem}_gate.json`` (``docs/gate.md``).
+        a route (it raised before).  The runner names the outputs it wrote
+        beside it and writes it as ``{file_stem}_gate.json``
+        (``docs/gate.md``).
         """
         from .coordinate.map_manager import MapManager  # noqa: PLC0415
         from .gate.record import GateCase, GateRecord  # noqa: PLC0415
+        from .world_reset import short_map_name  # noqa: PLC0415
 
         gate = self._document.gate
         match = self._route_match
@@ -544,7 +549,7 @@ class DeclarativeScenario(BaseScenario):
         try:
             carla_map = MapManager.get_instance().carla_map
             if carla_map is not None:
-                map_name = str(carla_map.name).rsplit("/", 1)[-1]
+                map_name = short_map_name(carla_map.name)
         except Exception:  # noqa: BLE001 -- the document's name stands in
             logger.debug("no CARLA map to name the gate case by", exc_info=True)
         failure = result.failure
@@ -565,13 +570,8 @@ class DeclarativeScenario(BaseScenario):
             message=result.message,
             elapsed_seconds=result.elapsed_seconds,
             failure_category=(
-                None if failure is None else failure.category.name.lower()
+                None if failure is None else failure.to_dict()["category"]
             ),
-            files={
-                "result": f"{file_stem}_result.json",
-                "coverage": f"{file_stem}_coverage.json",
-                "trajectory": f"{file_stem}.trajectory.jsonl",
-            },
             ego=list(self._gate_probe.rows) if self._gate_probe is not None else [],
         )
 

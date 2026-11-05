@@ -141,6 +141,21 @@ class RouteFrame:
         x, y = _point_at(points, along)
         return x, y, _heading_at(points, along)
 
+    def reference(self, s: float) -> tuple[float, float, float]:
+        """``(x, y, heading)`` of route s *s* on the cached reference line.
+
+        What :meth:`point` gives, read off the line :meth:`project` searches
+        rather than the lanelet's centreline: no lanelet is looked up, so it is
+        cheap enough for every tick.  Clamped to the route.
+        """
+        arc = self._arc
+        i = min(max(bisect.bisect_right(arc, s) - 1, 0), len(arc) - 2)
+        x0, y0 = self._xs[i], self._ys[i]
+        x1, y1 = self._xs[i + 1], self._ys[i + 1]
+        span = arc[i + 1] - arc[i]
+        f = min(max((s - arc[i]) / span, 0.0), 1.0) if span > 0.0 else 0.0
+        return x0 + f * (x1 - x0), y0 + f * (y1 - y0), math.atan2(y1 - y0, x1 - x0)
+
     def lanelet_at(self, s: float) -> Lanelet:
         """The lanelet route s *s* is on."""
         return self.map.laneletLayer[self.locate(s)[0]]

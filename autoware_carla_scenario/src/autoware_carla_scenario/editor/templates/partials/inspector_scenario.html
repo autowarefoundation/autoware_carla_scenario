@@ -72,22 +72,20 @@
    number what it asks.  A share is edited in percent and stored as 0-1.  The
    bar names no field -- it moves the number beside it, which the form sends.
    An unticked row's inputs are disabled, so they are not sent at all. #}
-{% macro gate_row(field, stored, judged) %}
-  {%- set shown = field.shown(stored) -%}
-  {%- set value = "%g"|format(field.default if shown is none else shown) -%}
+{% macro gate_row(field, value, input_name, label, check_name=none, judged=true, mono=false) %}
   <div class="ed-gate-row{% if not judged %} is-off{% endif %}">
-    <label class="ed-gate-name">
-      {% if field.optional %}
-        <input type="checkbox" name="gate_on_{{ field.name }}" value="1" {% if judged %}checked{% endif %}>
+    <label class="ed-gate-name{% if mono %} mono{% endif %}">
+      {% if check_name %}
+        <input type="checkbox" name="{{ check_name }}" value="1" {% if judged %}checked{% endif %}>
       {% endif %}
-      {{ field.label }}
+      {{ label }}
     </label>
     <div class="ed-gate-value">
       <input type="range" class="ed-gate-bar" min="0" max="{{ field.bar_max }}" step="{{ field.step }}"
-             value="{{ value }}" aria-label="{{ field.label }}"
+             value="{{ value }}" aria-label="{{ label }}"
              oninput="this.nextElementSibling.value = this.value"
              {% if not judged %}disabled{% endif %}>
-      <input type="number" class="ed-input ed-gate-number" name="gate_{{ field.name }}"
+      <input type="number" class="ed-input ed-gate-number" name="{{ input_name }}"
              min="0" step="{{ field.step }}" value="{{ value }}"
              oninput="this.previousElementSibling.value = this.value"
              {% if not judged %}disabled{% endif %}>
@@ -111,12 +109,14 @@
     <div class="ed-gate">
       {% for field in gate_fields %}
         {% set stored = gate|attr(field.name) %}
-        {{ gate_row(field, stored, not field.optional or stored is not none) }}
+        {{ gate_row(field, field.shown(stored), 'gate_' ~ field.name, field.label,
+                    check_name=('gate_on_' ~ field.name) if field.optional else none,
+                    judged=(not field.optional or stored is not none)) }}
       {% endfor %}
       {% if gate.judges_consistency %}
-        <p class="ed-gate-sub">Spread measured at</p>
+        <p class="ed-side-title ed-gate-sub">Spread measured at</p>
         {% for field in gate_consistency_fields %}
-          {{ gate_row(field, gate|attr(field.name), true) }}
+          {{ gate_row(field, field.shown(gate|attr(field.name)), 'gate_' ~ field.name, field.label) }}
         {% endfor %}
       {% else %}
         {# Kept while no spread is judged, so ticking one back finds them. #}
@@ -125,24 +125,12 @@
         {% endfor %}
       {% endif %}
 
-      <p class="ed-gate-sub">Coverage items</p>
+      <p class="ed-side-title ed-gate-sub">Coverage items</p>
       {% for entry in gate.coverage_items %}
-        <div class="ed-gate-row">
-          <label class="ed-gate-name mono">
-            <input type="checkbox" name="gate_item_on_{{ loop.index0 }}" value="1" checked>
-            {{ entry.item }}
-          </label>
-          <input type="hidden" name="gate_item_name_{{ loop.index0 }}" value="{{ entry.item }}">
-          <div class="ed-gate-value">
-            <input type="range" class="ed-gate-bar" min="0" max="100" step="1"
-                   value="{{ "%g"|format(entry.min * 100) }}" aria-label="coverage of {{ entry.item }}"
-                   oninput="this.nextElementSibling.value = this.value">
-            <input type="number" class="ed-input ed-gate-number" name="gate_item_min_{{ loop.index0 }}"
-                   min="0" max="100" step="1" value="{{ "%g"|format(entry.min * 100) }}"
-                   oninput="this.previousElementSibling.value = this.value">
-            <span class="unit">%</span>
-          </div>
-        </div>
+        <input type="hidden" name="gate_item_name_{{ loop.index0 }}" value="{{ entry.item }}">
+        {{ gate_row(gate_item_field, gate_item_field.shown(entry.min),
+                    'gate_item_min_' ~ loop.index0, entry.item,
+                    check_name='gate_item_on_' ~ loop.index0, mono=true) }}
       {% endfor %}
       <input type="text" name="gate_item_new" class="ed-input mono" style="font-size:11.5px"
              placeholder="add a cover item by name (speed_at_cut_in)">

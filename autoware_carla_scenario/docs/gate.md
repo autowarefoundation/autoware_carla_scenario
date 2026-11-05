@@ -137,8 +137,10 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
   out, taken before a case's overrides are folded in: every case of one
   version of the document has the same digest.
 - `gate` is the gate the document stated when the run ran.
-- `files` names the run's other outputs beside the record; the coverage
-  criteria merge the `coverage` files of the runs judged.
+- `files` names the run's other outputs the runner wrote beside the record
+  (one it did not write is left out); the coverage criteria merge the
+  `coverage` files of the runs judged.
+- The record is compact JSON: a row a tick adds up over a long run.
 
 ## Judging: `scenario-gate`
 
