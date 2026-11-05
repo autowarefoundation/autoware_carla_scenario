@@ -1,7 +1,7 @@
 """Where ``scenario-setup`` installs CARLA, and the paths it swaps an install by.
 
 The path logic of :mod:`autoware_carla_scenario.carla_install`, which
-re-exports every name here: the install directory and its launcher (which
+re-exports every name it uses: the install directory and its launcher (which
 :class:`~autoware_carla_scenario.server.CarlaServerManager` looks for), a
 package given as a local path, the lock file and the room an install needs,
 the renames that put a complete download in place of an old install, and
