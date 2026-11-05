@@ -259,9 +259,9 @@ def test_the_frame_is_pinned_field_for_field() -> None:
 
 
 def test_the_radius_is_inclusive_and_planar() -> None:
-    # 30 m off in x and y, and well above: within a 30 m radius.
+    # 30 m off in x and y, and a little up a slope: within a 30 m radius.
     ego = _Actor(1, (0.0, 0.0, 0.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)})
-    edge = _Actor(2, (30.0, 0.0, 50.0), 0.0)
+    edge = _Actor(2, (30.0, 0.0, 2.0), 0.0)
     beyond = _Actor(3, (30.0, 0.001, 0.0), 0.0)
     frame = cr_frame.read_frame(_World([ego, edge, beyond]), 30.0)  # type: ignore[arg-type]
     assert frame is not None
@@ -269,12 +269,31 @@ def test_the_radius_is_inclusive_and_planar() -> None:
 
 
 def test_just_above_the_hidden_depth_is_in_the_scene() -> None:
-    ego = _Actor(1, (0.0, 0.0, 0.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)})
+    # The ego as deep, so that the two are on the same level of road.
+    ego = _Actor(
+        1, (0.0, 0.0, -100.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)}
+    )
     at = _Actor(2, (1.0, 0.0, -100.0), 0.0)
     below = _Actor(3, (1.0, 0.0, -100.001), 0.0)
     frame = cr_frame.read_frame(_World([ego, at, below]), 30.0)  # type: ignore[arg-type]
     assert frame is not None
     assert [o["id"] for o in frame.others] == [2]
+
+
+def test_a_road_user_on_another_level_of_road_is_out_of_the_scene() -> None:
+    """A road user on a bridge over the ego, or in an underpass beneath it, is
+    on no lane of the ego's: the planar scenario would put it there (#1580).
+    Within a metre of the ego's box in height, it is on the ego's level."""
+    ego = _Actor(1, (0.0, 0.0, 0.0), 0.0, attributes={"role_name": str(EGO_ROLE_NAME)})
+    over = _Actor(2, (5.0, 0.0, 8.0), 0.0)
+    under = _Actor(3, (5.0, 0.0, -8.0), 0.0)
+    up_a_slope = _Actor(4, (10.0, 0.0, 1.6 + 0.9), 0.0)
+    beyond_the_margin = _Actor(5, (10.0, 0.0, 1.6 + 1.1), 0.0)
+    frame = cr_frame.read_frame(  # type: ignore[arg-type]
+        _World([ego, over, under, up_a_slope, beyond_the_margin]), 30.0
+    )
+    assert frame is not None
+    assert [o["id"] for o in frame.others] == [4]
 
 
 @pytest.mark.parametrize("radius", [0.0, 5.0])

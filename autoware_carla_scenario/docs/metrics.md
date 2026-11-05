@@ -58,6 +58,21 @@ are not road users. `collision_*` reads the boxes, not CARLA's collision
 sensor (`CollisionCondition`): it sees a collision as AlpaSim does, and tells
 the front from the rear.
 
+The boxes are compared on the ground, as AlpaSim's are, on the ego's level of
+road. A road user whose box is more than 1 m above or below the ego's (each
+box from its centre's height, the actor's origin plus the box's offset, less
+and plus its half height) is on a bridge over the ego or in an underpass
+beneath it: it is in no collision with the ego, and
+`min_distance_to_obstacle_m` measures to it across the height between the
+boxes too -- a car on a bridge 8 m over the ego, their boxes 1.6 m tall, is
+6.4 m from it, not `0`. The CommonRoad metrics leave it out. The metre lets a
+road user just up or down a slope from the ego, whose box is level here,
+still meet it. The lanes -- `offroad`, `wrong_lane`,
+`min_distance_to_lane_boundary_m` and the [weaving](#weaving) drift -- are
+asked for at the height of the ego, as `OffRoadFractionCondition` asks at the
+entity's, so that where roads cross at different heights the lane is the one
+the ego drives on, not the road under or over it.
+
 ### Weaving
 
 Three metrics read how the ego weaves from side to side, and a fourth how
@@ -122,7 +137,9 @@ reachable set (`COMMONROAD_METRICS`). Each is read on the ego against the road
 users around it, every one going on as it goes -- its velocity and
 acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe
 measures against other road users are the most critical over them, as CriMe
-folds them.
+folds them. CommonRoad's scenario is planar, so the road users on another
+level of road than the ego's -- more than 1 m above or below its box -- are
+left out of it, as they are of the collisions.
 
 | Key | Unit | Reads | Folds with |
 |---|---|---|---|
