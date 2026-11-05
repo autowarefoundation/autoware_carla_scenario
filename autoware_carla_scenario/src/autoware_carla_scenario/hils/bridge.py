@@ -380,26 +380,32 @@ class _SensorDevice:
             carla_module.Rotation(roll=roll, pitch=pitch, yaw=yaw),
         )
         actor = world.spawn_actor(blueprint, transform, attach_to=ego)
-        generation = self._next_generation()
-        revolution: Optional[LidarRevolution] = None
-        if spec.is_lidar:
-            attributes = actor.attributes
-            frequency = (
-                float(attributes["rotation_frequency"])
-                if "rotation_frequency" in attributes
-                else 1.0 / dt
-            )
-            # A revolution sweeps the field of view (360 degrees, CARLA's
-            # default); the config refused a sensor_tick.
-            fov = (
-                float(attributes["horizontal_fov"])
-                if "horizontal_fov" in attributes
-                else 360.0
-            )
-            revolution = LidarRevolution(frequency, dt, fov)
-        with self._convert_lock:
-            self._revolution = revolution
-        actor.listen(functools.partial(self._on_data, generation))
+        # Until it is the device's, a failure must not leave the sensor on the
+        # ego, measuring for nobody: the caller only logs it (#1478).
+        try:
+            generation = self._next_generation()
+            revolution: Optional[LidarRevolution] = None
+            if spec.is_lidar:
+                attributes = actor.attributes
+                frequency = (
+                    float(attributes["rotation_frequency"])
+                    if "rotation_frequency" in attributes
+                    else 1.0 / dt
+                )
+                # A revolution sweeps the field of view (360 degrees, CARLA's
+                # default); the config refused a sensor_tick.
+                fov = (
+                    float(attributes["horizontal_fov"])
+                    if "horizontal_fov" in attributes
+                    else 360.0
+                )
+                revolution = LidarRevolution(frequency, dt, fov)
+            with self._convert_lock:
+                self._revolution = revolution
+            actor.listen(functools.partial(self._on_data, generation))
+        except BaseException:
+            _discard(actor, self.spec.name)
+            raise
         self._actor = actor
         logger.info("%s: %s attached to ego %d", self.spec.name, spec.blueprint, ego.id)
 
@@ -517,6 +523,16 @@ class _SensorDevice:
         if self._outbox is not None and self._thread is not None:
             _put_newest(self._outbox, None)
             self._thread.join(timeout=5.0)
+
+
+def _discard(actor: Any, name: str) -> None:
+    """Stop and destroy a sensor *actor* that never became a device's."""
+    try:
+        actor.stop()
+        if actor.is_alive:
+            actor.destroy()
+    except Exception:  # noqa: BLE001 - the failure being raised matters more
+        logger.warning("%s: failed to destroy the sensor", name, exc_info=True)
 
 
 def _drain_queue(items: "queue.Queue[Any]") -> None:
