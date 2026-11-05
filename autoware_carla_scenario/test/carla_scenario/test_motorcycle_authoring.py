@@ -9,7 +9,6 @@ is in ``test_editor_routes.py``.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -20,15 +19,18 @@ from autoware_carla_scenario.authoring.compiler import compile_document
 from autoware_carla_scenario.authoring.models import (
     AUTO_MODEL,
     ScenarioDocument,
+    actor_kind,
 )
-from autoware_carla_scenario.authoring.registry import _ACTION_SPECS
 from autoware_carla_scenario.authoring.validator import validate_document
-from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pose
 from autoware_carla_scenario.entity import ANY_MOTORCYCLE, MotorcycleEntity
 from autoware_carla_scenario.entity.vehicle_entity import VehicleEntity
 
+from .test_entity_field_parity import built_entities
 
-def _document(**motorcycle: Any) -> ScenarioDocument:
+
+def _document(
+    actions: tuple[dict[str, Any], ...] = (), **motorcycle: Any
+) -> ScenarioDocument:
     return ScenarioDocument.model_validate(
         {
             "entities": [
@@ -41,6 +43,7 @@ def _document(**motorcycle: Any) -> ScenarioDocument:
                     **motorcycle,
                 },
             ],
+            "actions": list(actions),
             "assertions": {
                 "pass": [{"type": "elapsed_time", "params": {"duration_seconds": 5.0}}],
                 "fail": [{"type": "timeout", "params": {"timeout_seconds": 30.0}}],
@@ -92,66 +95,34 @@ class TestTheDocument:
         assert again.entities[2].vehicle_type == AUTO_MODEL
 
 
+def _action(type_id: str, **params: Any) -> dict[str, Any]:
+    return {"id": "a1", "type": type_id, "actor": "moto", "params": params}
+
+
 class TestItsActions:
-    def test_it_may_do_whatever_a_vehicle_may(self) -> None:
-        for spec in _ACTION_SPECS.values():
-            assert ("vehicle" in spec.actor_kinds) == (
-                "motorcycle" in spec.actor_kinds
-            ), spec.type_id
+    def test_it_acts_as_a_vehicle(self) -> None:
+        """Matched against an action's kinds as a vehicle, so every action
+        for a vehicle is a motorcycle's too, with no spec naming it."""
+        assert actor_kind("motorcycle") == "vehicle"
+        assert actor_kind("pedestrian") == "pedestrian"
+
+    def test_a_vehicles_action_on_it_is_valid(self) -> None:
+        document = _document((_action("lane_change", direction="left"),))
+        assert not [
+            i
+            for i in validate_document(document).errors
+            if "cannot be performed" in i.message
+        ]
 
     def test_a_pedestrians_action_on_it_is_refused(self) -> None:
-        document = _document()
-        document = ScenarioDocument.model_validate(
-            {
-                **document.model_dump(mode="json"),
-                "actions": [
-                    {
-                        "id": "walk",
-                        "type": "walk_straight",
-                        "actor": "moto",
-                        "params": {"speed_ms": 1.0},
-                    }
-                ],
-            }
-        )
+        document = _document((_action("walk_straight", speed_ms=1.0),))
         assert any(
             "cannot be performed by a motorcycle" in i.message
             for i in validate_document(document).errors
         )
 
 
-def _fake_world(pose: Lanelet2Pose) -> CarlaWorldPose:
-    return CarlaWorldPose(x=float(pose.lanelet_id), y=pose.s, z=0.0, yaw=0.0)
-
-
-def _built(document: ScenarioDocument) -> dict[str, Any]:
-    """What the runtime builds for every NPC of *document*."""
-    scenario = object.__new__(declarative.DeclarativeScenario)
-    scenario._document = document
-    scenario._compiled = compile_document(document)
-    scenario._ground_projection = None  # type: ignore[assignment]
-    scenario.ego_config = SimpleNamespace(  # type: ignore[assignment]
-        spawn_retry_max_count=0, spawn_retry_t_step=0.0, spawn_retry_z_step=0.0
-    )
-    with (
-        mock.patch(
-            "autoware_carla_scenario.coordinate.transform.to_carla_world",
-            side_effect=_fake_world,
-        ),
-        mock.patch(
-            "autoware_carla_scenario.coordinate.transform.to_opendrive",
-            side_effect=repr,
-        ),
-        mock.patch.object(
-            declarative,
-            "snap_to_carla_road",
-            side_effect=lambda pose, world, **_: _fake_world(pose),
-        ),
-    ):
-        return {
-            entity.id: scenario._build_npc(entity, object())
-            for entity in scenario._compiled.npcs
-        }
+_built = built_entities
 
 
 class TestTheRun:

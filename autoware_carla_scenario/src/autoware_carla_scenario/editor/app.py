@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from ..authoring import registry
 from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from ..authoring.hydra_config import run_map_group
-from ..authoring.models import SIGNAL_STATE_NAMES
+from ..authoring.models import SIGNAL_STATE_NAMES, actor_kind
 from ..authoring.persistence import DraftStore, default_draft_dir
 from ..trajectory.authoring import (
     format_relative_vertices,
@@ -169,6 +169,7 @@ def create_app(
         map_viewer_url=map_viewer_url,
         picker_matches_id=picker_matches_id,
         action_specs=registry.action_specs,
+        acts_as=actor_kind,
         condition_specs=registry.condition_specs,
         constraint_specs=registry.constraint_specs,
         binding_specs=registry.binding_specs,

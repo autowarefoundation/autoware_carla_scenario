@@ -88,7 +88,20 @@ def _ego_spawn(export: dict[str, Any]) -> Lanelet2Pose:
 
 
 def _built(document: ScenarioDocument) -> dict[str, Any]:
-    """What the runtime builds for every entity other than the ego."""
+    """What the runtime builds for every entity other than the ego, as the
+    fields of each one's config."""
+    return {
+        entity_id: {
+            f.name: repr(getattr(made._config, f.name))
+            for f in dataclasses.fields(made._config)
+        }
+        for entity_id, made in built_entities(document).items()
+    }
+
+
+def built_entities(document: ScenarioDocument) -> dict[str, Any]:
+    """The entity the runtime builds for every entity of *document* other
+    than the ego, by id, against a map and a world it never reaches."""
     from autoware_carla_scenario import declarative
     from autoware_carla_scenario.entity import fit
 
@@ -125,10 +138,7 @@ def _built(document: ScenarioDocument) -> dict[str, Any]:
                 made: Any = scenario._build_pedestrian(entity, object())
             else:
                 made = scenario._build_npc(entity, object())
-            built[entity.id] = {
-                f.name: repr(getattr(made._config, f.name))
-                for f in dataclasses.fields(made._config)
-            }
+            built[entity.id] = made
     return built
 
 

@@ -52,6 +52,7 @@ __all__ = [
     "EntitySize",
     "DEFAULT_MODELS",
     "EntityKind",
+    "actor_kind",
     "GoalSpec",
     "JunctionPath",
     "JunctionSegment",
@@ -100,6 +101,18 @@ DEFAULT_MODELS: dict[str, str] = {
     # 0001-0014 are gone from CARLA 0.10; 0015 is in every release.
     "pedestrian": "walker.pedestrian.0015",
 }
+#: A kind that performs actions as another kind does: an action spec names the
+#: kinds it is for (``ActionSpec.actor_kinds``), and a motorcycle may do
+#: whatever a vehicle may.
+_ACTS_AS: dict[str, str] = {"motorcycle": "vehicle"}
+
+
+def actor_kind(kind: str) -> str:
+    """The kind an entity of *kind* is matched against an action's
+    ``actor_kinds`` as."""
+    return _ACTS_AS.get(kind, kind)
+
+
 #: Which stack drives the ego, rendered as the framework's ``ego.entity`` key.
 #:
 #: ``autopilot`` is CARLA's TrafficManager, which is driven for the ego and

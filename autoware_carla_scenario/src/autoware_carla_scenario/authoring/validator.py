@@ -25,6 +25,7 @@ from .models import (
     LaneletSlot,
     RouteSearch,
     ScenarioDocument,
+    actor_kind,
     condition_refs,
 )
 from ..route.model import anchor_problem, parse_anchor, parse_route_search
@@ -595,7 +596,7 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
             )
         else:
             kind = refs.entity_kinds.get(str(node.actor), "")
-            if kind and kind not in spec.actor_kinds:
+            if kind and actor_kind(kind) not in spec.actor_kinds:
                 out.error(
                     f"{path}.actor",
                     f"{spec.title} cannot be performed by a {kind}; it is for "
@@ -1373,18 +1374,17 @@ def _check_model(out: _Collector, path: str, entity: Entity) -> None:
     motorcycle's only the server can say; it is refused when it is spawned.
     """
     wanted = "walker." if entity.kind == "pedestrian" else "vehicle."
-    if entity.vehicle_type == AUTO_MODEL and entity.kind == "motorcycle":
-        if entity.size is not None:
-            out.error(
-                f"{path}.size",
-                f"A motorcycle of vehicle_type: {AUTO_MODEL} is whichever "
-                "motorcycle the server has, so the size would be ignored. "
-                "Remove it.",
-                entity.id,
-            )
-        return
     if entity.vehicle_type == AUTO_MODEL:
-        if entity.kind != "vehicle":
+        if entity.kind == "motorcycle":
+            if entity.size is not None:
+                out.error(
+                    f"{path}.size",
+                    f"A motorcycle of vehicle_type: {AUTO_MODEL} is whichever "
+                    "motorcycle the server has, so the size would be ignored. "
+                    "Remove it.",
+                    entity.id,
+                )
+        elif entity.kind != "vehicle":
             out.error(
                 f"{path}.vehicle_type",
                 f"Only a vehicle other than the ego is chosen by its size "

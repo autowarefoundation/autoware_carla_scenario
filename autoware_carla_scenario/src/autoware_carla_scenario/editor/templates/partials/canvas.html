@@ -38,7 +38,7 @@
              pedestrian can do neither -- the kinds an action is for are the
              spec's, so this list needs no per-type branching of its own. #}
           {%- set actor_entity = draft.document.entity(actor) if actor else None -%}
-          {%- set actor_kind = actor_entity.kind if actor_entity else '' -%}
+          {%- set actor_kind = acts_as(actor_entity.kind) if actor_entity else '' -%}
           {% for spec in action_specs() %}
             {% if (spec.actor_required == (actor != '') or spec.actor_optional)
                   and (actor == '' or actor_kind in spec.actor_kinds) %}
