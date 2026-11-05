@@ -5878,7 +5878,7 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>138 functions and methods of those modules are <code>UNCALLED</code>
+<p>137 functions and methods of those modules are <code>UNCALLED</code>
 (40 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -5891,7 +5891,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 138 UNCALLED functions and methods, and why</summary>
+<summary>The 137 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -5947,7 +5947,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>driver.control.ControlConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the config with <code>**</code> of a dict</li>
 <li><code>driver.observation.encode_frame_jpeg</code>: encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled</li>
 <li><code>entity.registry.find_entity_by_role_name</code>: returns the entity of any kind registered under a role (<code>Optional[Any]</code>), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups</li>
-<li><code>entity.registry.register_entity</code>: takes an entity of any kind (<code>Any</code>: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls</li>
+<li><code>entity.registry.register_entity</code>: takes an entity of any kind (<code>Any</code>: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base and scenario_runner call</li>
 <li><code>failure.Failure.from_dict</code>: reads the dict to_dict() wrote, a <code>Mapping[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
 <li><code>failure.Failure.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
@@ -5973,7 +5973,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>route.model.parse_route_search</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
 <li><code>run_timeout.run_timeout_seconds</code>: takes the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express; the check it applies is check_run_timeout's</li>
 <li><code>scenario_base.BaseScenario._register_tick</code>: takes the list a plain callback goes into (<code>List[Callable[[carla.World], None]]</code>), and the check has no value of a list of callables to call with; register_init(), register_pre_tick() and register_post_tick() call it with BaseScenario's own lists, so its body is compiled through them</li>
-<li><code>scenario_base.BaseScenario.create_ego</code>: instantiates the ego's class held in <code>ego_type</code>, which Codon cannot hold as a value</li>
 <li><code>scenario_base.BaseScenario.register_cover</code>: builds a CoverItem of values of any type (<code>expression: Callable[[carla.World], Any]</code>, <code>values: Iterable[Any]</code>, <code>ignore: Callable[[Any], bool]</code>, <code>event: SamplingEvent | BaseCondition</code>), which Codon cannot express; coverage.items is not checked</li>
 <li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
 <li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
