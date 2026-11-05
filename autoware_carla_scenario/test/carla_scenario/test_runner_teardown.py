@@ -41,6 +41,15 @@ class _Ego:
         return self.markers
 
 
+def _npc_monitor(finished: list[Any] | None = None) -> MagicMock:
+    """A stand-in NpcCollisionMonitor that hears nothing on a tick and ends
+    *finished* when the run does."""
+    monitor = MagicMock()
+    monitor.tick.return_value = ([], [], [])
+    monitor.finish.return_value = [] if finished is None else finished
+    return monitor
+
+
 def _run(
     tmp_path: Path,
     trajectory: Any,
@@ -50,6 +59,8 @@ def _run(
     traffic_backend: Any = None,
     write_result: Any = None,
     rerun: Any = None,
+    npc_monitor: Any = None,
+    tick_error: BaseException | None = None,
 ) -> ScenarioRunner:
     """Run a scenario of three ticks through run_scenario, on stand-ins."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
@@ -77,6 +88,13 @@ def _run(
     scenario._post_tick_actions = []
     scenario._pre_tick_callbacks = []
     scenario._post_tick_callbacks = []
+    if tick_error is not None:
+        error = tick_error
+
+        def fail(world: Any) -> None:
+            raise error
+
+        scenario._post_tick_callbacks = [fail]
     scenario.is_done.side_effect = [False, False, False, True]
     scenario.create_ego.return_value = _Ego()
     if scenario_out is not None:
@@ -89,6 +107,10 @@ def _run(
             new=write_result or MagicMock(),
         ),
         patch("autoware_carla_scenario.scenario_runner._record_run"),
+        patch(
+            "autoware_carla_scenario.scenario_runner._npc_collision_monitor",
+            new=MagicMock(return_value=npc_monitor or _npc_monitor()),
+        ),
         patch("autoware_carla_scenario.scenario_runner._ScenarioClock") as clock,
         patch(
             "autoware_carla_scenario.scenario_runner.TrajectoryRecorder",
@@ -241,3 +263,65 @@ def test_the_traffic_record_is_written_into_the_result(tmp_path: Path) -> None:
         )
     data = json.loads(path.read_text())
     assert data["traffic"] == {"backend": "sumo", "fidelity": {"mesoscopic": 2}}
+
+
+def _ordered_npc_monitor(trajectory: MagicMock, order: list[str]) -> MagicMock:
+    """A monitor with one contact still under way, which notes in *order* when
+    it is finished and closed, and when *trajectory* takes its record."""
+    contact = SimpleNamespace(phase="end", duration=0.05)
+    monitor = _npc_monitor([contact])
+    real_finish = monitor.finish.return_value
+
+    def finish(elapsed: float) -> list[Any]:
+        order.append(f"finish {elapsed}")
+        return real_finish
+
+    monitor.finish.side_effect = finish
+    monitor.close.side_effect = lambda: order.append("close")
+    trajectory.record_collision.side_effect = lambda c: order.append(c.phase)
+    trajectory.close.side_effect = lambda: order.append("trajectory close")
+    return monitor
+
+
+def test_the_contacts_still_going_end_with_the_run(tmp_path: Path) -> None:
+    """#1539: the end record of a contact the run ended in is logged, at the
+    last tick's time, before the monitor and the trajectory log close."""
+    trajectory = MagicMock()
+    trajectory.active = True
+    order: list[str] = []
+    monitor = _ordered_npc_monitor(trajectory, order)
+    _run(tmp_path, trajectory, npc_monitor=monitor)
+    monitor.finish.assert_called_once_with(0.1)
+    assert order == ["finish 0.1", "end", "close", "trajectory close"]
+
+
+def test_the_contacts_end_with_a_run_that_raised(tmp_path: Path) -> None:
+    trajectory = MagicMock()
+    trajectory.active = True
+    order: list[str] = []
+    monitor = _ordered_npc_monitor(trajectory, order)
+    with pytest.raises(ValueError, match="tick broke"):
+        _run(
+            tmp_path,
+            trajectory,
+            npc_monitor=monitor,
+            tick_error=ValueError("tick broke"),
+        )
+    assert order == ["finish 0.1", "end", "close", "trajectory close"]
+
+
+def test_a_failing_finish_does_not_hide_why_the_run_ended(tmp_path: Path) -> None:
+    trajectory = MagicMock()
+    trajectory.active = True
+    monitor = _npc_monitor()
+    monitor.finish.side_effect = RuntimeError("finish broke")
+    with pytest.raises(ValueError, match="tick broke"):
+        _run(
+            tmp_path,
+            trajectory,
+            npc_monitor=monitor,
+            tick_error=ValueError("tick broke"),
+        )
+    # The rest of the cleanup still went.
+    monitor.close.assert_called_once_with()
+    trajectory.close.assert_called_once_with()

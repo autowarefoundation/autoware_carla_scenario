@@ -632,6 +632,68 @@ def test_a_contact_is_logged_when_it_starts_and_when_it_ends() -> None:
     assert records[1].duration == pytest.approx(2.95, abs=0.06)
 
 
+def test_a_contact_still_going_when_the_run_ends_is_ended_with_it() -> None:
+    """#1539: a contact that never goes quiet for REPEAT_S still gets its end
+    record, from finish(), with how long it lasted and its strongest impulse."""
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    records: list[Any] = []
+    t = 0.05
+    last = t
+    while t < 3.0:  # in contact until the run ends
+        world.sensors[0].listener(
+            SimpleNamespace(
+                frame=int(t * 20),
+                other_actor=b,
+                normal_impulse=SimpleNamespace(x=4.0 if t > 2.0 else 1.0, y=0.0, z=0.0),
+            )
+        )
+        records += monitor.tick(world, t)[0]  # type: ignore[arg-type]
+        last = t
+        t += 0.05
+    assert [r.phase for r in records] == ["start"]
+    ended = monitor.finish(last)
+    monitor.close()
+    assert [r.phase for r in ended] == ["end"]
+    end = ended[0]
+    assert end.frame == records[0].frame  # the contact's, as a normal end's
+    assert end.t == last
+    assert end.duration == pytest.approx(last - records[0].t)
+    assert end.impulse == 4.0
+    assert end.actors == ["npc1", "npc2"] and not end.ego
+    # Only once, and harmless after close.
+    assert monitor.finish(last) == []
+
+
+def test_finish_takes_up_the_events_heard_since_the_last_tick() -> None:
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    world.sensors[0].listener(
+        SimpleNamespace(
+            frame=4,
+            other_actor=b,
+            normal_impulse=SimpleNamespace(x=2.0, y=0.0, z=0.0),
+        )
+    )
+    records = monitor.finish(0.2)
+    monitor.close()
+    assert [(r.phase, r.duration) for r in records] == [("start", None), ("end", 0.0)]
+
+
+def test_finish_with_no_contact_records_nothing() -> None:
+    world = _MonitoredWorld([_actor(2, "vehicle.mini", "npc1")])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    monitor.close()
+    assert monitor.finish(0.05) == []
+
+
 def _register_walker(monkeypatch: pytest.MonkeyPatch, role: str, actor_id: int) -> None:
     """An entity answering to *role* whose walker is *actor_id*, for the run."""
     from autoware_carla_scenario.entity import registry
