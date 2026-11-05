@@ -224,6 +224,40 @@ class TestSource:
         with pytest.raises(ValueError):
             TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=-1.0)
 
+    @pytest.mark.parametrize("key", ["initial_vehicles", "max_vehicles", "seed"])
+    @pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+    def test_counts_and_seed_must_be_whole_numbers(self, key: str, value: Any) -> None:
+        # #1492: 2.5, NaN or True passed `< 0` and reached range() mid-run.
+        with pytest.raises(ValueError, match=key):
+            TrafficSourceAction(_NOT_JUNCTION, **{key: value})
+
+    def test_whole_float_counts_are_read_as_ints(self) -> None:
+        # Typed Any: the point is a float where an int is declared.
+        two: Any = 2.0
+        three: Any = 3.0
+        four: Any = 4.0
+        source = TrafficSourceAction(
+            _NOT_JUNCTION, initial_vehicles=two, max_vehicles=three, seed=four
+        )
+        assert source._initial == 2 and type(source._initial) is int  # noqa: SLF001
+        assert source._max == 3 and type(source._max) is int  # noqa: SLF001
+        assert source._seed == 4 and type(source._seed) is int  # noqa: SLF001
+        world, backend = _World(), _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert source.spawned == 2
+        assert len(backend.vehicles) == 2
+
+    def test_a_whole_float_limit_caps_the_vehicles(self) -> None:
+        limit: Any = 4.0
+        source = TrafficSourceAction(
+            _NOT_JUNCTION, initial_vehicles=6, max_vehicles=limit, min_gap_m=0.0
+        )
+        world, backend = _World(), _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert len(backend.vehicles) == 4
+
     @pytest.mark.parametrize("rate", [math.nan, math.inf, -math.inf])
     def test_a_rate_must_be_finite(self, rate: float) -> None:
         # #1321: NaN or infinity failed int() on the second tick, mid-run.
