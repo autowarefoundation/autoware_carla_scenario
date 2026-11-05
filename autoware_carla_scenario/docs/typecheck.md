@@ -2838,7 +2838,13 @@ checked module needs split into a checked module of its own, which the
 excluded one re-exports, instead of a model: `server` imports
 `installed_executable()` from `carla_install_paths`, which holds the path
 logic of the installer `carla_install` (tqdm, urllib.request, tarfile) and is
-compiled from its source (#1635).
+compiled from its source (#1635). It holds the decision whether an install is
+current and the headers of the conditional request too (`_current_of()`,
+`_conditions_of()`, #1671), over the stamp as a `dict[str, Optional[str]]`:
+`carla_install` reads the stamp's JSON and converts it at that boundary, so
+that a value of another type, in a stamp edited by hand, decides as it did. A
+constant a test replaces in the excluded module (`_UNPACKED_PER_PACKED`) is
+passed to the checked function (`_room_needed()`) rather than read there.
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
