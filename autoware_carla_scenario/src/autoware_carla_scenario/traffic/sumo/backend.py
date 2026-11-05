@@ -526,8 +526,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._walking: dict[str, tuple[float, float, float, float]] = {}
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
-        #: Lane id -> the vehicle classes it allowed before its first
-        #: close_lane(), and how many close_lane() calls are not yet matched
+        #: Lane id -> the vehicle classes it disallowed before its first
+        #: close_lane() (its permissions, kept as what it disallows: see
+        #: close_lane()), and how many close_lane() calls are not yet matched
         #: by a reopen_lane(): two zones on one lane share the closure, and
         #: the lane opens only once both are cleared (#1294).
         self._closed_lanes: dict[str, tuple[list[str], int]] = {}
@@ -2443,16 +2444,22 @@ class SumoTrafficBackend(TrafficBackend):
         if closure is not None:
             # Closed already (by another zone, or another span of this one):
             # one more owner, whose reopen_lane() the lane waits for too.
-            allowed, owners = closure
-            self._closed_lanes[lane_id] = (allowed, owners + 1)
+            disallowed, owners = closure
+            self._closed_lanes[lane_id] = (disallowed, owners + 1)
             return lane_id
         try:
-            allowed = list(tc.lane.getAllowed(lane_id))
+            # Kept as what the lane disallows, not what it allows: SUMO lists
+            # no class as allowed on a lane open to every class (no allow or
+            # disallow attribute, as netgenerate and most nets have), and
+            # setAllowed(lane, []) closes it to everything (#1533). The
+            # disallowed classes restore both that lane and one with an
+            # allow list exactly, with libsumo and TraCI alike.
+            disallowed = list(tc.lane.getDisallowed(lane_id))
             tc.lane.setDisallowed(lane_id, ["all"])
         except Exception as exc:  # noqa: BLE001 - a closure must not end the run
             logger.warning("SUMO could not close lane %s: %s", lane_id, exc)
             return None
-        self._closed_lanes[lane_id] = (allowed, 1)
+        self._closed_lanes[lane_id] = (disallowed, 1)
         logger.info("SUMO: lane %s closed", lane_id)
         return lane_id
 
@@ -2464,16 +2471,16 @@ class SumoTrafficBackend(TrafficBackend):
         closure = self._closed_lanes.get(handle)
         if closure is None:
             return
-        allowed, owners = closure
+        disallowed, owners = closure
         if owners > 1:
             # Another zone still stands on the lane: it stays closed.
-            self._closed_lanes[handle] = (allowed, owners - 1)
+            self._closed_lanes[handle] = (disallowed, owners - 1)
             return
         del self._closed_lanes[handle]
         if not self._running:
             return
         try:
-            self._traci.lane.setAllowed(handle, allowed)
+            self._traci.lane.setDisallowed(handle, disallowed)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not reopen lane %s: %s", handle, exc)
             return
