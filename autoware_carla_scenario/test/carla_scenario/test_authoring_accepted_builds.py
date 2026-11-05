@@ -871,6 +871,25 @@ def test_validator_refuses_a_bound_the_condition_refuses(
             {"lanelet_id": _LANELET, "start_time": -1.0},
             "start_time",
         ),
+        # ConstructionSettings' bounds (#1479): a negative length or count.
+        *[
+            ("construction_zone", None, {"lanelet_id": _LANELET, name: -1.0}, name)
+            for name in (
+                "taper_length_in",
+                "taper_length_out",
+                "warning_zone_length",
+                "buffer_zone_length",
+                "termination_zone_length",
+            )
+        ],
+        *[
+            ("urban_construction_zone", None, {"lanelet_id": _LANELET, name: v}, name)
+            for name, v in (
+                ("warning_zone_length", -1.0),
+                ("merge_distance", -1.0),
+                ("merge_signs", -1),
+            )
+        ],
         ("traffic_source", None, {"vehicles_per_minute": -1.0}, "vehicles_per_minute"),
         ("traffic_source", None, {"initial_vehicles": -1}, "initial_vehicles"),
         (

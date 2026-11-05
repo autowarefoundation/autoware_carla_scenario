@@ -97,8 +97,9 @@ class ConstructionZoneAction(_BackendAction):
         label: Human-readable identifier.
 
     Raises:
-        ValueError: *end_s* not after *start_s*, a negative or non-finite
-            *start_time*, or an *end_time* not after it.
+        ValueError: a non-finite *start_s* or *end_s*, *end_s* not after
+            *start_s*, a negative or non-finite *start_time*, or an
+            *end_time* not after it.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -133,6 +134,9 @@ class ConstructionZoneAction(_BackendAction):
         timing: TickTiming = TickTiming.PRE_TICK,
         label: str = "construction_zone",
     ) -> None:
+        # An infinite zone would be laid out for ever (#1479).
+        if not math.isfinite(start_s) or not math.isfinite(end_s):
+            raise ValueError(f"{label}: start_s and end_s must be finite")
         if not end_s > start_s:
             raise ValueError(f"{label}: end_s must be after start_s")
         # NaN fails every comparison, so a NaN start_time would never place it.

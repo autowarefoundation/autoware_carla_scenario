@@ -312,6 +312,13 @@ MUTCD's spacings apply instead. A taper can be `linear` or `curved` (an
 s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
 picked the side from the SUMO lane's index.
 
+`start_s` and `end_s` must be finite, with `end_s` after `start_s`.
+`ConstructionSettings` refuses a number that is not finite, a spacing
+(`spacing`, `warning_zone_spacing`) that is not positive, and a negative
+length, `speed_limit_mph` or `merge_signs`; a length of 0 means no such
+zone. A zone whose spacing would lay out more than `MAX_ZONE_OBJECTS`
+(100,000) objects is refused when it is placed (#1479).
+
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
 the world as CARLA props, each added by a `SpawnAction` and named
 `<label>/<zone>/<n>` (`docs/api.md`). Unlike a vehicle, a prop may appear
