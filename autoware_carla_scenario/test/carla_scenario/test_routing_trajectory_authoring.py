@@ -427,6 +427,12 @@ class TestEditor:
         entity = _stored(store, draft_id).entity(actor)
         assert entity is not None and entity.spawn.hidden
 
+        # The help names the card that brings it in, as the validator does
+        # (_check_hidden_spawns): a Spawn card, not a Set Goal one (#1525).
+        inspector = client.get(f"/draft/{draft_id}/inspector/{actor}").text
+        assert "until a Spawn card brings it in" in inspector
+        assert "until a Set Goal card brings it in" not in inspector
+
         client.post(
             f"/draft/{draft_id}/entity/{actor}", data={"spawn_hidden_shown": "1"}
         )

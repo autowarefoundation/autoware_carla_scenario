@@ -17,7 +17,10 @@ the same way a sweep binds it, through
 :func:`~autoware_carla_scenario.authoring.hydra_config.swept_slot` and the
 framework's own constraint engine -- and the panel says which of how many is on
 screen.  Stepping the pattern index walks the runs a ``--multirun`` sweep would
-perform, one concrete scenario at a time.
+perform, one concrete scenario at a time.  That includes the spawn's offset
+when it is derived from the map: the sweeper's binding is resolved for the pick,
+so a spawn a ``stop_line_offset`` walks back onto a predecessor is drawn there,
+and a pick whose binding fails -- one the sweep drops -- says so.
 
 Everything else keeps the id stored beside it, because that is exactly what a
 run that does not sweep uses: the sweeper enumerates a single target key, so at
@@ -29,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from ..authoring.hydra_config import swept_slot
+from ..authoring.hydra_config import spawn_s_binding, swept_slot
 from ..authoring.models import (
     GoalSpec,
     LaneletSlot,
@@ -96,6 +99,8 @@ class MapView:
         pattern_count: How many lanelets the search matched, which is also
             whether a pattern is bound at all.
         error: Why no pattern could be bound.
+        dropped: Why the sweep drops the bound pattern -- its spawn's offset
+            binding fails on it -- or ``""`` when the sweep runs it.
         has_map: Whether there is a Lanelet2 file to draw the places *on*.  It
             is the resolved file rather than ``map.lanelet2_path``, because a
             scenario naming a map repository leaves that field empty and its
@@ -111,6 +116,7 @@ class MapView:
     pattern: int = 0
     pattern_count: int = 0
     error: str = ""
+    dropped: str = ""
     has_map: bool = False
     map_hint: str = ""
 
@@ -166,10 +172,16 @@ def _entity_of(document: ScenarioDocument, slot: LaneletSlot) -> Optional[str]:
     return None
 
 
-def _detail(slot: LaneletSlot) -> str:
-    """Return where along the lanelet the document puts this point."""
+def _detail(slot: LaneletSlot, offset: Optional[map_preview.SpawnOffset]) -> str:
+    """Return where along the lanelet the document puts this point.
+
+    *offset* is the derived spawn offset resolved for the bound pick, when
+    there is one to show.
+    """
     holder = slot.holder
     if isinstance(holder, SpawnSpec):
+        if offset is not None and offset.s is not None:
+            return f"{offset.s:.1f} m along it, derived from the map"
         if holder.s.mode == "derived":
             return "offset derived from the map"
         return f"{holder.s.value:g} m along it"
@@ -208,6 +220,7 @@ def build_map_view(
     slots = document.lanelet_slots()
     swept = swept_slot(document)
     bound_id = 0
+    offset: Optional[map_preview.SpawnOffset] = None
     if swept is not None:
         view.swept_key = swept.key
         view.swept_label = swept.label
@@ -219,11 +232,22 @@ def build_map_view(
         if result.matched_ids:
             view.pattern = pattern % len(result.matched_ids)
             bound_id = result.matched_ids[view.pattern]
+        # A spawn whose s is derived is placed by its binding, which may walk
+        # back to a predecessor or fail -- and the sweep then drops the pick.
+        s_binding = spawn_s_binding(document, swept)
+        if s_binding is not None and bound_id > 0:
+            offset = map_preview.resolve_spawn_offset(
+                document, s_binding[0], s_binding[1], bound_id, paths=paths
+            )
 
     for slot in slots:
         is_swept = slot.key == view.swept_key
         bound = is_swept and bound_id > 0
         lanelet_id = bound_id if bound else slot.lanelet_id
+        moved = offset if bound else None
+        if moved is not None:
+            lanelet_id = moved.lanelet_id
+            view.dropped = moved.error
         derived = (
             map_preview.derive_lanelet(document, slot, bound_id, paths=paths)
             if slot.deriving and bound_id > 0
@@ -231,7 +255,17 @@ def build_map_view(
         )
         if derived is not None:
             lanelet_id = derived
-        if bound:
+        if moved is not None and moved.dropped:
+            note = (
+                f"match {view.pattern + 1} of {view.pattern_count} is dropped "
+                "by the sweep: its offset binding fails"
+            )
+        elif moved is not None and moved.walked_back:
+            note = (
+                f"bound: match {view.pattern + 1} of {view.pattern_count}, "
+                f"walked back from lanelet {bound_id} to fit the offset"
+            )
+        elif bound:
             note = f"bound: match {view.pattern + 1} of {view.pattern_count}"
         elif derived is not None:
             note = f"derived from match {view.pattern + 1}"
@@ -255,9 +289,9 @@ def build_map_view(
                 title=slot.title,
                 role=slot.role.lower(),
                 lanelet_id=lanelet_id,
-                detail=_detail(slot),
+                detail=_detail(slot, moved),
                 note=note,
-                bound=bound or derived is not None,
+                bound=(bound and not view.dropped) or derived is not None,
             )
         )
     return view

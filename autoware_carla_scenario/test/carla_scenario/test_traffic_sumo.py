@@ -3500,6 +3500,82 @@ def test_a_scenario_bicycle_joins_sumo_as_a_bicycle(
         backend.close()
 
 
+def test_a_motorcycle_is_a_vehicle_whose_base_type_says_so() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import is_motorcycle
+
+    bike = _FakeActor(None, type_id="vehicle.yamaha.yzf")
+    bike.attributes["base_type"] = "Motorcycle"
+    assert is_motorcycle(bike)
+    bicycle = _FakeActor(None, type_id="vehicle.bh.crossbike")
+    bicycle.attributes["base_type"] = "bicycle"
+    assert not is_motorcycle(bicycle)
+    assert not is_motorcycle(_FakeActor(None))
+    assert not is_motorcycle(SimpleNamespace())
+
+
+@needs_sumo
+@pytest.mark.parametrize("scenario_vehicles", ["sumo", "traffic_manager"])
+def test_a_scenario_motorcycle_joins_sumo_as_a_motorcycle(
+    crossroads: Path, tmp_path: Path, scenario_vehicles: str
+) -> None:
+    """Of the run's motorcycle type, on the carriageway, whether SUMO rides
+    it or is told where CARLA has it (the TrafficManager riding it)."""
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        MOTORCYCLE_TYPE,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles=scenario_vehicles,
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    # On the eastbound carriageway of the west arm (CARLA y > 0 is
+    # OpenDRIVE's right).
+    rider = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "rider", "vehicle.yamaha.yzf"
+    )
+    rider.attributes["base_type"] = "motorcycle"
+    rider.bounding_box.extent = _Extent(1.1, 0.4)
+    world = _FakeWorld([rider])
+    backend.adopt(_Entity(rider, "rider"))
+    backend.start(world)
+    tc = backend._traci
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "rider" in v]
+        assert tc.vehicle.getVehicleClass(sumo_id) == "motorcycle"
+        # Its own copy of it, once its size is set.
+        assert tc.vehicle.getTypeID(sumo_id).split("@", 1)[0] == MOTORCYCLE_TYPE
+        # Its own box, not a car's.
+        assert tc.vehicle.getLength(sumo_id) == pytest.approx(2.2)
+        assert tc.vehicle.getWidth(sumo_id) == pytest.approx(0.8)
+        assert all(
+            backend._net.getEdge(edge).allows("motorcycle")
+            for edge in tc.vehicle.getRoute(sumo_id)
+        )
+        if scenario_vehicles == "sumo":
+            # Ridden on by SUMO, and CARLA's motorcycle follows it.
+            assert rider.transform.location.x > -80.0
+    finally:
+        backend.close()
+
+
 @needs_sumo
 def test_signalled_bicycle_rides_go_with_the_traffic_carlas_lights_let_go(
     signalled_crossroads: Path, tmp_path: Path

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
     from autoware_carla_scenario.authoring.persistence import DraftStore
+    from autoware_carla_scenario.editor.service import EditorService
 
 from autoware_carla_scenario.maps import (
     GitMapCache,
@@ -1913,6 +1914,163 @@ class TestEditorMapSource:
         # Written out even though it is empty: the `map` group a run selects
         # describes another map, whose excluded lanelet ids mean nothing here.
         assert config["map"]["no_3d_model_lanelet_ids"] == []
+
+
+class TestEditorMapChangeForgetsExcludedLanelets:
+    """``map.no_3d_model_lanelet_ids`` belongs to the map it was set on (#1525).
+
+    They are lanelet ids: on another map they name other lanelets, or none,
+    and the export's own map group would ship them with the new map.  So a
+    change of map drops the list -- unless the same submission typed a new
+    one -- and only a change of map does.
+    """
+
+    @pytest.fixture
+    def service(
+        self, drafts: "DraftStore", monkeypatch: pytest.MonkeyPatch
+    ) -> "EditorService":
+        from autoware_carla_scenario.editor.service import EditorService
+
+        service = EditorService(drafts)
+        # Nothing here is about downloading: use_map's download is a no-op.
+        monkeypatch.setattr(service, "fetch_map", lambda document, **_: "")
+        return service
+
+    @staticmethod
+    def _document() -> Any:
+        from autoware_carla_scenario.authoring.starter import blank_document
+
+        return blank_document(title="Map change")
+
+    def test_choosing_another_library_map_clears_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.use_map(document, _B)
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_choosing_the_same_map_again_keeps_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        # Another spelling of the same source is the same map.
+        service.use_map(document, _A.removeprefix("git+"))
+        service.use_map(document, _A)
+        assert document.map.no_3d_model_lanelet_ids == [11, 12]
+
+    def test_a_malformed_stored_source_is_replaced_without_error(
+        self, service: "EditorService"
+    ) -> None:
+        """``MapSource.parse`` raises a plain ValueError on this one, not a
+        MapSourceError; it counts as another map, not as a server error."""
+        document = self._document()
+        document.map.source = "http://[::1"
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.use_map(document, _A)
+        assert document.map.source == _A
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_another_source_on_the_form_clears_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {"map_source": _B, "map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert document.map.source == _B
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_a_new_directory_clears_them(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "11, 12",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_ones_typed_alongside_a_new_directory_are_kept(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "7",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == [7]
+
+    def test_another_map_group_clears_them(self, service: "EditorService") -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {"map_group": "town10hd_opt", "map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_a_form_that_leaves_the_map_alone_keeps_them(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        service.update_scenario(document, {"map_directory": str(local_map)})
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "title": "Renamed",
+                "map_group": document.map.group,
+                "map_name": document.map.name,
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "11, 12",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == [11, 12]
+
+    def test_the_route_does_not_export_the_old_maps_ids(
+        self, editor: "TestClient", drafts: "DraftStore", origin_repo: Path
+    ) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_map_group_config,
+        )
+
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        editor.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert _stored(drafts, draft_id).map.no_3d_model_lanelet_ids == [11, 12]
+
+        editor.post(
+            f"/draft/{draft_id}/map/use",
+            data={"uri": _uri(origin_repo, "autoware_maps/TownB")},
+        )
+        document = _stored(drafts, draft_id)
+        assert document.map.name == "TownB"
+        config = build_map_group_config(document)
+        assert config is not None
+        assert config["map"]["no_3d_model_lanelet_ids"] == []
+
+
+#: Two maps of one (never fetched) repository, for the service-level tests.
+_A = "git+https://github.com/example/maps@main#autoware_maps/TownA"
+_B = "git+https://github.com/example/maps@main#autoware_maps/TownB"
 
 
 class TestEditorMapLibrary:
