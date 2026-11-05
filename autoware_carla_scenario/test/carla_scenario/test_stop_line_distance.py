@@ -19,6 +19,7 @@ from autoware_carla_scenario.measures import (
     read_measure,
     set_measured_scenario,
     stop_line_distance_between,
+    stop_line_lane,
 )
 from autoware_carla_scenario.placement import place_at_stop_line_distance
 
@@ -158,3 +159,78 @@ def test_placement_says_what_it_cannot_reach(road: LaneMap) -> None:
     past = Lanelet2Pose(lanelet_id=road.id("ego", 2), s=10.0)
     with pytest.raises(ValueError, match="no stop line"):
         place_at_stop_line_distance(past, 10.0, ego_bumpers=_EGO)
+
+
+#: How high the elevated road runs over the street (m).
+_DECK_Z = 8.0
+
+
+@pytest.fixture
+def decks() -> Iterator[LaneMap]:
+    """Two identical 300 m lanes, one over the other (#1595): the street at
+    z=0 with the stop line, and an elevated road at z=:data:`_DECK_Z` with
+    none."""
+    cuts = [0.0, 100.0, 200.0, 300.0]
+    street = build_road(straight(300.0), cuts, [-1.75, 1.75], {"ego": (0, False)})
+    deck = build_road(
+        straight(300.0),
+        cuts,
+        [-1.75, 1.75],
+        {"ego": (0, False)},
+        z=_DECK_Z,
+        first_id=20_000_000,
+    )
+    built = _lane_maps.stacked(street, deck)
+    _with_stop_line(built, built.id("ego", 1), _STOP_X)
+    yield from _lane_maps.loaded(built)
+
+
+def _over(x: float, z: float) -> carla.Transform:
+    return carla.Transform(carla.Location(x=x, y=0.0, z=z), carla.Rotation(yaw=0.0))
+
+
+def test_on_the_elevated_road_the_street_s_stop_line_is_not_read(
+    decks: LaneMap,
+) -> None:
+    ego = _over(60.0, _DECK_Z)
+
+    assert stop_line_distance_between(ego, _EGO) is None
+    assert stop_line_lane(ego, _EGO) == []
+    assert _measured(ego) is None
+
+
+def test_on_the_street_under_the_elevated_road_its_stop_line_is_read(
+    decks: LaneMap,
+) -> None:
+    ego = _over(60.0, 0.0)
+
+    assert stop_line_distance_between(ego, _EGO) == pytest.approx(87.4, abs=1e-3)
+    assert stop_line_lane(ego, _EGO) == [decks.id("ego", 0), decks.id("ego", 1)]
+    assert _measured(ego) == pytest.approx(87.4, abs=1e-3)
+
+
+def test_the_lane_kept_for_one_deck_is_not_read_on_the_other(decks: LaneMap) -> None:
+    # The same spot in plan view, read on the street, then on the deck over
+    # it, then on the street again: the lane found for one is not kept for
+    # the other.
+    for z, expected in ((0.0, 87.4), (_DECK_Z, None), (0.0, 87.4)):
+        reading = stop_line_distance_between(_over(60.0, z), _EGO)
+        if expected is None:
+            assert reading is None
+        else:
+            assert reading == pytest.approx(expected, abs=1e-3)
+
+
+def test_a_spawn_on_the_elevated_road_is_not_placed_by_the_street_s_stop_line(
+    decks: LaneMap,
+) -> None:
+    on_deck = Lanelet2Pose(lanelet_id=decks.id("upper:ego", 0), s=60.0)
+    with pytest.raises(ValueError, match="no stop line"):
+        place_at_stop_line_distance(on_deck, 10.0, ego_bumpers=_EGO)
+
+    on_street = Lanelet2Pose(lanelet_id=decks.id("ego", 0), s=60.0)
+    pose = place_at_stop_line_distance(on_street, 10.0, ego_bumpers=_EGO)
+    assert pose.lanelet_id == decks.id("ego", 1)
+    assert _measured(to_carla_world(pose).to_carla_transform()) == pytest.approx(
+        10.0, abs=0.01
+    )
